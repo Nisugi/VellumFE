@@ -35,7 +35,9 @@ pub fn convert_keycode(code: ct::KeyCode) -> Option<KeyCode> {
         ct::KeyCode::Esc => Some(KeyCode::Esc),
         ct::KeyCode::Null => Some(KeyCode::Null),
         // Keypad variants (from justinpopa/crossterm custom fork)
-        ct::KeyCode::KeypadBegin => None, // Numlock off, num5 - not useful
+        // KeypadBegin is numpad-5 with NumLock off. It has no navigation-block twin,
+        // so dropping it made the key dead; treat it as the numpad-5 it physically is.
+        ct::KeyCode::KeypadBegin => Some(KeyCode::Keypad5),
         ct::KeyCode::KeypadEnter => Some(KeyCode::KeypadEnter),
         // Keypad number keys (numlock on)
         ct::KeyCode::Keypad0 => Some(KeyCode::Keypad0),

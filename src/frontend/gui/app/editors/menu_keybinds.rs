@@ -58,8 +58,17 @@ impl VellumGuiApp {
         // While a row is capturing, grab the next key press into that field.
         if let Some(idx) = state.capturing {
             self.app_core.ui_state.input_mode = InputMode::KeybindForm;
-            if let Some(press) = Self::collect_pressed_key_events(ctx).into_iter().next() {
-                let key = crate::core::menu_actions::key_event_to_string(press.key_event);
+            // Numpad presses come from eframe's channel via `handle_global_input`;
+            // see the keybind editor for why they take priority.
+            let captured = self.frame_numpad_presses.first().copied().or_else(|| {
+                Self::collect_pressed_key_events(ctx)
+                    .into_iter()
+                    .next()
+                    .map(|press| press.key_event)
+            });
+
+            if let Some(key_event) = captured {
+                let key = crate::core::menu_actions::key_event_to_string(key_event);
                 if let Some(field) = MenuKeybinds::FIELDS.get(idx) {
                     (field.set)(&mut state.working, key);
                 }

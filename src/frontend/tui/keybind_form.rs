@@ -266,6 +266,14 @@ impl KeybindFormWidget {
             return;
         }
 
+        // Anything the real parser accepts is valid by definition — this covers
+        // legacy keypad spellings like "num_+" and "ctrl+num_+", which the split
+        // below would break apart at their literal '+'.
+        if crate::config::parse_key_string(combo).is_some() {
+            self.key_combo_error = None;
+            return;
+        }
+
         // Basic validation - check if it looks like a valid key combo
         // Valid formats: "a", "ctrl+a", "alt+shift+f5", etc.
         let parts: Vec<&str> = combo.split('+').collect();
@@ -326,22 +334,11 @@ impl KeybindFormWidget {
                     | "down"
                     | "left"
                     | "right"
-                    | "num_0"
-                    | "num_1"
-                    | "num_2"
-                    | "num_3"
-                    | "num_4"
-                    | "num_5"
-                    | "num_6"
-                    | "num_7"
-                    | "num_8"
-                    | "num_9"
-                    | "num_."
-                    | "num_+"
-                    | "num_-"
-                    | "num_*"
-                    | "num_/"
             ) {
+                has_key = true;
+            } else if crate::data::input::KeyCode::from_keypad_name(&normalized).is_some() {
+                // Numpad names come from the shared table so canonical word forms
+                // ("num_plus") and legacy symbol spellings ("num_+") both validate.
                 has_key = true;
             } else if !matches!(normalized.as_str(), "ctrl" | "alt" | "shift") {
                 self.key_combo_error = Some(format!("Invalid key: '{}'", part));
@@ -1110,6 +1107,65 @@ mod tests {
         match form.save_internal() {
             Some(KeybindFormResult::Save { value, .. }) => value,
             other => panic!("expected Save, got {other:?}"),
+        }
+    }
+
+    fn validation_error(combo: &str) -> Option<String> {
+        let mut form = KeybindFormWidget::new();
+        form.key_combo.insert_str(combo);
+        form.validate_key_combo();
+        form.key_combo_error.clone()
+    }
+
+    /// The validator must accept exactly what `key_event_to_string` emits, or a
+    /// captured numpad chord would be rejected by the form that recorded it.
+    #[test]
+    fn validator_accepts_canonical_numpad_names() {
+        for name in crate::data::input::keypad_names() {
+            assert_eq!(
+                validation_error(name),
+                None,
+                "canonical numpad name {name} was rejected"
+            );
+        }
+    }
+
+    /// Every modifier combination must validate — that's the feature.
+    #[test]
+    fn validator_accepts_modified_numpad_chords() {
+        for combo in [
+            "ctrl+num_plus",
+            "alt+num_8",
+            "shift+num_divide",
+            "ctrl+alt+num_decimal",
+            "ctrl+alt+shift+num_enter",
+        ] {
+            assert_eq!(
+                validation_error(combo),
+                None,
+                "numpad chord {combo} was rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validator_rejects_unknown_numpad_names() {
+        assert!(validation_error("num_x").is_some());
+        assert!(validation_error("numpad_1").is_some());
+    }
+
+    /// The loader still accepts legacy symbol spellings, so the form must too —
+    /// otherwise it cannot round-trip the very binds an older file contains.
+    /// These contain a literal '+', which the fallback split would mangle; they
+    /// are accepted because the validator asks the real parser first.
+    #[test]
+    fn validator_accepts_legacy_symbol_spellings() {
+        for combo in ["num_+", "num_.", "num_*", "ctrl+num_+", "alt+num_-"] {
+            assert_eq!(
+                validation_error(combo),
+                None,
+                "legacy spelling {combo} was rejected"
+            );
         }
     }
 

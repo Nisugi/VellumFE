@@ -112,24 +112,13 @@ pub fn key_event_to_string(key: KeyEvent) -> String {
         KeyCode::PageDown => "pagedown".to_string(),
         KeyCode::Insert => "insert".to_string(),
         KeyCode::F(n) => format!("f{}", n),
-        // Keypad keys (lowercase to match keybinds.toml)
-        KeyCode::Keypad0 => "num_0".to_string(),
-        KeyCode::Keypad1 => "num_1".to_string(),
-        KeyCode::Keypad2 => "num_2".to_string(),
-        KeyCode::Keypad3 => "num_3".to_string(),
-        KeyCode::Keypad4 => "num_4".to_string(),
-        KeyCode::Keypad5 => "num_5".to_string(),
-        KeyCode::Keypad6 => "num_6".to_string(),
-        KeyCode::Keypad7 => "num_7".to_string(),
-        KeyCode::Keypad8 => "num_8".to_string(),
-        KeyCode::Keypad9 => "num_9".to_string(),
-        KeyCode::KeypadPeriod => "num_.".to_string(),
-        KeyCode::KeypadPlus => "num_+".to_string(),
-        KeyCode::KeypadMinus => "num_-".to_string(),
-        KeyCode::KeypadMultiply => "num_*".to_string(),
-        KeyCode::KeypadDivide => "num_/".to_string(),
-        KeyCode::KeypadEnter => "num_enter".to_string(),
         KeyCode::Null => return String::new(), // Null key
+        // Numpad keys use the canonical word form ("num_plus"), which contains no
+        // '+' and so round-trips through the modifier parser.
+        code => match code.keypad_name() {
+            Some(name) => name.to_string(),
+            None => return String::new(),
+        },
     };
 
     parts.push(&key_str);
@@ -151,5 +140,78 @@ mod tests {
 
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(key_event_to_string(key), "enter");
+    }
+
+    #[test]
+    fn keypad_keys_use_canonical_word_form() {
+        let key = KeyEvent::new(KeyCode::KeypadPlus, KeyModifiers::NONE);
+        assert_eq!(key_event_to_string(key), "num_plus");
+
+        let key = KeyEvent::new(KeyCode::KeypadPeriod, KeyModifiers::NONE);
+        assert_eq!(key_event_to_string(key), "num_decimal");
+
+        let key = KeyEvent::new(KeyCode::Keypad7, KeyModifiers::NONE);
+        assert_eq!(key_event_to_string(key), "num_7");
+    }
+
+    /// The invariant that makes a recorded chord actually fire: whatever the editor
+    /// writes for a key event must parse back into that same key event. Symbol names
+    /// broke this - "ctrl+num_+" was emitted but could not be parsed.
+    #[test]
+    fn keypad_chords_round_trip_through_the_parser() {
+        let codes = [
+            KeyCode::Keypad0,
+            KeyCode::Keypad1,
+            KeyCode::Keypad2,
+            KeyCode::Keypad3,
+            KeyCode::Keypad4,
+            KeyCode::Keypad5,
+            KeyCode::Keypad6,
+            KeyCode::Keypad7,
+            KeyCode::Keypad8,
+            KeyCode::Keypad9,
+            KeyCode::KeypadPlus,
+            KeyCode::KeypadMinus,
+            KeyCode::KeypadMultiply,
+            KeyCode::KeypadDivide,
+            KeyCode::KeypadPeriod,
+            KeyCode::KeypadEnter,
+        ];
+
+        for code in codes {
+            for modifiers in [
+                KeyModifiers::NONE,
+                KeyModifiers {
+                    ctrl: true,
+                    alt: false,
+                    shift: false,
+                },
+                KeyModifiers {
+                    ctrl: false,
+                    alt: true,
+                    shift: false,
+                },
+                KeyModifiers {
+                    ctrl: false,
+                    alt: false,
+                    shift: true,
+                },
+                KeyModifiers {
+                    ctrl: true,
+                    alt: true,
+                    shift: true,
+                },
+            ] {
+                let event = KeyEvent::new(code, modifiers);
+                let rendered = key_event_to_string(event);
+                let (parsed_code, parsed_mods) = crate::config::parse_key_string(&rendered)
+                    .unwrap_or_else(|| panic!("{rendered:?} did not parse back"));
+
+                assert_eq!(parsed_code, code, "{rendered:?} lost its key code");
+                assert_eq!(parsed_mods.ctrl, modifiers.ctrl, "{rendered:?} ctrl");
+                assert_eq!(parsed_mods.alt, modifiers.alt, "{rendered:?} alt");
+                assert_eq!(parsed_mods.shift, modifiers.shift, "{rendered:?} shift");
+            }
+        }
     }
 }

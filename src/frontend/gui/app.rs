@@ -390,6 +390,13 @@ pub struct VellumGuiApp {
     /// Numpad keybind names last pushed to eframe via `set_numpad_capture_keys`;
     /// `None` until the first sync so startup always pushes the initial set.
     numpad_capture_keys: Option<HashSet<String>>,
+    /// Numpad presses seen this frame, for keybind editors to record.
+    ///
+    /// Numpad keys arrive through eframe's dedicated channel rather than egui's
+    /// event queue, and reading that channel needs `&Frame` — which editors don't
+    /// have. `handle_global_input` runs first and stashes them here; an armed editor
+    /// drains this later in the same frame.
+    frame_numpad_presses: Vec<crate::data::input::KeyEvent>,
     /// Gamepad context; None when init failed or the feature is disabled.
     #[cfg(feature = "gamepad")]
     gamepad: Option<gilrs::Gilrs>,
@@ -990,6 +997,7 @@ impl VellumGuiApp {
             highlight_editor: None,
             keybind_editor: None,
             menu_keybind_editor: None,
+            frame_numpad_presses: Vec::new(),
             #[cfg(feature = "gamepad")]
             controller_editor: None,
             hotbar_editor: None,

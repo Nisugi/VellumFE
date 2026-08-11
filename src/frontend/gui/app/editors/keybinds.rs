@@ -274,11 +274,22 @@ impl VellumGuiApp {
             // KeybindForm input mode and grab the next key press.
             if form.capture_armed {
                 self.app_core.ui_state.input_mode = InputMode::KeybindForm;
-                if let Some(press) = Self::collect_pressed_key_events(ctx)
-                    .into_iter()
-                    .next()
-                {
-                    form.key = crate::core::menu_actions::key_event_to_string(press.key_event);
+                // Numpad keys arrive through eframe's own channel, stashed by
+                // `handle_global_input` earlier this frame; they take priority because
+                // a numpad press can also surface as its navigation twin.
+                let captured = self
+                    .frame_numpad_presses
+                    .first()
+                    .copied()
+                    .or_else(|| {
+                        Self::collect_pressed_key_events(ctx)
+                            .into_iter()
+                            .next()
+                            .map(|press| press.key_event)
+                    });
+
+                if let Some(key_event) = captured {
+                    form.key = crate::core::menu_actions::key_event_to_string(key_event);
                     form.capture_armed = false;
                     self.app_core.ui_state.input_mode = InputMode::Normal;
                 }

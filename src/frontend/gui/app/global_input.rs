@@ -6,7 +6,15 @@ use super::*;
 
 impl VellumGuiApp {
     pub(super) fn handle_global_input(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
-        let mut key_presses = Self::collect_numpad_key_events(frame);
+        let numpad_presses = Self::collect_numpad_key_events(frame);
+
+        // Stash numpad presses for keybind editors, which render later this frame and
+        // have no access to `&Frame` to read the numpad channel themselves.
+        self.frame_numpad_presses.clear();
+        self.frame_numpad_presses
+            .extend(numpad_presses.iter().map(|press| press.key_event));
+
+        let mut key_presses = numpad_presses;
         key_presses.extend(Self::collect_pressed_key_events(ctx));
         if key_presses.is_empty() {
             return;
@@ -220,7 +228,21 @@ impl VellumGuiApp {
 
     /// Numpad keybind names ("num_1", "num_plus", …) with a user binding or an
     /// app shortcut, i.e. the keys `handle_global_input` can actually dispatch.
+    ///
+    /// While a keybind editor is waiting for a key press, every numpad key is
+    /// captured instead: an unbound key would otherwise keep its native behavior and
+    /// never surface as an event, so it could never be recorded — you could only
+    /// rebind numpad keys that were already bound.
     pub(super) fn bound_numpad_capture_keys(&self) -> HashSet<String> {
+        if self.keybind_capture_armed()
+            || self.menu_keybind_capture_armed()
+            || self.hotbar_capture_armed()
+        {
+            return crate::data::input::keypad_names()
+                .map(str::to_string)
+                .collect();
+        }
+
         let mut keys: HashSet<String> = self
             .app_core
             .keybind_map
@@ -244,54 +266,18 @@ impl VellumGuiApp {
         keys
     }
 
+    /// The eframe capture name for a numpad key. eframe uses the same canonical word
+    /// form as `keybinds.toml`, so this is the shared table in both directions.
     pub(super) fn frontend_code_to_numpad_binding_name(
         code: crate::data::input::KeyCode,
     ) -> Option<&'static str> {
-        let name = match code {
-            crate::data::input::KeyCode::Keypad0 => "num_0",
-            crate::data::input::KeyCode::Keypad1 => "num_1",
-            crate::data::input::KeyCode::Keypad2 => "num_2",
-            crate::data::input::KeyCode::Keypad3 => "num_3",
-            crate::data::input::KeyCode::Keypad4 => "num_4",
-            crate::data::input::KeyCode::Keypad5 => "num_5",
-            crate::data::input::KeyCode::Keypad6 => "num_6",
-            crate::data::input::KeyCode::Keypad7 => "num_7",
-            crate::data::input::KeyCode::Keypad8 => "num_8",
-            crate::data::input::KeyCode::Keypad9 => "num_9",
-            crate::data::input::KeyCode::KeypadPlus => "num_plus",
-            crate::data::input::KeyCode::KeypadMinus => "num_minus",
-            crate::data::input::KeyCode::KeypadMultiply => "num_multiply",
-            crate::data::input::KeyCode::KeypadDivide => "num_divide",
-            crate::data::input::KeyCode::KeypadEnter => "num_enter",
-            crate::data::input::KeyCode::KeypadPeriod => "num_decimal",
-            _ => return None,
-        };
-        Some(name)
+        code.keypad_name()
     }
 
     pub(super) fn numpad_binding_name_to_frontend_code(
         binding: &str,
     ) -> Option<crate::data::input::KeyCode> {
-        let code = match binding {
-            "num_0" => crate::data::input::KeyCode::Keypad0,
-            "num_1" => crate::data::input::KeyCode::Keypad1,
-            "num_2" => crate::data::input::KeyCode::Keypad2,
-            "num_3" => crate::data::input::KeyCode::Keypad3,
-            "num_4" => crate::data::input::KeyCode::Keypad4,
-            "num_5" => crate::data::input::KeyCode::Keypad5,
-            "num_6" => crate::data::input::KeyCode::Keypad6,
-            "num_7" => crate::data::input::KeyCode::Keypad7,
-            "num_8" => crate::data::input::KeyCode::Keypad8,
-            "num_9" => crate::data::input::KeyCode::Keypad9,
-            "num_plus" => crate::data::input::KeyCode::KeypadPlus,
-            "num_minus" => crate::data::input::KeyCode::KeypadMinus,
-            "num_multiply" => crate::data::input::KeyCode::KeypadMultiply,
-            "num_divide" => crate::data::input::KeyCode::KeypadDivide,
-            "num_enter" => crate::data::input::KeyCode::KeypadEnter,
-            "num_decimal" => crate::data::input::KeyCode::KeypadPeriod,
-            _ => return None,
-        };
-        Some(code)
+        crate::data::input::KeyCode::from_keypad_name(binding)
     }
 
     pub(super) fn resolve_global_dispatch_target(

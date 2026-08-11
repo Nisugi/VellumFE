@@ -1093,6 +1093,21 @@ pub struct MenuKeybindField {
 }
 
 impl MenuKeybinds {
+    /// Rewrites every bind to its canonical spelling ("num_+" → "num_plus").
+    /// `resolve_action` compares stored binds against `key_event_to_string` output
+    /// by raw string equality, and the renderer only ever emits canonical names —
+    /// so legacy spellings must be normalized at load or those binds silently stop
+    /// firing. Saves then write the canonical form, migrating the file in place.
+    pub fn normalized(mut self) -> Self {
+        for field in Self::FIELDS {
+            let canonical = canonicalize_keypad_bind((field.get)(&self));
+            if canonical != (field.get)(&self) {
+                (field.set)(&mut self, canonical);
+            }
+        }
+        self
+    }
+
     /// The 26 editable fields, in editor order (grouped as the struct is).
     /// Both editors iterate this so neither hardcodes a parallel field list.
     pub const FIELDS: &'static [MenuKeybindField] = &[
@@ -1412,58 +1427,67 @@ impl KeyAction {
     }
 }
 
+/// Consumes leading modifier tokens ("ctrl+", "control+", "alt+", "shift+") from an
+/// already-lowercased bind string and returns the modifiers plus the untouched key
+/// part. The key part is never split, so keypad spellings containing '+' survive.
+fn strip_modifier_prefix(mut key_part: &str) -> (KeyModifiers, &str) {
+    let mut modifiers = KeyModifiers::NONE;
+    loop {
+        if let Some(rest) = key_part
+            .strip_prefix("ctrl+")
+            .or_else(|| key_part.strip_prefix("control+"))
+        {
+            modifiers.ctrl = true;
+            key_part = rest;
+        } else if let Some(rest) = key_part.strip_prefix("alt+") {
+            modifiers.alt = true;
+            key_part = rest;
+        } else if let Some(rest) = key_part.strip_prefix("shift+") {
+            modifiers.shift = true;
+            key_part = rest;
+        } else {
+            return (modifiers, key_part);
+        }
+    }
+}
+
+/// Rewrites legacy keypad spellings in a bind string to canonical word form —
+/// "num_+" → "num_plus", "ctrl+num_." → "ctrl+num_decimal" — with modifiers
+/// re-rendered in the same ctrl/shift/alt order `key_event_to_string` emits, so
+/// normalized binds compare equal to rendered key events. Non-keypad binds are
+/// returned unchanged apart from lowercasing.
+pub fn canonicalize_keypad_bind(bind: &str) -> String {
+    let lower = bind.to_lowercase();
+    let (modifiers, key_part) = strip_modifier_prefix(&lower);
+    if let Some(canonical) = KeyCode::from_keypad_name(key_part).and_then(KeyCode::keypad_name) {
+        let mut out = String::new();
+        if modifiers.ctrl {
+            out.push_str("ctrl+");
+        }
+        if modifiers.shift {
+            out.push_str("shift+");
+        }
+        if modifiers.alt {
+            out.push_str("alt+");
+        }
+        out.push_str(canonical);
+        return out;
+    }
+    lower
+}
+
 /// Parse a key string like "ctrl+f" or "num_1" into KeyCode and KeyModifiers
 pub fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
     // Normalize to lowercase for consistent comparisons
     let key_str_lower = key_str.to_lowercase();
     let key_str = key_str_lower.as_str();
 
-    // Special case: "num_+" contains a '+' but it's not a modifier separator
-    // If the string is exactly a numpad key (no modifiers), handle it first
-    if key_str.starts_with("num_")
-        && !key_str.contains("shift+")
-        && !key_str.contains("ctrl+")
-        && !key_str.contains("alt+")
-    {
-        let key_code = match key_str {
-            "num_0" => KeyCode::Keypad0,
-            "num_1" => KeyCode::Keypad1,
-            "num_2" => KeyCode::Keypad2,
-            "num_3" => KeyCode::Keypad3,
-            "num_4" => KeyCode::Keypad4,
-            "num_5" => KeyCode::Keypad5,
-            "num_6" => KeyCode::Keypad6,
-            "num_7" => KeyCode::Keypad7,
-            "num_8" => KeyCode::Keypad8,
-            "num_9" => KeyCode::Keypad9,
-            "num_." => KeyCode::KeypadPeriod,
-            "num_+" => KeyCode::KeypadPlus,
-            "num_-" => KeyCode::KeypadMinus,
-            "num_*" => KeyCode::KeypadMultiply,
-            "num_/" => KeyCode::KeypadDivide,
-            _ => return None,
-        };
-        return Some((key_code, KeyModifiers::NONE));
-    }
-
-    // For keys with modifiers, we need to carefully parse
-    // Split by + but be aware that num_+ contains a literal +
-    let parts: Vec<&str> = key_str.split('+').collect();
-    let mut modifiers = KeyModifiers::NONE;
-    let mut key_part = key_str;
-
-    // Parse modifiers
-    if parts.len() > 1 {
-        for part in &parts[..parts.len() - 1] {
-            match part.to_lowercase().as_str() {
-                "ctrl" | "control" => modifiers.ctrl = true,
-                "alt" => modifiers.alt = true,
-                "shift" => modifiers.shift = true,
-                _ => return None,
-            }
-        }
-        key_part = parts[parts.len() - 1];
-    }
+    // Strip modifier tokens from the front, then resolve whatever remains as one
+    // piece. This is deliberately NOT a split('+'): legacy keypad spellings like
+    // "num_+" contain a literal '+', and splitting made "ctrl+num_+" unparseable
+    // (["ctrl", "num_", ""]). Prefix-stripping keeps the key part intact, so both
+    // canonical "ctrl+num_plus" and legacy "ctrl+num_+" resolve.
+    let (modifiers, key_part) = strip_modifier_prefix(key_str);
 
     // Parse the actual key
     let key_code = match key_part {
@@ -1484,22 +1508,13 @@ pub fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
         "page_up" | "pageup" => KeyCode::PageUp,
         "page_down" | "pagedown" => KeyCode::PageDown,
 
-        // Numpad keys (when used with modifiers like shift+num_1)
-        "num_0" => KeyCode::Keypad0,
-        "num_1" => KeyCode::Keypad1,
-        "num_2" => KeyCode::Keypad2,
-        "num_3" => KeyCode::Keypad3,
-        "num_4" => KeyCode::Keypad4,
-        "num_5" => KeyCode::Keypad5,
-        "num_6" => KeyCode::Keypad6,
-        "num_7" => KeyCode::Keypad7,
-        "num_8" => KeyCode::Keypad8,
-        "num_9" => KeyCode::Keypad9,
-        "num_." => KeyCode::KeypadPeriod,
-        "num_+" => KeyCode::KeypadPlus,
-        "num_-" => KeyCode::KeypadMinus,
-        "num_*" => KeyCode::KeypadMultiply,
-        "num_/" => KeyCode::KeypadDivide,
+        // Numpad keys, bare or modified: canonical word form ("num_plus",
+        // "ctrl+num_plus") and legacy symbol aliases ("num_+", "ctrl+num_+") all
+        // arrive here intact because modifiers were prefix-stripped, not split.
+        s if KeyCode::from_keypad_name(s).is_some() => {
+            // Safe: the guard just proved this resolves.
+            KeyCode::from_keypad_name(s)?
+        }
 
         // Function keys
         "f1" => KeyCode::F(1),
@@ -2561,7 +2576,7 @@ impl Config {
                 .clone()
                 .try_into()
                 .context("Failed to parse [menu] section from common keybinds")?;
-            Ok(menu_keybinds)
+            Ok(menu_keybinds.normalized())
         } else {
             Ok(MenuKeybinds::default())
         }
@@ -2588,7 +2603,7 @@ impl Config {
                     .clone()
                     .try_into()
                     .context("Failed to parse [menu] section")?;
-                return Ok(menu_keybinds);
+                return Ok(menu_keybinds.normalized());
             }
             // Character file exists but has no [menu] section - fall through to global
         }
@@ -2754,38 +2769,45 @@ pub fn default_keybinds() -> HashMap<String, KeyBindAction> {
         }),
     );
     map.insert(
-        "num_.".to_string(),
+        "num_decimal".to_string(),
         KeyBindAction::Macro(MacroAction {
             macro_text: "up\r".to_string(),
         }),
     );
     map.insert(
-        "num_+".to_string(),
+        "num_plus".to_string(),
         KeyBindAction::Macro(MacroAction {
             macro_text: "look\r".to_string(),
         }),
     );
     map.insert(
-        "num_-".to_string(),
+        "num_minus".to_string(),
         KeyBindAction::Macro(MacroAction {
             macro_text: "info\r".to_string(),
         }),
     );
     map.insert(
-        "num_*".to_string(),
+        "num_multiply".to_string(),
         KeyBindAction::Macro(MacroAction {
             macro_text: "exp\r".to_string(),
         }),
     );
     map.insert(
-        "num_/".to_string(),
+        "num_divide".to_string(),
         KeyBindAction::Macro(MacroAction {
             macro_text: "health\r".to_string(),
         }),
     );
 
-    // Note: Shift+numpad doesn't work on Windows - the OS doesn't report SHIFT modifier for numpad numeric keys
-    // If you want peer keybinds, use alt+numpad or ctrl+numpad instead (those modifiers work with numpad)
+    // Numpad keys accept any modifier combination: "ctrl+num_8", "alt+num_divide",
+    // "ctrl+alt+num_plus". This relies on the canonical word-form names above - a
+    // literal '+' in a key name would collide with the modifier separator.
+    //
+    // Shift+numpad works too, with one caveat: Windows temporarily overrides NumLock
+    // while Shift is held, so the numpad reports its navigation twin (Shift+num_8
+    // arrives as Up). We recover the numpad identity from the console's ENHANCED_KEY
+    // flag, but the recovered key is indistinguishable from the same physical key
+    // pressed with NumLock off.
 
     map
 }
@@ -4035,6 +4057,90 @@ south = { macro_text = \"stand\\r\" }
 
     #[test]
     fn test_parse_key_string_numpad_operators() {
+        assert_eq!(parse_key_string("num_plus").unwrap().0, KeyCode::KeypadPlus);
+        assert_eq!(
+            parse_key_string("num_minus").unwrap().0,
+            KeyCode::KeypadMinus
+        );
+        assert_eq!(
+            parse_key_string("num_multiply").unwrap().0,
+            KeyCode::KeypadMultiply
+        );
+        assert_eq!(
+            parse_key_string("num_divide").unwrap().0,
+            KeyCode::KeypadDivide
+        );
+        assert_eq!(
+            parse_key_string("num_decimal").unwrap().0,
+            KeyCode::KeypadPeriod
+        );
+        assert_eq!(parse_key_string("num_enter").unwrap().0, KeyCode::KeypadEnter);
+    }
+
+    /// Modified legacy spellings must parse too: the modifier prefix is stripped
+    /// from the front, so the literal '+' in the key part survives. The old
+    /// split('+') turned "ctrl+num_+" into ["ctrl", "num_", ""] and failed.
+    #[test]
+    fn test_parse_key_string_modified_legacy_numpad_aliases() {
+        let (code, mods) = parse_key_string("ctrl+num_+").expect("ctrl+num_+ must parse");
+        assert_eq!(code, KeyCode::KeypadPlus);
+        assert!(mods.ctrl && !mods.alt && !mods.shift);
+
+        let (code, mods) =
+            parse_key_string("alt+shift+num_.").expect("alt+shift+num_. must parse");
+        assert_eq!(code, KeyCode::KeypadPeriod);
+        assert!(mods.alt && mods.shift && !mods.ctrl);
+
+        let (code, mods) = parse_key_string("control+num_*").expect("control+num_* must parse");
+        assert_eq!(code, KeyCode::KeypadMultiply);
+        assert!(mods.ctrl);
+    }
+
+    /// canonicalize_keypad_bind rewrites keypad spellings to what
+    /// key_event_to_string emits, and leaves everything else alone — the contract
+    /// that keeps MenuKeybinds raw-equality comparisons working for legacy files.
+    #[test]
+    fn test_canonicalize_keypad_bind() {
+        assert_eq!(canonicalize_keypad_bind("num_+"), "num_plus");
+        assert_eq!(canonicalize_keypad_bind("num_."), "num_decimal");
+        assert_eq!(canonicalize_keypad_bind("ctrl+num_+"), "ctrl+num_plus");
+        // Modifier order is re-rendered canonically (ctrl, shift, alt).
+        assert_eq!(
+            canonicalize_keypad_bind("alt+shift+num_/"),
+            "shift+alt+num_divide"
+        );
+        // Already-canonical and non-keypad binds pass through (lowercased).
+        assert_eq!(canonicalize_keypad_bind("num_plus"), "num_plus");
+        assert_eq!(canonicalize_keypad_bind("ctrl+F"), "ctrl+f");
+        assert_eq!(canonicalize_keypad_bind("enter"), "enter");
+    }
+
+    /// A legacy menu-keybind file must keep firing after the renderer moved to
+    /// canonical names: normalized() rewrites the stored spellings so the raw
+    /// string comparisons in resolve_action match key_event_to_string output.
+    #[test]
+    fn test_menu_keybinds_normalized_migrates_legacy_spellings() {
+        let mut menu = MenuKeybinds::default();
+        menu.select = "num_+".to_string();
+        menu.navigate_up = "ctrl+num_8".to_string();
+        menu.cancel = "esc".to_string();
+
+        let menu = menu.normalized();
+        assert_eq!(menu.select, "num_plus");
+        assert_eq!(menu.navigate_up, "ctrl+num_8");
+        assert_eq!(menu.cancel, "esc");
+
+        // The point of the exercise: the normalized bind now matches a real
+        // KeypadPlus press rendered by key_event_to_string.
+        let pressed = crate::core::menu_actions::key_event_to_string(
+            crate::data::input::KeyEvent::new(KeyCode::KeypadPlus, KeyModifiers::NONE),
+        );
+        assert_eq!(menu.select, pressed);
+    }
+
+    /// Configs written before the word-form migration must keep working.
+    #[test]
+    fn test_parse_key_string_numpad_legacy_symbol_aliases() {
         assert_eq!(parse_key_string("num_+").unwrap().0, KeyCode::KeypadPlus);
         assert_eq!(parse_key_string("num_-").unwrap().0, KeyCode::KeypadMinus);
         assert_eq!(
@@ -4043,6 +4149,45 @@ south = { macro_text = \"stand\\r\" }
         );
         assert_eq!(parse_key_string("num_/").unwrap().0, KeyCode::KeypadDivide);
         assert_eq!(parse_key_string("num_.").unwrap().0, KeyCode::KeypadPeriod);
+    }
+
+    /// The whole point of word form: every numpad key must accept every modifier
+    /// combination. Symbol names could not do this - "ctrl+num_+" split into
+    /// ["ctrl", "num_", ""] and failed to parse.
+    #[test]
+    fn test_parse_key_string_numpad_accepts_all_modifier_combinations() {
+        let keys = [
+            ("num_0", KeyCode::Keypad0),
+            ("num_5", KeyCode::Keypad5),
+            ("num_9", KeyCode::Keypad9),
+            ("num_plus", KeyCode::KeypadPlus),
+            ("num_minus", KeyCode::KeypadMinus),
+            ("num_multiply", KeyCode::KeypadMultiply),
+            ("num_divide", KeyCode::KeypadDivide),
+            ("num_decimal", KeyCode::KeypadPeriod),
+            ("num_enter", KeyCode::KeypadEnter),
+        ];
+
+        for (name, expected_code) in keys {
+            for (prefix, ctrl, alt, shift) in [
+                ("", false, false, false),
+                ("ctrl+", true, false, false),
+                ("alt+", false, true, false),
+                ("shift+", false, false, true),
+                ("ctrl+alt+", true, true, false),
+                ("ctrl+shift+", true, false, true),
+                ("alt+shift+", false, true, true),
+                ("ctrl+alt+shift+", true, true, true),
+            ] {
+                let key_str = format!("{prefix}{name}");
+                let (code, mods) = parse_key_string(&key_str)
+                    .unwrap_or_else(|| panic!("{key_str} should parse"));
+                assert_eq!(code, expected_code, "{key_str} resolved the wrong key");
+                assert_eq!(mods.ctrl, ctrl, "{key_str} ctrl");
+                assert_eq!(mods.alt, alt, "{key_str} alt");
+                assert_eq!(mods.shift, shift, "{key_str} shift");
+            }
+        }
     }
 
     // ===========================================
@@ -4473,11 +4618,27 @@ south = { macro_text = \"stand\\r\" }
             let key = format!("num_{}", i);
             assert!(keybinds.contains_key(&key), "Missing numpad key: {}", key);
         }
-        assert!(keybinds.contains_key("num_+"));
-        assert!(keybinds.contains_key("num_-"));
-        assert!(keybinds.contains_key("num_*"));
-        assert!(keybinds.contains_key("num_/"));
-        assert!(keybinds.contains_key("num_."));
+        assert!(keybinds.contains_key("num_plus"));
+        assert!(keybinds.contains_key("num_minus"));
+        assert!(keybinds.contains_key("num_multiply"));
+        assert!(keybinds.contains_key("num_divide"));
+        assert!(keybinds.contains_key("num_decimal"));
+    }
+
+    /// Defaults must ship canonical names only; a symbol name would be unbindable
+    /// with modifiers and would round-trip into a different string on save.
+    #[test]
+    fn test_default_keybinds_use_canonical_numpad_names() {
+        for key in default_keybinds().keys() {
+            assert!(
+                !key.contains("num_+")
+                    && !key.contains("num_-")
+                    && !key.contains("num_*")
+                    && !key.contains("num_/")
+                    && !key.contains("num_."),
+                "default keybind {key} uses a legacy symbol numpad name"
+            );
+        }
     }
 
     #[test]
