@@ -391,6 +391,8 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Commands shorter than this are not saved to history", 0..=100, usize, ui.min_command_length),
         bool_entry!("ui.command_echo", "Command Echo", "UI",
             "Echo sent commands into the main window", ui.command_echo),
+        bool_entry!("ui.effect_countdown", "Effect Countdown", "UI",
+            "Tick effect bars down every second between server refreshes (off = show the server's ~10s snapshots)", ui.effect_countdown),
         bool_entry!("ui.keep_open_on_quit", "Keep Open On Quit", "UI",
             "After .quit, detach but keep the window open (.quit again or .exit closes it)", ui.keep_open_on_quit),
         bool_entry!("ui.history_suggestions", "History Suggestions", "UI",

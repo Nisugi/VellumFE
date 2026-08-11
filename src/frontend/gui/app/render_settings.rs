@@ -216,6 +216,9 @@ impl VellumGuiApp {
             gray_inactive_icons: self.ui_settings.status_icons.gray_inactive,
             gray_icon_overrides: self.ui_settings.status_icons.gray_overrides.clone(),
             doll_grayscale: self.ui_settings.doll_grayscale,
+            effect_countdown_now: self.app_core.config.ui.effect_countdown.then(|| {
+                chrono::Utc::now().timestamp() + self.app_core.server_time_offset
+            }),
         }
     }
 

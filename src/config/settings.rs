@@ -99,6 +99,12 @@ pub struct UiConfig {
     // Command echo settings
     #[serde(default = "default_command_echo")]
     pub command_echo: bool, // Echo sent commands into main window
+    /// Tick effect bars (buffs/debuffs/cooldowns/spells) down every second
+    /// between server refreshes, derived from each effect's absolute expiry.
+    /// Off shows the server's last snapshot, which refreshes at most every
+    /// ~10 seconds — calmer, but the numbers sit stale between updates.
+    #[serde(default = "default_true")]
+    pub effect_countdown: bool,
     /// After `.quit`: detach from the game/Lich but keep the app window open
     /// (a second `.quit`, or `.exit`, closes it). Off restores the old
     /// behavior — `.quit` closes the window immediately. Desktop only; the
@@ -248,6 +254,7 @@ impl Default for UiConfig {
             drag_modifier_key: default_drag_modifier_key(),
             min_command_length: default_min_command_length(),
             command_echo: default_command_echo(),
+            effect_countdown: true,
             keep_open_on_quit: true,
             history_suggestions: true,
             emoji_shortcodes: true,

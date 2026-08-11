@@ -650,7 +650,13 @@ function setEffects(categories) {
     category: cat.category,
     effects: cat.effects.map(e => {
       const seconds = parseEffectSeconds(e.time);
-      return { ...e, expiresAt: seconds === null ? null : now + seconds * 1000 };
+      // arrivalSeconds anchors the bar-fill scaling below: the server's
+      // percent drains proportionally as the remaining time ticks down.
+      return {
+        ...e,
+        expiresAt: seconds === null ? null : now + seconds * 1000,
+        arrivalSeconds: seconds,
+      };
     }),
   }));
   renderEffects();
@@ -724,7 +730,15 @@ function buildEffectRows(target) {
       bar.className = "fx-bar";
       const fill = document.createElement("div");
       fill.className = "fx-fill";
-      fill.style.width = `${Math.max(0, Math.min(100, e.value))}%`;
+      // Mirror the desktop countdown: scale the server's percent by the
+      // fraction of the arrival remainder still left, so the bar drains
+      // between refreshes instead of jumping every ~10s.
+      let value = e.value;
+      if (e.expiresAt !== null && e.arrivalSeconds > 0) {
+        const remaining = Math.max(0, (e.expiresAt - now) / 1000);
+        value = Math.min(value, (value * remaining) / e.arrivalSeconds);
+      }
+      fill.style.width = `${Math.max(0, Math.min(100, value))}%`;
       if (e.bar_color) fill.style.background = e.bar_color;
       bar.appendChild(fill);
       row.append(line, bar);

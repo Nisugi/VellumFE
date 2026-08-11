@@ -413,6 +413,49 @@ pub struct ActiveEffect {
     pub text_color: Option<String>,
 }
 
+impl ActiveEffect {
+    /// Seconds remaining right now, derived from the absolute expiry captured
+    /// at the last server update. `None` when the duration was unparseable
+    /// ("Indefinite", stack counts) — those never tick.
+    pub fn remaining_seconds(&self, now_server: i64) -> Option<i64> {
+        self.expires_at.map(|at| (at - now_server).max(0))
+    }
+
+    /// The time string to display at `now_server`: the ticking remainder when
+    /// there is one, the server's own string otherwise. Always HH:MM:SS so the
+    /// text is stable against the wire's format. Holds at 00:00:00 after
+    /// expiry — the server owns removal; the display only owns the number.
+    pub fn display_time(&self, now_server: i64) -> String {
+        match self.remaining_seconds(now_server) {
+            Some(s) => format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60),
+            None => self.time.clone(),
+        }
+    }
+
+    /// The bar percent at `now_server`: the server's percent scaled by how much
+    /// of the arrival remainder is left, so the bar drains smoothly between
+    /// refreshes and snaps to the server's number on each one. Falls back to
+    /// the raw percent when there is nothing to tick.
+    pub fn display_value(&self, now_server: i64) -> u32 {
+        let (Some(remaining), Some(at_arrival)) = (
+            self.remaining_seconds(now_server),
+            parse_time_seconds(&self.time),
+        ) else {
+            return self.value;
+        };
+        if at_arrival <= 0 {
+            return self.value;
+        }
+        ((self.value as i64 * remaining) / at_arrival).clamp(0, self.value as i64) as u32
+    }
+
+    /// Whether this effect has anything to tick — gates the once-a-second
+    /// repaint so a board of Indefinite effects schedules nothing.
+    pub fn ticks(&self) -> bool {
+        self.expires_at.is_some()
+    }
+}
+
 /// Parse an effect duration string ("HH:MM:SS" or "MM:SS") into seconds.
 /// Returns None for anything non-numeric (e.g. "Indefinite", "").
 pub fn parse_time_seconds(s: &str) -> Option<i64> {
@@ -1310,6 +1353,65 @@ mod tests {
         assert_eq!(parse_time_seconds("Indefinite"), None);
         assert_eq!(parse_time_seconds(""), None);
         assert_eq!(parse_time_seconds("1:2:3:4"), None);
+    }
+
+    // ==================== Effect countdown derivation ====================
+
+    fn timed_effect(value: u32, time: &str, expires_at: Option<i64>) -> ActiveEffect {
+        ActiveEffect {
+            id: "test".to_string(),
+            text: "Test Effect".to_string(),
+            value,
+            time: time.to_string(),
+            expires_at,
+            bar_color: None,
+            text_color: None,
+        }
+    }
+
+    /// The displayed time ticks down from the absolute expiry, holds at zero
+    /// after it (the server owns removal), and falls back to the server's own
+    /// string when there is nothing to tick.
+    #[test]
+    fn effect_display_time_ticks_from_expiry() {
+        // Arrived at t=1000 with 60s remaining.
+        let effect = timed_effect(100, "00:01:00", Some(1060));
+        assert_eq!(effect.display_time(1000), "00:01:00");
+        assert_eq!(effect.display_time(1030), "00:00:30");
+        assert_eq!(effect.display_time(1059), "00:00:01");
+        // Past expiry: hold at zero, never negative.
+        assert_eq!(effect.display_time(1100), "00:00:00");
+
+        // Hours format.
+        let long = timed_effect(100, "03:06:54", Some(1000 + 11214));
+        assert_eq!(long.display_time(1000), "03:06:54");
+        assert_eq!(long.display_time(1001), "03:06:53");
+
+        // Indefinite: the server's string, untouched, at any time.
+        let indefinite = timed_effect(100, "Indefinite", None);
+        assert_eq!(indefinite.display_time(999_999), "Indefinite");
+        assert!(!indefinite.ticks());
+    }
+
+    /// The bar percent scales the server's value by the fraction of the
+    /// arrival remainder still left — smooth drain, snapping to the server's
+    /// number on each refresh (where now == arrival and the scale is 1).
+    #[test]
+    fn effect_display_value_drains_proportionally() {
+        // Arrived at t=1000: 60s left, bar at 50%.
+        let effect = timed_effect(50, "00:01:00", Some(1060));
+        assert_eq!(effect.display_value(1000), 50); // at arrival: server's number
+        assert_eq!(effect.display_value(1030), 25); // half the time -> half the fill
+        assert_eq!(effect.display_value(1060), 0); // expired -> empty
+        assert_eq!(effect.display_value(1100), 0); // held, never negative
+
+        // Unparseable duration: the raw value, untouched.
+        let indefinite = timed_effect(75, "Indefinite", None);
+        assert_eq!(indefinite.display_value(999_999), 75);
+
+        // Degenerate zero-length arrival can't divide by zero.
+        let zero = timed_effect(40, "00:00:00", Some(1000));
+        assert_eq!(zero.display_value(1000), 40);
     }
 
     // ==================== TabbedTextContent update_tabs Tests ====================

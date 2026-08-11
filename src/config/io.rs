@@ -758,6 +758,7 @@ impl Default for Config {
                 selection_auto_copy: default_selection_auto_copy(),
                 drag_modifier_key: default_drag_modifier_key(),
                 min_command_length: default_min_command_length(),
+                effect_countdown: true,
                 emoji_shortcodes: true,
                 color_emoji: true,
                 custom_emoji_size: 1.0,

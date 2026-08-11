@@ -141,6 +141,9 @@ pub(super) struct WidgetRenderSettings {
     gray_icon_overrides: std::collections::HashMap<String, bool>,
     /// Doll art renders its grayscale twins (ui_settings.doll_grayscale).
     doll_grayscale: bool,
+    /// Server "now" for ticking effect bars between refreshes; None when
+    /// ui.effect_countdown is off (bars show the server's last snapshot).
+    effect_countdown_now: Option<i64>,
 }
 
 /// Stable widget id for the command-input TextEdit, wherever it renders

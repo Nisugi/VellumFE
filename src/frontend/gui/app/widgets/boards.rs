@@ -800,7 +800,15 @@ impl VellumGuiApp {
                     let corner_radius = settings.bar_corner_radius;
                     let painter = ui.painter_at(rect);
                     painter.rect_filled(rect, corner_radius, bg);
-                    let fraction = (effect.value.min(100) as f32) / 100.0;
+                    // Ticked to "now" when the countdown setting is on; the
+                    // server's last snapshot otherwise. One clock sample per
+                    // frame (captured in WidgetRenderSettings), so every bar
+                    // in every window flips on the same instant.
+                    let shown_value = match settings.effect_countdown_now {
+                        Some(now_server) => effect.display_value(now_server),
+                        None => effect.value,
+                    };
+                    let fraction = (shown_value.min(100) as f32) / 100.0;
                     if fraction > 0.0 {
                         let fill_rect = Rect::from_min_size(
                             rect.min,
@@ -831,7 +839,10 @@ impl VellumGuiApp {
                         size: text_size,
                         family: settings.font_family.clone(),
                     };
-                    let time = effect.time.trim();
+                    let ticked_time = settings
+                        .effect_countdown_now
+                        .map(|now_server| effect.display_time(now_server));
+                    let time = ticked_time.as_deref().unwrap_or(&effect.time).trim();
                     let mut name_clip = rect.shrink2(Vec2::new(4.0, 0.0));
                     if !time.is_empty() {
                         let time_galley = painter.layout_no_wrap(
@@ -885,6 +896,24 @@ impl VellumGuiApp {
                     }
                 }
             });
+
+        // Keep the countdown ticking: request one repaint at the next
+        // whole-second boundary while any timed effect is visible. egui
+        // coalesces every pending request down to the earliest deadline, so
+        // all effect windows share a single repaint per second and every bar
+        // flips its digit on the same frame; combat RT's own repaints subsume
+        // this entirely. Boards of Indefinite effects schedule nothing.
+        if settings.effect_countdown_now.is_some()
+            && effects_content.effects.iter().any(|e| e.ticks())
+        {
+            let ms_into_second = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| u64::from(d.subsec_millis()))
+                .unwrap_or(0);
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(
+                (1000 - ms_into_second).max(50),
+            ));
+        }
     }
 
     // Visibility: tested from app/tests.rs.
