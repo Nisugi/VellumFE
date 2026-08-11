@@ -29,6 +29,109 @@
 use super::*;
 use std::collections::{HashMap, HashSet};
 
+/// Where a pack's rules apply. All four selectors are optional and combine as
+/// OR: a room in scope by ANY of them arms the pack. A scope with nothing set
+/// means "everywhere", which is what ambiance packs want.
+///
+/// This is correctness before performance. A Reim encounter pack matching its
+/// patterns while you stand in a Wehnimer's bank produces false positives, and
+/// false positives are what make people switch an alert system off.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AlertPackScope {
+    /// mapdb `location` strings, e.g. "the Settlement of Reim". The unit pack
+    /// authors actually think in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub area: Vec<String>,
+    /// Game-sent `realm` codes from `<roommeta>`. Works even where the mapdb
+    /// has no entry, because it comes straight off the wire.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub zone: Vec<u32>,
+    /// mapdb curated room tags ("bank", "furrier", ...).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Explicit room uids, for surgical cases the other three can't express.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rooms: Vec<i64>,
+}
+
+impl AlertPackScope {
+    /// A scope with no selectors states no restriction, so the pack is always
+    /// armed. Ambiance packs rely on this being the default.
+    pub fn is_unscoped(&self) -> bool {
+        self.area.is_empty()
+            && self.zone.is_empty()
+            && self.tags.is_empty()
+            && self.rooms.is_empty()
+    }
+
+    /// Does this scope admit the described room?
+    ///
+    /// Every input is optional because the client is regularly somewhere the
+    /// mapdb doesn't know. Selectors whose data is missing simply don't match,
+    /// rather than failing open — an unscoped pack is the way to say
+    /// "everywhere", so a scoped pack matching everywhere when its data is
+    /// absent would make scoping meaningless exactly where it's needed.
+    pub fn admits(
+        &self,
+        location: Option<&str>,
+        realm: Option<u32>,
+        tags: &[String],
+        uid: Option<i64>,
+    ) -> bool {
+        if self.is_unscoped() {
+            return true;
+        }
+        if let Some(location) = location {
+            if self
+                .area
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(location))
+            {
+                return true;
+            }
+        }
+        if let Some(realm) = realm {
+            if self.zone.contains(&realm) {
+                return true;
+            }
+        }
+        if !self.tags.is_empty()
+            && tags
+                .iter()
+                .any(|t| self.tags.iter().any(|want| want.eq_ignore_ascii_case(t)))
+        {
+            return true;
+        }
+        if let Some(uid) = uid {
+            if self.rooms.contains(&uid) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Where the player currently is, as far as pack scoping is concerned.
+///
+/// A plain snapshot rather than a live borrow: it is cheap to build, trivial
+/// to compare (which is how re-arming is gated to actual scope changes), and
+/// keeps `config` free of any dependency on the map service.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RoomScope {
+    /// mapdb location of the current room, when it has one.
+    pub location: Option<String>,
+    /// Game-sent realm code from `<roommeta>`.
+    pub realm: Option<u32>,
+    /// mapdb tags of the current room.
+    pub tags: Vec<String>,
+    /// Current room uid.
+    pub uid: Option<i64>,
+}
+
+/// The reserved rule name a pack uses to declare its scope. Packs are plain
+/// rule maps, so the scope rides in a table that is not itself a rule.
+pub const SCOPE_KEY: &str = "__scope__";
+
 /// One installed pack: its rules plus the identity used to gate them.
 #[derive(Debug, Clone)]
 pub struct AlertPack {
@@ -38,6 +141,8 @@ pub struct AlertPack {
     pub hash: String,
     /// Every rule in the pack, keyed by rule name.
     pub rules: HashMap<String, HighlightPattern>,
+    /// Where these rules apply. Unscoped packs are always armed.
+    pub scope: AlertPackScope,
 }
 
 impl AlertPack {
@@ -191,17 +296,43 @@ impl Config {
                     continue;
                 }
             };
-            let rules: HashMap<String, HighlightPattern> = match toml::from_str(text) {
-                Ok(rules) => rules,
+            // The scope table shares the file with the rules, so pull it out
+            // as a raw value first — it is not a HighlightPattern and would
+            // fail to deserialize as one.
+            let mut raw: toml::Table = match toml::from_str(text) {
+                Ok(raw) => raw,
                 Err(err) => {
                     tracing::warn!("alert pack {name}: parse failed ({err})");
                     continue;
                 }
             };
+            let scope = match raw.remove(SCOPE_KEY) {
+                None => AlertPackScope::default(),
+                Some(value) => match value.try_into::<AlertPackScope>() {
+                    Ok(scope) => scope,
+                    Err(err) => {
+                        // A malformed scope must not silently become
+                        // "everywhere" — that is the permissive direction.
+                        tracing::warn!(
+                            "alert pack {name}: bad {SCOPE_KEY} ({err}); pack skipped"
+                        );
+                        continue;
+                    }
+                },
+            };
+            let rules: HashMap<String, HighlightPattern> =
+                match toml::Value::Table(raw).try_into() {
+                    Ok(rules) => rules,
+                    Err(err) => {
+                        tracing::warn!("alert pack {name}: parse failed ({err})");
+                        continue;
+                    }
+                };
             packs.push(AlertPack {
                 name: name.to_string(),
                 hash: pack_hash(&bytes),
                 rules,
+                scope,
             });
         }
         packs.sort_by(|a, b| a.name.cmp(&b.name));
@@ -244,9 +375,21 @@ impl Config {
         highlights: &mut HashMap<String, HighlightPattern>,
         packs: &[AlertPack],
         approvals: &AlertPackApprovals,
+        room: &RoomScope,
     ) {
         for pack in packs {
             if !approvals.is_enabled(&pack.name) {
+                continue;
+            }
+            // Out-of-area packs are dropped from the rule set entirely rather
+            // than flagged, because the matcher has no per-pack partitioning:
+            // membership of this Vec IS the arming mechanism.
+            if !pack.scope.admits(
+                room.location.as_deref(),
+                room.realm,
+                &room.tags,
+                room.uid,
+            ) {
                 continue;
             }
             let approved = approvals.is_approved(&pack.name, &pack.hash);
@@ -296,6 +439,7 @@ mod tests {
                 .into_iter()
                 .map(|(n, r)| (n.to_string(), r))
                 .collect(),
+            scope: AlertPackScope::default(),
         }
     }
 
@@ -399,7 +543,7 @@ mod tests {
         let pack = pack_with(vec![("r", rule("goblin"))]);
         let approvals = AlertPackApprovals::default(); // nothing enabled
         let mut highlights = HashMap::new();
-        Config::merge_alert_packs(&mut highlights, &[pack], &approvals);
+        Config::merge_alert_packs(&mut highlights, &[pack], &approvals, &RoomScope::default());
         assert!(highlights.is_empty(), "installed is not the same as enabled");
     }
 
@@ -413,7 +557,7 @@ mod tests {
         let mut highlights = HashMap::new();
         highlights.insert("stun".to_string(), rule("mystun"));
 
-        Config::merge_alert_packs(&mut highlights, &[pack], &approvals);
+        Config::merge_alert_packs(&mut highlights, &[pack], &approvals, &RoomScope::default());
 
         assert_eq!(
             highlights.get("stun").expect("personal rule").pattern,
@@ -441,8 +585,217 @@ mod tests {
         approvals.set_enabled("packb", true);
 
         let mut highlights = HashMap::new();
-        Config::merge_alert_packs(&mut highlights, &[a, b], &approvals);
+        Config::merge_alert_packs(&mut highlights, &[a, b], &approvals, &RoomScope::default());
         assert_eq!(highlights.len(), 2, "namespacing keeps both");
+    }
+
+    // ---- Area scoping -----------------------------------------------
+
+    fn reim() -> RoomScope {
+        RoomScope {
+            location: Some("the Settlement of Reim".to_string()),
+            realm: Some(7),
+            tags: vec!["bank".to_string()],
+            uid: Some(12345),
+        }
+    }
+
+    fn scoped(pack_name: &str, scope: AlertPackScope) -> AlertPack {
+        let mut pack = pack_with(vec![("r", rule("goblin"))]);
+        pack.name = pack_name.to_string();
+        pack.scope = scope;
+        pack
+    }
+
+    #[test]
+    fn an_unscoped_pack_is_armed_everywhere() {
+        let scope = AlertPackScope::default();
+        assert!(scope.is_unscoped());
+        assert!(scope.admits(None, None, &[], None), "even with no room data");
+        assert!(scope.admits(Some("anywhere"), Some(1), &["x".into()], Some(9)));
+    }
+
+    #[test]
+    fn area_scope_matches_the_location_case_insensitively() {
+        let scope = AlertPackScope {
+            area: vec!["The Settlement Of Reim".to_string()],
+            ..Default::default()
+        };
+        assert!(scope.admits(Some("the Settlement of Reim"), None, &[], None));
+        assert!(!scope.admits(Some("Wehnimer's Landing"), None, &[], None));
+    }
+
+    #[test]
+    fn zone_scope_works_without_any_mapdb_data() {
+        // The whole point of zone: it comes off the wire, so it still scopes
+        // correctly in places the mapdb has never heard of.
+        let scope = AlertPackScope { zone: vec![7], ..Default::default() };
+        assert!(scope.admits(None, Some(7), &[], None));
+        assert!(!scope.admits(None, Some(8), &[], None));
+    }
+
+    #[test]
+    fn tag_scope_matches_any_shared_tag() {
+        let scope = AlertPackScope {
+            tags: vec!["bank".to_string()],
+            ..Default::default()
+        };
+        assert!(scope.admits(None, None, &["shop".into(), "bank".into()], None));
+        assert!(!scope.admits(None, None, &["shop".into()], None));
+    }
+
+    #[test]
+    fn room_scope_matches_an_exact_uid() {
+        let scope = AlertPackScope { rooms: vec![42], ..Default::default() };
+        assert!(scope.admits(None, None, &[], Some(42)));
+        assert!(!scope.admits(None, None, &[], Some(43)));
+    }
+
+    #[test]
+    fn selectors_combine_as_or_so_any_one_match_arms_the_pack() {
+        let scope = AlertPackScope {
+            area: vec!["Nowhere".to_string()],
+            rooms: vec![42],
+            ..Default::default()
+        };
+        // Area misses but the uid hits: still in scope.
+        assert!(scope.admits(Some("Elsewhere"), None, &[], Some(42)));
+        assert!(!scope.admits(Some("Elsewhere"), None, &[], Some(43)));
+    }
+
+    #[test]
+    fn a_scoped_pack_stays_closed_when_its_data_is_missing() {
+        // Failing OPEN here would make scoping meaningless exactly where it
+        // matters — unmapped rooms. "Everywhere" is spelled by not scoping.
+        let scope = AlertPackScope {
+            area: vec!["the Settlement of Reim".to_string()],
+            ..Default::default()
+        };
+        assert!(!scope.admits(None, None, &[], None));
+    }
+
+    #[test]
+    fn out_of_area_packs_contribute_no_rules_at_all() {
+        let pack = scoped(
+            "reim",
+            AlertPackScope {
+                area: vec!["the Settlement of Reim".to_string()],
+                ..Default::default()
+            },
+        );
+        let mut approvals = AlertPackApprovals::default();
+        approvals.set_enabled("reim", true);
+
+        // Standing in Reim: armed.
+        let mut inside = HashMap::new();
+        Config::merge_alert_packs(&mut inside, &[pack.clone()], &approvals, &reim());
+        assert_eq!(inside.len(), 1, "armed inside its area");
+
+        // Standing in a bank in Wehnimer's: contributes nothing, because
+        // membership of the rule set IS the arming mechanism.
+        let elsewhere = RoomScope {
+            location: Some("Wehnimer's Landing".to_string()),
+            ..Default::default()
+        };
+        let mut outside = HashMap::new();
+        Config::merge_alert_packs(&mut outside, &[pack], &approvals, &elsewhere);
+        assert!(outside.is_empty(), "disarmed outside its area");
+    }
+
+    #[test]
+    fn scoping_and_the_trust_gate_are_independent() {
+        // An in-scope but unapproved pack still loses its sensitive powers.
+        let mut rewriter = rule("kobold");
+        rewriter.replace = Some("KOBOLD".to_string());
+        let mut pack = pack_with(vec![("rewrite", rewriter)]);
+        pack.scope = AlertPackScope { zone: vec![7], ..Default::default() };
+        let mut approvals = AlertPackApprovals::default();
+        approvals.set_enabled("testpack", true);
+
+        let mut highlights = HashMap::new();
+        Config::merge_alert_packs(&mut highlights, &[pack], &approvals, &reim());
+        assert!(
+            highlights
+                .get("pack:testpack/rewrite")
+                .expect("in scope, so present")
+                .replace
+                .is_none(),
+            "in scope does not imply approved"
+        );
+    }
+
+    #[test]
+    fn an_unscoped_pack_survives_a_move_that_disarms_a_scoped_one() {
+        let ambiance = scoped("ambiance", AlertPackScope::default());
+        let encounter = scoped(
+            "reim",
+            AlertPackScope { zone: vec![7], ..Default::default() },
+        );
+        let mut approvals = AlertPackApprovals::default();
+        approvals.set_enabled("ambiance", true);
+        approvals.set_enabled("reim", true);
+
+        let packs = [ambiance, encounter];
+        let mut here = HashMap::new();
+        Config::merge_alert_packs(&mut here, &packs, &approvals, &reim());
+        assert_eq!(here.len(), 2, "both armed in zone 7");
+
+        let far = RoomScope { realm: Some(99), ..Default::default() };
+        let mut there = HashMap::new();
+        Config::merge_alert_packs(&mut there, &packs, &approvals, &far);
+        assert_eq!(there.len(), 1, "ambiance stays, encounter drops");
+        assert!(there.contains_key("pack:ambiance/r"));
+    }
+
+    #[test]
+    fn a_pack_file_can_declare_its_scope() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+
+        let packs_dir = Config::alertpacks_dir().unwrap();
+        fs::create_dir_all(&packs_dir).unwrap();
+        fs::write(
+            packs_dir.join("reim.toml"),
+            "[__scope__]\narea = [\"the Settlement of Reim\"]\nzone = [7]\n\n\
+             [stun]\npattern = \"You are stunned\"\n",
+        )
+        .unwrap();
+
+        let packs = Config::load_alert_packs();
+        assert_eq!(packs.len(), 1);
+        // The scope table must not be mistaken for a rule.
+        assert_eq!(packs[0].rules.len(), 1, "only the real rule counts");
+        assert!(packs[0].rules.contains_key("stun"));
+        assert_eq!(packs[0].scope.area, vec!["the Settlement of Reim"]);
+        assert_eq!(packs[0].scope.zone, vec![7]);
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    #[test]
+    fn a_pack_with_a_malformed_scope_is_skipped_not_armed_everywhere() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+
+        let packs_dir = Config::alertpacks_dir().unwrap();
+        fs::create_dir_all(&packs_dir).unwrap();
+        fs::write(
+            packs_dir.join("bad.toml"),
+            "[__scope__]\nzone = \"not a list of numbers\"\n\n[r]\npattern = \"x\"\n",
+        )
+        .unwrap();
+
+        // Silently treating a broken scope as "everywhere" is the permissive
+        // direction, and the wrong one.
+        assert!(Config::load_alert_packs().is_empty());
+
+        std::env::remove_var("VELLUM_FE_DIR");
     }
 
     // ---- Disk round-trips -------------------------------------------
@@ -507,7 +860,7 @@ mod tests {
 
         // And the updated-but-unapproved pack runs with its powers stripped.
         let mut highlights = HashMap::new();
-        Config::merge_alert_packs(&mut highlights, &after, &approvals);
+        Config::merge_alert_packs(&mut highlights, &after, &approvals, &RoomScope::default());
         assert!(highlights
             .get("pack:p/r")
             .expect("rule loaded")
@@ -563,7 +916,7 @@ mod tests {
         approvals.set_enabled("testpack", true); // enabled, NOT approved
 
         let mut highlights = HashMap::new();
-        Config::merge_alert_packs(&mut highlights, &[pack], &approvals);
+        Config::merge_alert_packs(&mut highlights, &[pack], &approvals, &RoomScope::default());
 
         assert!(
             highlights

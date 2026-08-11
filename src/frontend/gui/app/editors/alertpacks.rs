@@ -147,6 +147,33 @@ impl VellumGuiApp {
             ui.weak(format!("{} rules", pack.rules.len()));
         });
 
+        // Scope is worth showing unprompted: "why didn't my pack fire?" is
+        // almost always "you weren't in its area".
+        if !pack.scope.is_unscoped() {
+            let mut parts: Vec<String> = Vec::new();
+            if !pack.scope.area.is_empty() {
+                parts.push(pack.scope.area.join(", "));
+            }
+            if !pack.scope.zone.is_empty() {
+                parts.push(format!(
+                    "zone {}",
+                    pack.scope
+                        .zone
+                        .iter()
+                        .map(|z| z.to_string())
+                        .collect::<Vec<_>>()
+                        .join("/")
+                ));
+            }
+            if !pack.scope.tags.is_empty() {
+                parts.push(format!("tagged {}", pack.scope.tags.join("/")));
+            }
+            if !pack.scope.rooms.is_empty() {
+                parts.push(format!("{} specific room(s)", pack.scope.rooms.len()));
+            }
+            ui.weak(format!("    Active in: {}", parts.join("; ")));
+        }
+
         if sensitive.is_empty() {
             ui.weak("    No sensitive rules — this pack cannot alter game text.");
             return;
@@ -227,7 +254,7 @@ impl VellumGuiApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::HighlightPattern;
+    use crate::config::{AlertPackScope, HighlightPattern, RoomScope};
     use std::collections::HashMap;
 
     fn rule(pattern: &str, replace: Option<&str>) -> HighlightPattern {
@@ -264,6 +291,7 @@ mod tests {
             name: name.to_string(),
             hash: hash.to_string(),
             rules: rules.into_iter().map(|(n, r)| (n.to_string(), r)).collect(),
+            scope: AlertPackScope::default(),
         }
     }
 
@@ -305,13 +333,13 @@ mod tests {
 
         // Engine's behavior must agree.
         let mut highlights = HashMap::new();
-        Config::merge_alert_packs(&mut highlights, &[sensitive.clone()], &approvals);
+        Config::merge_alert_packs(&mut highlights, &[sensitive.clone()], &approvals, &RoomScope::default());
         assert!(highlights["pack:p/rewrite"].replace.is_none());
 
         // After approval, both agree again.
         approvals.approve("p", &sensitive.hash);
         let mut highlights = HashMap::new();
-        Config::merge_alert_packs(&mut highlights, &[sensitive], &approvals);
+        Config::merge_alert_packs(&mut highlights, &[sensitive], &approvals, &RoomScope::default());
         assert_eq!(highlights["pack:p/rewrite"].replace.as_deref(), Some("KOBOLD"));
     }
 

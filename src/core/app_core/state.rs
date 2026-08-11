@@ -123,6 +123,17 @@ pub struct AppCore {
     /// Core-owned so detached viewports can't double-fire it and the phone
     /// bridge can push it; frontends only ever read `alerts.active()`.
     pub alerts: crate::core::alerts::AlertState,
+    /// Installed alert packs, cached in memory so per-room re-arming never
+    /// touches the disk (`reload_highlights` does, and would be far too
+    /// expensive to run every time the player walks through a door).
+    pub alert_packs: Vec<crate::config::AlertPack>,
+    /// Enable/approval record for those packs.
+    pub alertpack_approvals: crate::config::AlertPackApprovals,
+    /// Room scope the pack set was last armed for. Re-arming compares against
+    /// this, so moving between rooms in the same area rebuilds nothing.
+    pub last_pack_scope: Option<crate::config::RoomScope>,
+    /// Whether the pack cache has been populated from disk this session.
+    pub alert_packs_loaded: bool,
     /// Cached indicator templates keyed by UPPERCASE id, rebuilt from disk on
     /// load and after the template editor saves. Status icon resolution
     /// (indicator windows + dashboards) reads this per frame; the underlying
@@ -406,6 +417,10 @@ impl AppCore {
             jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             custom_status_expiries: std::collections::HashMap::new(),
             alerts: crate::core::alerts::AlertState::new(),
+            alert_packs: Vec::new(),
+            alertpack_approvals: Default::default(),
+            last_pack_scope: None,
+            alert_packs_loaded: false,
             indicator_templates: std::collections::HashMap::new(),
             jinx_catalog: None,
             jinx_nudge_pending: true,
@@ -599,6 +614,10 @@ impl AppCore {
             jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             custom_status_expiries: std::collections::HashMap::new(),
             alerts: crate::core::alerts::AlertState::new(),
+            alert_packs: Vec::new(),
+            alertpack_approvals: Default::default(),
+            last_pack_scope: None,
+            alert_packs_loaded: false,
             indicator_templates: std::collections::HashMap::new(),
             jinx_catalog: None,
             jinx_nudge_pending: true,
@@ -886,6 +905,10 @@ impl AppCore {
         self.poll_jinx();
         // Auto-clear expired highlight-set custom statuses.
         self.tick_custom_statuses();
+        // Arm/disarm area-scoped packs for wherever we are now. Gated on the
+        // scope actually changing, so this is a cheap comparison on the
+        // overwhelming majority of frames.
+        self.rearm_alert_packs();
         // Edge-detect condition-gated alerts, then retire expired ones.
         // Evaluation runs before expiry so an alert firing this frame gets
         // its full duration rather than being aged by a stale tick.

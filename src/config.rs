@@ -45,7 +45,9 @@ pub use highlights::{
     highlight_web_fields, AlertAnchor, AlertSpec, EventAction, EventPattern, HighlightPattern,
     RedirectMode,
 };
-pub use alertpacks::{pack_hash, AlertPack, AlertPackApprovals};
+pub use alertpacks::{
+    pack_hash, AlertPack, AlertPackApprovals, AlertPackScope, RoomScope, SCOPE_KEY,
+};
 pub use conditions::{
     Cmp, Condition, EffectCategory, HandSlot, NameMatch, VitalKind, VitalUnit, INJURY_AREAS,
 };

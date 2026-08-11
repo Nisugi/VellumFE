@@ -424,10 +424,18 @@ impl Config {
         // are namespaced (`pack:<pack>/<rule>`), so this can never overwrite
         // something the user wrote — and unapproved packs arrive with their
         // replace/redirect powers already stripped.
+        // Scope is applied later by `rearm_alert_packs` once the current room
+        // is known; at load time nothing is known about location, so packs
+        // start unscoped-armed and the first room sync narrows them.
         let packs = Self::load_alert_packs();
         if !packs.is_empty() {
             let approvals = Self::load_alertpack_approvals();
-            Self::merge_alert_packs(&mut highlights, &packs, &approvals);
+            Self::merge_alert_packs(
+                &mut highlights,
+                &packs,
+                &approvals,
+                &crate::config::RoomScope::default(),
+            );
         }
 
         // Compile all regex patterns for performance

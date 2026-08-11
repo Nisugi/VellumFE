@@ -25,6 +25,106 @@ fn is_empty_gate(condition: &crate::config::Condition) -> bool {
 }
 
 impl AppCore {
+    /// Snapshot where the player is, for pack scoping.
+    ///
+    /// `location` and `tags` come from the mapdb (absent when the room is
+    /// unmapped), `realm` straight off the wire via `<roommeta>` — which is
+    /// why zone scoping still works in places the mapdb has never seen.
+    pub fn current_room_scope(&self) -> crate::config::RoomScope {
+        let uid = self
+            .nav_room_id
+            .as_deref()
+            .and_then(|s| s.trim().parse::<i64>().ok())
+            .filter(|&u| u != 0);
+        let (location, tags) = match (self.map.current_room_id, self.map.mapdb()) {
+            (Some(id), Some(db)) => match db.room(id) {
+                Some(room) => (room.location.clone(), room.tags.clone()),
+                None => (self.map.current_location.clone(), Vec::new()),
+            },
+            _ => (self.map.current_location.clone(), Vec::new()),
+        };
+        crate::config::RoomScope {
+            location,
+            realm: self.game_state.room_meta.realm,
+            tags,
+            uid,
+        }
+    }
+
+    /// Re-arm alert packs for the current room, if the scope actually changed.
+    ///
+    /// The matcher has no per-pack partitioning — membership of the pattern
+    /// Vec IS the arming mechanism — so re-arming means rebuilding the rule
+    /// set from packs whose scope admits this room. That rebuild is an
+    /// Aho-Corasick construction, cheap but not free, and the player moves
+    /// constantly; gating on a scope EQUALITY check means walking twenty
+    /// rooms inside one area rebuilds nothing.
+    ///
+    /// Deliberately reuses the already-loaded `config.highlights` source of
+    /// truth rather than calling `reload_highlights`, which re-reads from
+    /// disk — far too expensive to do per room.
+    pub fn rearm_alert_packs(&mut self) {
+        let scope = self.current_room_scope();
+        if self.last_pack_scope.as_ref() == Some(&scope) {
+            return;
+        }
+        // First call of the session loads the pack cache. Self-loading here
+        // rather than at construction keeps the disk read off every AppCore
+        // (tests build many) and out of the startup path.
+        if !self.alert_packs_loaded {
+            self.alert_packs_loaded = true;
+            self.alert_packs = crate::config::Config::load_alert_packs();
+            self.alertpack_approvals = crate::config::Config::load_alertpack_approvals();
+        }
+
+        let packs = self.alert_packs.clone();
+        if packs.is_empty() {
+            // Nothing installed: record the scope so we don't recompute it
+            // every frame, and skip the rebuild entirely.
+            self.last_pack_scope = Some(scope);
+            return;
+        }
+
+        // Personal rules are everything not contributed by a pack; rebuild
+        // the pack contribution on top of them for the new room.
+        let mut highlights: std::collections::HashMap<String, crate::config::HighlightPattern> =
+            self.config
+                .highlights
+                .iter()
+                .filter(|(name, _)| !name.starts_with("pack:"))
+                .map(|(name, rule)| (name.clone(), rule.clone()))
+                .collect();
+
+        crate::config::Config::merge_alert_packs(
+            &mut highlights,
+            &packs,
+            &self.alertpack_approvals,
+            &scope,
+        );
+        crate::config::Config::compile_highlight_patterns(&mut highlights);
+
+        self.config.highlights = highlights;
+        self.message_processor.apply_highlights_config(
+            self.config.highlights.clone(),
+            self.config.highlight_settings.clone(),
+        );
+        // A pack entering scope brings condition rules whose gates may already
+        // be true. Reset edges so those adopt current state silently instead
+        // of firing a burst the moment you walk through a door.
+        self.alerts.reset_edges();
+        self.last_pack_scope = Some(scope);
+    }
+
+    /// Reload pack files and approvals from disk into the in-memory cache the
+    /// per-room re-arm reads. Called after any pack enable/approve change.
+    pub fn refresh_alert_packs(&mut self) {
+        self.alert_packs_loaded = true;
+        self.alert_packs = crate::config::Config::load_alert_packs();
+        self.alertpack_approvals = crate::config::Config::load_alertpack_approvals();
+        // Force the next re-arm to rebuild even if the room didn't change.
+        self.last_pack_scope = None;
+    }
+
     /// Hand queued alert triggers to the core alert state, which applies the
     /// cooldown and cap. Mirrors `apply_pending_status_actions`: the message
     /// pump collects, AppCore admits, frontends only draw.
@@ -240,6 +340,33 @@ impl AppCore {
                     pack.rules.len(),
                     &pack.hash[..8.min(pack.hash.len())]
                 ));
+                if pack.scope.is_unscoped() {
+                    self.add_system_message("  Active everywhere.");
+                } else {
+                    let scope = &pack.scope;
+                    let mut parts: Vec<String> = Vec::new();
+                    if !scope.area.is_empty() {
+                        parts.push(scope.area.join(", "));
+                    }
+                    if !scope.zone.is_empty() {
+                        parts.push(format!(
+                            "zone {}",
+                            scope
+                                .zone
+                                .iter()
+                                .map(|z| z.to_string())
+                                .collect::<Vec<_>>()
+                                .join("/")
+                        ));
+                    }
+                    if !scope.tags.is_empty() {
+                        parts.push(format!("tagged {}", scope.tags.join("/")));
+                    }
+                    if !scope.rooms.is_empty() {
+                        parts.push(format!("{} specific room(s)", scope.rooms.len()));
+                    }
+                    self.add_system_message(&format!("  Active in: {}", parts.join("; ")));
+                }
                 let sensitive = pack.sensitive_rules();
                 if sensitive.is_empty() {
                     self.add_system_message(
@@ -300,6 +427,9 @@ impl AppCore {
             self.add_system_message(&format!("Failed to save alert pack settings: {err}"));
             return;
         }
+        // Refresh the in-memory cache first so the reload below (and the next
+        // per-room re-arm) both see the new enable/approval state.
+        self.refresh_alert_packs();
         self.reload_highlights();
     }
 }
@@ -512,6 +642,75 @@ mod alert_condition_tests {
         core.game_state.vitals.health = 20;
         core.tick_alert_conditions();
         assert_eq!(core.alerts.active().len(), 1);
+    }
+
+    #[test]
+    fn rearming_is_skipped_when_the_room_scope_did_not_change() {
+        // The player moves constantly; rebuilding the matcher on every step
+        // would be a real regression. The equality gate is what prevents it.
+        let mut core = AppCore::new_for_test();
+        core.alert_packs_loaded = true; // don't touch disk in a unit test
+
+        core.rearm_alert_packs();
+        let first = core.last_pack_scope.clone();
+        assert!(first.is_some(), "first call records the scope");
+
+        // Nothing about the room changed, so this must be a no-op.
+        core.rearm_alert_packs();
+        assert_eq!(core.last_pack_scope, first);
+    }
+
+    #[test]
+    fn changing_realm_changes_the_scope_and_re_arms() {
+        let mut core = AppCore::new_for_test();
+        core.alert_packs_loaded = true;
+
+        core.game_state.room_meta.realm = Some(1);
+        core.rearm_alert_packs();
+        assert_eq!(
+            core.last_pack_scope.as_ref().and_then(|s| s.realm),
+            Some(1)
+        );
+
+        // Walking into a different realm is a scope change even with no
+        // mapdb data at all — that is what zone scoping buys.
+        core.game_state.room_meta.realm = Some(2);
+        core.rearm_alert_packs();
+        assert_eq!(
+            core.last_pack_scope.as_ref().and_then(|s| s.realm),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn the_room_scope_reads_realm_straight_off_the_wire() {
+        let mut core = AppCore::new_for_test();
+        core.game_state.room_meta.realm = Some(7);
+        let scope = core.current_room_scope();
+        assert_eq!(scope.realm, Some(7));
+        // No mapdb in a test core, so the map-derived fields stay empty
+        // rather than inventing values.
+        assert!(scope.tags.is_empty());
+    }
+
+    #[test]
+    fn refreshing_packs_forces_the_next_rearm_to_rebuild() {
+        let mut core = AppCore::new_for_test();
+        core.alert_packs_loaded = true;
+        core.rearm_alert_packs();
+        assert!(core.last_pack_scope.is_some());
+
+        // Enabling or approving a pack must take effect without waiting for
+        // the player to walk somewhere else.
+        core.last_pack_scope = Some(crate::config::RoomScope {
+            realm: Some(123),
+            ..Default::default()
+        });
+        core.refresh_alert_packs();
+        assert!(
+            core.last_pack_scope.is_none(),
+            "cleared so the next tick re-arms"
+        );
     }
 
     #[test]
