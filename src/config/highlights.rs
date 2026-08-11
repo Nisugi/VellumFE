@@ -18,6 +18,94 @@ impl Default for RedirectMode {
     }
 }
 
+/// Where an alert overlay is pinned on the main viewport. A 9-grid anchor
+/// keeps authored packs resolution-independent: the same pack lands sensibly
+/// on a 1080p laptop and an ultrawide. Screen-anchored is the v1 model;
+/// window-anchored overlays are deliberately deferred (they need
+/// hidden/closed/detached fallback rules that have no customer yet).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertAnchor {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    #[default]
+    Center,
+    CenterRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+/// Presentation + discipline for one alert. Attached to a `HighlightPattern`,
+/// so alerts inherit the whole highlight system: the same editors, the same
+/// per-stream filtering, the same fast-parse matching path. No new trigger
+/// infrastructure exists or should exist.
+///
+/// Every presentation field is optional and they compose: an alert may show a
+/// banner AND art AND a flash. An alert with no presentation at all is inert
+/// (and rejected by the editor) rather than an error.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AlertSpec {
+    /// Stable identity for cooldown state and (later) timer `cancels`
+    /// references and pack-update diffing. Falls back to the pattern text
+    /// when absent, which is stable enough for cooldowns but changes if the
+    /// user edits the pattern — hence the explicit id for authored packs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
+    /// Banner text shown at the anchor. Supports `$1`-style capture groups
+    /// expanded from the triggering match, so "%s is casting" style alerts
+    /// can name the caster.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner: Option<String>,
+    /// Banner foreground/background color names (same palette as highlights).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner_fg: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner_bg: Option<String>,
+
+    /// Image played once at the anchor. Any decodable format: a static PNG is
+    /// simply a one-frame animation and takes the decoder's static path, so
+    /// "icon popup" and "animated flourish" are the same field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art: Option<String>,
+
+    /// Viewport-edge tint pulse color. Photosensitivity-sensitive: always
+    /// scaled by the global intensity ceiling and killable outright.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flash: Option<String>,
+
+    /// Where on the viewport this alert is pinned.
+    #[serde(default, skip_serializing_if = "is_default_anchor")]
+    pub anchor: AlertAnchor,
+    /// Pixel nudge from the anchor point, `(x, y)`, +y down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<(f32, f32)>,
+
+    /// Seconds on screen before auto-dismiss. Alerts ALWAYS expire; there is
+    /// no infinite alert, because a stuck overlay over combat prose is
+    /// unrecoverable without a config edit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f32>,
+
+    /// Minimum seconds between fires of this rule. Anti-spam is the product:
+    /// a heavy-scroll Reim pull must not machine-gun one rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cooldown: Option<f32>,
+
+    /// Higher wins when the concurrent cap evicts. Carried in v1 but not yet
+    /// consulted (eviction is oldest-first); present now because retrofitting
+    /// a field into already-authored TOML is far costlier than reserving it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i32>,
+}
+
+fn is_default_anchor(anchor: &AlertAnchor) -> bool {
+    *anchor == AlertAnchor::default()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HighlightPattern {
     pub pattern: String,
@@ -59,6 +147,8 @@ pub struct HighlightPattern {
     pub status_duration: Option<f32>, // Seconds until the set status auto-clears; None = until cleared
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clear_status: Option<String>, // Custom status id to deactivate on match
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alert: Option<AlertSpec>, // Overlay alert (banner/art/flash) to raise on match
 
     // Performance optimization: cache compiled regex (not serialized)
     #[serde(skip)]
@@ -170,13 +260,29 @@ pub const HIGHLIGHT_FIELDS: &[HlFieldDef] = &[
     HlFieldDef { name: "replace", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "stream", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "window", applies_to: &[Tui, Gui, Web] },
+    // Overlay alerts (2026-08-11). GUI-only by design, not by neglect: the
+    // GUI overlay renderer is the only one that exists in this slice. The
+    // TUI's constrained form (banner line, border flash) and the web DOM
+    // overlay each need a renderer AND a bridge message before their editors
+    // can honestly claim to author this. Widen `applies_to` as those land —
+    // that is the whole point of tracking it per-frontend rather than
+    // exempting it.
+    HlFieldDef { name: "alert", applies_to: &[Gui] },
 ];
 
 /// Deliberate coverage gaps, each with a reason. A `(field, frontend)`
 /// here is excused from the parity test. Mirror of registry.rs's
 /// EXEMPT_PREFIXES — an explicit, reviewed escape hatch. Empty today:
 /// full parity is the goal, so any entry is a conscious retreat from it.
-pub const HL_FIELD_EXEMPTIONS: &[(&str, HlFrontend, &str)] = &[];
+pub const HL_FIELD_EXEMPTIONS: &[(&str, HlFrontend, &str)] = &[
+    // TEMPORARY — remove when the GUI highlight editor grows its alert
+    // section (the overlay renderer lands first; an editor for a field
+    // nothing can draw would be worse than none). The alert data path is
+    // live and round-trips through both editors without loss; only the
+    // authoring UI is outstanding. This entry is a dated IOU, not a
+    // decision: `alert` is meant to reach full Tui/Gui/Web parity.
+    ("alert", Gui, "GUI alert editor section pending (added 2026-08-11)"),
+];
 
 /// The highlight fields the web/phone form should render, in catalog order —
 /// every field that applies to `Web` and isn't exempted there. Shipped to the
@@ -709,6 +815,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 
@@ -741,6 +848,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 
@@ -776,6 +884,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 
@@ -805,6 +914,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 
@@ -834,6 +944,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 
@@ -1002,6 +1113,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 
@@ -1052,6 +1164,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
         let toml_str = toml::to_string(&pattern).unwrap();
@@ -1109,6 +1222,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 

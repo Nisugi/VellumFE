@@ -213,6 +213,7 @@ impl MessageProcessor {
         self.pending_status_actions
             .extend(highlight_result.status_actions);
         self.pending_rumbles.extend(highlight_result.rumbles);
+        self.pending_alerts.extend(highlight_result.alerts);
 
         let mut line = StyledLine {
             segments: std::mem::take(&mut self.current_segments),

@@ -4,6 +4,7 @@
 //! NO imports from frontend/ or rendering code.
 //! Core updates data structures in the data layer, frontends read and render.
 
+pub mod alerts;
 pub mod app_core;
 pub mod bounty_parser;
 pub mod character_state;

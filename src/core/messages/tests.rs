@@ -133,6 +133,7 @@ fn make_redirect_pattern(pattern: &str) -> crate::config::HighlightPattern {
         set_status: None,
         status_duration: None,
         clear_status: None,
+        alert: None,
         compiled_regex: None,
     }
 }

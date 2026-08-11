@@ -259,6 +259,9 @@ pub struct MessageProcessor {
     pub pending_sounds: Vec<super::highlight_engine::SoundTrigger>,
     /// Custom-status changes from matched highlights, drained by AppCore.
     pub pending_status_actions: Vec<super::highlight_engine::StatusAction>,
+    /// Overlay alerts from matched highlights, drained by AppCore into the
+    /// core alert state (which owns cooldowns, the concurrent cap, and expiry).
+    pub pending_alerts: Vec<super::highlight_engine::AlertTrigger>,
     /// Rumble pattern names from highlight matches, drained by AppCore
     /// into the haptic queue.
     pub pending_rumbles: Vec<String>,
@@ -371,6 +374,7 @@ impl MessageProcessor {
             pending_webui_handshake: None,
             pending_sounds: Vec::new(),
             pending_status_actions: Vec::new(),
+            pending_alerts: Vec::new(),
             pending_rumbles: Vec::new(),
             pending_evidence: Vec::new(),
             pending_pathcode: None,

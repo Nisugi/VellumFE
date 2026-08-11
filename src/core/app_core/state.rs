@@ -118,6 +118,10 @@ pub struct AppCore {
     /// Auto-clear deadlines for highlight-set custom statuses (UPPERCASE
     /// id -> when it switches back off).
     pub custom_status_expiries: std::collections::HashMap<String, std::time::Instant>,
+    /// Live overlay alerts + their discipline (cooldowns, concurrent cap).
+    /// Core-owned so detached viewports can't double-fire it and the phone
+    /// bridge can push it; frontends only ever read `alerts.active()`.
+    pub alerts: crate::core::alerts::AlertState,
     /// Cached indicator templates keyed by UPPERCASE id, rebuilt from disk on
     /// load and after the template editor saves. Status icon resolution
     /// (indicator windows + dashboards) reads this per frame; the underlying
@@ -400,6 +404,7 @@ impl AppCore {
             map_updater: crate::core::mapdb_update::MapDbUpdater::new(temp.join("mapdb")),
             jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             custom_status_expiries: std::collections::HashMap::new(),
+            alerts: crate::core::alerts::AlertState::new(),
             indicator_templates: std::collections::HashMap::new(),
             jinx_catalog: None,
             jinx_nudge_pending: true,
@@ -592,6 +597,7 @@ impl AppCore {
             ),
             jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             custom_status_expiries: std::collections::HashMap::new(),
+            alerts: crate::core::alerts::AlertState::new(),
             indicator_templates: std::collections::HashMap::new(),
             jinx_catalog: None,
             jinx_nudge_pending: true,
@@ -879,6 +885,8 @@ impl AppCore {
         self.poll_jinx();
         // Auto-clear expired highlight-set custom statuses.
         self.tick_custom_statuses();
+        // Retire overlay alerts past their duration.
+        self.tick_alerts();
         // Browse replies waiting on the layout worker.
         self.service_pending_map_views();
         // A layout that finished generating between game lines still needs
@@ -923,6 +931,40 @@ impl AppCore {
                 self.custom_status_expiries.remove(&id.to_ascii_uppercase());
             }
         }
+    }
+
+    /// Hand queued alert triggers to the core alert state, which applies the
+    /// cooldown and cap. Mirrors `apply_pending_status_actions`: the message
+    /// pump collects, AppCore admits, frontends only draw.
+    pub fn apply_pending_alerts(&mut self) {
+        // Config is the authority for the kill switch; sync it here rather
+        // than mirroring it into a second place that can drift. Toggling it
+        // off also clears what is already on screen (see `set_enabled`).
+        let enabled = self.config.highlight_settings.alerts_enabled;
+        if self.alerts.is_enabled() != enabled {
+            self.alerts.set_enabled(enabled);
+        }
+        if self.message_processor.pending_alerts.is_empty() {
+            return;
+        }
+        let triggers: Vec<_> = self.message_processor.pending_alerts.drain(..).collect();
+        let now = std::time::Instant::now();
+        for trigger in triggers {
+            self.alerts.fire(trigger, now);
+        }
+    }
+
+    /// Retire alerts whose time is up. Called once per frame with the other
+    /// pollers; expiry is time-based, so this must run even on idle frames.
+    pub fn tick_alerts(&mut self) {
+        // Also sync the kill switch here, not just on the drain path: toggling
+        // alerts off must take effect immediately even when the game is quiet
+        // and no lines are arriving to drive `apply_pending_alerts`.
+        let enabled = self.config.highlight_settings.alerts_enabled;
+        if self.alerts.is_enabled() != enabled {
+            self.alerts.set_enabled(enabled);
+        }
+        self.alerts.tick(std::time::Instant::now());
     }
 
     /// Deactivate custom statuses whose duration ran out. Called once per
@@ -1347,6 +1389,8 @@ impl AppCore {
             self.queue_highlight_rumbles();
             // Highlight-driven custom statuses flip their indicators.
             self.apply_pending_status_actions();
+            // Overlay alerts admitted through the same drain seam.
+            self.apply_pending_alerts();
 
             // Attribute mapping observations to the current room uid
             if !self.message_processor.pending_evidence.is_empty() {
@@ -1429,6 +1473,8 @@ impl AppCore {
             self.queue_highlight_rumbles();
             // Highlight-driven custom statuses flip their indicators.
             self.apply_pending_status_actions();
+            // Overlay alerts admitted through the same drain seam.
+            self.apply_pending_alerts();
 
             // Attribute mapping observations to the current room uid
             if !self.message_processor.pending_evidence.is_empty() {

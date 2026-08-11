@@ -47,6 +47,11 @@ struct HighlightFormState {
     set_status: String,
     status_duration: String,
     clear_status: String,
+    /// Overlay alert spec. Held as the parsed struct rather than round-tripped
+    /// through strings like the fields above, because it is a nested record,
+    /// not a scalar. Editing UI lands with the overlay renderer; until then
+    /// this preserves what was authored elsewhere.
+    alert: Option<crate::config::AlertSpec>,
     is_global: bool,
     error: Option<String>,
 }
@@ -77,6 +82,7 @@ impl HighlightFormState {
             set_status: String::new(),
             status_duration: String::new(),
             clear_status: String::new(),
+            alert: None,
             is_global: true,
             error: None,
         }
@@ -113,6 +119,7 @@ impl HighlightFormState {
                 .map(|secs| secs.to_string())
                 .unwrap_or_default(),
             clear_status: pattern.clear_status.clone().unwrap_or_default(),
+            alert: pattern.alert.clone(),
             is_global,
             error: None,
         }
@@ -183,6 +190,7 @@ impl HighlightFormState {
                 set_status: opt(&self.set_status),
                 status_duration,
                 clear_status: opt(&self.clear_status),
+                alert: self.alert.clone(),
                 compiled_regex: None,
             },
         ))

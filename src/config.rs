@@ -41,7 +41,8 @@ pub use colors::{
     SpellColorStyle, UiColors,
 };
 pub use highlights::{
-    highlight_web_fields, EventAction, EventPattern, HighlightPattern, RedirectMode,
+    highlight_web_fields, AlertAnchor, AlertSpec, EventAction, EventPattern, HighlightPattern,
+    RedirectMode,
 };
 pub use conditions::{
     Cmp, Condition, EffectCategory, HandSlot, NameMatch, VitalKind, VitalUnit, INJURY_AREAS,

@@ -94,6 +94,14 @@ pub struct HighlightFormWidget {
     status_duration: TextArea<'static>,
     clear_status: TextArea<'static>,
 
+    /// Overlay alert carried through untouched. The TUI has no alert renderer
+    /// yet (`alert` is GUI-only in HIGHLIGHT_FIELDS), so this form cannot edit
+    /// one — but it must not DESTROY one either. Hardcoding `None` here is the
+    /// exact bug that once wiped GUI-authored status actions on any TUI edit;
+    /// preserving the source spec is the fix. Delete this passthrough only
+    /// when the TUI grows real alert fields.
+    alert: Option<crate::config::AlertSpec>,
+
     // Scope (Global vs Character)
     is_global: bool, // true = save to global/, false = save to character profile
 
@@ -232,6 +240,7 @@ impl HighlightFormWidget {
             set_status,
             status_duration,
             clear_status,
+            alert: None,
             is_global: true,        // Default to global scope
             rumble: None,
             rumble_options: vec!["(none)".to_string()],
@@ -337,6 +346,8 @@ impl HighlightFormWidget {
             form.clear_status = TextArea::from([status.clone()]);
             form.clear_status.set_cursor_line_style(Style::default());
         }
+        // Not editable here; carried so saving doesn't wipe it (see field doc).
+        form.alert = pattern.alert.clone();
 
         form.status_message = "Editing highlight".to_string();
         form
@@ -736,6 +747,8 @@ impl HighlightFormWidget {
                 let text = self.clear_status.lines()[0].as_str().trim();
                 (!text.is_empty()).then(|| text.to_string())
             },
+            // Preserved, never authored here — same reasoning as set_status above.
+            alert: self.alert.clone(),
             compiled_regex: None, // Will be compiled when config is loaded
         };
 
@@ -2122,6 +2135,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         }
     }
