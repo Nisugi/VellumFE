@@ -182,6 +182,7 @@ impl TravelContext<'_> {
             Cond::Profession(want) => matches(self.profession, want),
             Cond::Society(want) => matches(self.society, want),
             Cond::Not(inner) => !self.eval(inner),
+            Cond::Any(any) => any.iter().any(|c| self.eval(c)),
         }
     }
 
@@ -481,6 +482,9 @@ pub struct TravelTask {
     /// capture from a previous crossing has no business filling a later
     /// command.
     captures: Captures,
+    /// Re-entries into the current GuidedRoute, so a landmark that never
+    /// appears can't re-arm the direction cycle forever. Reset per edge.
+    guided_laps: u32,
     restarts: u32,
     started_ms: u64,
     /// Set once while waiting out a muckled state so the status line doesn't
@@ -553,6 +557,7 @@ impl TravelTask {
             banned: HashSet::new(),
             edge_retries: 0,
             captures: Captures::new(),
+            guided_laps: 0,
             restarts: 0,
             started_ms: now_ms,
             muckle_announced: false,
@@ -875,6 +880,7 @@ impl TravelTask {
         // Captures are scoped to the edge that bound them; a value read off a
         // line during the last crossing must not fill a command in the next.
         self.captures.clear();
+        self.guided_laps = 0;
         // On a funding detour, reaching the bank returns to the funding phase
         // (to withdraw) rather than continuing as a normal walk.
         if let Some(bank) = self.funding_bank {
@@ -1615,9 +1621,21 @@ impl TravelTask {
                 WalkAction::GuidedRoute {
                     start_rooms,
                     dirs,
-                    landmark,
-                    enter,
+                    landmarks,
                 } => {
+                    // Already standing at a landmark: enter it without walking.
+                    // Checked first so a route that starts on its destination
+                    // doesn't take a needless lap.
+                    if let Some((_, enter)) = landmarks.iter().find(|(noun, _)| {
+                        ctx.loot_nouns.iter().any(|n| n.eq_ignore_ascii_case(noun))
+                    }) {
+                        actions.splice(pc..=pc, [WalkAction::Move(enter.clone())]);
+                        continue;
+                    }
+                    if landmarks.is_empty() {
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    }
                     // Join the direction cycle at the offset for the room we
                     // are actually in. Not knowing where we are is the Ruby's
                     // `else echo 'error: mini-script expected a different
@@ -1634,6 +1652,18 @@ impl TravelTask {
                         self.handle_uncrossable_edge(from, expected, ctx, events);
                         return;
                     };
+                    // The walk re-enters this action to pick its landmark, so
+                    // bound the re-entries: a landmark that never appears would
+                    // otherwise re-arm the cycle forever.
+                    self.guided_laps += 1;
+                    if self.guided_laps > GUIDED_ROUTE_LAPS {
+                        self.guided_laps = 0;
+                        events.push(TravelEvent::Status(format!(
+                            "edge {from} -> {expected}: walked the route without finding a landmark"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    }
                     if dirs.is_empty() {
                         self.handle_uncrossable_edge(from, expected, ctx, events);
                         return;
@@ -1643,27 +1673,43 @@ impl TravelTask {
                     // than as bespoke stepping state) means the walk inherits
                     // RT-waiting and suspend/resume for free, and the loop
                     // ceiling bounds it.
+                    // Stop as soon as ANY landmark shows up — a route can be
+                    // hunting a door OR a mirror.
+                    let arrived = Cond::Any(
+                        landmarks
+                            .iter()
+                            .map(|(noun, _)| Cond::RoomHasObject(noun.clone()))
+                            .collect(),
+                    );
                     let cycle = (0..dirs.len())
                         .map(|i| dirs[(offset + i) % dirs.len()].clone())
                         .map(|d| {
                             WalkAction::Repeat {
-                                // One StepMove per iteration, skipped once the
+                                // One StepMove per iteration, skipped once a
                                 // landmark appears — the loop's own condition
                                 // is what actually ends the walk.
                                 body: vec![WalkAction::StepMove(d)],
-                                until: RepeatUntil::Cond(Cond::RoomHasObject(
-                                    landmark.clone(),
-                                )),
+                                until: RepeatUntil::Cond(arrived.clone()),
                                 max: 1,
                             }
                         })
                         .collect::<Vec<_>>();
-                    let mut expansion = vec![WalkAction::Repeat {
-                        body: cycle,
-                        until: RepeatUntil::Cond(Cond::RoomHasObject(landmark.clone())),
-                        max: GUIDED_ROUTE_LAPS,
-                    }];
-                    expansion.push(WalkAction::Move(enter));
+                    let expansion = vec![
+                        WalkAction::Repeat {
+                            body: cycle,
+                            until: RepeatUntil::Cond(arrived),
+                            max: GUIDED_ROUTE_LAPS,
+                        },
+                        // Re-enter this GuidedRoute once the walk ends: its
+                        // already-at-a-landmark branch above picks whichever
+                        // landmark actually turned up and enters it. We can't
+                        // choose here — the walk hasn't happened yet.
+                        WalkAction::GuidedRoute {
+                            start_rooms,
+                            dirs,
+                            landmarks,
+                        },
+                    ];
                     actions.splice(pc..=pc, expansion);
                 }
                 WalkAction::PauseForUser {
@@ -3657,8 +3703,7 @@ mod tests {
         let actions = vec![WalkAction::GuidedRoute {
             start_rooms: vec![99, 1, 98],
             dirs: vec!["north".into(), "east".into(), "south".into()],
-            landmark: "staircase".into(),
-            enter: "climb staircase".into(),
+            landmarks: vec![("staircase".into(), "climb staircase".into())],
         }];
         let mut ev = Vec::new();
         task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
@@ -3681,8 +3726,7 @@ mod tests {
         let actions = vec![WalkAction::GuidedRoute {
             start_rooms: vec![97, 98, 99],
             dirs: vec!["north".into()],
-            landmark: "staircase".into(),
-            enter: "climb staircase".into(),
+            landmarks: vec![("staircase".into(), "climb staircase".into())],
         }];
         let mut ev = Vec::new();
         task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
@@ -3703,8 +3747,7 @@ mod tests {
         let actions = vec![WalkAction::GuidedRoute {
             start_rooms: vec![1],
             dirs: vec!["north".into(), "east".into()],
-            landmark: "staircase".into(),
-            enter: "climb staircase".into(),
+            landmarks: vec![("staircase".into(), "climb staircase".into())],
         }];
         let mut ev = Vec::new();
         task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);

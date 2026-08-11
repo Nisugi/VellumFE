@@ -96,10 +96,11 @@ pub enum WalkAction {
         start_rooms: Vec<u32>,
         /// The direction cycle. Longer than `start_rooms` in most corpus edges.
         dirs: Vec<String>,
-        /// Ground-loot noun that ends the walk when it appears.
-        landmark: String,
-        /// Command sent once the landmark is in the room ("climb staircase").
-        enter: String,
+        /// Landmarks that end the walk, each with the command to enter it.
+        /// A list, not one: 206 corpus edges walk until EITHER a door or a
+        /// mirror appears and then enter whichever one it was, so a single
+        /// landmark can't express them.
+        landmarks: Vec<(String, String)>,
     },
     /// Stop and tell the user to do something the client can't (place a gem in
     /// hand, be strong enough to turn a wheel), resuming when `until` holds.
@@ -269,4 +270,6 @@ pub enum Cond {
     /// Negation, so a recognizer can express "unless X" without every
     /// condition needing an inverted twin.
     Not(Box<Cond>),
+    /// True when any member holds (Ruby's `a or b`). Empty is false.
+    Any(Vec<Cond>),
 }

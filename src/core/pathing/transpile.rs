@@ -97,7 +97,13 @@ re!(
 );
 // 31× ";e Map[3600].wayto['3600'].call;" — delegation: run another edge's
 // wayto script. We resolve it to that edge's transpiled actions.
-re!(WAYTO_DELEGATE, r"^;e\s+Map\[(\d+)\]\.wayto\['(\d+)'\]\.call;?$");
+// Also 66x with a global-setting preamble (`$mapdb_seeking_destination = N;`)
+// and in the `Room[N]` spelling. The preamble only records a goal for the
+// delegated script to read; the delegation is the whole crossing.
+re!(
+    WAYTO_DELEGATE,
+    r#"^;e\s+(?:\$\w+\s*=\s*(?:'[^']*'|"[^"]*"|\d+)\s*;\s*)?(?:Map|Room)\[(\d+)\]\.wayto\['(\d+)'\]\.call;?$"#
+);
 // 29× ";e move 'go curtain'; $go2_restart = true" — move then force a replan.
 re!(
     MOVE_RESTART,
@@ -231,8 +237,15 @@ re!(
 // appears, then enter it. Not an algorithm — two tables and a noun.
 re!(
     GUIDED_ROUTE,
-    r#"^;e\s*start_room\s*=\s*\[([^\]]*)\]\s*;\s*dirs\s*=\s*\[([^\]]*)\]\s*;\s*if\s+index\s*=\s*start_room\.index\(Room\.current\.id\);\s*until\s+checkloot\.include\?\(['"]([^'"]+)['"]\);.*?end;\s*move\s*\(?['"]([^'"]+)['"]\)?;"#
+    r#"^;e\s*start_room\s*=\s*\[([^\]]*)\]\s*;\s*dirs\s*=\s*\[([^\]]*)\]\s*;\s*if\s+index\s*=\s*start_room\.index\(Room\.current\.id\);\s*until\s+(checkloot\.include\?.+?);\s*move dirs\[index\];.*?end;\s*(.*?)\s*else;\s*echo"#
 );
+// Landmark nouns in the `until` clause: `checkloot.include?('door') or
+// checkloot.include?('mirror')`.
+re!(CHECKLOOT_NOUN, r#"checkloot\.include\?\(['"]([^'"]+)['"]\)"#);
+// The enter command(s) after the walk. Either a bare `move 'go door'` or a
+// branch picking per landmark: `if checkloot.include?('door'); move 'go
+// door'; elsif ...`.
+re!(ENTER_MOVE, r#"move\s*\(?['"]([^'"]+)['"]\)?"#);
 /// Parse a Ruby array literal of ids, mapping `nil` to a sentinel that can
 /// never match a room id. Positions matter — the index into `dirs` is
 /// positional — so holes must be preserved, not skipped.
@@ -386,15 +399,38 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
     if let Some(c) = GUIDED_ROUTE.captures(src) {
         let start_rooms = parse_id_table(&c[1]);
         let dirs = parse_dir_table(&c[2]);
-        // A table we couldn't parse would walk the wrong way; leave the edge
-        // untranspiled so it bans or hands off instead.
-        if !start_rooms.is_empty() && !dirs.is_empty() {
-            return Some(vec![WalkAction::GuidedRoute {
-                start_rooms,
-                dirs,
-                landmark: c[3].to_string(),
-                enter: c[4].to_string(),
-            }]);
+        // Landmarks in `until`, paired positionally with the enter commands
+        // in the tail. One landmark -> one `move 'go X'`; two landmarks -> an
+        // if/elsif picking per landmark, in the same order.
+        let nouns: Vec<String> = CHECKLOOT_NOUN
+            .captures_iter(&c[3])
+            .map(|m| m[1].to_string())
+            .collect();
+        let enters: Vec<String> = ENTER_MOVE
+            .captures_iter(&c[4])
+            .map(|m| m[1].to_string())
+            .collect();
+        // Mismatched counts mean we misread the tail; walking with a wrong
+        // enter command would strand the character, so leave it untranspiled.
+        if !start_rooms.is_empty() && !dirs.is_empty() && !nouns.is_empty() {
+            let landmarks: Vec<(String, String)> = match enters.len() {
+                // A single enter command serves every landmark.
+                1 => nouns
+                    .iter()
+                    .map(|n| (n.clone(), enters[0].clone()))
+                    .collect(),
+                n if n == nouns.len() => {
+                    nouns.iter().cloned().zip(enters.iter().cloned()).collect()
+                }
+                _ => Vec::new(),
+            };
+            if !landmarks.is_empty() {
+                return Some(vec![WalkAction::GuidedRoute {
+                    start_rooms,
+                    dirs,
+                    landmarks,
+                }]);
+            }
         }
     }
     if let Some(c) = MATCH_THEN_MOVE.captures(src) {
@@ -915,8 +951,7 @@ mod tests {
             WalkAction::GuidedRoute {
                 start_rooms,
                 dirs,
-                landmark,
-                enter,
+                landmarks,
             } => {
                 // `nil` holds a POSITION - the index into dirs is positional,
                 // so dropping it would shift every later room's direction.
@@ -927,9 +962,39 @@ mod tests {
                 );
                 assert_eq!(dirs.len(), 5, "dirs is its own cycle, longer than start_room");
                 assert_eq!(dirs[0], "southwest");
-                assert_eq!(landmark, "thread");
-                assert_eq!(enter, "climb thread");
+                assert_eq!(
+                    landmarks,
+                    &[("thread".to_string(), "climb thread".to_string())]
+                );
             }
+            other => panic!("expected a GuidedRoute, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn guided_route_pairs_two_landmarks_with_their_own_enter_commands() {
+        // 206 edges walk until EITHER a door or a mirror appears, then enter
+        // whichever it was. A single landmark can't express that.
+        let got = transpile(
+            ";e start_room = [ 2579, 2580 ]; dirs = [ 'southwest', 'east' ]; \
+             if index = start_room.index(Room.current.id); \
+             until checkloot.include?('door') or checkloot.include?('mirror'); \
+             move dirs[index]; index += 1; index = 0 if index >= dirs.length; end; \
+             if checkloot.include?('door'); move 'go door'; \
+             elsif checkloot.include?('mirror'); move 'go mirror'; end;; \
+             else; echo 'error: mini-script expected a different room'; end; \
+             $go2_restart = true",
+        )
+        .expect("two-landmark guided route transpiles");
+        match &got[0] {
+            WalkAction::GuidedRoute { landmarks, .. } => assert_eq!(
+                landmarks,
+                &[
+                    ("door".to_string(), "go door".to_string()),
+                    ("mirror".to_string(), "go mirror".to_string()),
+                ],
+                "each landmark keeps its own enter command, in order"
+            ),
             other => panic!("expected a GuidedRoute, got {other:?}"),
         }
     }
