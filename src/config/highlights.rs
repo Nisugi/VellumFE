@@ -420,6 +420,16 @@ impl Config {
             highlights = toml::from_str(DEFAULT_HIGHLIGHTS).unwrap_or_default();
         }
 
+        // Enabled alert packs merge in AFTER personal rules. Pack rule names
+        // are namespaced (`pack:<pack>/<rule>`), so this can never overwrite
+        // something the user wrote — and unapproved packs arrive with their
+        // replace/redirect powers already stripped.
+        let packs = Self::load_alert_packs();
+        if !packs.is_empty() {
+            let approvals = Self::load_alertpack_approvals();
+            Self::merge_alert_packs(&mut highlights, &packs, &approvals);
+        }
+
         // Compile all regex patterns for performance
         Self::compile_highlight_patterns(&mut highlights);
 

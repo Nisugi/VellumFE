@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 pub mod menu_keybind_validator;
 pub mod wrayth_import;
+mod alertpacks;
 mod colors;
 mod conditions;
 mod highlights;
@@ -44,6 +45,7 @@ pub use highlights::{
     highlight_web_fields, AlertAnchor, AlertSpec, EventAction, EventPattern, HighlightPattern,
     RedirectMode,
 };
+pub use alertpacks::{pack_hash, AlertPack, AlertPackApprovals};
 pub use conditions::{
     Cmp, Condition, EffectCategory, HandSlot, NameMatch, VitalKind, VitalUnit, INJURY_AREAS,
 };

@@ -2346,6 +2346,9 @@ impl AppCore {
             "addhighlight" | "addhl" => {
                 return Ok(CommandOutcome::Ui(UiAction::AddHighlight));
             }
+            "alertpacks" | "packs" => {
+                self.handle_alertpacks_command(&parts);
+            }
             "edithighlight" | "edithl" => {
                 return Ok(CommandOutcome::Ui(UiAction::EditHighlight(
                     parts.get(1).map(|name| name.to_string()),

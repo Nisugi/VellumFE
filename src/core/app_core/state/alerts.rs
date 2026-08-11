@@ -153,6 +153,157 @@ impl AppCore {
 }
 
 
+impl AppCore {
+    /// `.alertpacks` — list installed packs, toggle them, and work the trust
+    /// gate. Text-driven for now; a browser UI is a separate piece of work,
+    /// but packs must be usable and INSPECTABLE the moment they can load,
+    /// since an un-inspectable trust gate is not a trust gate.
+    pub fn handle_alertpacks_command(&mut self, parts: &[&str]) {
+        let packs = crate::config::Config::load_alert_packs();
+        let mut approvals = crate::config::Config::load_alertpack_approvals();
+
+        match parts.get(1).map(|s| s.to_ascii_lowercase()).as_deref() {
+            None | Some("list") => {
+                if packs.is_empty() {
+                    self.add_system_message(
+                        "No alert packs installed. Drop a .toml in global/alertpacks/.",
+                    );
+                    return;
+                }
+                self.add_system_message("Alert packs:");
+                for pack in &packs {
+                    let on = approvals.is_enabled(&pack.name);
+                    let sensitive = pack.needs_approval();
+                    let approved = approvals.is_approved(&pack.name, &pack.hash);
+                    let state = match (on, sensitive, approved) {
+                        (false, _, _) => "off".to_string(),
+                        (true, false, _) => "on".to_string(),
+                        (true, true, true) => "on, approved".to_string(),
+                        (true, true, false) => {
+                            "on, UNAPPROVED (replace/redirect withheld)".to_string()
+                        }
+                    };
+                    self.add_system_message(&format!(
+                        "  {} [{}] - {} rules",
+                        pack.name,
+                        state,
+                        pack.rules.len()
+                    ));
+                }
+                self.add_system_message(
+                    "Use: .alertpacks <on|off|show|approve|revoke> <name>",
+                );
+            }
+            Some("on") | Some("off") => {
+                let on = parts[1].eq_ignore_ascii_case("on");
+                let Some(name) = parts.get(2) else {
+                    self.add_system_message("Usage: .alertpacks on|off <name>");
+                    return;
+                };
+                if !packs.iter().any(|p| p.name == *name) {
+                    self.add_system_message(&format!("No alert pack named '{name}'."));
+                    return;
+                }
+                approvals.set_enabled(name, on);
+                self.persist_and_reload_packs(&approvals);
+                self.add_system_message(&format!(
+                    "Alert pack '{name}' {}.",
+                    if on { "enabled" } else { "disabled" }
+                ));
+                // Point at the gate rather than letting the user wonder why a
+                // pack they just enabled isn't fully working.
+                if on {
+                    if let Some(pack) = packs.iter().find(|p| p.name == *name) {
+                        if pack.needs_approval()
+                            && !approvals.is_approved(&pack.name, &pack.hash)
+                        {
+                            self.add_system_message(&format!(
+                                "  '{name}' contains replace/redirect rules, withheld until \
+                                 you review them: .alertpacks show {name}"
+                            ));
+                        }
+                    }
+                }
+            }
+            Some("show") => {
+                let Some(name) = parts.get(2) else {
+                    self.add_system_message("Usage: .alertpacks show <name>");
+                    return;
+                };
+                let Some(pack) = packs.iter().find(|p| p.name == *name) else {
+                    self.add_system_message(&format!("No alert pack named '{name}'."));
+                    return;
+                };
+                self.add_system_message(&format!(
+                    "Pack '{}' ({} rules, hash {})",
+                    pack.name,
+                    pack.rules.len(),
+                    &pack.hash[..8.min(pack.hash.len())]
+                ));
+                let sensitive = pack.sensitive_rules();
+                if sensitive.is_empty() {
+                    self.add_system_message(
+                        "  No sensitive rules: this pack cannot alter game text.",
+                    );
+                    return;
+                }
+                self.add_system_message("  Sensitive rules needing approval:");
+                for (rule, what) in sensitive {
+                    self.add_system_message(&format!("    {rule}: {what}"));
+                }
+                if approvals.is_approved(&pack.name, &pack.hash) {
+                    self.add_system_message("  Status: approved.");
+                } else {
+                    self.add_system_message(&format!(
+                        "  Status: NOT approved. Approve with: .alertpacks approve {name}"
+                    ));
+                }
+            }
+            Some("approve") | Some("revoke") => {
+                let approving = parts[1].eq_ignore_ascii_case("approve");
+                let Some(name) = parts.get(2) else {
+                    self.add_system_message("Usage: .alertpacks approve|revoke <name>");
+                    return;
+                };
+                let Some(pack) = packs.iter().find(|p| p.name == *name) else {
+                    self.add_system_message(&format!("No alert pack named '{name}'."));
+                    return;
+                };
+                if approving {
+                    approvals.approve(&pack.name, &pack.hash);
+                } else {
+                    approvals.revoke(&pack.name);
+                }
+                self.persist_and_reload_packs(&approvals);
+                self.add_system_message(&format!(
+                    "Alert pack '{name}' {}.",
+                    if approving {
+                        "approved for its current contents"
+                    } else {
+                        "approval revoked"
+                    }
+                ));
+            }
+            Some(other) => {
+                self.add_system_message(&format!(
+                    "Unknown .alertpacks option '{other}'. \
+                     Use list, on, off, show, approve, or revoke."
+                ));
+            }
+        }
+    }
+
+    /// Save the approval record and rebuild the highlight engine so the
+    /// change takes effect immediately rather than at next launch.
+    fn persist_and_reload_packs(&mut self, approvals: &crate::config::AlertPackApprovals) {
+        if let Err(err) = crate::config::Config::save_alertpack_approvals(approvals) {
+            self.add_system_message(&format!("Failed to save alert pack settings: {err}"));
+            return;
+        }
+        self.reload_highlights();
+    }
+}
+
 #[cfg(test)]
 mod alert_condition_tests {
     use crate::config::{
