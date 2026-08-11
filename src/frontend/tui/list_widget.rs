@@ -346,6 +346,11 @@ impl ListWidget {
         self.word_wrap = enabled;
     }
 
+    /// Current word wrap mode.
+    pub fn word_wrap(&self) -> bool {
+        self.word_wrap
+    }
+
     /// Update inner dimensions based on window size
     fn update_inner_size(&mut self, width: u16, height: u16) {
         self.inner_width = if self.show_border {

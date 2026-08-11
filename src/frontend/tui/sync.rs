@@ -407,6 +407,7 @@ impl TuiFrontend {
                 }
 
                 // Update configuration and content from WindowDef if present
+                let mut wrap_changed = false;
                 if let Some(inv_window) = self.widget_manager.inventory_windows.get_mut(name) {
                     inv_window.set_title(text_content.title.clone());
                     if let Some(def) = window_def {
@@ -424,6 +425,22 @@ impl TuiFrontend {
                             String::new()
                         };
                         inv_window.set_title(title_text);
+                        // Honor the authored wordwrap flag. Both editors expose
+                        // this checkbox and the preset defaults it on, so the
+                        // renderer has to read it or the control does nothing.
+                        // Wrapping is applied as lines are added, so a change
+                        // has to force a refill or it won't show until the game
+                        // next re-sends the list.
+                        match def {
+                            crate::config::WindowDef::Inventory { data, .. }
+                            | crate::config::WindowDef::Reserve { data, .. } => {
+                                if inv_window.word_wrap() != data.wordwrap {
+                                    inv_window.set_word_wrap(data.wordwrap);
+                                    wrap_changed = true;
+                                }
+                            }
+                            _ => {}
+                        }
                     }
 
                     // Change detection: only sync if content changed (using generation)
@@ -431,7 +448,7 @@ impl TuiFrontend {
                         self.widget_manager.last_synced_generation.get(name).copied().unwrap_or(0);
                     let current_gen = text_content.generation;
 
-                    if current_gen != last_synced_gen {
+                    if current_gen != last_synced_gen || wrap_changed {
                         // Content changed - sync text lines from WindowContent to widget
                         inv_window.clear();
                         tracing::debug!("Syncing inventory widget '{}' with {} lines (gen changed from {} to {})",
@@ -803,8 +820,23 @@ impl TuiFrontend {
                 // Update effects data and configuration
                 if let Some(widget) = self.widget_manager.active_effects_windows.get_mut(name) {
                     // Skip the clear+reclone data rebuild when unchanged
-                    // (config/theme application below stays unconditional)
-                    let data_gen = effects_content.generation;
+                    // (config/theme application below stays unconditional).
+                    //
+                    // With the effect countdown on, the displayed values also
+                    // change once per second even though the server data did
+                    // not — fold the current second into the generation so the
+                    // rebuild fires exactly on second boundaries and every
+                    // window ticks from the same clock sample. Boards with
+                    // nothing to tick keep the plain generation.
+                    let countdown_now = (app_core.config.ui.effect_countdown
+                        && effects_content.effects.iter().any(|e| e.ticks()))
+                    .then(|| chrono::Utc::now().timestamp() + app_core.server_time_offset);
+                    let data_gen = match countdown_now {
+                        // Generations are small counters; seconds in the high
+                        // bits cannot collide with them.
+                        Some(now) => effects_content.generation ^ ((now as u64) << 32),
+                        None => effects_content.generation,
+                    };
                     if self.widget_manager.widget_data_generation.get(name) != Some(&data_gen) {
                         let previous_scroll = widget.scroll_position();
 
@@ -813,11 +845,17 @@ impl TuiFrontend {
 
                         // Add all effects from content
                         for effect in &effects_content.effects {
+                            let (value, time) = match countdown_now {
+                                Some(now) => {
+                                    (effect.display_value(now), effect.display_time(now))
+                                }
+                                None => (effect.value, effect.time.clone()),
+                            };
                             widget.add_or_update_effect(
                                 effect.id.clone(),
                                 effect.text.clone(),
-                                effect.value,
-                                effect.time.clone(),
+                                value,
+                                time,
                                 effect.bar_color.clone(),
                                 effect.text_color.clone(),
                             );

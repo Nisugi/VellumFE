@@ -34,6 +34,17 @@ impl InventoryWindow {
         self.widget.set_replace_enabled(enabled);
     }
 
+    /// Set word wrap. Wrapping is applied as lines are added, so callers
+    /// must set this before refilling the widget's contents.
+    pub fn set_word_wrap(&mut self, enabled: bool) {
+        self.widget.set_word_wrap(enabled);
+    }
+
+    /// Current word wrap setting, so callers can detect a change and refill.
+    pub fn word_wrap(&self) -> bool {
+        self.widget.word_wrap()
+    }
+
     /// Clear all content (called when inv stream is pushed)
     pub fn clear(&mut self) {
         self.widget.clear();
