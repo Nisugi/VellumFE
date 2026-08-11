@@ -109,8 +109,13 @@ impl VellumGuiApp {
         };
 
         let mut rich = RichText::new(text)
+            // Bold must NEVER change the font size (owner decision 2026-08-11):
+            // the old +0.5pt "bold" hack made emphasized text visibly larger
+            // than its neighbors in the same galley. Emphasis is color only
+            // (.strong() below); the wire's <pushBold> doesn't even reach this
+            // flag anymore — it is monsterbold COLOR, applied in the parser.
             .font(egui::FontId {
-                size: font_id.size + if segment.bold { 0.5 } else { 0.0 },
+                size: font_id.size,
                 family: font_id.family.clone(),
             })
             .color(foreground)
@@ -235,8 +240,11 @@ impl VellumGuiApp {
                 .unwrap_or(Color32::TRANSPARENT)
         };
         egui::TextFormat {
+            // Bold must NEVER change the font size (owner decision 2026-08-11).
+            // The +0.5pt hack made bold runs taller than their galley neighbors
+            // — the "styled text looks smaller" report from beta.37.
             font_id: egui::FontId {
-                size: font_id.size + if segment.bold { 0.5 } else { 0.0 },
+                size: font_id.size,
                 family: if segment.mono {
                     egui::FontFamily::Monospace
                 } else {

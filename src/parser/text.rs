@@ -14,7 +14,11 @@ impl XmlParser {
     }
 
     pub(super) fn handle_push_bold(&mut self) {
-        // <pushBold/> - apply monsterbold preset and set bold
+        // <pushBold/> is SEMANTIC markup — "this is a hostile creature" — not a
+        // font instruction. Its entire visual meaning is the monsterbold color
+        // preset (owner decision 2026-08-11). The stack tracks the open scope
+        // for the preset pop, link color priority, and SpanType::Monsterbold;
+        // it must never surface as a font-bold flag on text.
         self.bold_stack.push(true);
 
         // Apply monsterbold color preset
@@ -40,7 +44,11 @@ impl XmlParser {
         // Get current colors from stacks (last pushed takes precedence)
         let mut fg = None;
         let mut bg = None;
-        let bold = !self.bold_stack.is_empty();
+        // NEVER derived from bold_stack: <pushBold> means "monsterbold style"
+        // (color, carried by the preset stack and SpanType::Monsterbold below),
+        // not "bolden the font". The segment-level bold flag is reserved for the
+        // user's own highlight rules, which are applied later in the pipeline.
+        let bold = false;
 
         // Check stacks in order: color > preset > style
         for style in &self.color_stack {

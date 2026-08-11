@@ -274,6 +274,11 @@ fn test_color_tag_with_background() {
 
 // ==================== Bold Tag Parsing ====================
 
+/// <pushBold>/<popBold> is semantic markup — "hostile creature, use the
+/// monsterbold STYLE" — not a font instruction (owner decision 2026-08-11).
+/// The text inside the scope carries SpanType::Monsterbold and the preset's
+/// color, and its font-bold flag stays FALSE: that flag belongs to the user's
+/// own highlight rules, never to the wire.
 #[test]
 fn test_pushbold_popbold() {
     let mut parser = test_parser();
@@ -285,7 +290,7 @@ fn test_pushbold_popbold() {
         .collect();
     assert_eq!(text_elements.len(), 2);
 
-    // First text should be bold (monsterbold)
+    // Inside the scope: monsterbold SPAN TYPE, no font bold.
     let ParsedElement::Text {
         content,
         bold,
@@ -296,10 +301,13 @@ fn test_pushbold_popbold() {
         panic!("Expected Text element, got {:?}", text_elements[0]);
     };
     assert_eq!(content, "A goblin");
-    assert!(*bold);
+    assert!(
+        !*bold,
+        "pushBold must not set the font-bold flag — it means monsterbold style, not font weight"
+    );
     assert_eq!(*span_type, SpanType::Monsterbold);
 
-    // Second text should not be bold
+    // Outside the scope: plain.
     let ParsedElement::Text {
         content,
         bold,
