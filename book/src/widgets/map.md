@@ -22,7 +22,7 @@ client's own pathing. No Lich required, which is why it works on the phone too.
 1. Get map data first — the map cannot draw without it. Open **Settings** in the top toolbar,
    go to the **Map** section, and click **Download map data**.
    (Typed equivalent: `.mapdb download`.)
-2. Click **Windows** in the top toolbar and tick **Map** in the catalog. Use the row's **zone**
+2. Click **Windows** in the top toolbar, expand **Navigation**, and tick **Map**. Use the row's **zone**
    control to place it. (Typed equivalent: `.addwindow map map 0 0 30 12`.)
 3. Right-click the map for its two controls: **Custom map zoom** — tick it to reveal a
    pixels-per-cell slider, untick to return to the default 16 — and **Open Map Explorer**.

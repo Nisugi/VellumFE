@@ -24,7 +24,8 @@ how you build alerts the game never offered you.
 {{#tabs global="frontend"}}
 {{#tab name="Desktop GUI"}}
 
-1. Click **Windows** in the top toolbar. The catalog ships a row per standard status — tick
+1. Click **Windows** in the top toolbar, expand **Status**, then expand the **Indicators** fold
+   inside it — the statuses sit two levels down so they don't bury the **dashboard** row. Tick
    **stunned**, **bleeding**, **webbed**, **hidden**, or whichever you want. Set each row's
    **zone** to send it somewhere it'll live.
    (Typed equivalent: `.addwindow stunned indicator 0 0 6 3`.)

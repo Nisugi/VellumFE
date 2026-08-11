@@ -29,6 +29,10 @@ is_exempt() {
     reference/commands.md|reference/cli.md) return 0 ;;  # command tables
     reference/faq.md|reference/troubleshooting.md) return 0 ;;  # Q&A format
     configuration/*) return 0 ;;                      # the TOML appendix itself
+    */README.md) return 0 ;;                          # section index pages: a
+                                                      # roster of links has no
+                                                      # per-frontend gesture to
+                                                      # put in {{#tabs}}
     *) return 1 ;;
   esac
 }

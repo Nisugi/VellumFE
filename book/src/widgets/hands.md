@@ -19,7 +19,7 @@ desktop GUI they can go further — the icon itself can change based on what you
 {{#tabs global="frontend"}}
 {{#tab name="Desktop GUI"}}
 
-1. Click **Windows** in the top toolbar and tick **Left Hand**, **Right Hand**, and **Spell**
+1. Click **Windows** in the top toolbar, expand **Hands**, and tick **Left Hand**, **Right Hand**, and **Spell**
    in the catalog. Set each row's **zone** — stacking all three in the **Right Bar** keeps
    them together. (Typed equivalent: `.addwindow left hand 92 22 28 1`.)
 2. Right-click a hand window and choose **Hand icons…** in the widget section. That opens the

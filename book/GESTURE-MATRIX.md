@@ -768,6 +768,149 @@ widget section. In the TUI editor, `Quickbar` and `MissingSpells` push **zero** 
 - **`experience` in `HIDDEN_STREAMS` is inert** — no code path produces a text stream by that
   name; neither Experience widget is stream-fed. The entry is defensive.
 
+### The Windows catalog — what the reader actually sees (added 2026-08-11)
+
+**⚠️ EVERY catalog category is COLLAPSED by default, and Status nests a second fold.**
+`CollapsingHeader::new(category.display_name()).default_open(false)`
+(`gui/app/editors/known_windows.rs:236-237`). Inside **Status**, the thirteen `indicator` rows
+sit in their own nested **Indicators** fold, also `default_open(false)` (`:246-258`), so the
+Dashboard row isn't buried. **Any page that says "tick X in the catalog" without "expand the
+group first" is under-specified** — ten shipped pages were corrected in Wave 8.
+
+**Rows sort ALPHABETICALLY BY TITLE, not in catalog order** (`known_windows.rs:99`). `CATALOG`
+order (`presets.rs:132-201`) is fixture order. Category buckets follow `WidgetCategory::ALL`.
+
+**⚠️ SEVEN valid types are absent from `CATALOG`, and two are reachable under another key.**
+Absent as catalog keys: `command_input`, `performance`, `webui`, `dialogpanel`, `container`,
+`injury_doll`, `active_effects`. But `injury_doll` is reachable as catalog key **`injuries`**
+(`presets.rs:191`; `try_from_str` accepts both — `data/window.rs:83`), and `active_effects` as
+five preset keys (`buffs`/`debuffs`/`cooldowns`/`active_spells`/`active_effects_custom`).
+**Truly typed-only: `command_input`, `performance`, `webui`, `dialogpanel`, `container`,
+`spacer`.**
+
+**⚠️ But `command_input` and `spacer` ARE injected into the HIDE/EDIT pickers** as special
+cases (`presets.rs:2110-2134`, into `WidgetCategory::Other`). "Not in the catalog" is an
+ADD-path fact only.
+
+**`spacer` and the six `*_custom` seeds are excluded from the GUI catalog**
+(`state/menus.rs:800`). The custom seeds resurface under **➕ Custom window…** with different
+labels — **Text · Tabbed text · Progress bar · Countdown · Entity list · Active effects**
+(`core/local_catalog.rs:92-101`). So `entity_custom` is never a row reading "Custom"; it is the
+**Entity list** item.
+
+**Type aliases `VALID_TYPES` does not list** (`data/window.rs:83,88,108,110`): `injuries` =
+`injury_doll`, `commandinput` = `command_input`, `lichui` = `webui`, `dialog_panel` =
+`dialogpanel`. The "type strings are unforgiving" note is true for `active_effects` and
+`missingspells` but **over-general** — these four accept two spellings each.
+
+**Title-vs-key divergences** (all `presets.rs`): `main`→**Story**, `hotkeybar`→**Actions**,
+`bounty`→**Bounties**, `society`→**Society Tasks**, `roundtime`→**RT**, `casttime`→**Cast**,
+`stuntime`→**Stun**, `injuries`→**Injuries**, `perception`→**Perceptions**,
+`encum`→**Encumbrance**, `command_input`→**Command Input**, `performance`→**Performance
+Stats**. Plus `minivitals` with `title: None` falling back to the bare key.
+
+### Hotbars and utility widgets (added 2026-08-11)
+
+**⚠️ Hotbar hotkeys are BAR-scoped, not window-scoped.** `merge_hotbar_hotkeys` walks every bar
+in the loaded config with **no check that any window displays it**
+(`core/app_core/keybinds.rs:50-99`), so a bar with no window on screen still owns its keys.
+Inserted into the **runtime map only** — never into `keybinds.toml`, invisible to the keybind
+editor. Existing bindings win; conflicts name the owner as `bar:button`. **The old
+`hotkeybar.md` claimed hotkeys register "while a window shows the bar" — false, corrected in
+Wave 8.**
+
+**Hotkeybar `bar` and `orientation` are authorable in NEITHER window editor.** The GUI
+**Hotbar** section holds exactly one item, **Edit hotbars…** (`window_config.rs:1125-1132`);
+the TUI pushes zero fields (`construction.rs:208`). `create_window_content` overwrites `bar`
+with the window NAME (`window_lifecycle.rs:1293-1297`), so the preset default `"default"` is
+unreachable for `.addwindow`-created windows. **[repair?]**
+
+**⚠️ `.addwindow webui` is the WRONG route.** `.webui <script/page>` (`commands.rs:2287-2293`)
+builds a window named `webui:<page>` with the binding set and sizes it from the page's own
+hint (`window_lifecycle.rs:1425-1500`). A hand-added `webui` window has `page=""` and **no
+editor exposes the field**. Same for `dialogpanel`: panels are DISCOVERED from
+`DialogPanelOpen` (`element.rs:1249-1267`) and built as **ephemeral** windows placed from the
+dialog's hints (`window_lifecycle.rs:600-643`).
+
+**⚠️ Hiding `command_input` MEANS DIFFERENT THINGS per frontend.** The GUI paints a **fixed
+bottom fallback panel** when no input window renders (`gui/app.rs:2602-2624`). The TUI persists
+the hidden flag but **keeps the input on screen**: *"Command input hidden in the layout (GUI
+shows its fallback bar); the TUI keeps it visible."* (`window_lifecycle.rs:119-140`, gated on
+`force_show_command_input`).
+
+**Min sizes** (`core/app_core/layout.rs:451-459`): `spacer` **(1,1)** — the smallest in the
+product, so a thin alignment spacer survives `distribute_1d`; `dialogpanel` (14,4);
+`hotkeybar`/`quickbar` (20,1). Everything else floors at (5,3).
+
+**TUI-authored-only widgets:** `command_input` pushes **six** fields (`construction.rs:176-183`)
+and `performance` pushes **EditMetrics** (`:292-294`), while **neither has a GUI widget
+section**. `Spacer`, `WebUi`, and `DialogPanel` push zero in both. **[repair?]**
+
+### The injury doll (added 2026-08-11)
+
+**⚠️ The severity scale is 0-6 and the scar names are off by three.** `severity_level_from_key`
+(`config/skins.rs:289-300`): `healthy`→0, `injury1..3`→1-3, **`scar1..3`→4-6**. So **Injury >=
+4** means "any scar" and **Injury >= 1** means "anything wrong". Three vocabularies for one
+scale: TUI editor labels (**Wound1**/**Scar1**), TOML color keys (`injury1_color`/`scar1_color`),
+skin art keys (`injury1`/`scar1`). Counting scars from 1 in a condition is the most common way
+to write a rule that never fires.
+
+**⚠️ AUTHORING IS SPLIT, AND EACH FRONTEND OWNS HALF.** Severity colors are **TUI-only**
+authoring (`construction.rs:249-257` pushes seven fields; the GUI has no `InjuryDoll` arm in
+`render_widget_config_controls`), while art, grayscale, and calibration are **GUI-only**. Each
+frontend *reads* the other's half — a TUI-authored palette paints the GUI vector doll. Document
+as a division of labor, not a gap.
+
+**Both `injuries` and `injury_doll` work as type strings** (`data/window.rs:83`,
+`presets.rs:1090`). Catalog key `injuries`, **ungated — both games**, category **Character**.
+
+**⚠️ Variants are FULL REPLACE, including suppression.** `doll_set` builds the view entirely
+from the variant's own base/parts/anchors/dots with **no merge** (`gui/skin.rs:433-454`); a
+default-set `hidden_when` does **not** apply while a variant is active
+(`doll_rules.rs:264-268`). First match in declaration order wins. Nesting variants is a parse
+error.
+
+**⚠️ A pool doll is NOT a skin doll.** Applying `doll_image` sets the base then **clears**
+`doll_parts`, `doll_anchors`, `doll_hidden_when` (`gui/skin.rs:1052-1055`); variant loading is
+gated on `doll_override.is_none()` (`:1140`). **Pool dolls carry no variants and no
+`hidden_when`** — pinned by `doll_rules.rs:272-279`. Calibration writes a `<stem>.toml` sidecar
+beside the image.
+
+**The calibrator's Doll set combo discards unsaved edits on switch**
+(`doll_calibration.rs:240-263`), and is **skin targets only** — pool dolls get no combo
+(`:140-149,214`). Two doors to it: the window's **Injury doll ▸ Calibrate doll…**
+(`menus.rs:1992`) and **Settings ▸ Appearance ▸ Calibrate injury doll…**
+(`editors/settings.rs:976`).
+
+**Overlay art suppresses the generated dot entirely** — never a dot stamped on hand-drawn art
+(`widgets/injury.rs:149-169`). "No overlay" is a deliberate reveal for inverted skins. Artless
+parts keep dots. **nsys draws FIRST as an underlay** (`:133-140`). **GUI tooltip only on
+wounds** (`:193-196`) — an unwounded doll has no hover text.
+
+**Grayscale is GENERATED, never authored** — luminance recolor cached as `"<path>#gray"`
+(`gui/skin.rs:1800-1809`). **There is no `base_gray` TOML key.**
+
+**Other-player popup (`injuries-<playerid>`) is DESKTOP-ONLY and always default set/palette** —
+variants and hidden parts read SELF state, so your prone flag must never reshape someone else's
+body (`widgets/injury.rs:304-307`). No remote transport exists.
+
+**Mobile: DOLL ART DOES REACH THE PHONE.** `/doll.json` and
+`/doll/image?kind=base|overlay&part=&level=` (`web/server.rs:290-291,676`, token-gated) serve
+the real skin PNGs; `skinDollSvg()` (`app.js:5312-5372`) embeds them as SVG. Vector fallback
+only when the host has no doll base. Surface is the **status drawer** (`#status-doll`, then an
+**Injuries** section) — **not** the status row, which carries indicators. **The host pushes
+ANSWERS**: `RemoteDelta::Doll { variant, hidden }` — the phone never evaluates a condition.
+Nothing there is tappable. **[repair?]** Per-widget palette overrides never reach the phone —
+`LEVEL_COLORS` (`app.js:5185-5188`) is a hardcoded default subset.
+
+**[doc-bug] FIXED 2026-08-11:** `tui/injury_doll.rs:19-24` claimed `ns`/`nk`/`bk` at rows
+1/3/5; the code (`:209-213`) is **`nk`=neck row 1, `bk`=back row 3, `ns`=nerves row 5**. The
+old `injury-doll.md` copied the wrong comment. Both corrected.
+
+**Note on "has a section" vs "has config rows":** `widget_section_label` NAMES a section for
+InjuryDoll, Compass, Hand, Map, and Dashboard, but `render_widget_config_controls` has no arm
+for some of them — those sections contain only appearance controls.
+
 ## Conditions — the shared vocabulary (added 2026-08-11)
 
 > One condition language drives **hotbar button states**, **indicator icon

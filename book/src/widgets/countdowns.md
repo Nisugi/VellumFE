@@ -22,7 +22,7 @@ in exactly the same way.
 {{#tabs global="frontend"}}
 {{#tab name="Desktop GUI"}}
 
-1. Click **Windows** in the top toolbar and tick **roundtime**. It arrives bound to the
+1. Click **Windows** in the top toolbar, expand **Countdowns**, and tick **RT**. It arrives bound to the
    `roundtime` feed, titled **RT**, drawn in red.
 2. Tick **casttime** as well if you cast — it arrives titled **Cast** in deep sky blue, so the
    two never get confused at a glance.

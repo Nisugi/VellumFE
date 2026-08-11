@@ -18,7 +18,7 @@ way to feel out an unmapped area, and it never scrolls off.
 {{#tabs global="frontend"}}
 {{#tab name="Desktop GUI"}}
 
-1. Click **Windows** in the top toolbar and tick **Compass** in the catalog. Use the row's
+1. Click **Windows** in the top toolbar, expand **Navigation**, and tick **Compass**. Use the row's
    **zone** control to send it somewhere it'll live — the **Right Bar** is a good home.
    (Typed equivalent: `.addwindow compass compass 92 15 28 7`.)
 2. Right-click the compass to pick its art. The widget section has a **Compass art** drop-down

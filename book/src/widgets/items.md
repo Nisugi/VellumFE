@@ -19,7 +19,7 @@ item onto a container or your hand.
 {{#tabs global="frontend"}}
 {{#tab name="Desktop GUI"}}
 
-1. Click **Windows** in the top toolbar and tick **Items** in the catalog. Set the row's
+1. Click **Windows** in the top toolbar, expand **Entities**, and tick **Items**. Set the row's
    **zone** — the **Right Bar** keeps it next to your other room lists.
    (Typed equivalent: `.addwindow items items 92 25 28 10`.)
 2. There are no per-window options for this widget; its border, colors, and title are the

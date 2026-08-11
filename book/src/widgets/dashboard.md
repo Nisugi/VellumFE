@@ -22,7 +22,7 @@ That makes it the right home for statuses you're still experimenting with.
 {{#tabs global="frontend"}}
 {{#tab name="Desktop GUI"}}
 
-1. Click **Windows** in the top toolbar and tick **dashboard** in the catalog. Set the row's
+1. Click **Windows** in the top toolbar, expand **Status**, and tick **dashboard**. Set the row's
    **zone** to place it. (Typed equivalent: `.addwindow dashboard dashboard 0 0 10 3`.)
 2. Right-click the window and choose **Edit dashboard…** in its widget section. A new dashboard
    ships empty, so this is where it gets its contents.

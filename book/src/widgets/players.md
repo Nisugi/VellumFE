@@ -17,7 +17,7 @@ short tags, and corpses dimmed with a `[ded]` marker so you can tell "someone's 
 {{#tabs global="frontend"}}
 {{#tab name="Desktop GUI"}}
 
-1. Click **Windows** in the top toolbar and tick **Players** in the catalog. Set the row's
+1. Click **Windows** in the top toolbar, expand **Entities**, and tick **Players**. Set the row's
    **zone** — the **Right Bar** under your targets window works well.
    (Typed equivalent: `.addwindow players players 92 16 28 8`.)
 2. There are no per-window options. Everything that shapes these rows — status side,

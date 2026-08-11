@@ -19,7 +19,7 @@ obvious before you swing.
 {{#tabs global="frontend"}}
 {{#tab name="Desktop GUI"}}
 
-1. Click **Windows** in the top toolbar and tick **Targets** in the catalog. Use the row's
+1. Click **Windows** in the top toolbar, expand **Entities**, and tick **Targets**. Use the row's
    **zone** control to place it — the **Right Bar** keeps it beside the text without covering
    it. (Typed equivalent: `.addwindow targets targets 92 3 28 12`.)
 2. Right-click the window for its two per-window options: **Show filtered appendage count**
