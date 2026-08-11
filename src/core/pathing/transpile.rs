@@ -224,6 +224,14 @@ re!(
     r#"^;e\s+fput\s*\(?['"]([^'"]+)['"]\)?\s*;\s*fput\s*\(?['"]([^'"]+)['"]\)?;?$"#
 );
 
+// 497x: the minotaur maze. A learned-graph walker whose whole configuration
+// is the goal room and the maze's room set — everything else in the ~1.5KB
+// proc is the exploration algorithm, which lives in travel::minotaur.
+re!(
+    MINOTAUR_MAZE,
+    r"^;e\s+target_room_id\s*=\s*(\d+);\s*maze_rooms\s*=\s*\[([^\]]*)\];\s*\$minotaur_maze_dirs\s*\|\|="
+);
+
 // 478x, the largest residue family: joining a gaming table. Send `go <table>
 // table`; the response is either "you head over to" (seated, done) or an
 // invitation, which must be accepted by sending the SAME command again.
@@ -374,6 +382,13 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
             WalkAction::Put(c[1].to_string()),
             WalkAction::Move(c[2].to_string()),
         ]);
+    }
+    if let Some(c) = MINOTAUR_MAZE.captures(src) {
+        let target: u32 = c[1].parse().ok()?;
+        let maze_rooms = parse_id_table(&c[2]);
+        if !maze_rooms.is_empty() {
+            return Some(vec![WalkAction::MinotaurMaze { target, maze_rooms }]);
+        }
     }
     if let Some(c) = TABLE_JOIN.captures(src) {
         // The table name carries Ruby's escaped quotes ("Cat\'s Paw").
@@ -892,6 +907,26 @@ mod tests {
         assert_eq!(
             transpile(";e fput 'search';fput 'go hatch'"),
             Some(vec![Put("search".into()), Move("go hatch".into())])
+        );
+    }
+
+    #[test]
+    fn minotaur_maze_extracts_only_its_goal_and_room_set() {
+        // ~1.5KB of exploration algorithm whose entire per-edge configuration
+        // is two values; the algorithm itself lives in travel::minotaur.
+        let got = transpile(
+            ";e target_room_id = 6192; maze_rooms = [6191, 6254, 6192]; \
+             $minotaur_maze_dirs ||= Hash.new; loop { if (bounty? =~ /^You have made \
+             contact with the child/); child = GameObj.npcs.find { |npc| npc.noun == \
+             'child' }; else; child = nil; end; start_room = Room.current; }",
+        )
+        .expect("minotaur maze transpiles");
+        assert_eq!(
+            got,
+            vec![WalkAction::MinotaurMaze {
+                target: 6192,
+                maze_rooms: vec![6191, 6254, 6192],
+            }]
         );
     }
 

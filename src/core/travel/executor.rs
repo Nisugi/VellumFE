@@ -360,6 +360,17 @@ enum Step {
         /// on arrival we can record `learned[from][dir] = arrived`.
         pending: Option<ConfluencePending>,
     },
+    /// The minotaur maze walker: same learned-graph shape as Confluence, but
+    /// hunting a specific ROOM rather than a landmark, over a room set carried
+    /// per-edge. See travel::minotaur.
+    Minotaur {
+        /// The room this maze crossing is trying to reach.
+        target: u32,
+        /// Rooms belonging to this maze; arriving outside means we fell out.
+        maze_rooms: Vec<u32>,
+        /// Awaiting arrival after a walk (from-room + direction sent).
+        pending: Option<ConfluencePending>,
+    },
     /// A scripted-edge `StepMove` is in flight: a paced walk command was sent
     /// mid-script and we're waiting for the room to change before resuming the
     /// script at `pc`. `sent_from` is the room it was sent in (any other room
@@ -505,6 +516,8 @@ pub struct TravelTask {
     /// Step enum so Step stays Clone+PartialEq, same as `stash`. `Some` only
     /// while inside the Plane.
     confluence: Option<super::confluence::ConfluenceState>,
+    /// Learned graph for an in-progress minotaur maze crossing.
+    minotaur: Option<super::minotaur::MinotaurState>,
     /// The silver reading at the moment a bank withdrawal was sent. The
     /// withdraw confirmation isn't a wealth line, so we re-probe `wealth quiet`
     /// and wait for `game_state.silver` to change from this value (proving the
@@ -566,6 +579,7 @@ impl TravelTask {
             silver_need,
             funding_bank: None,
             confluence: None,
+            minotaur: None,
             silver_at_withdraw: None,
             in_transport: false,
             day_pass_close_sack: None,
@@ -686,6 +700,9 @@ impl TravelTask {
             }
             Step::Confluence { pending } => {
                 self.tick_confluence(pending, current, ctx, &mut events);
+            }
+            Step::Minotaur { target, maze_rooms, pending } => {
+                self.tick_minotaur(target, maze_rooms, pending, current, ctx, &mut events);
             }
             Step::AwaitStand { sent_ms, attempts } => {
                 if ctx.standing {
@@ -1176,6 +1193,109 @@ impl TravelTask {
         } else {
             // No entry edge from here — re-path.
             self.repath(ctx.db, current, ctx.lich_fallback, events);
+        }
+    }
+
+    /// The minotaur maze tick: one step of learn-and-navigate toward a room.
+    /// Same shape as `tick_confluence`, different goal (see travel::minotaur).
+    fn tick_minotaur(
+        &mut self,
+        target: u32,
+        maze_rooms: Vec<u32>,
+        pending: Option<ConfluencePending>,
+        current: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        let resume = |pending| Step::Minotaur {
+            target,
+            maze_rooms: maze_rooms.clone(),
+            pending,
+        };
+        // Reached the goal: hand back to the normal walker from here.
+        if current == target {
+            self.minotaur = None;
+            self.step = Step::Prepare;
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
+            return;
+        }
+        if ctx.muckled {
+            if !self.muckle_announced {
+                events.push(TravelEvent::Status(
+                    "stunned/webbed - waiting until you can move".into(),
+                ));
+                self.muckle_announced = true;
+            }
+            self.step = resume(pending);
+            return;
+        }
+        self.muckle_announced = false;
+
+        // A move is in flight: wait for the room to change, then learn it.
+        if let Some(p) = &pending {
+            if current == p.from {
+                if ctx.now_ms.saturating_sub(p.sent_ms) <= STEP_TIMEOUT_MS {
+                    return; // still waiting to land
+                }
+                self.step = resume(None);
+                return;
+            }
+            if let Some(state) = self.minotaur.as_mut() {
+                state.record_arrival(p.from, &p.dir, current);
+            }
+            self.step = resume(None);
+            // fall through and decide from `current`
+        }
+
+        // Fell out of the maze. The Ruby walks back along the arrival room's
+        // own wayto edge to where it came from; we let the router do it, which
+        // handles the walk-back and any re-plan in one place.
+        if !maze_rooms.contains(&current) {
+            self.minotaur = None;
+            events.push(TravelEvent::Status(format!(
+                "left the maze at room {current} - re-pathing"
+            )));
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
+            return;
+        }
+        if ctx.rt_remaining > 0.0 {
+            return;
+        }
+
+        let state = self
+            .minotaur
+            .get_or_insert_with(super::minotaur::MinotaurState::new);
+        // Exits changed since we last stood here → the maze shifted and every
+        // learned edge is now a lie. Wipe rather than route on stale data.
+        if state.record_exits(current, ctx.compass_dirs) {
+            events.push(TravelEvent::Status(
+                "the maze shifted - relearning".into(),
+            ));
+            state.reset();
+            state.record_exits(current, ctx.compass_dirs);
+        }
+        match state.choose_dir(current, target, ctx.compass_dirs) {
+            super::minotaur::MinotaurMove::Arrive => {
+                self.minotaur = None;
+                self.step = Step::Prepare;
+                self.repath(ctx.db, current, ctx.lich_fallback, events);
+            }
+            super::minotaur::MinotaurMove::Go(dir) => {
+                events.push(TravelEvent::Send(dir.clone()));
+                self.step = resume(Some(ConfluencePending {
+                    from: current,
+                    dir,
+                    sent_ms: ctx.now_ms,
+                }));
+            }
+            // No exits at all: don't wander blindly out of a maze.
+            super::minotaur::MinotaurMove::Lost => {
+                self.minotaur = None;
+                events.push(TravelEvent::Status(
+                    "no way out of this maze room - re-pathing".into(),
+                ));
+                self.repath(ctx.db, current, ctx.lich_fallback, events);
+            }
         }
     }
 
@@ -1711,6 +1831,18 @@ impl TravelTask {
                         },
                     ];
                     actions.splice(pc..=pc, expansion);
+                }
+                WalkAction::MinotaurMaze { target, maze_rooms } => {
+                    // Hand off to the learned-graph walker. It owns the whole
+                    // crossing from here — including deciding when we've
+                    // arrived — so this action never returns to the script.
+                    self.minotaur = Some(super::minotaur::MinotaurState::new());
+                    self.step = Step::Minotaur {
+                        target,
+                        maze_rooms,
+                        pending: None,
+                    };
+                    return;
                 }
                 WalkAction::PauseForUser {
                     msg,

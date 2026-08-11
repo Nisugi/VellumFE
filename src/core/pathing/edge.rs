@@ -102,6 +102,9 @@ pub enum WalkAction {
         /// landmark can't express them.
         landmarks: Vec<(String, String)>,
     },
+    /// Hand this crossing to the minotaur maze walker (see travel::minotaur):
+    /// learn adjacency by walking until `target` is reached. 497 corpus edges.
+    MinotaurMaze { target: u32, maze_rooms: Vec<u32> },
     /// Stop and tell the user to do something the client can't (place a gem in
     /// hand, be strong enough to turn a wheel), resuming when `until` holds.
     ///
