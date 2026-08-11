@@ -53,9 +53,19 @@ fn portal_candidates(
         let trimmed = command.trim();
         if crate::core::mapdb::is_proc_command(trimmed) {
             // A StringProc edge: show the movement it performs, send a native
-            // .go2 to that neighbor. Skip ones we can't interpret at all.
-            let Some(label) = proc_edge_label(trimmed, db) else {
-                continue;
+            // .go2 to that neighbor.
+            //
+            // When the proc doesn't transpile we still list the exit — the
+            // router plans through any edge with a `timeto` regardless of
+            // whether we can read its `wayto` (dijkstra.rs), and `.go2 <dest>`
+            // walks it (handing off to Lich if it can't cross). Dropping it
+            // here made real exits invisible to `.portal` while `.go2` could
+            // reach them. We just can't name the MOVEMENT, so name the
+            // DESTINATION instead; recognizer work upgrades these labels to
+            // real movements with no change here.
+            let label = match proc_edge_label(trimmed, db) {
+                Some(label) => label,
+                None => proc_edge_destination_label(dest, db),
             };
             if COMPASS_WORDS.contains(&label.to_ascii_lowercase().as_str()) {
                 continue;
@@ -94,6 +104,22 @@ fn proc_edge_label(
         WalkAction::Move(cmd) | WalkAction::Put(cmd) => Some(cmd),
         _ => None,
     })
+}
+
+/// Display label for a proc edge we can't transpile: where it goes, since we
+/// can't say how it gets there. Prefers the destination's room title (already
+/// bracketed in mapdb, e.g. `[Vornavis, Wooded Plains]`), then its location,
+/// and falls back to the bare room id.
+fn proc_edge_destination_label(dest: u32, db: &crate::core::mapdb::MapDb) -> String {
+    if let Some(room) = db.room(dest) {
+        if let Some(title) = room.title.first().filter(|t| !t.trim().is_empty()) {
+            return title.trim().to_string();
+        }
+        if let Some(loc) = room.location.as_deref().filter(|l| !l.trim().is_empty()) {
+            return loc.trim().to_string();
+        }
+    }
+    format!("room {dest}")
 }
 
 /// Seconds encoded by a macro sleep segment: the whole segment (modulo
@@ -3182,10 +3208,10 @@ mod portal_tests {
 
     #[test]
     fn candidates_skip_compass_dedupe_and_surface_procs_by_movement() {
-        // A room whose edges mix cardinals, string portals, and a StringProc
-        // footpath edge. Compass words are excluded; the proc edge appears by
-        // its movement label ("climb footpath") with a .go2 <dest> command;
-        // an un-interpretable proc is skipped.
+        // A room whose edges mix cardinals, string portals, and StringProc
+        // edges. Compass words are excluded; a transpilable proc edge appears
+        // by its movement label ("climb footpath"); an un-interpretable proc
+        // edge is STILL listed, labeled by where it goes.
         let db = crate::core::mapdb::MapDb::from_json(
             r#"[
                 {"id": 1, "uid": [9000001], "location": "T", "title": ["[Road]"],
@@ -3199,7 +3225,10 @@ mod portal_tests {
                  "timeto": {"2": 0.2, "3": 0.2, "4": 0.2, "5": 0.2, "6": 0.2},
                  "paths": ""},
                 {"id": 2, "uid": [9000002], "location": "T", "title": ["[N]"],
-                 "wayto": {"1": "south"}, "timeto": {"1": 0.2}, "paths": ""}
+                 "wayto": {"1": "south"}, "timeto": {"1": 0.2}, "paths": ""},
+                {"id": 6, "uid": [9000006], "location": "T",
+                 "title": ["[Vornavis, Wooded Plains]"],
+                 "wayto": {"1": "out"}, "timeto": {"1": 0.2}, "paths": ""}
             ]"#,
         )
         .unwrap();
@@ -3212,8 +3241,34 @@ mod portal_tests {
                 PortalCandidate { label: "climb stair".into(), command: "climb stair".into() },
                 // The proc footpath shows its movement, runs .go2 to room 5.
                 PortalCandidate { label: "climb footpath".into(), command: ".go2 5".into() },
+                // The un-interpretable proc is a REAL exit the router can plan
+                // through, so it stays listed - named by its destination.
+                PortalCandidate {
+                    label: "[Vornavis, Wooded Plains]".into(),
+                    command: ".go2 6".into(),
+                },
             ],
-            "compass excluded, string edges verbatim, proc edge by movement"
+            "compass excluded, string edges verbatim, proc edges by movement or destination"
+        );
+    }
+
+    #[test]
+    fn untranspilable_proc_edge_to_an_unknown_room_still_lists() {
+        // Same rescue when the destination isn't in the mapdb either: the edge
+        // is still walkable via .go2, so it must not vanish from .portal.
+        let db = crate::core::mapdb::MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Road]"],
+                 "wayto": {"7": ";e some_unparseable_confluence_thing"},
+                 "timeto": {"7": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let got = portal_candidates(db.room(1).unwrap(), &db);
+        assert_eq!(
+            got,
+            vec![PortalCandidate { label: "room 7".into(), command: ".go2 7".into() }],
+            "falls back to the bare room id rather than dropping the exit"
         );
     }
 
