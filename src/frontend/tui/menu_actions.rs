@@ -717,6 +717,16 @@ pub fn handle_ui_action(
             );
             app_core.needs_render = true;
         }
+        UiAction::AlertPacks => {
+            // The browser panel is GUI-only, but the trust gate is fully
+            // usable here: .alertpacks show prints the same digest the
+            // panel does, so a TUI user is never asked to approve
+            // something they cannot read.
+            app_core.add_system_message(
+                "The alert-pack browser is GUI-only. Use .alertpacks to list,                  .alertpacks show <name> to review what a pack can change, and                  .alertpacks on|off|approve|revoke <name>.",
+            );
+            app_core.needs_render = true;
+        }
         UiAction::RoomImagesEdit => {
             // The grouped image->rooms editor is GUI-only for now; the
             // dot-command covers the whole workflow in the TUI.

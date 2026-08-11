@@ -2346,7 +2346,13 @@ impl AppCore {
             "addhighlight" | "addhl" => {
                 return Ok(CommandOutcome::Ui(UiAction::AddHighlight));
             }
-            "alertpacks" | "packs" => {
+            "alertpacks" => {
+                // Bare `.alertpacks` opens the browser where one exists; with
+                // a subcommand it stays text-driven, so the whole workflow
+                // remains available in the TUI and over the bridge.
+                if parts.len() == 1 {
+                    return Ok(CommandOutcome::Ui(UiAction::AlertPacks));
+                }
                 self.handle_alertpacks_command(&parts);
             }
             "edithighlight" | "edithl" => {
