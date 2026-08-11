@@ -80,6 +80,10 @@ pub struct TravelContext<'a> {
     /// Live compass exits from the current room (`XMLData.room_exits`) — the
     /// Confluence explorer's only view of the shifting maze.
     pub compass_dirs: &'a [String],
+    /// Names of everything you're carrying, containers included — for
+    /// `Cond::HasItem` (a door that needs its key). Empty when the caller
+    /// doesn't wire inventory, which evaluates as "don't have it".
+    pub carried_names: &'a [String],
     /// Ground-loot nouns in the current room — the Confluence explorer scans
     /// these for the tranquility point / pit landmarks (`GameObj.loot`).
     pub loot_nouns: &'a [String],
@@ -206,6 +210,14 @@ impl TravelContext<'_> {
             Cond::Not(inner) => !self.eval(inner),
             Cond::Any(any) => any.iter().any(|c| self.eval(c)),
             Cond::InRoom(id) => self.current_room == Some(*id),
+            // Unknown inventory answers false: sending a pile of unlock
+            // commands without the key just fails noisily, and the else
+            // branch (try the door anyway) is the safe one.
+            Cond::HasItem(name) => self.carried_names.iter().any(|n| {
+                let n = n.to_lowercase();
+                let want = name.to_lowercase();
+                n == want || n.contains(&want)
+            }),
         }
     }
 
@@ -1855,6 +1867,21 @@ impl TravelTask {
                     ];
                     actions.splice(pc..=pc, expansion);
                 }
+                WalkAction::SetVar { name, value } => {
+                    use crate::core::pathing::transpile::{
+                        set_mapdb_var, CURRENT_ROOM_TOKEN,
+                    };
+                    // `Map.current.id` isn't knowable at transpile time; fill
+                    // it from where we're standing as the action runs.
+                    let value = match value.as_deref() {
+                        Some(CURRENT_ROOM_TOKEN) => {
+                            ctx.current_room.map(|id| id.to_string())
+                        }
+                        _ => value,
+                    };
+                    set_mapdb_var(&name, value);
+                    pc += 1;
+                }
                 WalkAction::TrinketWarp => {
                     // Unconfigured or not carried: this crossing can't run.
                     // Fall back rather than sending `turn #` with no id.
@@ -3159,6 +3186,7 @@ mod tests {
                 funding: self.funding,
                 at_pinefar_depository: self.pinefar,
                 compass_dirs: &self.compass_dirs,
+                carried_names: &[],
                 loot_nouns: &self.loot_nouns,
                 fwi_trinket: None,
                 day_pass: None,
@@ -3452,6 +3480,7 @@ mod tests {
                 funding: None,
                 at_pinefar_depository: false,
                 compass_dirs: &[],
+                carried_names: &[],
                 loot_nouns: &[],
                 fwi_trinket: None,
                 day_pass: None,
@@ -3550,6 +3579,7 @@ mod tests {
                     funding: None,
                     at_pinefar_depository: false,
                     compass_dirs: &[],
+                    carried_names: &[],
                     loot_nouns: &[],
                     fwi_trinket: None,
                     day_pass: None,
@@ -4791,7 +4821,7 @@ mod tests {
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
                     recent_lines: &[], line_seq: 0,
-                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
                     fwi_trinket: None,
                     day_pass: Some(dp),
                 }
@@ -4887,7 +4917,7 @@ mod tests {
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
                     recent_lines: &[], line_seq: 0,
-                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
                     fwi_trinket: None,
                     day_pass: Some(dp),
                 }
@@ -4967,7 +4997,7 @@ mod tests {
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
                     recent_lines: &[], line_seq: 0,
-                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
                     fwi_trinket: None,
                     day_pass: Some(dp),
                 }

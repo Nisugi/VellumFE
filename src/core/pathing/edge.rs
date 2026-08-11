@@ -102,6 +102,14 @@ pub enum WalkAction {
         /// landmark can't express them.
         landmarks: Vec<(String, String)>,
     },
+    /// Set (or with `None`, clear) a `UserVars.mapdb_<name>` scratch variable.
+    ///
+    /// Load-bearing, not bookkeeping: an event area's dozen return edges all
+    /// send the same command and are told apart ONLY by the variable their
+    /// entry edge set, which their `timeto` reads. Skipping it makes every
+    /// return edge unroutable, or makes them all look equal so you exit
+    /// somewhere you didn't ask for.
+    SetVar { name: String, value: Option<String> },
     /// Warp via the Isle of Four Winds trinket: retrieve it if stowed, `turn`
     /// it, then put it back where it came from. 30 corpus edges.
     ///
@@ -309,4 +317,7 @@ pub enum Cond {
     /// Standing in this specific room. `try_move`'s "did that work?" test and
     /// the guard on a trailing replan.
     InRoom(u32),
+    /// Carrying an item matching this name (a door key). Resolved against the
+    /// live inventory registry, so it covers containers too.
+    HasItem(String),
 }

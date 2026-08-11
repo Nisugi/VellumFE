@@ -224,6 +224,62 @@ re!(
     r#"^;e\s+fput\s*\(?['"]([^'"]+)['"]\)?\s*;\s*fput\s*\(?['"]([^'"]+)['"]\)?;?$"#
 );
 
+// 43x: enter/leave an event area, recording (or clearing) which room you came
+// from. `N.times{fput "..."}` on the way in, `move(...)` on the way out.
+re!(
+    ORIGIN_VAR_ENTER,
+    r#"^;e\s+(?:(\d+)\.times\s*\{\s*)?(?:fput|move)\s*\(?['"]([^'"]+)['"]\)?\s*\}?\s*;\s*UserVars\.(mapdb_\w+)\s*=\s*(\d+|Map\.current\.id|nil);?$"#
+);
+
+// Tier-1 quoting variants: the same shapes we already support, written with
+// double quotes. An edge failing over a quote character is a bug in our
+// regexes, not a limit of the transpiler.
+re!(
+    BARE_MOVE_ANY,
+    r#"^;e\s+move\s*\(?["']([^"']+)["']\)?\s*(?:;\s*waitrt\?)?;?$"#
+);
+re!(BARE_FPUT_ANY, r#"^;e\s+fput\s*\(?["']([^"']+)["']\)?;?$"#);
+// Leading `waitrt?` before a move (9x), and `fput 'x' waitfor 'y'` with no
+// separator (6x).
+re!(
+    WAITRT_MOVE,
+    r#"^;e\s+waitrt\?;\s*move\s*\(?["']([^"']+)["']\)?;?$"#
+);
+re!(
+    FPUT_WAITFOR_ONLY,
+    r#"^;e\s+fput\s*\(?["']([^"']+)["']\)?\s+waitfor\s+["']([^"']+)["'];?$"#
+);
+// `move 'a'; move 'b' if/unless checkpaths.include?('dir')` (12x).
+re!(
+    MOVE_THEN_COND_MOVE,
+    r#"^;e\s+move\s*\(?["']([^"']+)["']\)?;\s*move\s*\(?["']([^"']+)["']\)?\s+(if|unless)\s+checkpaths\.include\?\(['"]([^'"]+)['"]\);?$"#
+);
+// `move 'x' while checkpaths.include?('dir')` (7x) — keep going while an exit
+// is still there.
+re!(
+    MOVE_WHILE_PATH,
+    r#"^;e\s+move\s*\(?["']([^"']+)["']\)?\s+while\s+checkpaths\.include\?\(['"]([^'"]+)['"]\);?$"#
+);
+// `x=XMLData.room_count; fput "north" until XMLData.room_count > x` (7x) —
+// retry a command until it actually moves you.
+re!(
+    FPUT_UNTIL_MOVED,
+    r#"^;e\s+\w+\s*=\s*XMLData\.room_count;\s*fput\s*\(?["']([^"']+)["']\)?\s+until\s+XMLData\.room_count\s*>\s*\w+;?$"#
+);
+// `unless (move 'go door'); ...; end` (8x) — try it, and on failure run a
+// recovery. Same shape as try_move.
+re!(
+    UNLESS_MOVE,
+    r#"^;e\s+unless\s*\(\s*move\s*\(?["']([^"']+)["']\)?\s*\);.*?move\s*\(?["']([^"']+)["']\)?;\s*end;?$"#
+);
+// Key-in-inventory door (8x): `door='X';key=GameObj.inv.find{...name=='K'};
+// if !key.nil? then multifput 'a','b',...; end`.
+re!(
+    KEYED_DOOR,
+    r#"^;e\s+door\s*=\s*['"]([^'"]+)['"];\s*key\s*=\s*GameObj\.inv\.find\{[^}]*name\s*==\s*['"]([^'"]+)['"];?\s*\};\s*if\s+!key\.nil\?\s+then\s+multifput\s+(.+?);\s*end;?$"#
+);
+re!(QUOTED_ITEM, r#"['"]([^'"]+)['"]"#);
+
 // 1x directly (plus 29 delegations to it): the Isle of Four Winds trinket
 // portal. Matched by its distinctive UserVar rather than the whole ~1.5KB
 // body, which is inventory-link scraping we replace with registry lookups.
@@ -720,6 +776,108 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
         // inline here would re-path *before* the move lands.
         return Some(vec![WalkAction::Move(c[1].to_string())]);
     }
+
+    // --- event-area origin markers (43x) ---
+    if let Some(c) = ORIGIN_VAR_ENTER.captures(src) {
+        let times: u32 = c.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(1);
+        let cmd = c[2].to_string();
+        let mut out: Vec<WalkAction> = (0..times.min(5).max(1))
+            .map(|i| {
+                // The last send is the one that moves us.
+                if i + 1 == times.min(5).max(1) {
+                    WalkAction::Move(cmd.clone())
+                } else {
+                    WalkAction::Put(cmd.clone())
+                }
+            })
+            .collect();
+        // Record where we came from so the return edge's timeto can tell
+        // itself apart from the other eleven identical exits.
+        out.push(WalkAction::SetVar {
+            name: c[3].to_string(),
+            value: match &c[4] {
+                "nil" => None,
+                // `Map.current.id` is resolved at crossing time, not here.
+                "Map.current.id" => Some(CURRENT_ROOM_TOKEN.to_string()),
+                literal => Some(literal.to_string()),
+            },
+        });
+        return Some(out);
+    }
+
+    // --- tier 1: quoting/whitespace variants of supported shapes ---
+    if let Some(c) = WAITRT_MOVE.captures(src) {
+        return Some(vec![WalkAction::WaitRt, WalkAction::Move(c[1].to_string())]);
+    }
+    if let Some(c) = FPUT_WAITFOR_ONLY.captures(src) {
+        return Some(vec![WalkAction::Await {
+            cmd: Some(c[1].to_string()),
+            pattern: Box::new(AwaitPattern::new(&regex::escape(&c[2]))?),
+            timeout: WAITFOR_TIMEOUT_SECS,
+            on_timeout: OnTimeout::Fail,
+            if_match: None,
+        }]);
+    }
+    if let Some(c) = MOVE_THEN_COND_MOVE.captures(src) {
+        let cond = Cond::PathAvailable(c[4].to_string());
+        let second = vec![WalkAction::Move(c[2].to_string())];
+        return Some(vec![
+            WalkAction::Move(c[1].to_string()),
+            WalkAction::If {
+                cond: if &c[3] == "if" {
+                    cond
+                } else {
+                    Cond::Not(Box::new(cond))
+                },
+                then: second,
+                els: Vec::new(),
+            },
+        ]);
+    }
+    if let Some(c) = MOVE_WHILE_PATH.captures(src) {
+        return Some(vec![WalkAction::Repeat {
+            body: vec![WalkAction::StepMove(c[1].to_string())],
+            // Stop once the exit we were following is gone.
+            until: RepeatUntil::Cond(Cond::Not(Box::new(Cond::PathAvailable(
+                c[2].to_string(),
+            )))),
+            max: MAX_RETRY_LOOP,
+        }]);
+    }
+    if let Some(c) = FPUT_UNTIL_MOVED.captures(src) {
+        return Some(vec![WalkAction::Repeat {
+            body: vec![WalkAction::StepMove(c[1].to_string()), WalkAction::WaitRt],
+            until: RepeatUntil::RoomChanged,
+            max: MAX_RETRY_LOOP,
+        }]);
+    }
+    if let Some(c) = UNLESS_MOVE.captures(src) {
+        return Some(vec![WalkAction::TryMove {
+            cmd: c[1].to_string(),
+            fallback: vec![WalkAction::Move(c[2].to_string())],
+        }]);
+    }
+    if let Some(c) = KEYED_DOOR.captures(src) {
+        // Only unlock when the key is actually on us; otherwise the multifput
+        // sends a pile of commands that all fail.
+        let steps: Vec<WalkAction> = QUOTED_ITEM
+            .captures_iter(&c[3])
+            .map(|m| WalkAction::Put(m[1].to_string()))
+            .collect();
+        if !steps.is_empty() {
+            return Some(vec![WalkAction::If {
+                cond: Cond::HasItem(c[2].to_string()),
+                then: steps,
+                els: vec![WalkAction::Move(format!("go {}", &c[1]))],
+            }]);
+        }
+    }
+    if let Some(c) = BARE_MOVE_ANY.captures(src) {
+        return Some(vec![WalkAction::Move(c[1].to_string())]);
+    }
+    if let Some(c) = BARE_FPUT_ANY.captures(src) {
+        return Some(vec![WalkAction::Put(c[1].to_string())]);
+    }
     None
 }
 
@@ -769,6 +927,58 @@ re!(
     TIMETO_SEEKING,
     r"^;e\s+if Society\.status == 'Order of Voln' and Society\.rank == 26 and \$go2_use_seeking;\s*([\d.]+);\s*else;\s*nil;\s*end$"
 );
+
+// `;e (!UserVars.mapdb_duskruin_origin.nil? and UserVars.mapdb_duskruin_origin
+// == 7) ? 0.2 : nil;` — the return edge is only routable when the variable
+// says THIS is where you came in.
+re!(
+    TIMETO_ORIGIN_VAR,
+    // No backreference (Rust's regex crate has none): both var names are
+    // captured and compared in code.
+    r"^;e\s+\(!UserVars\.(mapdb_\w+)\.nil\?\s+and\s+UserVars\.(mapdb_\w+)\s*==\s*(\d+)\)\s*\?\s*([\d.]+)\s*:\s*nil;?$"
+);
+
+/// Placeholder for `Map.current.id` in a [`WalkAction::SetVar`] value: the
+/// room isn't known at transpile time, so the executor substitutes the live
+/// one when the action runs.
+pub const CURRENT_ROOM_TOKEN: &str = "{current_room}";
+
+/// Lich's `UserVars.mapdb_*` scratch variables, as the router sees them.
+///
+/// These are NOT decoration: several event areas (Duskruin, Ebon Gate,
+/// Talondown) have ONE physical exit shared by a dozen return edges, and the
+/// only thing distinguishing them is a variable the entry edge set. Their
+/// `timeto` reads it — `(origin == 7) ? 0.2 : nil` — so without the variable
+/// every return edge is either unroutable or, worse, all of them look equally
+/// good and the router picks one at random. You come out somewhere you didn't
+/// ask for.
+///
+/// A process global rather than task state because `resolve_timeto` is a free
+/// function the dijkstra calls with no context, matching `USE_SEEKING` above.
+/// Values are per-session and cheap; a stale one only mis-costs an edge that
+/// re-planning corrects.
+static MAPDB_VARS: std::sync::LazyLock<
+    std::sync::RwLock<std::collections::HashMap<String, String>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// Read a `UserVars.mapdb_<name>` value, `None` when never set (Ruby `nil`).
+pub fn mapdb_var(name: &str) -> Option<String> {
+    MAPDB_VARS.read().ok()?.get(name).cloned()
+}
+
+/// Set a `UserVars.mapdb_<name>`; `None` clears it (Ruby `= nil`).
+pub fn set_mapdb_var(name: &str, value: Option<String>) {
+    if let Ok(mut vars) = MAPDB_VARS.write() {
+        match value {
+            Some(v) => {
+                vars.insert(name.to_string(), v);
+            }
+            None => {
+                vars.remove(name);
+            }
+        }
+    }
+}
 
 /// Whether Voln seeking edges are routable this session — the Rust analog of
 /// Lich's `$go2_use_seeking` global (the seeking timeto procs read it
@@ -933,6 +1143,17 @@ fn resolve_timeto_depth(db: &MapDb, timeto: &TimeTo, depth: u8) -> Option<f64> {
                 // Pessimistic constant: same walkability, honest ETA.
                 return Some(a.max(b));
             }
+            if let Some(c) = TIMETO_ORIGIN_VAR.captures(src) {
+                // Routable only from the room the entry edge recorded — this
+                // is what keeps a dozen identical `go wagon` exits distinct.
+                // Both halves must name the same variable (the backreference
+                // the regex crate can't express).
+                if c[1] == c[2] {
+                    return (mapdb_var(&c[1]).as_deref() == Some(&c[3]))
+                        .then(|| c[4].parse().ok())
+                        .flatten();
+                }
+            }
             if let Some(c) = TIMETO_SEEKING.captures(src) {
                 // Routable only when seeking is enabled (which is only
                 // possible for a Voln Master — set_use_seeking gates it).
@@ -1007,6 +1228,111 @@ mod tests {
             transpile(";e fput 'search';fput 'go hatch'"),
             Some(vec![Put("search".into()), Move("go hatch".into())])
         );
+    }
+
+    #[test]
+    fn event_origin_var_gates_which_return_edge_is_routable() {
+        // Duskruin has ELEVEN entrances all landing in 26905, and 26905 has
+        // twelve exits back that ALL send `go wagon`. The only thing telling
+        // them apart is the variable the entry edge set, read by the return
+        // edge's timeto. Drop it and every return edge is unroutable - or
+        // worse, they all look equal and you exit somewhere you didn't ask for.
+        let _guard = GATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let enter = transpile(
+            ";e 2.times{fput \"event transport duskruin\"};\
+             UserVars.mapdb_duskruin_origin = 2426;",
+        )
+        .expect("entry edge transpiles");
+        assert_eq!(
+            enter.last(),
+            Some(&WalkAction::SetVar {
+                name: "mapdb_duskruin_origin".into(),
+                value: Some("2426".into()),
+            }),
+            "the entry records where we came from: {enter:?}"
+        );
+
+        let cost = TimeTo::Proc(
+            ";e (!UserVars.mapdb_duskruin_origin.nil? and \
+             UserVars.mapdb_duskruin_origin == 2426) ? 0.2 : nil;"
+                .into(),
+        );
+        let db = MapDb::from_json("[]").unwrap();
+
+        set_mapdb_var("mapdb_duskruin_origin", None);
+        assert_eq!(
+            resolve_timeto_depth(&db, &cost, 0),
+            None,
+            "with no origin recorded the return edge is not routable"
+        );
+        set_mapdb_var("mapdb_duskruin_origin", Some("9410".into()));
+        assert_eq!(
+            resolve_timeto_depth(&db, &cost, 0),
+            None,
+            "a DIFFERENT origin doesn't open this exit"
+        );
+        set_mapdb_var("mapdb_duskruin_origin", Some("2426".into()));
+        assert_eq!(
+            resolve_timeto_depth(&db, &cost, 0),
+            Some(0.2),
+            "the matching origin makes exactly this exit routable"
+        );
+        set_mapdb_var("mapdb_duskruin_origin", None);
+    }
+
+    #[test]
+    fn leaving_an_event_area_clears_its_origin() {
+        let got = transpile(";e move('go wagon');UserVars.mapdb_duskruin_origin = nil;")
+            .expect("exit edge transpiles");
+        assert_eq!(
+            got,
+            vec![
+                WalkAction::Move("go wagon".into()),
+                WalkAction::SetVar {
+                    name: "mapdb_duskruin_origin".into(),
+                    value: None,
+                },
+            ],
+            "leaving clears the marker so a later trip can't reuse it"
+        );
+    }
+
+    #[test]
+    fn quoting_variants_of_supported_shapes_transpile() {
+        use WalkAction::*;
+        // Double quotes are the SAME shapes we already handled; an edge
+        // failing over a quote character was a bug in our regexes.
+        assert_eq!(
+            transpile(r#";e move "go vortex""#),
+            Some(vec![Move("go vortex".into())])
+        );
+        assert_eq!(
+            transpile(r#";e fput "go gang""#),
+            Some(vec![Put("go gang".into())])
+        );
+        assert_eq!(
+            transpile(";e waitrt?; move 'east'"),
+            Some(vec![WaitRt, Move("east".into())])
+        );
+    }
+
+    #[test]
+    fn keyed_door_only_unlocks_when_the_key_is_on_you() {
+        let got = transpile(
+            ";e door='iron door';key=GameObj.inv.find{|k| k.name=='brass key';};\
+             if !key.nil? then multifput 'unlock door', 'open door', 'go door'; end;",
+        )
+        .expect("keyed door transpiles");
+        match &got[0] {
+            WalkAction::If { cond, then, els } => {
+                assert_eq!(*cond, Cond::HasItem("brass key".into()));
+                assert_eq!(then.len(), 3, "the unlock sequence: {then:?}");
+                // Without the key, sending the whole sequence just fails
+                // noisily; try the door instead.
+                assert_eq!(els, &[WalkAction::Move("go iron door".into())]);
+            }
+            other => panic!("expected an If, got {other:?}"),
+        }
     }
 
     #[test]

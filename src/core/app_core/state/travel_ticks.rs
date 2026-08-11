@@ -205,6 +205,18 @@ impl AppCore {
                 };
                 (item.id.clone(), return_to, in_hand)
             });
+        // Every item name we can reach, for `Cond::HasItem` (keyed doors).
+        // Carried plus container contents — a key in your bag still opens it.
+        let carried_names: Vec<String> = objects
+            .carried()
+            .into_iter()
+            .map(|i| i.name.clone())
+            .chain(
+                objects
+                    .containers()
+                    .flat_map(|c| c.items.iter().map(|i| i.name.clone())),
+            )
+            .collect();
         let weaponsack = resolve_bag(&self.config.go2.weaponsack);
         let lootsack = resolve_bag(&self.config.go2.lootsack);
         let day_pass_sack = resolve_bag(&self.config.go2.day_pass_sack);
@@ -300,6 +312,7 @@ impl AppCore {
             // current room's compass exits and ground-loot nouns (the
             // tranquility point / pit landmarks live in ground + room_desc).
             compass_dirs: &compass_dirs,
+            carried_names: &carried_names,
             loot_nouns: &loot_nouns,
             // Day-pass crossing inputs: the resolved sack container, buy config,
             // and the live pass cache (begin_day_pass computes the per-edge
