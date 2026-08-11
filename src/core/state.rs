@@ -192,6 +192,9 @@ pub struct GameState {
     /// Encumbrance dialog state (from encum dialog)
     pub encumbrance: EncumbranceState,
 
+    /// Combat stance (from the stance dialog's pbarStance)
+    pub stance: StanceState,
+
     /// Betrayer panel state (blood points + items) - GS4 only
     pub betrayer: BetrayerState,
 
@@ -973,6 +976,58 @@ impl EncumbranceState {
     }
 }
 
+/// Combat stance, from `<progressBar id='pbarStance' value='100'
+/// text='defensive (100%)'/>` inside the stance dialog.
+///
+/// Before this existed the stance bar rendered straight into a window widget
+/// and never reached game state, so headless and remote clients -- anything
+/// without a stance window -- had no stance at all. It is stored here for the
+/// same reason injuries and vitals are: the data belongs to the session, not
+/// to whichever window happens to be on screen.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StanceState {
+    /// Percent of stance contributing to defense (0-100). 100 is fully
+    /// defensive, 0 fully offensive.
+    pub value: u32,
+    /// Stance name parsed out of the bar text ("defensive", "offensive", ...).
+    /// Empty until the first stance bar arrives.
+    pub text: String,
+    /// Generation counter for change detection
+    pub generation: u64,
+}
+
+impl StanceState {
+    /// Update from progress bar data; returns true if changed.
+    ///
+    /// The feed's text is `"defensive (100%)"` -- the percent is already in
+    /// `value`, so the parenthetical is stripped and only the name kept.
+    /// Callers pass the raw text; parsing lives here so every entry point
+    /// (dialog path and bare progressBar path) normalizes identically.
+    pub fn update(&mut self, value: u32, text: &str) -> bool {
+        let name = text
+            .split('(')
+            .next()
+            .unwrap_or(text)
+            .trim()
+            .to_ascii_lowercase();
+        if self.value != value || self.text != name {
+            self.value = value;
+            self.text = name;
+            self.generation += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Clear on disconnect/login.
+    pub fn clear(&mut self) {
+        self.value = 0;
+        self.text.clear();
+        self.generation += 1;
+    }
+}
+
 /// Betrayer panel state (from `<dialogData id='BetrayerPanel'>`)
 /// Displays blood points as progress bar + list of contributing items
 #[derive(Clone, Debug, Default)]
@@ -1068,6 +1123,7 @@ impl GameState {
             dr_experience: DRExperienceState::default(),
             gs4_experience: GS4ExperienceState::default(),
             encumbrance: EncumbranceState::default(),
+            stance: StanceState::default(),
             minivitals: MiniVitalsState::default(),
             betrayer: BetrayerState::default(),
             bounty: BountyState::default(),
@@ -1549,6 +1605,54 @@ mod tests {
         assert!(cloned.standing());
         assert!(cloned.hidden());
         assert!(!cloned.dead());
+    }
+
+    #[test]
+    fn stance_parses_name_out_of_bar_text() {
+        let mut stance = StanceState::default();
+        // The feed's text is "defensive (100%)" -- the percent is already in
+        // `value`, so only the name is kept.
+        assert!(stance.update(100, "defensive (100%)"));
+        assert_eq!(stance.value, 100);
+        assert_eq!(stance.text, "defensive");
+
+        assert!(stance.update(0, "offensive (0%)"));
+        assert_eq!(stance.value, 0);
+        assert_eq!(stance.text, "offensive");
+    }
+
+    #[test]
+    fn stance_handles_text_without_percent() {
+        let mut stance = StanceState::default();
+        // Defensive against a feed that omits the parenthetical.
+        stance.update(50, "guarded");
+        assert_eq!(stance.text, "guarded");
+
+        // ...and against casing drift.
+        stance.update(50, "Advance (50%)");
+        assert_eq!(stance.text, "advance");
+    }
+
+    #[test]
+    fn stance_reports_changes_for_delta_suppression() {
+        let mut stance = StanceState::default();
+        assert!(stance.update(100, "defensive (100%)"));
+        // Same value and name: no change, so no delta is emitted.
+        assert!(!stance.update(100, "defensive (100%)"));
+        // A percent change alone counts.
+        assert!(stance.update(75, "defensive (75%)"));
+        let gen = stance.generation;
+        assert!(!stance.update(75, "defensive (75%)"));
+        assert_eq!(stance.generation, gen, "no-op must not bump generation");
+    }
+
+    #[test]
+    fn stance_clear_resets() {
+        let mut stance = StanceState::default();
+        stance.update(100, "defensive (100%)");
+        stance.clear();
+        assert_eq!(stance.value, 0);
+        assert!(stance.text.is_empty());
     }
 
     #[test]

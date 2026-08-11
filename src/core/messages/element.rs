@@ -959,6 +959,12 @@ impl MessageProcessor {
                     "encumlevel" => {
                         game_state.encumbrance.update_level(*value, text.clone());
                     }
+                    // The stance bar renders into a window widget above, but
+                    // it also belongs in game state: headless and remote
+                    // clients have no stance window to read it from.
+                    "pbarStance" => {
+                        game_state.stance.update(*value, text);
+                    }
                     _ => {}
                 }
             }
@@ -1455,6 +1461,16 @@ impl MessageProcessor {
                         None => dialog.progress_bars.push(bar),
                     }
                 }
+
+                // Stance arrives by either route depending on how the server
+                // frames the dialog, so mirror it into game state from both.
+                // Everything else here is dialog-slot rendering only.
+                for pb in progress_bars {
+                    if pb.id == "pbarStance" {
+                        game_state.stance.update(pb.value, &pb.text);
+                    }
+                }
+
                 self.sync_shown_dialog(ui_state, id, show);
             }
             ParsedElement::DialogLabelList { id, clear, labels } => {

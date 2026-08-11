@@ -1195,6 +1195,76 @@ fn unmapped_indicators_now_reach_gamestate() {
     assert!(game_state.status.diseased());
 }
 
+/// Stance reaches GameState via the bare `<progressBar>` route.
+///
+/// Previously the stance bar rendered only into a window widget, so a client
+/// with no stance window -- headless, remote, or the multi-account display --
+/// had no stance value at all.
+#[test]
+fn stance_progress_bar_reaches_gamestate() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    let element = ParsedElement::ProgressBar {
+        id: "pbarStance".to_string(),
+        value: 80,
+        max: 100,
+        text: "defensive (80%)".to_string(),
+    };
+    processor.process_element(
+        &element,
+        &mut game_state,
+        &mut ui_state,
+        &mut std::collections::HashMap::new(),
+        &mut None,
+        &mut false,
+        &mut None,
+        &mut None,
+        &mut None,
+        None,
+    );
+
+    assert_eq!(game_state.stance.value, 80);
+    assert_eq!(game_state.stance.text, "defensive");
+}
+
+/// Stance also reaches GameState via the `<dialogData>` route, which is how
+/// the server usually frames it. Both paths must populate state or stance
+/// would be present only on some connections.
+#[test]
+fn stance_dialog_progress_bar_reaches_gamestate() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    let element = ParsedElement::DialogProgressBars {
+        id: "stance".to_string(),
+        clear: false,
+        progress_bars: vec![crate::parser::DialogProgressBarSpec {
+            id: "pbarStance".to_string(),
+            value: 0,
+            text: "offensive (0%)".to_string(),
+            layout: None,
+        }],
+    };
+    processor.process_element(
+        &element,
+        &mut game_state,
+        &mut ui_state,
+        &mut std::collections::HashMap::new(),
+        &mut None,
+        &mut false,
+        &mut None,
+        &mut None,
+        &mut None,
+        None,
+    );
+
+    assert_eq!(game_state.stance.value, 0);
+    assert_eq!(game_state.stance.text, "offensive");
+}
+
 /// An id with no typed accessor and no preset must still round-trip, so a new
 /// game indicator needs no code change to become readable by conditions.
 #[test]

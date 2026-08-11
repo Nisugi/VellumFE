@@ -862,6 +862,12 @@ pub struct RemoteTarget {
 /// Character-sheet lines for the status drawer: experience, encumbrance,
 /// bounty, society — pre-formatted core-side so every client renders the
 /// same text. Empty sections are omitted from the wire.
+///
+/// The `Vec<String>` sections are display text and stay that way; the phone
+/// client renders them verbatim. `gauges` carries the same values in numeric
+/// form for clients that need to draw a bar rather than print a line — the
+/// multi-account display would otherwise have to re-parse "Mind: clear (0%)"
+/// back into a number.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct RemoteCharInfo {
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -872,6 +878,39 @@ pub struct RemoteCharInfo {
     pub bounty: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub society: Vec<String>,
+    /// Numeric mirrors of the above, for bar-drawing clients.
+    #[serde(skip_serializing_if = "RemoteGauges::is_empty")]
+    pub gauges: RemoteGauges,
+}
+
+/// Numeric character gauges: percent plus the label the game gave it.
+/// Every field is optional because a session may not have reported one yet,
+/// and a display should show "unknown" rather than a confident zero.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteGauges {
+    /// Mind state 0-100 with its text ("clear", "muddled", ...).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mind: Option<RemoteGauge>,
+    /// Encumbrance 0-100 with its level text ("None", "Light", ...).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encumbrance: Option<RemoteGauge>,
+    /// Stance 0-100 (percent contributing to defense) with its name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stance: Option<RemoteGauge>,
+}
+
+impl RemoteGauges {
+    fn is_empty(&self) -> bool {
+        self.mind.is_none() && self.encumbrance.is_none() && self.stance.is_none()
+    }
+}
+
+/// One numeric gauge: a percent and the game's own word for it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteGauge {
+    pub value: u32,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub text: String,
 }
 
 /// One drawable room on the phone map. Short field names on purpose — a
@@ -1123,6 +1162,29 @@ impl RemoteStateSnapshot {
                     info.bounty.push(game_state.bounty.raw_text.clone());
                 }
                 info.society = game_state.society.lines.clone();
+
+                // Numeric mirrors for bar-drawing clients. Gated on the same
+                // "have we seen it" checks as the text above, so an
+                // unreported gauge is absent rather than a misleading zero.
+                if !exp.mind_state_text.is_empty() {
+                    info.gauges.mind = Some(RemoteGauge {
+                        value: exp.mind_state_value,
+                        text: exp.mind_state_text.clone(),
+                    });
+                }
+                if !enc.text.is_empty() {
+                    info.gauges.encumbrance = Some(RemoteGauge {
+                        value: enc.value,
+                        text: enc.text.clone(),
+                    });
+                }
+                let stance = &game_state.stance;
+                if !stance.text.is_empty() {
+                    info.gauges.stance = Some(RemoteGauge {
+                        value: stance.value,
+                        text: stance.text.clone(),
+                    });
+                }
                 info
             },
             session: RemoteSessionInfo::default(),
@@ -1673,6 +1735,62 @@ mod tests {
             stream: "main".to_string(),
             timestamp: None,
         })
+    }
+
+    #[test]
+    fn gauges_carry_numeric_mind_encumbrance_and_stance() {
+        let mut gs = GameState::new();
+        gs.gs4_experience.update_mind_state(42, "muddled".to_string());
+        gs.encumbrance.update_level(17, "Light".to_string());
+        gs.stance.update(80, "defensive (80%)");
+
+        let snap = RemoteStateSnapshot::from_game_state(&gs, &[]);
+        let g = &snap.char_info.gauges;
+
+        let mind = g.mind.as_ref().expect("mind gauge");
+        assert_eq!(mind.value, 42);
+        assert_eq!(mind.text, "muddled");
+
+        let enc = g.encumbrance.as_ref().expect("encumbrance gauge");
+        assert_eq!(enc.value, 17);
+        assert_eq!(enc.text, "Light");
+
+        let stance = g.stance.as_ref().expect("stance gauge");
+        assert_eq!(stance.value, 80);
+        assert_eq!(stance.text, "defensive");
+
+        // The pre-formatted display lines the phone reads are unchanged --
+        // gauges are additive, not a replacement.
+        assert!(snap
+            .char_info
+            .experience
+            .iter()
+            .any(|l| l == "Mind: muddled (42%)"));
+        assert!(snap
+            .char_info
+            .encumbrance
+            .iter()
+            .any(|l| l == "Light (17%)"));
+    }
+
+    /// An unreported gauge must be absent from the wire rather than a zero.
+    /// A multi-account card showing "stance 0%" for a character that never
+    /// reported stance would read as "fully offensive", which is a lie.
+    #[test]
+    fn unreported_gauges_are_absent_not_zero() {
+        let gs = GameState::new();
+        let snap = RemoteStateSnapshot::from_game_state(&gs, &[]);
+
+        assert!(snap.char_info.gauges.mind.is_none());
+        assert!(snap.char_info.gauges.encumbrance.is_none());
+        assert!(snap.char_info.gauges.stance.is_none());
+
+        // ...and the whole gauges object drops out of the JSON entirely.
+        let json = serde_json::to_string(&snap.char_info).expect("serialize");
+        assert!(
+            !json.contains("gauges"),
+            "empty gauges must not ship: {json}"
+        );
     }
 
     #[test]
