@@ -2977,13 +2977,16 @@ impl AppCore {
 
     /// Persist mappings, republish the lookup index, and keep the in-memory
     /// copy in sync so the next command sees the change.
+    ///
+    /// The store is the merged global+character view, so it is saved through the
+    /// scope-splitting writer — flattening it into the global file would leak
+    /// character entries there and lose edits to them on the next launch.
     pub fn commit_room_images(&mut self, store: crate::config::room_images::RoomImagesConfig) {
         use crate::config::room_images::RoomImageIndex;
         self.message_processor
             .set_room_image_index(RoomImageIndex::build(&store));
-        if let Err(e) = crate::config::Config::save_room_images(
+        if let Err(e) = crate::config::Config::save_room_images_split(
             &store,
-            true,
             self.config.character.as_deref(),
         ) {
             self.add_system_message(&format!("Room art saved to session only: {e}"));

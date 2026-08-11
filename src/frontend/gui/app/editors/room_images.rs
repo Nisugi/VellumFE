@@ -97,10 +97,16 @@ impl VellumGuiApp {
                             ui.group(|ui| {
                                 ui.horizontal(|ui| {
                                     // Thumbnail, so a card is identifiable at a glance.
-                                    if let Some((tex, size)) = self
-                                        .skin_state
-                                        .thumbnail(ctx, &format!("inline/{}.png", entry.name))
-                                    {
+                                    // Resolve through the registry for the real file
+                                    // name: hardcoding ".png" left every jpg/gif/webp
+                                    // card — including all play.net downloads — blank.
+                                    if let Some((tex, size)) = crate::core::inline_image::get(
+                                        &entry.name,
+                                    )
+                                    .and_then(|art| {
+                                        let file = art.path.file_name()?.to_str()?.to_owned();
+                                        self.skin_state.thumbnail(ctx, &format!("inline/{file}"))
+                                    }) {
                                         let scale = 40.0 / size.y.max(1.0);
                                         ui.image((tex, size * scale));
                                     }

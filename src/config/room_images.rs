@@ -180,6 +180,72 @@ fn merge_room_images(base: &mut RoomImagesConfig, overlay: RoomImagesConfig) {
     base.names.extend(overlay.names);
 }
 
+/// Splits the merged (global + character) working store back into its two scope
+/// files. The merged view cannot simply be written to global: character entries
+/// would leak into the shared file, and on the next launch the untouched
+/// character file would layer the stale version back over them — the edit lost.
+///
+/// Rules, keyed the same way `merge_room_images` merges (image name / label uid):
+/// - an entry whose name exists in the prior character file stays character-scoped
+///   (edits to it land in the character file);
+/// - everything else is global — new entries created in the editor are shared;
+/// - a global entry currently shadowed by a character one is preserved in the
+///   global file untouched, unless the name is gone from the merged store
+///   entirely, which means the user deleted it: deletion removes it everywhere.
+fn split_room_images(
+    merged: &RoomImagesConfig,
+    character_prior: &RoomImagesConfig,
+    global_prior: &RoomImagesConfig,
+) -> (RoomImagesConfig, RoomImagesConfig) {
+    use std::collections::HashSet;
+
+    let character_names: HashSet<&str> = character_prior
+        .images
+        .iter()
+        .map(|d| d.name.as_str())
+        .collect();
+    let merged_names: HashSet<&str> = merged.images.iter().map(|d| d.name.as_str()).collect();
+
+    let mut character_out = RoomImagesConfig::default();
+    let mut global_out = RoomImagesConfig::default();
+
+    for def in &merged.images {
+        if character_names.contains(def.name.as_str()) {
+            character_out.images.push(def.clone());
+        } else {
+            global_out.images.push(def.clone());
+        }
+    }
+    // Global versions shadowed by a character entry: the merged store only holds
+    // the character copy, so carry the global original forward — but not past a
+    // full delete.
+    for def in &global_prior.images {
+        if character_names.contains(def.name.as_str()) && merged_names.contains(def.name.as_str())
+        {
+            global_out.images.push(def.clone());
+        }
+    }
+
+    let character_uids: HashSet<&str> = character_prior.names.keys().map(String::as_str).collect();
+    for (uid, label) in &merged.names {
+        if character_uids.contains(uid.as_str()) {
+            character_out.names.insert(uid.clone(), label.clone());
+        } else {
+            global_out.names.insert(uid.clone(), label.clone());
+        }
+    }
+    for (uid, label) in &global_prior.names {
+        if character_uids.contains(uid.as_str()) && merged.names.contains_key(uid) {
+            global_out
+                .names
+                .entry(uid.clone())
+                .or_insert_with(|| label.clone());
+        }
+    }
+
+    (character_out, global_out)
+}
+
 impl Config {
     /// Load global room images from ~/.vellum-fe/global/room_images.toml.
     pub fn load_common_room_images() -> Result<RoomImagesConfig> {
@@ -229,6 +295,34 @@ impl Config {
         crate::config::write_atomic(&path, text.as_bytes())
             .with_context(|| format!("Failed to write room images: {:?}", path))
     }
+
+    /// Persist the merged working store, splitting entries back into the global
+    /// and character files they came from (see [`split_room_images`]). With no
+    /// character profile everything is global and only that file is written.
+    pub fn save_room_images_split(
+        merged: &RoomImagesConfig,
+        character: Option<&str>,
+    ) -> Result<()> {
+        if character.is_none() {
+            return Self::save_room_images(merged, true, None);
+        }
+
+        let character_prior = Self::load_character_room_images_only(character)?;
+        let global_prior = Self::load_common_room_images()?;
+        let (character_out, global_out) =
+            split_room_images(merged, &character_prior, &global_prior);
+
+        // Only touch the character file when it already participates: a user
+        // without per-character art shouldn't grow an empty file on every save.
+        if !character_prior.images.is_empty()
+            || !character_prior.names.is_empty()
+            || !character_out.images.is_empty()
+            || !character_out.names.is_empty()
+        {
+            Self::save_room_images(&character_out, false, character)?;
+        }
+        Self::save_room_images(&global_out, true, None)
+    }
 }
 
 #[cfg(test)]
@@ -250,6 +344,76 @@ mod tests {
             align: None,
             variants: Vec::new(),
         }
+    }
+
+    /// A character-scoped entry edited in the merged view must return to the
+    /// CHARACTER file, and the global file must not absorb it — flattening the
+    /// merged store into global leaked character art to every character and
+    /// lost the edit on the next launch (the untouched character file layered
+    /// the stale version back over it).
+    #[test]
+    fn split_keeps_character_entries_in_the_character_file() {
+        let global_prior = cfg(vec![def("shared", &[1])]);
+        let character_prior = cfg(vec![def("mine", &[2])]);
+        // The user edited "mine" (added a room) in the merged view.
+        let merged = cfg(vec![def("shared", &[1]), def("mine", &[2, 3])]);
+
+        let (character_out, global_out) =
+            split_room_images(&merged, &character_prior, &global_prior);
+
+        assert_eq!(character_out.images.len(), 1);
+        assert_eq!(character_out.images[0].name, "mine");
+        assert_eq!(character_out.images[0].rooms, vec![2, 3]);
+        assert_eq!(global_out.images.len(), 1);
+        assert_eq!(global_out.images[0].name, "shared");
+    }
+
+    /// New entries created in the editor are shared: they land in global.
+    #[test]
+    fn split_sends_new_entries_to_global() {
+        let global_prior = cfg(vec![]);
+        let character_prior = cfg(vec![]);
+        let merged = cfg(vec![def("fresh", &[9])]);
+
+        let (character_out, global_out) =
+            split_room_images(&merged, &character_prior, &global_prior);
+
+        assert!(character_out.images.is_empty());
+        assert_eq!(global_out.images.len(), 1);
+        assert_eq!(global_out.images[0].name, "fresh");
+    }
+
+    /// A global entry shadowed by a character override is invisible in the
+    /// merged store, but the global file must keep its own version — rewriting
+    /// global without it would strip the base art from every other character.
+    #[test]
+    fn split_preserves_shadowed_global_entries() {
+        let global_prior = cfg(vec![def("pier", &[1])]);
+        let character_prior = cfg(vec![def("pier", &[1, 2])]);
+        let merged = cfg(vec![def("pier", &[1, 2])]); // merged holds the char copy
+
+        let (character_out, global_out) =
+            split_room_images(&merged, &character_prior, &global_prior);
+
+        assert_eq!(character_out.images.len(), 1);
+        assert_eq!(character_out.images[0].rooms, vec![1, 2]);
+        assert_eq!(global_out.images.len(), 1, "shadowed global copy must survive");
+        assert_eq!(global_out.images[0].rooms, vec![1], "global keeps ITS version");
+    }
+
+    /// Deleting an entry from the merged view means "gone": it must vanish
+    /// from BOTH files, or the surviving layer resurrects it next launch.
+    #[test]
+    fn split_deletion_removes_the_entry_everywhere() {
+        let global_prior = cfg(vec![def("pier", &[1])]);
+        let character_prior = cfg(vec![def("pier", &[1, 2])]);
+        let merged = cfg(vec![]); // user deleted it
+
+        let (character_out, global_out) =
+            split_room_images(&merged, &character_prior, &global_prior);
+
+        assert!(character_out.images.is_empty());
+        assert!(global_out.images.is_empty());
     }
 
     /// The file is image-major; the runtime needs room-major. Every room in
