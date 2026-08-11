@@ -1117,6 +1117,109 @@ fn dashboard_auto_discovers_unclaimed_indicator() {
     assert_eq!(dashboard_ids(&ui_state), vec!["STANDING"]);
 }
 
+/// CHARACTERIZATION: the ten indicator ids that `element.rs` actually writes
+/// into `GameState.status`. Pins the parser->GameState boundary before the
+/// general-map refactor. Note JOINED is absent from this list by design --
+/// see `characterize_joined_indicator_is_dropped` below.
+#[test]
+fn characterize_statusinfo_fields_written_by_parser() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    for id in [
+        "STUNNED",
+        "BLEEDING",
+        "HIDDEN",
+        "INVISIBLE",
+        "WEBBED",
+        "DEAD",
+        "STANDING",
+        "KNEELING",
+        "SITTING",
+        "PRONE",
+    ] {
+        feed_indicator(&mut processor, &mut game_state, &mut ui_state, id, true);
+    }
+
+    let s = &game_state.status;
+    assert!(s.stunned && s.bleeding && s.hidden && s.invisible && s.webbed);
+    assert!(s.dead && s.standing && s.kneeling && s.sitting && s.prone);
+
+    // Clearing round-trips too.
+    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "STUNNED", false);
+    assert!(!game_state.status.stunned);
+}
+
+/// CHARACTERIZATION OF A DEFECT: `element.rs` has no `"joined"` match arm, so
+/// the game's `IconJOINED` indicator is swallowed by the `_ => {}` fallthrough
+/// and `status.joined` stays false forever -- despite the field existing and
+/// being serialized to remote clients.
+///
+/// The refactor FIXES this. Group membership is a prerequisite for the
+/// multi-account roster, so this flip is the whole point.
+#[test]
+fn characterize_joined_indicator_is_dropped() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "JOINED", true);
+
+    assert!(
+        !game_state.status.joined,
+        "pre-refactor: JOINED is dropped by the _ => {{}} arm"
+    );
+    // It DOES reach the dashboard widget path, proving the id arrives intact
+    // and only the GameState projection loses it.
+    assert!(dashboard_ids(&ui_state).contains(&"JOINED".to_string()));
+}
+
+/// CHARACTERIZATION OF A DEFECT: POISONED/DISEASED are real game indicators
+/// and shipped presets, but have no `StatusInfo` field at all. They reach the
+/// dashboard but nothing in core can read them.
+///
+/// The refactor FIXES this -- a general map stores every id the game sends.
+#[test]
+fn characterize_unmapped_indicators_reach_widget_but_not_gamestate() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    for id in ["POISONED", "DISEASED"] {
+        feed_indicator(&mut processor, &mut game_state, &mut ui_state, id, true);
+    }
+
+    // Widget path sees them...
+    let ids = dashboard_ids(&ui_state);
+    assert!(ids.contains(&"POISONED".to_string()));
+    assert!(ids.contains(&"DISEASED".to_string()));
+
+    // ...but GameState has nowhere to put them. Asserting the whole struct is
+    // still default proves nothing else was written as a side effect.
+    assert_eq!(
+        game_state.status,
+        crate::core::state::StatusInfo::default(),
+        "pre-refactor: unmapped ids leave GameState.status untouched"
+    );
+}
+
+/// CHARACTERIZATION: the parser strips the `Icon` prefix but preserves case,
+/// and the GameState write is case-insensitive. Both castings must land.
+/// This behavior must SURVIVE the refactor unchanged.
+#[test]
+fn characterize_indicator_write_is_case_insensitive() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "stunned", true);
+    assert!(game_state.status.stunned, "lowercase id must write");
+
+    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "STUNNED", false);
+    assert!(!game_state.status.stunned, "uppercase id must write too");
+}
+
 #[test]
 fn dashboard_suppresses_claimed_indicator() {
     // A combined POSTURE indicator claims STANDING/KNEELING/PRONE/SITTING;

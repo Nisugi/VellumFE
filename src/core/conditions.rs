@@ -387,6 +387,144 @@ mod tests {
         }
     }
 
+    fn indicator_cond(id: &str, active: bool) -> Condition {
+        Condition::Indicator {
+            id: id.to_string(),
+            active,
+        }
+    }
+
+    /// CHARACTERIZATION: every indicator id the game can send, evaluated
+    /// through `Condition::Indicator`. These pin the pre-refactor contract so
+    /// the move to a general indicator map is provably behavior-preserving
+    /// except where the change is deliberate. Several assertions below encode
+    /// *defects* rather than intent; each is labelled.
+    #[test]
+    fn characterize_indicator_lowercase_ids_resolve() {
+        let mut gs = GameState::new();
+        gs.status.standing = true;
+        gs.status.stunned = true;
+
+        // Lowercase ids hit `indicator_value`'s match arms and resolve.
+        assert!(eval_condition(&indicator_cond("standing", true), &gs, 0, None));
+        assert!(eval_condition(&indicator_cond("stunned", true), &gs, 0, None));
+        // Negation works: asking active=false on a set flag is false.
+        assert!(!eval_condition(&indicator_cond("standing", false), &gs, 0, None));
+        // An unset flag reads false, and active=false matches it.
+        assert!(!eval_condition(&indicator_cond("kneeling", true), &gs, 0, None));
+        assert!(eval_condition(&indicator_cond("kneeling", false), &gs, 0, None));
+    }
+
+    /// CHARACTERIZATION OF A DEFECT: config and presets store indicator ids in
+    /// UPPERCASE (`presets.rs` uses `"STANDING"`), but `indicator_value`
+    /// matches lowercase literals only and does not normalize. So every
+    /// uppercase indicator condition currently resolves to `None` and is
+    /// coerced to `false` by the `unwrap_or(false)` at the call site --
+    /// including `active: false`, which a user would reasonably expect to be
+    /// true when the flag is unset.
+    ///
+    /// The refactor FIXES this by normalizing case in the accessor. When that
+    /// lands, these assertions flip; that flip is the intended behavior change.
+    #[test]
+    fn characterize_indicator_uppercase_ids_silently_false_today() {
+        let mut gs = GameState::new();
+        gs.status.standing = true;
+
+        // Standing IS set, but the uppercase id never matches -> false.
+        assert!(!eval_condition(&indicator_cond("STANDING", true), &gs, 0, None));
+        // And the negation is ALSO false -- the tell-tale sign of `None`
+        // rather than a real boolean answer.
+        assert!(!eval_condition(&indicator_cond("STANDING", false), &gs, 0, None));
+    }
+
+    /// CHARACTERIZATION OF A DEFECT: `element.rs` has no match arm writing
+    /// `status.joined`, so the field is permanently `false` even though the
+    /// game sends `<indicator id='IconJOINED'>` and the field is serialized to
+    /// remote clients. The condition path resolves the id (it is a real match
+    /// arm) but always reads the stale default.
+    ///
+    /// The refactor FIXES this: a general map stores whatever the game sends.
+    /// Group membership conditions start working, which is a prerequisite for
+    /// the multi-account roster.
+    #[test]
+    fn characterize_joined_never_set_by_parser() {
+        let gs = GameState::new();
+        // The id resolves (unlike an unknown id) but the value is always false.
+        assert!(!eval_condition(&indicator_cond("joined", true), &gs, 0, None));
+        assert!(eval_condition(&indicator_cond("joined", false), &gs, 0, None));
+    }
+
+    /// CHARACTERIZATION OF A DEFECT: POISONED and DISEASED are shipped
+    /// indicator templates (`presets.rs`) and real game indicators, but have no
+    /// `StatusInfo` field, so `indicator_value` returns `None` and conditions
+    /// on them are silently false in BOTH directions. They reach the dashboard
+    /// widget path only.
+    ///
+    /// The refactor FIXES this -- a general map has no fixed arity.
+    #[test]
+    fn characterize_unmapped_game_indicators_are_dead_conditions() {
+        let gs = GameState::new();
+        for id in ["poisoned", "diseased", "POISONED", "DISEASED"] {
+            assert!(
+                !eval_condition(&indicator_cond(id, true), &gs, 0, None),
+                "{id} active=true should be false pre-refactor"
+            );
+            assert!(
+                !eval_condition(&indicator_cond(id, false), &gs, 0, None),
+                "{id} active=false should ALSO be false pre-refactor (None, not a boolean)"
+            );
+        }
+    }
+
+    /// CHARACTERIZATION: a genuinely unknown id must stay false in both
+    /// directions even after the refactor. A general map must NOT invent
+    /// `true` for ids the game never sent. This assertion is expected to
+    /// survive the refactor unchanged.
+    #[test]
+    fn characterize_unknown_indicator_id_stays_false() {
+        let gs = GameState::new();
+        assert!(!eval_condition(&indicator_cond("not_a_real_id", true), &gs, 0, None));
+        assert!(!eval_condition(&indicator_cond("not_a_real_id", false), &gs, 0, None));
+    }
+
+    /// CHARACTERIZATION: the full set of ids that DO resolve today, asserted
+    /// one by one against a fully-set status. This is the regression net for
+    /// the accessor rewrite -- if the map loses any of these, this fails.
+    #[test]
+    fn characterize_all_eleven_statusinfo_fields_readable() {
+        let mut gs = GameState::new();
+        gs.status.standing = true;
+        gs.status.kneeling = true;
+        gs.status.sitting = true;
+        gs.status.prone = true;
+        gs.status.stunned = true;
+        gs.status.bleeding = true;
+        gs.status.hidden = true;
+        gs.status.invisible = true;
+        gs.status.webbed = true;
+        gs.status.joined = true;
+        gs.status.dead = true;
+
+        for id in [
+            "standing",
+            "kneeling",
+            "sitting",
+            "prone",
+            "stunned",
+            "bleeding",
+            "hidden",
+            "invisible",
+            "webbed",
+            "joined",
+            "dead",
+        ] {
+            assert!(
+                eval_condition(&indicator_cond(id, true), &gs, 0, None),
+                "indicator {id} should read true when its field is set"
+            );
+        }
+    }
+
     #[test]
     fn injury_absent_part_is_healthy() {
         let gs = GameState::new();
