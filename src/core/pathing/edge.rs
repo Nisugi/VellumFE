@@ -102,6 +102,13 @@ pub enum WalkAction {
         /// landmark can't express them.
         landmarks: Vec<(String, String)>,
     },
+    /// Warp via the Isle of Four Winds trinket: retrieve it if stowed, `turn`
+    /// it, then put it back where it came from. 30 corpus edges.
+    ///
+    /// The item is named by config (`go2.fwi_trinket`), the way Lich names it
+    /// with `UserVars.mapdb_fwi_trinket`. Resolution is deferred to crossing
+    /// time because the trinket's exist id and container are live state.
+    TrinketWarp,
     /// Send `cmd`; if the room DIDN'T change, run `fallback` (Lich's
     /// `try_move`). 27 corpus edges — a locker door that must be closed
     /// before the exit works, and similar "try it, fix it, retry" doors.

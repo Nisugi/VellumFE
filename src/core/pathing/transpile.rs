@@ -224,6 +224,11 @@ re!(
     r#"^;e\s+fput\s*\(?['"]([^'"]+)['"]\)?\s*;\s*fput\s*\(?['"]([^'"]+)['"]\)?;?$"#
 );
 
+// 1x directly (plus 29 delegations to it): the Isle of Four Winds trinket
+// portal. Matched by its distinctive UserVar rather than the whole ~1.5KB
+// body, which is inventory-link scraping we replace with registry lookups.
+re!(FWI_TRINKET, r"^;e\s+worn\s*=\s*!GameObj\[UserVars\.mapdb_fwi_trinket\]");
+
 // 27x: try a move; if the room didn't change, fix something and retry. The
 // trailing `$go2_restart` is optional (it splits the family in the residue
 // report but is the same shape).
@@ -411,6 +416,9 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
             WalkAction::Put(c[1].to_string()),
             WalkAction::Move(c[2].to_string()),
         ]);
+    }
+    if FWI_TRINKET.is_match(src) {
+        return Some(vec![WalkAction::TrinketWarp]);
     }
     if let Some(c) = TRY_MOVE.captures(src) {
         let mut out = vec![WalkAction::TryMove {

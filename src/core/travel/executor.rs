@@ -86,6 +86,28 @@ pub struct TravelContext<'a> {
     /// Chronomage day-pass crossing inputs, when the planned edge is a day-pass
     /// edge and the caller supplies them (`None` otherwise).
     pub day_pass: Option<DayPassInputs<'a>>,
+    /// The Isle of Four Winds trinket, resolved from `go2.fwi_trinket`
+    /// against live inventory: its exist id, and the container to put it back
+    /// in (`None` when it's worn or held, i.e. nothing to return it to).
+    /// `None` overall when unconfigured or not carried — the crossing then
+    /// can't run and its edges fall back.
+    pub fwi_trinket: Option<TrinketInputs<'a>>,
+}
+
+/// The Four Winds trinket, resolved against live inventory.
+///
+/// Resolved by the caller (which owns the registry) rather than passing the
+/// registry in, matching how `StashInputs` works: the executor stays a pure
+/// state machine over values it was handed.
+#[derive(Clone, Copy, Debug)]
+pub struct TrinketInputs<'a> {
+    /// Exist id, for `turn #<id>`.
+    pub id: &'a str,
+    /// Container command-target to return it to, when it came out of one.
+    /// `None` for a worn/held trinket — nothing to put back.
+    pub return_to: Option<&'a str>,
+    /// Whether it's already in hand (skip the `get`).
+    pub in_hand: bool,
 }
 
 /// What the day-pass crossing needs from live state. The specific pass id and
@@ -1833,6 +1855,40 @@ impl TravelTask {
                     ];
                     actions.splice(pc..=pc, expansion);
                 }
+                WalkAction::TrinketWarp => {
+                    // Unconfigured or not carried: this crossing can't run.
+                    // Fall back rather than sending `turn #` with no id.
+                    let Some(t) = ctx.fwi_trinket else {
+                        events.push(TravelEvent::Status(format!(
+                            "edge {from} -> {expected} needs your Four Winds trinket - \
+                             set it in Settings > Travel"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    // The Ruby scrapes `<a exist=...>` links out of the `get`
+                    // response to learn which container the trinket came from.
+                    // We don't need to: the registry already tracks
+                    // containment, so `return_to` is resolved before we start.
+                    let mut steps = Vec::new();
+                    if !t.in_hand {
+                        steps.push(WalkAction::EmptyHands);
+                        steps.push(WalkAction::Put(format!("get #{}", t.id)));
+                    }
+                    steps.push(WalkAction::StepMove(format!("turn #{}", t.id)));
+                    if !t.in_hand {
+                        steps.push(WalkAction::Put(match t.return_to {
+                            Some(bag) => format!("put #{} in #{bag}", t.id),
+                            // Came from nowhere trackable — stow is the
+                            // Ruby's own fallback for the same case.
+                            None => format!("stow #{}", t.id),
+                        }));
+                        steps.push(WalkAction::FillHands);
+                    }
+                    // The warp lands somewhere the edge can't predict.
+                    steps.push(WalkAction::Replan);
+                    actions.splice(pc..=pc, steps);
+                }
                 WalkAction::TryMove { cmd, fallback } => {
                     // Lower into: send it, wait for the room to settle, then
                     // run the fallback only if we're still where we started.
@@ -3104,6 +3160,7 @@ mod tests {
                 at_pinefar_depository: self.pinefar,
                 compass_dirs: &self.compass_dirs,
                 loot_nouns: &self.loot_nouns,
+                fwi_trinket: None,
                 day_pass: None,
             }
         }
@@ -3396,6 +3453,7 @@ mod tests {
                 at_pinefar_depository: false,
                 compass_dirs: &[],
                 loot_nouns: &[],
+                fwi_trinket: None,
                 day_pass: None,
             }
         }
@@ -3493,6 +3551,7 @@ mod tests {
                     at_pinefar_depository: false,
                     compass_dirs: &[],
                     loot_nouns: &[],
+                    fwi_trinket: None,
                     day_pass: None,
                 }
             }};
@@ -3945,6 +4004,65 @@ mod tests {
         assert!(
             !ev.iter().any(|e| matches!(e, TravelEvent::Failed(_))),
             "a correct landing is not a failure: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn trinket_warp_retrieves_turns_and_puts_it_back() {
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let mut ctx = sim.ctx(&db);
+        ctx.fwi_trinket = Some(TrinketInputs {
+            id: "500",
+            return_to: Some("77"),
+            in_hand: false,
+        });
+        let mut ev = Vec::new();
+        task.tick_script(
+            vec![WalkAction::TrinketWarp],
+            0,
+            None,
+            2,
+            1,
+            None,
+            ctx,
+            &mut ev,
+        );
+        // Hands are freed, then the trinket comes out. The `turn` is a
+        // StepMove so the put-back waits for the warp to land.
+        let sent = sent(&ev);
+        assert!(
+            sent.iter().any(|c| *c == "get #500"),
+            "retrieves the trinket by its live exist id: {sent:?}"
+        );
+    }
+
+    #[test]
+    fn trinket_warp_without_a_configured_trinket_falls_back() {
+        // Sending `turn #` with no id would be nonsense; the edge should
+        // hand off instead, and say why.
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let mut ev = Vec::new();
+        task.tick_script(
+            vec![WalkAction::TrinketWarp],
+            0,
+            None,
+            2,
+            1,
+            None,
+            sim.ctx(&db),
+            &mut ev,
+        );
+        assert!(sent(&ev).is_empty(), "nothing is sent: {ev:?}");
+        assert!(
+            ev.iter().any(|e| matches!(e, TravelEvent::Status(s)
+                if s.contains("Four Winds trinket"))),
+            "the message names the setting to fix: {ev:?}"
         );
     }
 
@@ -4674,6 +4792,7 @@ mod tests {
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
                     recent_lines: &[], line_seq: 0,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    fwi_trinket: None,
                     day_pass: Some(dp),
                 }
             }};
@@ -4769,6 +4888,7 @@ mod tests {
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
                     recent_lines: &[], line_seq: 0,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    fwi_trinket: None,
                     day_pass: Some(dp),
                 }
             }};
@@ -4848,6 +4968,7 @@ mod tests {
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
                     recent_lines: &[], line_seq: 0,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    fwi_trinket: None,
                     day_pass: Some(dp),
                 }
             }};

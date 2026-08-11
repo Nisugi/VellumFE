@@ -185,6 +185,26 @@ impl AppCore {
             }
             objects.find_container(name).map(|c| c.command_target())
         };
+        // Four Winds trinket: resolve the configured name to a live exist id
+        // and the container to put it back in. Done here (not in the
+        // executor) so the executor stays a state machine over plain values.
+        // The registry already tracks containment, so the crossing never has
+        // to scrape `<a exist=...>` links the way the mapdb proc does.
+        let fwi = (!self.config.go2.fwi_trinket.trim().is_empty())
+            .then(|| objects.find_item(self.config.go2.fwi_trinket.trim()))
+            .flatten()
+            .map(|(item, loc)| {
+                use crate::core::game_objects::Location;
+                let in_hand = matches!(loc, Location::Hand(_));
+                let return_to = match &loc {
+                    Location::Container(id) => objects
+                        .container(id)
+                        .map(|c| c.command_target()),
+                    // Worn / at-feet / held: nothing to return it to.
+                    _ => None,
+                };
+                (item.id.clone(), return_to, in_hand)
+            });
         let weaponsack = resolve_bag(&self.config.go2.weaponsack);
         let lootsack = resolve_bag(&self.config.go2.lootsack);
         let day_pass_sack = resolve_bag(&self.config.go2.day_pass_sack);
@@ -284,6 +304,13 @@ impl AppCore {
             // Day-pass crossing inputs: the resolved sack container, buy config,
             // and the live pass cache (begin_day_pass computes the per-edge
             // held-pass / buy-permission from the town pair).
+            fwi_trinket: fwi.as_ref().map(|(id, return_to, in_hand)| {
+                crate::core::travel::executor::TrinketInputs {
+                    id,
+                    return_to: return_to.as_deref(),
+                    in_hand: *in_hand,
+                }
+            }),
             day_pass: Some(crate::core::travel::executor::DayPassInputs {
                 sack_id: day_pass_sack.as_deref(),
                 buy_day_pass: &self.config.go2.buy_day_pass,
