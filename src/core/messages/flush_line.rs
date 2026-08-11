@@ -50,6 +50,14 @@ impl MessageProcessor {
             self.pending_move_feedback.push(fb);
         }
 
+        // Raw line for scripted-edge `Await` steps. Unlike the typed feedback
+        // above we can't pre-classify these: the patterns live in mapdb data.
+        // Only buffered while a scripted edge is actually awaiting, so the
+        // common case costs one bool check.
+        if self.capture_recent_lines {
+            self.pending_recent_lines.push(full_text.clone());
+        }
+
         // Character state (society/profession/CHE/citizenship). Buffer the line
         // for the prompt handler to feed into game_state.character IN ORDER —
         // the PROFILE house parse is stateful across lines. Cheap prefix gate.

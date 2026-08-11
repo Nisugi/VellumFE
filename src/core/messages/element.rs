@@ -352,6 +352,13 @@ impl MessageProcessor {
                     .move_feedback
                     .extend(self.pending_move_feedback.drain(..));
 
+                // Raw lines for scripted-edge awaits. A bounded ring, not a
+                // queue: an await must see lines that arrived before it armed,
+                // and several steps may match the same line.
+                for line in self.pending_recent_lines.drain(..) {
+                    game_state.push_recent_line(&line);
+                }
+
                 // Character-state lines feed the parser in order (the PROFILE
                 // house parse is stateful).
                 for line in self.pending_character_lines.drain(..) {

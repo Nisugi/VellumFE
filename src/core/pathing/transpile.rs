@@ -17,7 +17,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use super::edge::{Cond, WalkAction};
+use super::edge::{AwaitPattern, Cond, OnTimeout, RepeatUntil, WalkAction};
 use crate::core::mapdb::{MapDb, Room, TimeTo};
 
 macro_rules! re {
@@ -135,6 +135,47 @@ re!(
     r"^;e\s+fput\s*\(?'stand'\)?\s+unless\s+standing\?;?\s*move\s*\(?'([^']+)'\)?;?\s*(\$go2_restart\s*=\s*true;?)?$"
 );
 
+// --- await/repeat idioms (phase 3a) ---
+
+// ";e waitfor 'The gate swings open'; move 'go gate'" — a bare `waitfor` is
+// an UNBOUNDED block in Lich. We give it a long-but-finite timeout and treat
+// a miss as a failure: the awaited line is the only evidence the crossing
+// happened, so continuing past it would walk into the wrong room.
+re!(
+    WAITFOR_MOVE,
+    r#"^;e\s+waitfor\s+['"]([^'"]+)['"]\s*;\s*move\s*\(?['"]([^'"]+)['"]\)?;?$"#
+);
+// ";e fput 'go gangplank'; waitfor 'lowers the gangplank'; move 'out'" — the
+// ferry idiom. The `fput` is the active command, the `waitfor` is its await.
+re!(
+    FPUT_WAITFOR_MOVE,
+    r#"^;e\s+fput\s*\(?['"]([^'"]+)['"]\)?;\s*waitfor\s+['"]([^'"]+)['"]\s*;\s*move\s*\(?['"]([^'"]+)['"]\)?;?$"#
+);
+// ";e fput 'search' until GameObj.loot.find { |o| o.noun == 'crevice' }; move
+// 'go crevice'" — search until something appears, then enter it. Bounded by
+// the interpreter's loop ceiling.
+re!(
+    SEARCH_UNTIL_MOVE,
+    r#"^;e\s+fput\s*\(?['"]([^'"]+)['"]\)?\s+until\s+.+?;\s*move\s*\(?['"]([^'"]+)['"]\)?;?$"#
+);
+// ";e fput 'go fog' while Room.current.id == 24675" — retry a command until
+// the room changes (the Red Forest family).
+re!(
+    FPUT_WHILE_SAME_ROOM,
+    r#"^;e\s+(?:fput|dothistimeout)\s*\(?['"]([^'"]+)['"]\)?[^;]*?\s+while\s+Room\.current\.id\s*==\s*\d+;?$"#
+);
+
+/// How long a bare `waitfor` waits before giving up. Lich's `waitfor` blocks
+/// forever; a client that hangs a trip indefinitely is worse than one that
+/// gives up and hands off, so this is "effectively forever, but bounded" —
+/// long enough for a scheduled ferry, short enough to not strand a trip.
+const WAITFOR_TIMEOUT_SECS: f32 = 1800.0;
+
+/// Iterations for a "retry until the room changes" loop. The interpreter
+/// clamps this again; keeping it lower here matches the corpus, where these
+/// loops succeed within a few tries or not at all.
+const MAX_RETRY_LOOP: u32 = 20;
+
 /// Transpile a StringProc wayto command. `None` = unsupported (edge stays
 /// out of the graph).
 pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
@@ -167,6 +208,51 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
             cond: Cond::Sitting,
             then: vec![WalkAction::Move(c[1].to_string())],
             els: vec![WalkAction::Move(c[2].to_string())],
+        }]);
+    }
+    // Await idioms first: they are strictly more specific than the plain
+    // fput/move shapes below, which would otherwise match and silently drop
+    // the wait (walking on before the ferry arrives).
+    if let Some(c) = FPUT_WAITFOR_MOVE.captures(src) {
+        return Some(vec![
+            WalkAction::Await {
+                cmd: Some(c[1].to_string()),
+                pattern: Box::new(AwaitPattern::new(&regex::escape(&c[2]))?),
+                timeout: WAITFOR_TIMEOUT_SECS,
+                on_timeout: OnTimeout::Fail,
+            },
+            WalkAction::Move(c[3].to_string()),
+        ]);
+    }
+    if let Some(c) = WAITFOR_MOVE.captures(src) {
+        return Some(vec![
+            WalkAction::Await {
+                cmd: None,
+                pattern: Box::new(AwaitPattern::new(&regex::escape(&c[1]))?),
+                timeout: WAITFOR_TIMEOUT_SECS,
+                on_timeout: OnTimeout::Fail,
+            },
+            WalkAction::Move(c[2].to_string()),
+        ]);
+    }
+    if let Some(c) = SEARCH_UNTIL_MOVE.captures(src) {
+        return Some(vec![
+            WalkAction::Repeat {
+                body: vec![WalkAction::Put(c[1].to_string()), WalkAction::WaitRt],
+                // The Ruby condition tests for a room object we can't see from
+                // here; the loop ceiling bounds it and the move that follows
+                // is the real test of whether the search worked.
+                until: RepeatUntil::Count,
+                max: 15,
+            },
+            WalkAction::Move(c[2].to_string()),
+        ]);
+    }
+    if let Some(c) = FPUT_WHILE_SAME_ROOM.captures(src) {
+        return Some(vec![WalkAction::Repeat {
+            body: vec![WalkAction::Put(c[1].to_string()), WalkAction::WaitRt],
+            until: RepeatUntil::RoomChanged,
+            max: MAX_RETRY_LOOP,
         }]);
     }
     if let Some(c) = MULTIFPUT.captures(src) {
@@ -509,6 +595,89 @@ mod tests {
     use super::*;
 
     pub(crate) use super::GATE_LOCK;
+
+    #[test]
+    fn ferry_idiom_becomes_an_await_not_a_bare_move() {
+        // The motivating case for Await: `fput` boards, `waitfor` blocks until
+        // the crew lowers the gangplank, `move` disembarks. Transpiling this
+        // as fput+move (which the plain FPUT_MOVE shape would do) walks off
+        // the pier before the boat arrives.
+        let got = transpile(
+            ";e fput 'go gangplank'; waitfor 'lowers the gangplank'; move 'out'",
+        )
+        .expect("ferry idiom transpiles");
+        assert_eq!(got.len(), 2, "an await and the disembark: {got:?}");
+        match &got[0] {
+            WalkAction::Await {
+                cmd,
+                pattern,
+                on_timeout,
+                ..
+            } => {
+                assert_eq!(cmd.as_deref(), Some("go gangplank"), "boards actively");
+                assert!(
+                    pattern.is_match("An elven crewmember lowers the gangplank."),
+                    "matches the real arrival line"
+                );
+                assert_eq!(
+                    *on_timeout,
+                    OnTimeout::Fail,
+                    "the awaited line is the only evidence the boat came"
+                );
+            }
+            other => panic!("expected an Await, got {other:?}"),
+        }
+        assert_eq!(got[1], WalkAction::Move("out".into()));
+    }
+
+    #[test]
+    fn waitfor_text_is_escaped_not_treated_as_a_pattern() {
+        // waitfor takes a literal string. Regex metacharacters in it (periods
+        // especially) must match literally, or the pattern silently over-matches.
+        let got = transpile(";e waitfor 'the gate. opens'; move 'go gate'")
+            .expect("transpiles");
+        match &got[0] {
+            WalkAction::Await { pattern, .. } => {
+                assert!(pattern.is_match("the gate. opens"), "literal text matches");
+                assert!(
+                    !pattern.is_match("the gateX opens"),
+                    "the '.' is escaped, not a wildcard"
+                );
+            }
+            other => panic!("expected an Await, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn retry_until_room_change_becomes_a_bounded_repeat() {
+        // The Red Forest family: keep sending until the room changes.
+        let got = transpile(";e fput 'go fog' while Room.current.id == 24675")
+            .expect("transpiles");
+        assert_eq!(got.len(), 1);
+        match &got[0] {
+            WalkAction::Repeat { body, until, max } => {
+                assert_eq!(*until, RepeatUntil::RoomChanged);
+                assert!(*max > 0 && *max <= MAX_RETRY_LOOP, "bounded: {max}");
+                assert_eq!(body[0], WalkAction::Put("go fog".into()));
+            }
+            other => panic!("expected a Repeat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn search_until_becomes_a_bounded_repeat_then_the_move() {
+        let got = transpile(
+            ";e fput 'search' until GameObj.loot.find { |o| o.noun == 'crevice' }; move 'go crevice'",
+        )
+        .expect("transpiles");
+        assert_eq!(got.len(), 2, "the search loop and the entry: {got:?}");
+        assert!(
+            matches!(&got[0], WalkAction::Repeat { .. }),
+            "the search is a loop: {:?}",
+            got[0]
+        );
+        assert_eq!(got[1], WalkAction::Move("go crevice".into()));
+    }
 
     #[test]
     fn corpus_idioms_transpile() {

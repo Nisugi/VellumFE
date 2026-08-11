@@ -48,6 +48,17 @@ pub struct TravelContext<'a> {
     /// Move-feedback events since the last tick (drained from GameState) —
     /// nav arrivals + recovery signals. Empty when idle (§09/§12).
     pub feedback: &'a [crate::core::move_feedback::MoveFeedback],
+    /// Recent raw game lines (seq, text), newest last — what `Await` steps
+    /// match against. A bounded ring, NOT drained per tick like `feedback`:
+    /// an await arms mid-tick and must see lines that landed before it
+    /// started, and several steps may match the same line. Each await
+    /// remembers the seq it armed at and only considers newer entries.
+    /// Empty when the caller doesn't wire it (tests without awaits).
+    pub recent_lines: &'a [(u64, String)],
+    /// The newest line sequence number, i.e. what an await arming NOW should
+    /// record as its starting point. Equals the last `recent_lines` seq, or
+    /// the running counter when the ring is empty.
+    pub line_seq: u64,
     /// When native travel reaches an edge it can't cross, hand off to Lich's
     /// `;go2 <dest>` instead of banning + re-pathing. Only true on a Lich
     /// connection with the setting enabled (the caller gates on direct-mode).
@@ -150,6 +161,19 @@ impl TravelContext<'_> {
     }
 }
 
+/// An armed `Await`: what it has already done, so a resume doesn't repeat it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AwaitState {
+    /// Line sequence when the await armed; only newer lines can match. Without
+    /// this a stale line already in the ring would satisfy the await instantly.
+    since_seq: u64,
+    /// Deadline in `now_ms` terms.
+    deadline_ms: u64,
+    /// Whether the `Retry` re-send has already been spent (so it fails on the
+    /// second timeout rather than re-sending forever).
+    retried: bool,
+}
+
 /// What a tick produced, in order.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TravelEvent {
@@ -182,6 +206,8 @@ enum Step {
         sleep_until: Option<u64>,
         expected: u32,
         from: u32,
+        /// State of an in-progress `Await` at `pc`, if one is armed.
+        awaiting: Option<AwaitState>,
     },
     /// The hands stow/retrieve cascade (an EmptyHands/FillHands action) is
     /// running via the StashService (held on the task). When it finishes we
@@ -313,6 +339,11 @@ const MAX_STAND_ATTEMPTS: u32 = 5;
 const MAX_EDGE_RETRIES: u32 = 2;
 /// Re-path budget — a trip that restarts this often is going nowhere.
 const MAX_RESTARTS: u32 = 10;
+/// Hard ceiling on `WalkAction::Repeat` iterations, applied by the
+/// interpreter no matter what the map data asks for. Mirrors Lich's
+/// MAX_LOOP_ITERATIONS: bad map data may waste a route, it must never hang
+/// the client waiting on a loop that can't terminate.
+const MAX_SCRIPT_LOOP: u32 = 50;
 /// How long the maze NPC gets to speak a route before the walk gives up.
 const MAZE_ASK_TIMEOUT_MS: u64 = 12_000;
 /// Gap between maze route commands beyond waiting out RT.
@@ -580,7 +611,7 @@ impl TravelTask {
                 if current != sent_from
                     || ctx.now_ms.saturating_sub(sent_ms) > SLOW_ARRIVAL_TIMEOUT_MS
                 {
-                    self.tick_script(actions, pc, None, expected, from, ctx, &mut events);
+                    self.tick_script(actions, pc, None, expected, from, None, ctx, &mut events);
                 } else {
                     self.step = Step::ScriptWalk {
                         actions,
@@ -598,6 +629,7 @@ impl TravelTask {
                 sleep_until,
                 expected,
                 from,
+                awaiting,
             } => {
                 // A scripted edge can land the room change before its
                 // actions finish (multi-command edges): arrival wins.
@@ -613,7 +645,9 @@ impl TravelTask {
                     self.repath(ctx.db, current, ctx.lich_fallback, &mut events);
                     return events;
                 }
-                self.tick_script(actions, pc, sleep_until, expected, from, ctx, &mut events);
+                self.tick_script(
+                    actions, pc, sleep_until, expected, from, awaiting, ctx, &mut events,
+                );
             }
             Step::AwaitArrival {
                 expected,
@@ -1164,10 +1198,11 @@ impl TravelTask {
         mut sleep_until: Option<u64>,
         expected: u32,
         from: u32,
+        mut awaiting: Option<AwaitState>,
         ctx: TravelContext,
         events: &mut Vec<TravelEvent>,
     ) {
-        use crate::core::pathing::edge::WalkAction;
+        use crate::core::pathing::edge::{RepeatUntil, WalkAction};
         // Did this run emit any command? A script that finishes without sending
         // anything (a pure `;e true` pass-through, e.g. the virtual urchin
         // hideout entry) causes no room change — so we must NOT arrival-watch
@@ -1289,6 +1324,7 @@ impl TravelTask {
                         sleep_until,
                         expected,
                         from,
+                        awaiting: None,
                     });
                     if done_immediately {
                         // Empty stack (nothing to stow) — carry on inline.
@@ -1301,6 +1337,118 @@ impl TravelTask {
                     self.stash = Some(task);
                     self.step = Step::Stashing { resume };
                     return;
+                }
+                WalkAction::Await {
+                    cmd,
+                    pattern,
+                    timeout,
+                    on_timeout,
+                } => {
+                    use crate::core::pathing::edge::OnTimeout;
+                    let state = match awaiting.take() {
+                        // Already armed: just check for a match / timeout.
+                        Some(state) => state,
+                        // Arming now. Send the command (if active) and record
+                        // the line seq so only NEWER lines can satisfy us.
+                        None => {
+                            if let Some(cmd) = &cmd {
+                                events.push(TravelEvent::Send(cmd.clone()));
+                                sent_anything = true;
+                            }
+                            AwaitState {
+                                since_seq: ctx.line_seq,
+                                deadline_ms: ctx.now_ms
+                                    + (timeout.max(0.0) * 1000.0) as u64,
+                                retried: false,
+                            }
+                        }
+                    };
+                    let matched = ctx
+                        .recent_lines
+                        .iter()
+                        .any(|(seq, line)| *seq > state.since_seq && pattern.is_match(line));
+                    if matched {
+                        pc += 1;
+                        continue;
+                    }
+                    if ctx.now_ms < state.deadline_ms {
+                        // Still waiting: suspend with the state intact.
+                        awaiting = Some(state);
+                        break;
+                    }
+                    match on_timeout {
+                        // Advisory await: the line never came, carry on.
+                        OnTimeout::Continue => {
+                            pc += 1;
+                            continue;
+                        }
+                        // One re-send, then treat a second timeout as failure.
+                        // Only meaningful with a command to re-send; a passive
+                        // await has nothing to retry, so it fails instead.
+                        OnTimeout::Retry if !state.retried && cmd.is_some() => {
+                            let cmd = cmd.clone().expect("checked is_some");
+                            events.push(TravelEvent::Send(cmd));
+                            sent_anything = true;
+                            awaiting = Some(AwaitState {
+                                since_seq: ctx.line_seq,
+                                deadline_ms: ctx.now_ms
+                                    + (timeout.max(0.0) * 1000.0) as u64,
+                                retried: true,
+                            });
+                            break;
+                        }
+                        OnTimeout::Fail | OnTimeout::Retry => {
+                            events.push(TravelEvent::Status(format!(
+                                "edge {from} -> {expected}: timed out waiting for /{}/",
+                                pattern.source()
+                            )));
+                            self.handle_uncrossable_edge(from, expected, ctx, events);
+                            return;
+                        }
+                    }
+                }
+                WalkAction::Repeat { body, until, max } => {
+                    // Unroll one iteration in place, re-emitting the loop
+                    // behind it with a decremented budget. Splicing keeps the
+                    // whole loop inside the existing resumable action list, so
+                    // suspend/resume (RT, sleep, await) works inside a loop
+                    // for free — no separate loop stack to persist.
+                    //
+                    // MAX_SCRIPT_LOOP caps this regardless of the data's own
+                    // number: bad map data may waste a route, never hang us.
+                    let budget = max.min(MAX_SCRIPT_LOOP);
+                    let done = match &until {
+                        RepeatUntil::Count => false,
+                        RepeatUntil::RoomChanged => ctx.current_room != Some(from),
+                        RepeatUntil::Room(id) => ctx.current_room == Some(*id),
+                        RepeatUntil::Cond(cond) => ctx.eval(*cond),
+                    };
+                    if done || budget == 0 {
+                        pc += 1;
+                        continue;
+                    }
+                    let mut expansion = body.clone();
+                    expansion.push(WalkAction::Repeat {
+                        body,
+                        until,
+                        max: budget - 1,
+                    });
+                    actions.splice(pc..=pc, expansion);
+                }
+                WalkAction::Break => {
+                    // Drop everything up to and including the enclosing
+                    // Repeat. The loop is always BEHIND us in the spliced
+                    // list (see Repeat), so scan forward for it.
+                    match actions[pc..]
+                        .iter()
+                        .position(|a| matches!(a, WalkAction::Repeat { .. }))
+                    {
+                        Some(offset) => {
+                            actions.drain(pc..=pc + offset);
+                        }
+                        // Outside a loop: a no-op, per Lich.
+                        None => pc += 1,
+                    }
                 }
                 WalkAction::Replan => {
                     // The edge asked to re-plan from here ($go2_restart).
@@ -1315,6 +1463,7 @@ impl TravelTask {
             sleep_until,
             expected,
             from,
+            awaiting,
         };
     }
 
@@ -1477,7 +1626,7 @@ impl TravelTask {
         if crate::core::mapdb::is_proc_command(&command) {
             match crate::core::pathing::transpile::transpile_edge(ctx.db, &command) {
                 Some(actions) => {
-                    self.tick_script(actions, 0, None, next, from, ctx, events);
+                    self.tick_script(actions, 0, None, next, from, None, ctx, events);
                     return;
                 }
                 None => {
@@ -1540,9 +1689,12 @@ impl TravelTask {
                 sleep_until,
                 expected,
                 from,
+                awaiting,
             } = *resume
             {
-                self.tick_script(actions, pc, sleep_until, expected, from, ctx, events);
+                self.tick_script(
+                    actions, pc, sleep_until, expected, from, awaiting, ctx, events,
+                );
             } else {
                 self.step = *resume;
             }
@@ -1951,7 +2103,7 @@ impl TravelTask {
         }
         // Curated override beats whatever the mapdb says about this edge.
         if let Some(ov) = crate::core::pathing::overrides::edge_override(current, next) {
-            self.tick_script(ov.actions.clone(), 0, None, next, current, ctx, events);
+            self.tick_script(ov.actions.clone(), 0, None, next, current, None, ctx, events);
             return;
         }
         // Chronomage day-pass edge: a self-contained per-town script (open sack
@@ -1968,7 +2120,7 @@ impl TravelTask {
             // transpile — interpreting the proc is our job here, at the edge.
             match crate::core::pathing::transpile::transpile_edge(ctx.db, &command) {
                 Some(actions) => {
-                    self.tick_script(actions, 0, None, next, current, ctx, events);
+                    self.tick_script(actions, 0, None, next, current, None, ctx, events);
                 }
                 None => {
                     // Can't interpret this proc natively. This is where the
@@ -2377,6 +2529,9 @@ mod tests {
         pinefar: bool,
         compass_dirs: Vec<String>,
         loot_nouns: Vec<String>,
+        /// Raw game lines an `Await` can match, as (seq, text).
+        recent_lines: Vec<(u64, String)>,
+        line_seq: u64,
     }
 
     impl Sim {
@@ -2398,7 +2553,15 @@ mod tests {
                 pinefar: false,
                 compass_dirs: Vec::new(),
                 loot_nouns: Vec::new(),
+                recent_lines: Vec::new(),
+                line_seq: 0,
             }
+        }
+
+        /// Feed a game line an `Await` can match, as the parser would.
+        fn say(&mut self, line: &str) {
+            self.line_seq += 1;
+            self.recent_lines.push((self.line_seq, line.to_string()));
         }
 
         fn ctx<'a>(&'a self, db: &'a MapDb) -> TravelContext<'a> {
@@ -2416,6 +2579,8 @@ mod tests {
                 pathcodes: &self.pathcodes,
                 hands: None,
                 feedback: &self.feedback,
+                recent_lines: &self.recent_lines,
+                line_seq: self.line_seq,
                 lich_fallback: self.lich_fallback,
                 funding: self.funding,
                 at_pinefar_depository: self.pinefar,
@@ -2702,6 +2867,8 @@ mod tests {
                 pathcodes,
                 hands: Some(hands),
                 feedback: &[],
+                recent_lines: &[],
+                line_seq: 0,
                 lich_fallback: false,
                 funding: None,
                 at_pinefar_depository: false,
@@ -2793,6 +2960,8 @@ mod tests {
                     pathcodes: &pathcodes,
                     hands: Some(hands),
                     feedback: &[],
+                    recent_lines: &[],
+                    line_seq: 0,
                     lich_fallback: false,
                     funding: None,
                     at_pinefar_depository: false,
@@ -3015,6 +3184,206 @@ mod tests {
             "hands off to ;go2 2: {events:?}"
         );
         assert!(TravelTask::is_finished(&events), "the fallback ends the task");
+    }
+
+    /// Two-room db with a scripted edge 1->2, for driving raw action lists.
+    fn script_db() -> MapDb {
+        MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
+                 "wayto": {"2": ";e true"}, "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[B]"],
+                 "wayto": {"1": "back"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap()
+    }
+
+    fn pattern(src: &str) -> Box<crate::core::pathing::edge::AwaitPattern> {
+        Box::new(crate::core::pathing::edge::AwaitPattern::new(src).expect("valid pattern"))
+    }
+
+    #[test]
+    fn await_sends_then_waits_for_its_line_before_continuing() {
+        use crate::core::pathing::edge::{OnTimeout, WalkAction};
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+
+        // `await 'go gangplank' for /lowers the gangplank/` then `move out`.
+        let actions = vec![
+            WalkAction::Await {
+                cmd: Some("go gangplank".into()),
+                pattern: pattern(r"lowers the gangplank"),
+                timeout: 30.0,
+                on_timeout: OnTimeout::Fail,
+            },
+            WalkAction::Move("out".into()),
+        ];
+
+        // Arms: sends its command, then blocks - `out` must NOT go out yet.
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert_eq!(sent(&ev), ["go gangplank"], "arms by sending its command");
+
+        // A non-matching line doesn't satisfy it.
+        sim.say("The crewmember ignores you.");
+        sim.now += 1_000;
+        let ev = task.tick(sim.ctx(&db));
+        assert!(sent(&ev).is_empty(), "unrelated line doesn't release the await");
+
+        // The awaited line does.
+        sim.say("An elven crewmember lowers the gangplank.");
+        sim.now += 1_000;
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev), ["out"], "the matching line releases the await");
+    }
+
+    #[test]
+    fn await_that_times_out_continues_or_fails_per_policy() {
+        use crate::core::pathing::edge::{OnTimeout, WalkAction};
+        let db = script_db();
+
+        // Continue (the default): the line never came, carry on anyway.
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        let actions = vec![
+            WalkAction::Await {
+                cmd: None,
+                pattern: pattern(r"never happens"),
+                timeout: 5.0,
+                on_timeout: OnTimeout::Continue,
+            },
+            WalkAction::Move("out".into()),
+        ];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert!(sent(&ev).is_empty(), "passive await sends nothing");
+        sim.now += 6_000;
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev), ["out"], "a Continue timeout runs the next action");
+
+        // Fail: the awaited line was the only evidence the crossing worked.
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        let actions = vec![
+            WalkAction::Await {
+                cmd: None,
+                pattern: pattern(r"never happens"),
+                timeout: 5.0,
+                on_timeout: OnTimeout::Fail,
+            },
+            WalkAction::Move("out".into()),
+        ];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        sim.now += 6_000;
+        let ev = task.tick(sim.ctx(&db));
+        assert!(
+            !sent(&ev).iter().any(|c| *c == "out"),
+            "a Fail timeout does NOT run the next action: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn await_ignores_lines_that_predate_it() {
+        // The ring holds lines from before the await armed. Matching one would
+        // release the await instantly and skip the wait entirely.
+        use crate::core::pathing::edge::{OnTimeout, WalkAction};
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.say("An elven crewmember lowers the gangplank.");
+
+        let actions = vec![
+            WalkAction::Await {
+                cmd: None,
+                pattern: pattern(r"lowers the gangplank"),
+                timeout: 30.0,
+                on_timeout: OnTimeout::Fail,
+            },
+            WalkAction::Move("out".into()),
+        ];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert!(
+            sent(&ev).is_empty(),
+            "a line that predates the await must not satisfy it: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn repeat_runs_its_body_until_the_room_changes() {
+        use crate::core::pathing::edge::{RepeatUntil, WalkAction};
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+
+        // `repeat { fput 'go fog' } until_room_change`
+        let actions = vec![WalkAction::Repeat {
+            body: vec![WalkAction::Put("go fog".into())],
+            until: RepeatUntil::RoomChanged,
+            max: 10,
+        }];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        // Still in room 1, so the body ran - repeatedly, within one tick,
+        // since nothing in it suspends.
+        let sends = sent(&ev);
+        assert!(
+            sends.iter().all(|c| *c == "go fog") && !sends.is_empty(),
+            "the body runs while the room hasn't changed: {sends:?}"
+        );
+        assert!(
+            sends.len() <= MAX_SCRIPT_LOOP as usize,
+            "the interpreter caps iterations at {MAX_SCRIPT_LOOP}, got {}",
+            sends.len()
+        );
+    }
+
+    #[test]
+    fn repeat_max_is_clamped_no_matter_what_the_data_says() {
+        use crate::core::pathing::edge::{RepeatUntil, WalkAction};
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        // Data asking for a million iterations must not hang the client.
+        let actions = vec![WalkAction::Repeat {
+            body: vec![WalkAction::Put("spin".into())],
+            until: RepeatUntil::Count,
+            max: 1_000_000,
+        }];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert_eq!(
+            sent(&ev).len(),
+            MAX_SCRIPT_LOOP as usize,
+            "clamped to the interpreter's ceiling, not the data's number"
+        );
+    }
+
+    #[test]
+    fn break_leaves_the_enclosing_loop() {
+        use crate::core::pathing::edge::{RepeatUntil, WalkAction};
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        // `repeat { fput 'search'; break }` then move — the search runs once.
+        let actions = vec![
+            WalkAction::Repeat {
+                body: vec![WalkAction::Put("search".into()), WalkAction::Break],
+                until: RepeatUntil::Count,
+                max: 50,
+            },
+            WalkAction::Move("go crevice".into()),
+        ];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert_eq!(
+            sent(&ev),
+            ["search", "go crevice"],
+            "break exits the loop and the script continues after it"
+        );
     }
 
     #[test]
@@ -3520,6 +3889,7 @@ mod tests {
                     standing: true, sitting: false, kneeling: false, active_spells: &[],
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
+                    recent_lines: &[], line_seq: 0,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
                     day_pass: Some(dp),
                 }
@@ -3613,6 +3983,7 @@ mod tests {
                     standing: true, sitting: false, kneeling: false, active_spells: &[],
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
+                    recent_lines: &[], line_seq: 0,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
                     day_pass: Some(dp),
                 }
@@ -3690,6 +4061,7 @@ mod tests {
                     standing: true, sitting: false, kneeling: false, active_spells: &[],
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
+                    recent_lines: &[], line_seq: 0,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
                     day_pass: Some(dp),
                 }

@@ -165,6 +165,24 @@ pub struct GameState {
     /// exactly once. See `core::move_feedback` and §09/§12 of the go2 plan.
     pub move_feedback: std::collections::VecDeque<crate::core::move_feedback::MoveFeedback>,
 
+    /// Recent raw game lines for scripted-edge `Await` steps, newest last.
+    ///
+    /// `move_feedback` is a fixed enum of pre-classified recovery events; an
+    /// `Await` needs the TEXT, because the pattern comes from mapdb data we
+    /// can't enumerate ahead of time (a ferry's arrival line, a lever's
+    /// response, a captured group interpolated into a later command).
+    ///
+    /// Unlike `move_feedback` this is NOT drained by the consumer — an await
+    /// arms mid-tick and must see lines that arrived before it started, and
+    /// several steps may match the same line. It is a bounded ring instead:
+    /// pushed on every line, capped at `RAW_LINE_RING`, with each entry
+    /// carrying the sequence number an await compares against so it only
+    /// matches lines newer than its own arming point.
+    pub recent_lines: std::collections::VecDeque<(u64, String)>,
+    /// Monotonic counter stamped onto `recent_lines`; also the "now" an await
+    /// records when it arms. Never reset.
+    pub line_seq: u64,
+
     /// Character state parsed from the feed (society status/rank, profession,
     /// CHE/House, citizenship) — gates seeking, guild, and locker travel.
     /// Populated by SOCIETY/INFO/PROFILE/CITIZENSHIP output. See
@@ -947,7 +965,27 @@ impl BetrayerState {
         self.generation += 1;
     }
 }
+/// How many recent game lines stay available to `Await` steps. An await
+/// polls once per tick, so this only has to cover the burst a single tick can
+/// miss; 64 is far more than any observed edge needs and costs nothing.
+pub const RAW_LINE_RING: usize = 64;
+
 impl GameState {
+    /// Record a game line for scripted-edge awaits, evicting the oldest past
+    /// [`RAW_LINE_RING`]. Returns nothing; awaits read `recent_lines`.
+    pub fn push_recent_line(&mut self, line: &str) {
+        // Blank lines can't match a meaningful pattern and would evict real
+        // content from a small ring.
+        if line.trim().is_empty() {
+            return;
+        }
+        self.line_seq += 1;
+        self.recent_lines.push_back((self.line_seq, line.to_string()));
+        while self.recent_lines.len() > RAW_LINE_RING {
+            self.recent_lines.pop_front();
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             connected: false,
@@ -985,6 +1023,8 @@ impl GameState {
             room_meta: RoomMetaState::default(),
             objects: crate::core::game_objects::GameObjects::default(),
             move_feedback: std::collections::VecDeque::new(),
+            recent_lines: std::collections::VecDeque::new(),
+            line_seq: 0,
             spell_names_seen: std::collections::HashMap::new(),
             character: crate::core::character_state::CharacterState::default(),
             silver: None,

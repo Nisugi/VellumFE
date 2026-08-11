@@ -142,6 +142,14 @@ pub struct MessageProcessor {
     /// drained into `game_state.move_feedback` at the prompt so the walk
     /// executor sees each one exactly once.
     pending_move_feedback: Vec<crate::core::move_feedback::MoveFeedback>,
+    /// Raw game lines captured during flush (no `game_state` there); pushed
+    /// into `game_state.recent_lines` at the prompt for scripted-edge awaits.
+    pending_recent_lines: Vec<String>,
+    /// Whether to buffer raw lines at all. Off unless a travel task is
+    /// running: awaits are the only consumer, and copying every game line into
+    /// a ring for a feature nobody is using is pure waste. `tick_travel`
+    /// raises it when travel starts and drops it when travel ends.
+    pub capture_recent_lines: bool,
     /// Character-state lines captured during flush (no `game_state` there);
     /// fed into `game_state.character` at the prompt. Society/profession/CHE/
     /// citizenship output from SOCIETY/INFO/PROFILE/CITIZENSHIP.
@@ -335,6 +343,8 @@ impl MessageProcessor {
             pending_container_ingest: None,
             pending_ready_stow: Vec::new(),
             pending_move_feedback: Vec::new(),
+            pending_recent_lines: Vec::new(),
+            capture_recent_lines: false,
             pending_character_lines: Vec::new(),
             pending_day_pass_lines: Vec::new(),
             pending_silver: None,

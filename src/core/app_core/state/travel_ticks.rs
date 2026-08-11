@@ -129,8 +129,19 @@ impl AppCore {
         if !self.travel.is_traveling() {
             // Not walking: don't let feedback accumulate unboundedly.
             self.game_state.move_feedback.clear();
+            // Awaits are the only consumer of raw lines; stop copying every
+            // game line into the ring once travel ends, and drop what's left.
+            if self.message_processor.capture_recent_lines {
+                self.message_processor.capture_recent_lines = false;
+                self.game_state.recent_lines.clear();
+            }
             return;
         }
+        // Travelling: a scripted edge may arm an `Await` at any point, and an
+        // await must be able to see lines that landed before it armed, so the
+        // capture has to be running for the whole trip rather than switched on
+        // when a step needs it.
+        self.message_processor.capture_recent_lines = true;
         let Some(db) = self.map.mapdb().cloned() else {
             return;
         };
@@ -138,6 +149,12 @@ impl AppCore {
         // each consumed exactly once — §09).
         let feedback: Vec<crate::core::move_feedback::MoveFeedback> =
             self.game_state.move_feedback.drain(..).collect();
+        // Raw lines for `Await` steps. Copied (not drained): the ring must
+        // outlive this tick so an await arming now still sees earlier lines.
+        // A VecDeque isn't contiguous, and `as_slices().0` would silently drop
+        // the wrapped half, so flatten it into an owned Vec.
+        let recent_lines: Vec<(u64, String)> =
+            self.game_state.recent_lines.iter().cloned().collect();
         // Active spell numbers for scripted-edge checkspell branches.
         let active_spells: Vec<u16> = self
             .game_state
@@ -235,6 +252,10 @@ impl AppCore {
             pathcodes: &self.config.go2.pathcodes,
             hands: Some(hands),
             feedback: &feedback,
+            // Raw lines for `Await` steps. A ring, not a drained queue — see
+            // GameState::recent_lines.
+            recent_lines: &recent_lines,
+            line_seq: self.game_state.line_seq,
             // The fallback is a Lich-only bandaid: gated on the setting AND a
             // Lich connection (a direct connection has no Lich to hand off to).
             // Gate on the connection itself, NOT on WebUI reachability — WebUI
