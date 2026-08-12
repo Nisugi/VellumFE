@@ -419,6 +419,9 @@ enum Step {
     ScriptWalk {
         actions: Vec<crate::core::pathing::edge::WalkAction>,
         pc: usize,
+        /// The action that SENT the in-flight command, so an RT rejection
+        /// ("...wait 2 seconds") can re-run it instead of skipping ahead.
+        sent_pc: usize,
         expected: u32,
         from: u32,
         sent_from: u32,
@@ -783,15 +786,39 @@ impl TravelTask {
             Step::ScriptWalk {
                 actions,
                 pc,
+                sent_pc,
                 expected,
                 from,
                 sent_from,
                 sent_ms,
             } => {
-                // Paced walk step in flight. When the room changes off
-                // `sent_from`, resume the script at `pc`. A generous timeout
-                // re-sends by resuming (the next StepMove/Move handles it).
-                if current != sent_from
+                use crate::core::move_feedback::MoveFeedback as F;
+                // The command landed during roundtime: nothing failed, re-run
+                // the SAME action (RT-gated) instead of skipping ahead or
+                // waiting out a timeout.
+                if ctx.saw(&F::RtWait) {
+                    self.tick_script(actions, sent_pc, None, expected, from, None, ctx, &mut events);
+                    return events;
+                }
+                // Paced walk step in flight. Resume the script at `pc` when
+                // ANY movement evidence arrives - a Lich-room change, a <nav>
+                // (the room moved even if its mapped id didn't: multi-uid
+                // rooms like the Whistler's Pass labyrinth are one id across
+                // many physical rooms, and waiting on the id alone stalled
+                // every in-maze step for the full 30s slow timeout), or a
+                // failure line (the Ruby scripts' moves also proceeded on
+                // failure; retry loops re-evaluate immediately). The timeout
+                // stays as the backstop for silent responses.
+                let moved = current != sent_from
+                    || ctx.saw(&F::NavArrived);
+                let failed = ctx.saw(&F::MoveFailedRemovable)
+                    || ctx.saw(&F::MoveFailedKeep)
+                    || ctx.saw(&F::DoorClosed)
+                    || ctx.saw(&F::Fell)
+                    || ctx.saw(&F::NeedClimb)
+                    || ctx.saw(&F::CantClimb);
+                if moved
+                    || failed
                     || ctx.now_ms.saturating_sub(sent_ms) > SLOW_ARRIVAL_TIMEOUT_MS
                 {
                     self.tick_script(actions, pc, None, expected, from, None, ctx, &mut events);
@@ -799,6 +826,7 @@ impl TravelTask {
                     self.step = Step::ScriptWalk {
                         actions,
                         pc,
+                        sent_pc,
                         expected,
                         from,
                         sent_from,
@@ -904,6 +932,16 @@ impl TravelTask {
                 use crate::core::move_feedback::MoveFeedback;
                 if ctx.saw(&MoveFeedback::NavArrived) && ctx.current_room.is_none() {
                     self.arrive();
+                    return events;
+                }
+                // The move landed during roundtime ("...wait 2 seconds"):
+                // nothing failed, so re-send as soon as RT clears — via
+                // Prepare, which gates on rt_remaining — rather than waiting
+                // out the 8s step timeout. Not counted as a retry: the edge
+                // did not fail.
+                if ctx.saw(&MoveFeedback::RtWait) {
+                    self.step = Step::Prepare;
+                    self.tick_prepare(current, ctx, &mut events);
                     return events;
                 }
                 let timeout = if slow { SLOW_ARRIVAL_TIMEOUT_MS } else { STEP_TIMEOUT_MS };
@@ -1556,6 +1594,7 @@ impl TravelTask {
                     self.step = Step::ScriptWalk {
                         actions,
                         pc: pc + 1,
+                        sent_pc: pc,
                         expected,
                         from,
                         sent_from: ctx.current_room.unwrap_or(from),
@@ -1589,6 +1628,7 @@ impl TravelTask {
                     self.step = Step::ScriptWalk {
                         actions,
                         pc: pc + 1,
+                        sent_pc: pc,
                         expected,
                         from,
                         sent_from: ctx.current_room.unwrap_or(from),
@@ -1614,6 +1654,7 @@ impl TravelTask {
                     self.step = Step::ScriptWalk {
                         actions,
                         pc: pc + 1,
+                        sent_pc: pc,
                         expected,
                         from,
                         sent_from: ctx.current_room.unwrap_or(from),

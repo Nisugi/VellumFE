@@ -480,7 +480,9 @@ impl MessageProcessor {
                         .as_secs() as i64;
                     self.server_time_offset = server_time - local_time;
                     // Update game_time to the prompt's server timestamp
-                    game_state.game_time = server_time;
+                    // (through the setter so the local receipt stamp that
+                    // keeps RT flowing between lines is taken too).
+                    game_state.update_game_time(server_time);
                 }
 
                 // Reset chunk tracking for next prompt

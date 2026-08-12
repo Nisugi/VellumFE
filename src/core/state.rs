@@ -55,6 +55,13 @@ pub struct GameState {
     /// This is the authoritative time source for roundtime/casttime comparisons
     pub game_time: i64,
 
+    /// When `game_time` was last updated, on the LOCAL clock. Prompts only
+    /// arrive with traffic, so during silence `game_time` stands still - and
+    /// a roundtime measured against it never counts down, freezing travel
+    /// until any line lands (a `look` used to unstick it). Extrapolating from
+    /// this stamp keeps RT flowing through quiet stretches.
+    pub game_time_received: Option<std::time::Instant>,
+
     /// Roundtime end timestamp (Unix time from game server)
     pub roundtime_end: Option<i64>,
 
@@ -1130,6 +1137,7 @@ impl GameState {
             room_name: None,
             exits: Vec::new(),
             game_time: 0,
+            game_time_received: None,
             roundtime_end: None,
             casttime_end: None,
             spell: None,
@@ -1184,6 +1192,7 @@ impl GameState {
     /// Also periodically recalculates estimated lag (every 30 seconds of game time).
     pub fn update_game_time(&mut self, prompt_time: i64) {
         self.game_time = prompt_time;
+        self.game_time_received = Some(std::time::Instant::now());
 
         // Periodically calculate lag (every LAG_CHECK_INTERVAL_SECS)
         if prompt_time - self.last_lag_check_time >= LAG_CHECK_INTERVAL_SECS {
@@ -1201,21 +1210,31 @@ impl GameState {
         }
     }
 
+    /// Server "now", extrapolated: the last prompt's timestamp plus how long
+    /// ago it arrived on the local clock. Timers keep flowing between lines.
+    pub fn game_time_now(&self) -> i64 {
+        self.game_time
+            + self
+                .game_time_received
+                .map(|at| at.elapsed().as_secs() as i64)
+                .unwrap_or(0)
+    }
+
     /// Check if currently in roundtime.
-    /// Compares against game server time, not system time.
+    /// Compares against extrapolated game server time, not system time.
     pub fn in_roundtime(&self) -> bool {
         if let Some(end_time) = self.roundtime_end {
-            self.game_time < end_time
+            self.game_time_now() < end_time
         } else {
             false
         }
     }
 
     /// Check if currently in casttime.
-    /// Compares against game server time, not system time.
+    /// Compares against extrapolated game server time, not system time.
     pub fn in_casttime(&self) -> bool {
         if let Some(end_time) = self.casttime_end {
-            self.game_time < end_time
+            self.game_time_now() < end_time
         } else {
             false
         }
@@ -1224,7 +1243,7 @@ impl GameState {
     /// Get remaining roundtime in seconds (0 if not in roundtime)
     pub fn roundtime_remaining(&self) -> i64 {
         if let Some(end_time) = self.roundtime_end {
-            (end_time - self.game_time).max(0)
+            (end_time - self.game_time_now()).max(0)
         } else {
             0
         }
@@ -1233,7 +1252,7 @@ impl GameState {
     /// Get remaining casttime in seconds (0 if not in casttime)
     pub fn casttime_remaining(&self) -> i64 {
         if let Some(end_time) = self.casttime_end {
-            (end_time - self.game_time).max(0)
+            (end_time - self.game_time_now()).max(0)
         } else {
             0
         }

@@ -34,6 +34,9 @@ pub enum MoveFeedback {
     NeedClimb,
     /// "You can't climb that." — swap `climb` back to `go`.
     CantClimb,
+    /// The command landed during roundtime ("...wait 2 seconds."): nothing
+    /// failed, re-send once the RT clears instead of waiting out a timeout.
+    RtWait,
     /// A hard failure ("You can't go there", impassable, …). The edge is bad;
     /// safe to remove from the graph (Lich's `move` returns `false`).
     MoveFailedRemovable,
@@ -181,6 +184,9 @@ patterns! {
         // Lich's raise wait also matches these failure shapes.
         "pass is expired",
         "Raise what",
+    ],
+    RtWait => [
+        "...wait",
     ],
     MoveFailedRemovable => [
         "You can't go there",
