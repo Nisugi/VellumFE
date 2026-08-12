@@ -1220,7 +1220,7 @@ impl VellumGuiApp {
                 let last = ma.rows.len().saturating_sub(1);
                 for (index, (row, shown, merged)) in ma.rows.iter().enumerate() {
                     let row = *row;
-                    let shares = index > 0 && *merged && row.can_share();
+                    let shares = index > 0 && *merged;
                     ui.horizontal(|ui| {
                         if ui
                             .add_enabled(index > 0, egui::Button::new("\u{2B06}").small())
@@ -1255,11 +1255,16 @@ impl VellumGuiApp {
                             changed = true;
                         }
                     });
-                    if index > 0 && *shown && row.can_share() {
+                    if index > 0 && *shown {
                         ui.indent((row.id(), "ma_row_share"), |ui| {
                             let mut share = *merged;
                             if ui
                                 .checkbox(&mut share, "Share line with the row above")
+                                .on_hover_text(if row.full_width() {
+                                    "Vitals and the injury doll only pair with each                                      other (doll left, bars beside it) -- joining a                                      compact row would crush them."
+                                } else {
+                                    "Compact rows mix freely on one line."
+                                })
                                 .changed()
                             {
                                 if let Some(entry) =

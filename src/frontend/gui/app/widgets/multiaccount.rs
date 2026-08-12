@@ -500,7 +500,10 @@ impl VellumGuiApp {
                 // Peers ship wounds, not art, so the doll uses OUR installed
                 // art. Variant stays None: variant rules resolve against the
                 // local character's conditions, wrong for a peer.
-                let doll_h = (data.card_width * 0.9).clamp(60.0, 160.0);
+                // Height follows the width the doll actually gets -- half a
+                // card when sharing a line with the vitals, the full card
+                // alone -- so the figure keeps its proportions either way.
+                let doll_h = (ui.available_width() * 0.9).clamp(60.0, 160.0);
                 ui.allocate_ui(egui::vec2(ui.available_width(), doll_h), |ui| {
                     Self::render_injury_doll(
                         ui,

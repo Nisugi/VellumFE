@@ -1172,13 +1172,18 @@ impl CardRow {
         }
     }
 
-    /// Whether this row may share a line at all. The vitals block (four
-    /// stacked bars) and the injury doll need the full card width -- merging
-    /// them onto another row crushes them into an unreadable half-column,
-    /// which is exactly the "clicked it and it looked wrong" complaint.
-    /// Gauges stay shareable: two half-width bars pair fine.
-    pub fn can_share(self) -> bool {
-        !matches!(self, CardRow::Vitals | CardRow::Injuries)
+    /// Whether this is one of the BIG rows -- the vitals block and the
+    /// injury doll. Big rows may share a line with each other (doll left,
+    /// bars beside it: the classic character-panel layout), but never with a
+    /// compact row, where they end up crushed onto an RT label's line.
+    /// Compact rows mix freely among themselves.
+    pub fn full_width(self) -> bool {
+        matches!(self, CardRow::Vitals | CardRow::Injuries)
+    }
+
+    /// Whether two rows may sit on one line: like pairs with like.
+    pub fn compatible(self, other: CardRow) -> bool {
+        self.full_width() == other.full_width()
     }
 
     /// Whether the row fills the width it is given (bars and the doll) or
@@ -1264,11 +1269,6 @@ impl MultiAccountWidgetData {
     /// Whether this row RENDERS on the line above it: stored flag, unless the
     /// row is first (nothing above it to join).
     pub fn row_merged(&self, row: CardRow) -> bool {
-        // Data-level guard, not just UI: a stale config with vitals or the
-        // doll in merged_rows self-heals here instead of rendering crushed.
-        if !row.can_share() {
-            return false;
-        }
         if self
             .ordered_rows()
             .first()
@@ -1302,7 +1302,16 @@ impl MultiAccountWidgetData {
             if !shown {
                 continue;
             }
-            if self.row_merged(row) && !lines.is_empty() {
+            // A merged row joins the line above only when every row already
+            // on it is compatible (like pairs with like). This is the
+            // data-level guard: a config asking vitals to join the RT line
+            // self-heals to its own line instead of rendering crushed, while
+            // doll + vitals -- the classic character-panel pairing -- works.
+            let joinable = self.row_merged(row)
+                && lines
+                    .last()
+                    .is_some_and(|line| line.iter().all(|other| row.compatible(*other)));
+            if joinable {
                 lines.last_mut().expect("non-empty").push(row);
             } else {
                 lines.push(vec![row]);
@@ -1861,23 +1870,32 @@ mod multiaccount_row_tests {
         assert!(!flat.contains(&R::Injuries));
     }
 
-    /// Vitals and the doll need the full card width; a stale config marking
-    /// them merged must self-heal at the data level rather than render
-    /// crushed into a half-column.
+    /// Big rows pair with each other -- doll left, vitals beside it, the
+    /// classic character-panel layout -- but never with a compact row, where
+    /// they end up crushed onto an RT label's line.
     #[test]
-    fn full_width_rows_never_share_a_line() {
+    fn big_rows_pair_with_each_other_but_not_with_compact_rows() {
         let mut data = MultiAccountWidgetData::default();
+        // Doll first, vitals merged onto it.
+        data.row_order = vec!["injuries".to_string(), "vitals".to_string()];
         data.set_row_merged(R::Vitals, true);
-        data.set_row_merged(R::Injuries, true);
-        assert!(!data.row_merged(R::Vitals));
-        assert!(!data.row_merged(R::Injuries));
-        let flat = data.row_lines();
-        assert!(
-            flat.iter().any(|line| line == &vec![R::Vitals]),
-            "vitals stays on its own line: {flat:?}"
+        let lines = data.row_lines();
+        assert_eq!(
+            lines[0],
+            vec![R::Injuries, R::Vitals],
+            "doll + vitals share a line: {lines:?}"
         );
 
-        // Gauges pair fine -- two half-width bars.
+        // But vitals asked to join a compact line self-heals to its own.
+        let mut data = MultiAccountWidgetData::default();
+        data.set_row_merged(R::Vitals, true); // above it: rt + status
+        let lines = data.row_lines();
+        assert!(
+            lines.iter().any(|line| line == &vec![R::Vitals]),
+            "vitals must not join the RT line: {lines:?}"
+        );
+
+        // Compact rows still mix freely.
         data.set_row_shown(R::Mind, true);
         data.set_row_shown(R::Stance, true);
         data.set_row_merged(R::Stance, true);
