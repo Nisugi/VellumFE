@@ -198,6 +198,7 @@ pub const CATALOG: &[(&str, Option<GameType>)] = &[
     ("encum", None),
     ("minivitals", Some(GameType::GS4)),
     ("betrayer", Some(GameType::GS4)),
+    ("multiaccount", None),
 ];
 
 impl Config {
@@ -1569,7 +1570,21 @@ impl Config {
                 data: SpacerWidgetData {},
             }),
 
-            "missingspells" => Some(WindowDef::MissingSpells {
+            "multiaccount" => Some(WindowDef::MultiAccount {
+            base: WindowBase {
+                name: "multiaccount".to_string(),
+                title: Some("Characters".to_string()),
+                row: Row::new(0),
+                col: Col::new(0),
+                rows: Height::new(12),
+                cols: Width::new(46),
+                min_rows: Some(6),
+                min_cols: Some(24),
+                ..base_defaults.clone()
+            },
+            data: MultiAccountWidgetData::default(),
+        }),
+        "missingspells" => Some(WindowDef::MissingSpells {
                 base: WindowBase {
                     name: "missingspells".to_string(),
                     title: Some("Missing Spells".to_string()),

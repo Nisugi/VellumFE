@@ -62,6 +62,7 @@ quickbar
 hotkeybar
 spacer
 encum
+multiaccount
 
 [template_list.gs4]
 health
@@ -129,6 +130,7 @@ gs4_experience
 encum
 minivitals
 betrayer
+multiaccount
 
 [template_list.dr]
 health
@@ -195,6 +197,7 @@ spacer
 perception
 experience
 encum
+multiaccount
 
 [template_game_type]
 health = None
@@ -265,6 +268,7 @@ gs4_experience = Some(GS4)
 encum = None
 minivitals = Some(GS4)
 betrayer = Some(GS4)
+multiaccount = None
 
 [id_maps]
 "inv": dialog="inv" stream="inventory" has_widget=false
@@ -308,7 +312,7 @@ betrayer = Some(GS4)
 
 [templates_by_category]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
-Character: inventory, reserve, spells, missingspells, injuries, perception, experience, gs4_experience, encum
+Character: inventory, reserve, spells, missingspells, injuries, perception, experience, gs4_experience, encum, multiaccount
 Countdown: roundtime, casttime, stuntime, countdown_custom
 Dialog: betrayer
 Entity: targets, players, items, entity_custom
@@ -322,7 +326,7 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
 
 [addable_on_empty_layout.all]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
-Character: inventory, spells, missingspells, injuries, encum
+Character: inventory, spells, missingspells, injuries, encum, multiaccount
 Countdown: roundtime, casttime, stuntime, countdown_custom
 Entity: targets, players, items, entity_custom
 Hand: left, right, spell
@@ -335,7 +339,7 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
 
 [addable_on_empty_layout.gs4]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
-Character: inventory, reserve, spells, missingspells, injuries, gs4_experience, encum
+Character: inventory, reserve, spells, missingspells, injuries, gs4_experience, encum, multiaccount
 Countdown: roundtime, casttime, stuntime, countdown_custom
 Dialog: betrayer
 Entity: targets, players, items, entity_custom
@@ -349,7 +353,7 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
 
 [addable_on_empty_layout.dr]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
-Character: inventory, spells, missingspells, injuries, perception, experience, encum
+Character: inventory, spells, missingspells, injuries, perception, experience, encum, multiaccount
 Countdown: roundtime, casttime, stuntime, countdown_custom
 Entity: targets, players, items, entity_custom
 Hand: left, right, spell
@@ -1944,3 +1948,47 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
   visibility = "shown"
   tts_speak = false
   show_items = true
+
+[template.multiaccount]
+  widget_type = "multiaccount"
+  name = "multiaccount"
+  row = 0
+  col = 0
+  rows = 12
+  cols = 46
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Characters"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 6
+  min_cols = 24
+  visibility = "shown"
+  tts_speak = false
+  show_vitals = true
+  show_rt = true
+  show_status = true
+  show_injuries = true
+  show_mind = false
+  show_stance = false
+  show_field_exp = false
+  show_encumbrance = false
+  show_room = true
+  show_self = true
+  show_absolute_vitals = true
+  show_hands = false
+  show_effects = true
+  effect_categories = ["Debuffs", "Cooldowns"]
+  effect_filter = []
+  max_effects = 4
+  merged_rows = ["status"]
+  row_order = []
+  card_column_weights = [1.0]
+  sort_by = "group"
+  columns = 0
+  card_width = 150.0
+  
+  [card_row_columns]

@@ -160,6 +160,11 @@ pub struct MessageProcessor {
     /// Silver on hand parsed from a `wealth` line during flush; applied to
     /// `game_state.silver` at the prompt.
     pending_silver: Option<u64>,
+    /// Group events captured during flush, with the line's `<a exist noun>`
+    /// links. Text says what happened; the links say to whom. Applied to
+    /// `game_state.group` at the prompt IN ORDER -- a `group` reply's roster
+    /// line and its status sentinel must not be reordered.
+    pending_group: Vec<(crate::core::group::GroupEvent, Vec<crate::core::group::GroupMember>)>,
 
     /// Track if chunk (since last prompt) has main stream text
     chunk_has_main_text: bool,
@@ -348,6 +353,7 @@ impl MessageProcessor {
             pending_character_lines: Vec::new(),
             pending_day_pass_lines: Vec::new(),
             pending_silver: None,
+            pending_group: Vec::new(),
             remote: None,
             pending_client_commands: Vec::new(),
             chunk_has_main_text: false,

@@ -416,6 +416,20 @@ impl Frontend for TuiFrontend {
                             widget.render(area, f.buffer_mut());
                         }
                     }
+                    WindowContent::MultiAccount => {
+                        // GUI-only for now: the cards lean on per-card dolls
+                        // and bar art the TUI has no equivalent for. Say so
+                        // rather than leaving an unexplained empty window.
+                        let note = ratatui::widgets::Paragraph::new(
+                            "Multi-account cards are available in the GUI frontend.",
+                        )
+                        .wrap(ratatui::widgets::Wrap { trim: true })
+                        .style(
+                            ratatui::style::Style::default()
+                                .fg(ratatui::style::Color::DarkGray),
+                        );
+                        f.render_widget(note, area);
+                    }
                     WindowContent::Items => {
                         // Use the Items widget (component-based, reads from GameState.room_objects)
                         if let Some(items_widget) = items_widgets.get_mut(name) {

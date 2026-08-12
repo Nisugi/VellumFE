@@ -875,6 +875,47 @@ pub struct WebConfig {
     /// pref like `story_size`. Empty = unset (phone's own order).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub chip_order: Vec<String>,
+    /// Share this session's status with, and read status from, other
+    /// VellumFE instances on this machine (the `multiaccount` widget).
+    ///
+    /// On by default, unlike `enabled`: the multi-account display is
+    /// useless unless the instances can see each other, and gating it
+    /// behind the phone server would leave the widget silently empty for
+    /// anyone who never turned that on. `local_status_only()` is what the
+    /// runtime actually checks — this flag alone starts the sidecar bound
+    /// to loopback, serving status to siblings but no phone client.
+    #[serde(default = "default_true")]
+    pub multiaccount: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl WebConfig {
+    /// Whether to run the sidecar at all: either the phone server is on, or
+    /// multi-account needs it for sibling discovery.
+    pub fn should_serve(&self) -> bool {
+        self.enabled || self.multiaccount
+    }
+
+    /// True when the sidecar exists ONLY to serve sibling status. It still
+    /// binds loopback and still authenticates, but nothing is being invited
+    /// in from the network — `bind` stays 127.0.0.1 regardless of config.
+    pub fn local_status_only(&self) -> bool {
+        !self.enabled && self.multiaccount
+    }
+
+    /// Address to bind. Status-only mode forces loopback: enabling the
+    /// multi-account widget must never expose a session to the LAN, even
+    /// if `bind` was left at 0.0.0.0 from an earlier phone setup.
+    pub fn effective_bind(&self) -> &str {
+        if self.local_status_only() {
+            "127.0.0.1"
+        } else {
+            &self.bind
+        }
+    }
 }
 
 fn default_web_port() -> u16 {
@@ -889,6 +930,7 @@ impl Default for WebConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            multiaccount: true,
             port: default_web_port(),
             bind: default_web_bind(),
             pinned: false,
@@ -1051,6 +1093,84 @@ impl Default for MapConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- Web sidecar gating -------------------------------------------
+
+    /// The multi-account display is useless unless instances can see each
+    /// other, so it must NOT require turning on the phone server. Shipping it
+    /// gated behind `enabled` (false by default) made the widget silently
+    /// empty for everyone who had never set up phone access.
+    #[test]
+    fn multiaccount_is_on_by_default_and_starts_the_sidecar() {
+        let web = WebConfig::default();
+        assert!(!web.enabled, "phone server stays opt-in");
+        assert!(web.multiaccount, "sibling status is on by default");
+        assert!(
+            web.should_serve(),
+            "the sidecar must run for sibling discovery"
+        );
+        assert!(web.local_status_only());
+    }
+
+    #[test]
+    fn phone_server_alone_is_not_status_only() {
+        let web = WebConfig {
+            enabled: true,
+            multiaccount: false,
+            ..Default::default()
+        };
+        assert!(web.should_serve());
+        assert!(!web.local_status_only());
+    }
+
+    #[test]
+    fn both_off_means_no_sidecar_at_all() {
+        let web = WebConfig {
+            enabled: false,
+            multiaccount: false,
+            ..Default::default()
+        };
+        assert!(
+            !web.should_serve(),
+            "opting out of both must cost nothing"
+        );
+    }
+
+    /// Enabling the multi-account widget must never expose a session to the
+    /// network, even if `bind` was left at 0.0.0.0 from an earlier phone
+    /// setup. Status-only mode forces loopback.
+    #[test]
+    fn status_only_mode_forces_loopback_bind() {
+        let web = WebConfig {
+            enabled: false,
+            multiaccount: true,
+            bind: "0.0.0.0".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            web.effective_bind(),
+            "127.0.0.1",
+            "status-only must not honor a LAN bind"
+        );
+
+        // With the phone server deliberately on, the user's bind is theirs.
+        let web = WebConfig {
+            enabled: true,
+            bind: "0.0.0.0".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(web.effective_bind(), "0.0.0.0");
+    }
+
+    /// An existing config predates this field; it must read as on rather
+    /// than defaulting to false and leaving the widget dead.
+    #[test]
+    fn an_older_config_without_the_field_gets_multiaccount_on() {
+        let web: WebConfig = toml::from_str("enabled = false\nport = 8040\n")
+            .expect("parse legacy web section");
+        assert!(web.multiaccount);
+        assert!(web.should_serve());
+    }
 
     // ---- StreamRoute string form --------------------------------------
 

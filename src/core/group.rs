@@ -1,0 +1,970 @@
+//! Group roster tracking, parsed from the game's group messaging.
+//!
+//! GS4 tells you the group's *shape* only through prose: "Bob joins your
+//! group.", "You join Bob.", "You disband your group." The only structured
+//! signal is `<indicator id='IconJOINED'>`, a bare "you are grouped" flag with
+//! no roster. So membership has to be reconstructed from text.
+//!
+//! Ported from Lich's `lib/gemstone/group.rb`, whose patterns are battle-worn
+//! and worth reusing, with three deliberate departures:
+//!
+//! 1. **One identity key.** Lich stores members by `exist` id but its
+//!    staleness probe compares by noun, so the two disagree. Everything here
+//!    keys on the exist id, with the display name carried alongside.
+//! 2. **The JOINED indicator is authoritative for OUR membership.** Its
+//!    falling edge clears the roster even when no leave message arrives
+//!    (death, linkdeath). A *member's* silent departure from a group we lead
+//!    is NOT detected -- the game announces no message to parse -- so a
+//!    roster can go stale until the next `group` reply; the display carries
+//!    `confirmed` precisely so it can hedge instead of asserting.
+//! 3. **Uncertainty is explicit.** Lich's `check` re-sends `group` on any
+//!    read while unconfirmed, which can spam the game. Here an unconfirmed
+//!    roster is simply reported as unconfirmed and the display says so; the
+//!    only automatic `group` send is one per session on connect.
+//!
+//! The matchers run against the flattened line text, but membership is keyed
+//! off the line's `<a exist noun>` link segments, which the parser preserves
+//! (see `data::widget::LinkData`). Text tells us *what happened*; links tell
+//! us *to whom*.
+
+use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
+
+use regex::Regex;
+
+/// One member of the group, identified the way the game identifies people.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupMember {
+    /// The `exist` id from the link. Stable for the session and the only
+    /// reliable identity -- two players can share a display name.
+    pub id: String,
+    /// The `noun` from the link (usually the first name).
+    pub noun: String,
+    /// The link's display text.
+    pub name: String,
+}
+
+/// Who leads the group.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "who")]
+pub enum GroupLeader {
+    /// Not in a group at all.
+    #[default]
+    None,
+    /// This character leads.
+    SelfLed,
+    /// This character follows someone else.
+    Other(GroupMember),
+    /// Grouped, but we do not know with whom -- the JOINED indicator fired
+    /// without any message naming the members. Distinct from `None`, which
+    /// means genuinely not grouped.
+    Unknown,
+}
+
+/// The group roster as currently understood.
+///
+/// `confirmed` is the honest-uncertainty flag: false means the roster may be
+/// incomplete, which happens whenever we join someone else's group (we can
+/// see that we joined, but not who else is already in it). A display should
+/// say "unconfirmed" rather than presenting a partial roster as fact.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupState {
+    pub leader: GroupLeader,
+    /// Members excluding this character. Ordered by first sighting.
+    pub members: Vec<GroupMember>,
+    /// Whether the roster has been confirmed against a `group` reply.
+    pub confirmed: bool,
+}
+
+impl GroupState {
+    /// True when this character is in a group at all.
+    pub fn is_grouped(&self) -> bool {
+        !matches!(self.leader, GroupLeader::None) || !self.members.is_empty()
+    }
+
+    /// True when this character leads.
+    pub fn leads(&self) -> bool {
+        matches!(self.leader, GroupLeader::SelfLed)
+    }
+
+    /// Everyone in the group including the leader, for display. When we
+    /// follow someone, the leader is a member of the group we are in but is
+    /// tracked separately, so callers that want "the whole roster" ask here.
+    pub fn everyone(&self) -> Vec<&GroupMember> {
+        let mut out = Vec::with_capacity(self.members.len() + 1);
+        if let GroupLeader::Other(leader) = &self.leader {
+            out.push(leader);
+        }
+        out.extend(self.members.iter());
+        out
+    }
+
+    /// Add a member if not already present. Returns true if the roster changed.
+    pub fn add(&mut self, member: GroupMember) -> bool {
+        if self.members.iter().any(|m| m.id == member.id) {
+            return false;
+        }
+        self.members.push(member);
+        true
+    }
+
+    /// Remove a member by exist id. Returns true if the roster changed.
+    pub fn remove(&mut self, id: &str) -> bool {
+        let before = self.members.len();
+        self.members.retain(|m| m.id != id);
+        // Losing the leader we follow means we are no longer in their group.
+        if let GroupLeader::Other(leader) = &self.leader {
+            if leader.id == id {
+                self.leader = GroupLeader::None;
+                self.confirmed = false;
+                return true;
+            }
+        }
+        if self.members.len() != before {
+            return true;
+        }
+        false
+    }
+
+    /// Clear the roster entirely (disband, or the JOINED indicator going off).
+    pub fn clear(&mut self) {
+        if self.members.is_empty() && matches!(self.leader, GroupLeader::None) && self.confirmed {
+            return;
+        }
+        self.members.clear();
+        self.leader = GroupLeader::None;
+        // An empty group is a known-good state, not an uncertain one.
+        self.confirmed = true;
+    }
+
+    /// Replace the roster wholesale from a `group` reply. This is the only
+    /// path that sets `confirmed`.
+    pub fn replace(&mut self, leader: GroupLeader, members: Vec<GroupMember>) {
+        if self.leader != leader || self.members != members || !self.confirmed {
+            self.leader = leader;
+            self.members = members;
+            self.confirmed = true;
+        }
+    }
+
+    /// The game says we are grouped but we have no roster: the `IconJOINED`
+    /// indicator arrives when someone ADDS us, with no message naming the
+    /// members. Records "grouped, roster unknown" so a display can say that
+    /// rather than showing nothing at all.
+    ///
+    /// Uses `Unknown` rather than inventing a leader -- we genuinely do not
+    /// know who leads until a `group` reply arrives.
+    pub fn mark_joined_unconfirmed(&mut self) {
+        if !matches!(self.leader, GroupLeader::Unknown) {
+            self.leader = GroupLeader::Unknown;
+            self.confirmed = false;
+        }
+    }
+
+    /// Mark the roster as possibly incomplete -- we know we are in a group but
+    /// not who else is in it.
+    pub fn mark_unconfirmed(&mut self) {
+        if self.confirmed {
+            self.confirmed = false;
+        }
+    }
+}
+
+/// What a group-related line means. Resolving a line to one of these is pure
+/// text work; applying it needs the line's links, which the caller supplies.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GroupEvent {
+    /// Someone joined the group we lead ("X joins your group.", "You add X").
+    /// Carries the position of the relevant link on the line.
+    Joined,
+    /// Someone left the group we lead.
+    Left,
+    /// We joined someone else's group; the first link is the new leader.
+    JoinedOther,
+    /// We disbanded, were removed, or the group emptied.
+    Disbanded,
+    /// Leadership passed to us.
+    GainedLeadership,
+    /// The start of a `group` reply naming the whole roster. `self_led` is
+    /// true for "You are leading", false for "You are grouped with".
+    RosterLine { self_led: bool },
+    /// "You are not currently in a group."
+    NoGroup,
+    /// The `group` reply's final line -- the completion sentinel.
+    StatusLine,
+    /// We took someone's hand: we lead, they follow.
+    HeldTheirHand,
+    /// Someone took our hand: they lead, we follow.
+    TheyHeldOurHand,
+    /// A hand was released, ending the grouping.
+    Released,
+}
+
+// Lich matches these against raw XML because it has no parsed link data. We
+// match the flattened text and read identity from the parsed links instead,
+// so the patterns are the same sentences with the markup removed.
+
+static RE_JOINS_YOUR_GROUP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.+) joins your group\.$").unwrap());
+static RE_LEAVES_YOUR_GROUP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.+) leaves your group\.$").unwrap());
+static RE_YOU_ADD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^You add (.+) to your group\.$").unwrap());
+static RE_YOU_REMOVE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^You remove (.+) from the group\.$").unwrap());
+static RE_YOU_JOIN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^You join (.+)\.$").unwrap());
+static RE_ADDS_YOU: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.+) adds you to (.+) group\.$").unwrap());
+static RE_OTHER_JOINS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.+) joins (.+) group\.$").unwrap());
+static RE_LEADER_ADDS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.+) adds (.+) to (.+) group\.$").unwrap());
+static RE_LEADER_REMOVES: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.+) removes (.+) from the group\.$").unwrap());
+// Hand-holding groups you exactly like `group` does, and it is how a duo
+// most often forms. Four demeanor variants (reserved/neutral/friendly/warm)
+// x three persons, matching Lich's set.
+//
+// First person -- WE take their hand, so we lead.
+static RE_HOLD_FIRST: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^You (?:grab|reach out and hold|gently take hold of|clasp) (.+?) hand(?: tenderly)?\.$",
+    )
+    .unwrap()
+});
+// Second person -- THEY take ours, so they lead.
+static RE_HOLD_SECOND: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^(.+?) (?:grabs|reaches out and holds|gently takes hold of|clasps) your hand(?: tenderly)?\.$",
+    )
+    .unwrap()
+});
+// Third person -- two other people, which tells us nothing about our own
+// group but must not be mistaken for either case above.
+static RE_HOLD_THIRD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^(.+?) (?:grabs|reaches out and holds|gently takes hold of|clasps) (.+?) hand(?: tenderly)?\.$",
+    )
+    .unwrap()
+});
+// Letting go ends the grouping the same way leaving does.
+static RE_RELEASE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:You let go of (.+?)|(.+?) lets go of your) hand\.$").unwrap()
+});
+
+static RE_ROSTER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^You are (leading|grouped with) ").unwrap());
+// NOT `$`-anchored: the real line continues past the period --
+// "Your group status is currently open.  You may be joined or taken into
+// another group by the actions of another player." Anchoring it meant the
+// sentinel never matched, so a `group` reply staged its roster and never
+// committed, and a manual `group` appeared to do nothing at all.
+static RE_STATUS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^Your group status is currently (open|closed)\.").unwrap());
+
+/// Cheap gate so ordinary lines pay almost nothing. Every pattern above
+/// contains one of these substrings -- note "You are leading X." carries
+/// none of the obvious ones, which is exactly the kind of miss a narrow gate
+/// makes silently.
+///
+/// Public because the flush pipeline gates on this BEFORE collecting link
+/// data. It used to keep its own hand-copied version, which drifted (it
+/// lacked the `" hand"` clause) and silently killed every hand-holding event
+/// in production while the unit tests -- which call `classify_line` directly
+/// -- stayed green. One gate, one place.
+pub fn might_be_group_line(line: &str) -> bool {
+    line.contains("group")
+        || line.contains("You join ")
+        || line.starts_with("You are leading ")
+        || line.contains("designates you as the new leader")
+        // Hand-holding is a grouping action with no "group" in the sentence.
+        || line.contains(" hand")
+}
+
+/// Classify a single game line as a group event, if it is one.
+///
+/// Order matters: the more specific three-party forms ("X adds Y to Z group")
+/// must be tested before the two-party ones they would otherwise match.
+///
+/// Trailing whitespace is trimmed here rather than at every call site, since
+/// these patterns are `$`-anchored and the feed carries "\r\n".
+pub fn classify_line(line: &str) -> Option<GroupEvent> {
+    let line = line.trim_end();
+    if !might_be_group_line(line) {
+        return None;
+    }
+
+    if RE_STATUS.is_match(line) {
+        return Some(GroupEvent::StatusLine);
+    }
+    if line.starts_with("You are not currently in a group") {
+        return Some(GroupEvent::NoGroup);
+    }
+    if let Some(c) = RE_ROSTER.captures(line) {
+        return Some(GroupEvent::RosterLine {
+            self_led: &c[1] == "leading",
+        });
+    }
+    if line.starts_with("You disband your group") {
+        return Some(GroupEvent::Disbanded);
+    }
+    if line.contains("designates you as the new leader of the group") {
+        return Some(GroupEvent::GainedLeadership);
+    }
+
+    // Anything about US must be tested before the general third-party forms,
+    // which are looser and would otherwise swallow it: "Bob adds you to Bob's
+    // group" also matches the shape of "X adds Y to Z group".
+    if RE_ADDS_YOU.is_match(line) {
+        return Some(GroupEvent::JoinedOther);
+    }
+    if RE_YOU_JOIN.is_match(line) {
+        return Some(GroupEvent::JoinedOther);
+    }
+
+    // Now the third-party forms: someone else's group changing while we watch.
+    if RE_LEADER_ADDS.is_match(line) {
+        return Some(GroupEvent::Joined);
+    }
+    if RE_LEADER_REMOVES.is_match(line) {
+        return Some(GroupEvent::Left);
+    }
+    if RE_OTHER_JOINS.is_match(line) {
+        return Some(GroupEvent::Joined);
+    }
+
+    // Hand-holding, before the generic group forms: these sentences share no
+    // wording with them, but ordering keeps intent obvious.
+    if RE_RELEASE.is_match(line) {
+        return Some(GroupEvent::Released);
+    }
+    if RE_HOLD_FIRST.is_match(line) {
+        return Some(GroupEvent::HeldTheirHand);
+    }
+    if RE_HOLD_SECOND.is_match(line) {
+        return Some(GroupEvent::TheyHeldOurHand);
+    }
+    if RE_HOLD_THIRD.is_match(line) {
+        // Two other people held hands. Our own roster is unaffected.
+        return None;
+    }
+
+    if RE_JOINS_YOUR_GROUP.is_match(line) || RE_YOU_ADD.is_match(line) {
+        return Some(GroupEvent::Joined);
+    }
+    if RE_LEAVES_YOUR_GROUP.is_match(line) || RE_YOU_REMOVE.is_match(line) {
+        return Some(GroupEvent::Left);
+    }
+
+    None
+}
+
+/// Apply one classified event, with the links found on the same line, to the
+/// roster.
+///
+/// `roster_pending` is the caller's cursor into a multi-line `group` reply:
+/// the roster line names everyone, and the status sentinel that follows ends
+/// the reply. It is threaded through rather than stored on `GroupState` so a
+/// half-read reply cannot leak into the observable roster.
+pub fn apply_event(
+    state: &mut GroupState,
+    event: &GroupEvent,
+    members: &[GroupMember],
+    roster_pending: &mut Option<(GroupLeader, Vec<GroupMember>)>,
+) {
+    match event {
+        GroupEvent::Joined => {
+            // Third-party joins ("Carol joins Bob's group") carry links for
+            // people who are not in OUR group. Only take them when we lead --
+            // if we follow, we cannot see the full roster anyway, so the
+            // honest move is to flag uncertainty rather than guess.
+            if state.leads() {
+                for m in members {
+                    state.add(m.clone());
+                }
+            } else if state.is_grouped() {
+                state.mark_unconfirmed();
+            }
+        }
+        GroupEvent::Left => {
+            for m in members {
+                state.remove(&m.id);
+            }
+        }
+        GroupEvent::JoinedOther => {
+            // We joined someone else's group. The first link is the leader.
+            // We can see that we joined but NOT who else is already in it,
+            // so the roster is explicitly unconfirmed until a `group` reply.
+            if let Some(leader) = members.first() {
+                state.leader = GroupLeader::Other(leader.clone());
+                state.members.clear();
+                state.confirmed = false;
+            }
+        }
+        GroupEvent::Disbanded | GroupEvent::NoGroup => state.clear(),
+        GroupEvent::GainedLeadership => {
+            // Leadership passed to us; the roster carries over.
+            if !state.leads() {
+                state.leader = GroupLeader::SelfLed;
+                // We inherit a group whose full membership we may not have
+                // seen, so this is not a confirmed roster.
+                state.confirmed = false;
+            }
+        }
+        GroupEvent::RosterLine { self_led } => {
+            // Start of a `group` reply. When we follow, the first link is the
+            // leader and the rest are members; when we lead, all links are
+            // members. Held aside until the status sentinel confirms the
+            // reply completed -- a truncated reply must not clobber a good
+            // roster.
+            let (leader, rest) = if *self_led {
+                (GroupLeader::SelfLed, members.to_vec())
+            } else {
+                match members.split_first() {
+                    Some((first, rest)) => {
+                        (GroupLeader::Other(first.clone()), rest.to_vec())
+                    }
+                    None => (GroupLeader::None, Vec::new()),
+                }
+            };
+            *roster_pending = Some((leader, rest));
+        }
+        GroupEvent::StatusLine => {
+            // The reply's final line. Commit whatever the roster line staged.
+            if let Some((leader, members)) = roster_pending.take() {
+                state.replace(leader, members);
+            } else {
+                // A status line with no preceding roster line means the reply
+                // said we are in no group; `NoGroup` already cleared it. Mark
+                // confirmed so the display stops hedging.
+                state.confirmed = true;
+            }
+        }
+        GroupEvent::HeldTheirHand => {
+            // We took their hand -- and only the LEADER can hold, so this is
+            // proof we lead. It must ADD to whatever group we already lead,
+            // not replace it: holding Dave while leading Bob and Carol grows
+            // the group to four, and wiping the roster here erased real
+            // members.
+            if let Some(other) = members.first() {
+                match &state.leader {
+                    GroupLeader::SelfLed => {
+                        state.add(other.clone());
+                    }
+                    GroupLeader::None => {
+                        // Solo before the hold: a complete, known two-person
+                        // group -- both ends of a hold are visible.
+                        state.replace(GroupLeader::SelfLed, vec![other.clone()]);
+                    }
+                    _ => {
+                        // We believed we were following someone (or grouped
+                        // with unknowns), yet the game let us hold -- so we
+                        // lead now and our old belief was stale. The held
+                        // person is certain; who else came along is not.
+                        state.leader = GroupLeader::SelfLed;
+                        state.add(other.clone());
+                        state.mark_unconfirmed();
+                    }
+                }
+            }
+        }
+        GroupEvent::TheyHeldOurHand => {
+            // They took ours: they lead. We can see who, but not who else is
+            // already in their group, so the roster stays unconfirmed.
+            if let Some(leader) = members.first() {
+                state.leader = GroupLeader::Other(leader.clone());
+                state.members.clear();
+                state.confirmed = false;
+            }
+        }
+        GroupEvent::Released => {
+            // A released hand ends the pairing with that person. Two cases
+            // end OUR grouping entirely and must clear to a known-empty state
+            // rather than dangle: the released person was the leader we
+            // follow (their letting go removes us from their group), and a
+            // led group whose last member just left. `remove` on the leader
+            // returns true but leaves `confirmed` false -- without the
+            // explicit clear the card showed "roster unconfirmed" forever for
+            // a character in no group.
+            let released_our_leader = matches!(
+                &state.leader,
+                GroupLeader::Other(l) if members.iter().any(|m| m.id == l.id)
+            );
+            let removed = members.iter().any(|m| state.remove(&m.id));
+            if !removed
+                || released_our_leader
+                || (state.members.is_empty() && state.leads())
+            {
+                state.clear();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn member(id: &str, name: &str) -> GroupMember {
+        GroupMember {
+            id: id.to_string(),
+            noun: name.to_ascii_lowercase(),
+            name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn classifies_joins_and_leaves_of_our_own_group() {
+        assert_eq!(
+            classify_line("Bob joins your group."),
+            Some(GroupEvent::Joined)
+        );
+        assert_eq!(
+            classify_line("You add Bob to your group."),
+            Some(GroupEvent::Joined)
+        );
+        assert_eq!(
+            classify_line("Bob leaves your group."),
+            Some(GroupEvent::Left)
+        );
+        assert_eq!(
+            classify_line("You remove Bob from the group."),
+            Some(GroupEvent::Left)
+        );
+    }
+
+    #[test]
+    fn classifies_joining_someone_elses_group() {
+        assert_eq!(
+            classify_line("You join Bob."),
+            Some(GroupEvent::JoinedOther)
+        );
+        assert_eq!(
+            classify_line("Bob adds you to Bob's group."),
+            Some(GroupEvent::JoinedOther)
+        );
+    }
+
+    #[test]
+    fn classifies_third_party_membership_changes() {
+        // Someone else's group changing while we watch. These must not be
+        // mistaken for changes to OUR group.
+        assert_eq!(
+            classify_line("Bob adds Carol to Bob's group."),
+            Some(GroupEvent::Joined)
+        );
+        assert_eq!(
+            classify_line("Bob removes Carol from the group."),
+            Some(GroupEvent::Left)
+        );
+        assert_eq!(
+            classify_line("Carol joins Bob's group."),
+            Some(GroupEvent::Joined)
+        );
+    }
+
+    #[test]
+    fn classifies_roster_reply_lines() {
+        assert_eq!(
+            classify_line("You are leading Bob."),
+            Some(GroupEvent::RosterLine { self_led: true })
+        );
+        assert_eq!(
+            classify_line("You are grouped with Bob."),
+            Some(GroupEvent::RosterLine { self_led: false })
+        );
+        assert_eq!(
+            classify_line("You are not currently in a group."),
+            Some(GroupEvent::NoGroup)
+        );
+        // The REAL line, verbatim from the game -- it continues past the
+        // period. An earlier `$`-anchored pattern matched only the truncated
+        // form invented for this test, so a `group` reply staged its roster
+        // and never committed. Keep the full sentence here.
+        assert_eq!(
+            classify_line(
+                "Your group status is currently open.  You may be joined or taken                  into another group by the actions of another player."
+            ),
+            Some(GroupEvent::StatusLine)
+        );
+        assert_eq!(
+            classify_line("Your group status is currently closed."),
+            Some(GroupEvent::StatusLine)
+        );
+    }
+
+    #[test]
+    fn classifies_disband_and_leadership() {
+        assert_eq!(
+            classify_line("You disband your group."),
+            Some(GroupEvent::Disbanded)
+        );
+        assert_eq!(
+            classify_line("Bob designates you as the new leader of the group."),
+            Some(GroupEvent::GainedLeadership)
+        );
+    }
+
+    #[test]
+    fn classifies_hand_holding_in_every_person() {
+        // First person: we take theirs, so we lead.
+        assert_eq!(
+            classify_line("You reach out and hold Abem's hand."),
+            Some(GroupEvent::HeldTheirHand)
+        );
+        assert_eq!(
+            classify_line("You grab Abem's hand."),
+            Some(GroupEvent::HeldTheirHand)
+        );
+        assert_eq!(
+            classify_line("You gently take hold of Abem's hand."),
+            Some(GroupEvent::HeldTheirHand)
+        );
+        assert_eq!(
+            classify_line("You clasp Abem's hand tenderly."),
+            Some(GroupEvent::HeldTheirHand)
+        );
+
+        // Second person: they take ours, so they lead.
+        assert_eq!(
+            classify_line("Ultz reaches out and holds your hand."),
+            Some(GroupEvent::TheyHeldOurHand)
+        );
+        assert_eq!(
+            classify_line("Ultz grabs your hand."),
+            Some(GroupEvent::TheyHeldOurHand)
+        );
+        assert_eq!(
+            classify_line("Ultz clasps your hand tenderly."),
+            Some(GroupEvent::TheyHeldOurHand)
+        );
+
+        // Third person: two other people. Our roster is unaffected, and this
+        // must NOT be mistaken for either case above.
+        assert_eq!(
+            classify_line("Wilhelm reaches out and holds Walker's hand."),
+            None
+        );
+    }
+
+    #[test]
+    fn classifies_releasing_a_hand() {
+        assert_eq!(
+            classify_line("You let go of Abem's hand."),
+            Some(GroupEvent::Released)
+        );
+        assert_eq!(
+            classify_line("Ultz lets go of your hand."),
+            Some(GroupEvent::Released)
+        );
+    }
+
+    #[test]
+    fn holding_a_hand_makes_a_confirmed_two_person_group() {
+        // Unlike being added to someone else's group, both ends of a
+        // hand-hold are visible, so the roster is genuinely known.
+        let g = drive(&[(GroupEvent::HeldTheirHand, vec![member("-1", "Abem")])]);
+        assert!(g.leads());
+        assert_eq!(g.members, vec![member("-1", "Abem")]);
+        assert!(g.confirmed);
+    }
+
+    #[test]
+    fn having_our_hand_held_makes_us_a_follower() {
+        let g = drive(&[(GroupEvent::TheyHeldOurHand, vec![member("-1", "Ultz")])]);
+        assert_eq!(g.leader, GroupLeader::Other(member("-1", "Ultz")));
+        assert!(
+            !g.confirmed,
+            "we cannot see the rest of their group from the hold alone"
+        );
+    }
+
+    /// Only the leader can hold, so a hold while already leading GROWS the
+    /// group. The old code replaced the roster, erasing real members.
+    #[test]
+    fn holding_while_leading_adds_to_the_roster() {
+        let mut state = GroupState::default();
+        let mut pending = None;
+        state.replace(
+            GroupLeader::SelfLed,
+            vec![member("-1", "Bob"), member("-2", "Carol")],
+        );
+        apply_event(
+            &mut state,
+            &GroupEvent::HeldTheirHand,
+            &[member("-3", "Dave")],
+            &mut pending,
+        );
+        assert!(state.leads());
+        assert_eq!(
+            state.members,
+            vec![member("-1", "Bob"), member("-2", "Carol"), member("-3", "Dave")],
+            "Bob and Carol must survive the hold"
+        );
+        assert!(state.confirmed, "adding a visible member loses no certainty");
+    }
+
+    /// The leader letting go of OUR hand removes us from their group -- a
+    /// known-empty state, not a permanently-unconfirmed one.
+    #[test]
+    fn leader_releasing_us_clears_to_known_empty() {
+        let mut state = GroupState::default();
+        let mut pending = None;
+        apply_event(
+            &mut state,
+            &GroupEvent::TheyHeldOurHand,
+            &[member("-1", "Ultz")],
+            &mut pending,
+        );
+        assert!(state.is_grouped());
+        apply_event(
+            &mut state,
+            &GroupEvent::Released,
+            &[member("-1", "Ultz")],
+            &mut pending,
+        );
+        assert!(!state.is_grouped());
+        assert!(
+            state.confirmed,
+            "an ended pairing leaves no doubt -- amber warning forever was the bug"
+        );
+    }
+
+    #[test]
+    fn releasing_a_hand_ends_the_pairing() {
+        let mut state = GroupState::default();
+        let mut pending = None;
+        apply_event(
+            &mut state,
+            &GroupEvent::HeldTheirHand,
+            &[member("-1", "Abem")],
+            &mut pending,
+        );
+        assert!(state.is_grouped());
+        apply_event(
+            &mut state,
+            &GroupEvent::Released,
+            &[member("-1", "Abem")],
+            &mut pending,
+        );
+        assert!(!state.is_grouped());
+    }
+
+    #[test]
+    fn ignores_ordinary_lines() {
+        // The gate must be cheap AND not fire on unrelated prose. "group" in
+        // an unrelated sentence must not produce an event.
+        assert_eq!(classify_line("You see nothing unusual."), None);
+        assert_eq!(classify_line("A group of tourists wanders past."), None);
+        assert_eq!(classify_line("The sky is blue."), None);
+        assert_eq!(classify_line(""), None);
+    }
+
+    #[test]
+    fn roster_add_is_idempotent_by_id() {
+        let mut g = GroupState::default();
+        assert!(g.add(member("-1", "Bob")));
+        // Same id again: no change, even though a fresh struct is passed.
+        assert!(!g.add(member("-1", "Bob")));
+        assert_eq!(g.members.len(), 1);
+
+        // Same NAME but a different id is a different person, and both stay.
+        assert!(g.add(member("-2", "Bob")));
+        assert_eq!(g.members.len(), 2);
+    }
+
+    #[test]
+    fn removing_the_leader_we_follow_ends_the_group() {
+        let mut g = GroupState::default();
+        g.replace(GroupLeader::Other(member("-1", "Bob")), vec![member("-2", "Carol")]);
+        assert!(g.is_grouped());
+
+        // Bob dies or leaves: we are no longer in his group, and what remains
+        // is uncertain -- Carol may or may not still be grouped with us.
+        assert!(g.remove("-1"));
+        assert_eq!(g.leader, GroupLeader::None);
+        assert!(!g.confirmed);
+    }
+
+    #[test]
+    fn clear_is_a_confirmed_empty_state() {
+        let mut g = GroupState::default();
+        g.replace(GroupLeader::SelfLed, vec![member("-1", "Bob")]);
+        g.clear();
+        assert!(!g.is_grouped());
+        assert!(g.members.is_empty());
+        // Disbanding leaves NO doubt about the roster, unlike joining someone
+        // else's group. Confirmed, not unconfirmed.
+        assert!(g.confirmed);
+    }
+
+    #[test]
+    fn everyone_includes_the_leader_we_follow() {
+        let mut g = GroupState::default();
+        g.replace(GroupLeader::Other(member("-1", "Bob")), vec![member("-2", "Carol")]);
+        let names: Vec<&str> = g.everyone().iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["Bob", "Carol"]);
+
+        // When we lead, there is no separate leader entry to prepend.
+        let mut g2 = GroupState::default();
+        g2.replace(GroupLeader::SelfLed, vec![member("-2", "Carol")]);
+        let names: Vec<&str> = g2.everyone().iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["Carol"]);
+    }
+
+    #[test]
+    fn no_op_mutations_report_no_change() {
+        let mut g = GroupState::default();
+        assert!(g.add(member("-1", "Bob")));
+        assert!(!g.add(member("-1", "Bob")), "duplicate add is a no-op");
+        assert!(!g.remove("-999"), "removing a non-member is a no-op");
+    }
+
+    /// Drive a sequence of (event, links) through `apply_event` the way the
+    /// prompt drain does, and hand back the resulting roster.
+    fn drive(events: &[(GroupEvent, Vec<GroupMember>)]) -> GroupState {
+        let mut state = GroupState::default();
+        let mut pending = None;
+        for (event, members) in events {
+            apply_event(&mut state, event, members, &mut pending);
+        }
+        state
+    }
+
+    #[test]
+    fn group_reply_commits_only_on_the_status_sentinel() {
+        // "You are leading Bob, Carol." then "Your group status is ..."
+        let g = drive(&[
+            (
+                GroupEvent::RosterLine { self_led: true },
+                vec![member("-1", "Bob"), member("-2", "Carol")],
+            ),
+            (GroupEvent::StatusLine, vec![]),
+        ]);
+        assert_eq!(g.leader, GroupLeader::SelfLed);
+        assert_eq!(g.members.len(), 2);
+        assert!(g.confirmed);
+    }
+
+    #[test]
+    fn truncated_group_reply_does_not_clobber_the_roster() {
+        // A roster line with no status sentinel (reply cut off, or split
+        // across prompts) must leave the previous roster intact rather than
+        // committing a partial one.
+        let mut state = GroupState::default();
+        let mut pending = None;
+        apply_event(
+            &mut state,
+            &GroupEvent::RosterLine { self_led: true },
+            &[member("-1", "Bob")],
+            &mut pending,
+        );
+        // Staged, not applied.
+        assert!(state.members.is_empty());
+        assert!(!state.confirmed);
+    }
+
+    #[test]
+    fn following_roster_line_splits_leader_from_members() {
+        // "You are grouped with Bob, Carol." -- Bob leads, Carol is a peer.
+        let g = drive(&[
+            (
+                GroupEvent::RosterLine { self_led: false },
+                vec![member("-1", "Bob"), member("-2", "Carol")],
+            ),
+            (GroupEvent::StatusLine, vec![]),
+        ]);
+        assert_eq!(g.leader, GroupLeader::Other(member("-1", "Bob")));
+        assert_eq!(g.members, vec![member("-2", "Carol")]);
+        assert!(g.confirmed);
+    }
+
+    #[test]
+    fn joining_someone_elses_group_is_unconfirmed() {
+        // We can see we joined, but not who else is already in Bob's group.
+        // Claiming an empty roster would be a lie.
+        let g = drive(&[(GroupEvent::JoinedOther, vec![member("-1", "Bob")])]);
+        assert_eq!(g.leader, GroupLeader::Other(member("-1", "Bob")));
+        assert!(!g.confirmed, "roster is not knowable from the join alone");
+        assert!(g.is_grouped());
+    }
+
+    #[test]
+    fn third_party_joins_do_not_pollute_our_roster_when_following() {
+        // "Carol joins Bob's group" while we merely follow Bob. We cannot
+        // tell whose group changed, so we flag uncertainty rather than
+        // inventing a member.
+        let mut state = GroupState::default();
+        let mut pending = None;
+        apply_event(
+            &mut state,
+            &GroupEvent::JoinedOther,
+            &[member("-1", "Bob")],
+            &mut pending,
+        );
+        apply_event(
+            &mut state,
+            &GroupEvent::Joined,
+            &[member("-9", "Stranger")],
+            &mut pending,
+        );
+        assert!(
+            !state.members.iter().any(|m| m.id == "-9"),
+            "a stranger must not be added to a group we do not lead"
+        );
+        assert!(!state.confirmed);
+    }
+
+    #[test]
+    fn joins_land_in_our_roster_when_we_lead() {
+        let mut state = GroupState::default();
+        let mut pending = None;
+        state.replace(GroupLeader::SelfLed, vec![]);
+        apply_event(
+            &mut state,
+            &GroupEvent::Joined,
+            &[member("-1", "Bob")],
+            &mut pending,
+        );
+        assert_eq!(state.members, vec![member("-1", "Bob")]);
+    }
+
+    #[test]
+    fn disband_and_no_group_both_clear() {
+        for event in [GroupEvent::Disbanded, GroupEvent::NoGroup] {
+            let mut state = GroupState::default();
+            let mut pending = None;
+            state.replace(GroupLeader::SelfLed, vec![member("-1", "Bob")]);
+            apply_event(&mut state, &event, &[], &mut pending);
+            assert!(!state.is_grouped(), "{event:?} must clear the roster");
+            assert!(state.confirmed, "{event:?} leaves no doubt");
+        }
+    }
+
+    #[test]
+    fn gaining_leadership_keeps_members_but_flags_uncertainty() {
+        let mut state = GroupState::default();
+        let mut pending = None;
+        apply_event(
+            &mut state,
+            &GroupEvent::JoinedOther,
+            &[member("-1", "Bob")],
+            &mut pending,
+        );
+        apply_event(&mut state, &GroupEvent::GainedLeadership, &[], &mut pending);
+        assert!(state.leads());
+        // We inherited a group whose full membership we never saw.
+        assert!(!state.confirmed);
+    }
+
+    #[test]
+    fn mark_unconfirmed_reflects_joining_a_group_blind() {
+        let mut g = GroupState::default();
+        g.replace(GroupLeader::SelfLed, vec![]);
+        assert!(g.confirmed);
+        // We just joined someone else's group: we saw the join, but not the
+        // roster. Saying "you are alone with Bob" would be a guess.
+        g.mark_unconfirmed();
+        assert!(!g.confirmed);
+    }
+}

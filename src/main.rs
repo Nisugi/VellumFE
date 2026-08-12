@@ -13,6 +13,7 @@ mod migrate;
 mod network;
 mod parser;
 mod performance;
+mod process_probe;
 mod platform;
 mod selection;
 mod session_cache;

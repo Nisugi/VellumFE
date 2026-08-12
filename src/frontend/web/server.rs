@@ -103,7 +103,7 @@ pub async fn serve(
         config.port.saturating_add(PORT_WALK_RANGE)
     };
     for port in config.port..=last {
-        match tokio::net::TcpListener::bind((config.bind.as_str(), port)).await {
+        match tokio::net::TcpListener::bind((config.effective_bind(), port)).await {
             Ok(l) => {
                 listener = Some(l);
                 bound_port = port;
@@ -130,11 +130,19 @@ pub async fn serve(
     };
 
     tracing::info!(
-        "web server listening on http://{}:{}",
-        config.bind,
-        bound_port
+        "web server listening on http://{}:{} ({})",
+        config.effective_bind(),
+        bound_port,
+        if config.local_status_only() {
+            "multi-account status only"
+        } else {
+            "phone client + status"
+        }
     );
-    if bound_port != config.port {
+    // Only surface the port walk to a user who is trying to reach a URL. In
+    // status-only mode the port is an implementation detail -- siblings find
+    // each other through the registry, not by typing it.
+    if bound_port != config.port && !config.local_status_only() {
         let _ = handles.event_tx.send(RemoteEvent::Notice(format!(
             "Web server on port {} (base {} was taken)",
             bound_port, config.port
@@ -157,99 +165,15 @@ pub async fn serve(
         }
     };
 
-    serve_listener_with_token(listener, handles, auth_token).await
+    serve_listener_with_token_mode(listener, handles, auth_token, config.local_status_only()).await
 }
 
 /// Session registry: files in ~/.vellum-fe/web-sessions/, one per running
 /// instance, keyed by pid.
-pub mod registry {
-    use serde::{Deserialize, Serialize};
-    use std::fs;
-    use std::path::PathBuf;
-
-    #[derive(Clone, Debug, Serialize, Deserialize)]
-    pub struct SessionEntry {
-        pub character: String,
-        pub port: u16,
-        pub pid: u32,
-        pub started_at: String,
-    }
-
-    pub fn dir() -> Option<PathBuf> {
-        let dir = crate::config::Config::base_dir().ok()?.join("web-sessions");
-        fs::create_dir_all(&dir).ok()?;
-        Some(dir)
-    }
-
-    fn entry_path(pid: u32) -> Option<PathBuf> {
-        Some(dir()?.join(format!("{pid}.json")))
-    }
-
-    pub fn write_entry(port: u16, character: &str) {
-        let pid = std::process::id();
-        let entry = SessionEntry {
-            character: character.to_string(),
-            port,
-            pid,
-            started_at: chrono::Utc::now().to_rfc3339(),
-        };
-        let Some(path) = entry_path(pid) else { return };
-        if let Ok(json) = serde_json::to_string_pretty(&entry) {
-            if let Err(e) = fs::write(&path, json) {
-                tracing::warn!("failed to write session registry entry: {e}");
-            }
-        }
-    }
-
-    /// Remove this instance's entry (clean shutdown).
-    pub fn remove_entry() {
-        if let Some(path) = entry_path(std::process::id()) {
-            let _ = fs::remove_file(path);
-        }
-    }
-
-    /// All current entries. Also garbage-collects files whose pid is no
-    /// longer running (crashed instances).
-    pub fn list_and_gc() -> Vec<SessionEntry> {
-        let Some(dir) = dir() else { return Vec::new() };
-        let Ok(read) = fs::read_dir(&dir) else {
-            return Vec::new();
-        };
-        #[cfg(feature = "desktop")]
-        let mut system = sysinfo::System::new();
-        #[cfg(feature = "desktop")]
-        system.refresh_processes();
-        let mut entries = Vec::new();
-        for file in read.flatten() {
-            let path = file.path();
-            if path.extension().is_none_or(|e| e != "json") {
-                continue;
-            }
-            let Ok(text) = fs::read_to_string(&path) else {
-                continue;
-            };
-            let Ok(entry) = serde_json::from_str::<SessionEntry>(&text) else {
-                let _ = fs::remove_file(&path);
-                continue;
-            };
-            #[cfg(feature = "desktop")]
-            let alive = system
-                .process(sysinfo::Pid::from_u32(entry.pid))
-                .is_some();
-            // Without process inspection (Android: single-process app), only
-            // our own entry can be live; anything else is a stale leftover.
-            #[cfg(not(feature = "desktop"))]
-            let alive = entry.pid == std::process::id();
-            if alive {
-                entries.push(entry);
-            } else {
-                let _ = fs::remove_file(&path);
-            }
-        }
-        entries.sort_by(|a, b| a.character.cmp(&b.character));
-        entries
-    }
-}
+/// Session registry, re-exported from core so existing call sites keep
+/// working. The implementation moved to `core::session_registry` because the
+/// multi-account hub needs it and core cannot import from `frontend/`.
+pub use crate::core::session_registry as registry;
 
 /// Serve on an already-bound listener with a fixed token (integration
 /// tests bind port 0 and pass a known token).
@@ -266,14 +190,44 @@ pub async fn serve_listener_with_token(
     handles: RemoteServerHandles,
     auth_token: String,
 ) -> Result<()> {
+    serve_listener_with_token_mode(listener, handles, auth_token, false).await
+}
+
+/// As above, with `status_only` selecting the reduced router.
+///
+/// In status-only mode (multiaccount on, phone server off -- the default
+/// config) the listener exists solely so sibling instances can watch this
+/// session. Serving the whole phone surface there -- /play, assets,
+/// /sessions, doll art -- exposed far more than the feature needs to a mode
+/// the user never opted into; the reduced router is /ws (still
+/// token-authenticated) plus /health for the dashboard's liveness probes.
+pub async fn serve_listener_with_token_mode(
+    listener: tokio::net::TcpListener,
+    handles: RemoteServerHandles,
+    auth_token: String,
+    status_only: bool,
+) -> Result<()> {
     let state = Arc::new(WebState {
         handles,
         auth_token,
         auth_failures: std::sync::Mutex::new(Vec::new()),
     });
-    let router = Router::new()
+    let router = if status_only {
+        Router::new()
+            .route("/health", get(health))
+            .route("/ws", get(ws_upgrade))
+            .with_state(state)
+    } else {
+        full_router(state)
+    };
+    serve_router(listener, router).await
+}
+
+fn full_router(state: Arc<WebState>) -> Router {
+    Router::new()
         .route("/", get(dashboard_html))
         .route("/play", get(index_html))
+        .route("/characters", get(characters_html))
         .route("/sessions", get(sessions_json))
         .route("/app.js", get(app_js))
         .route("/wheel-core.js", get(wheel_core_js))
@@ -290,7 +244,10 @@ pub async fn serve_listener_with_token(
         .route("/doll.json", get(doll_json))
         .route("/doll/image", get(doll_image))
         .route("/ws", get(ws_upgrade))
-        .with_state(state);
+        .with_state(state)
+}
+
+async fn serve_router(listener: tokio::net::TcpListener, router: Router) -> Result<()> {
     let addr = listener
         .local_addr()
         .context("web listener has no local address")?;
@@ -437,6 +394,17 @@ async fn dashboard_html() -> impl IntoResponse {
     (
         [(header::CACHE_CONTROL, "no-cache")],
         Html(include_str!("assets/dashboard.html")),
+    )
+}
+
+/// The multi-account status wall: one card per running session, grouped like
+/// the GUI Characters window. Entirely client-side -- the page dials every
+/// registered session's `/ws` in watch mode itself, so it works no matter
+/// which instance serves it and needs no hub handle in the server.
+async fn characters_html() -> impl IntoResponse {
+    (
+        [(header::CACHE_CONTROL, "no-cache")],
+        Html(include_str!("assets/characters.html")),
     )
 }
 
@@ -650,20 +618,29 @@ async fn doll_json(
     State(state): State<Arc<WebState>>,
 ) -> impl IntoResponse {
     use axum::http::StatusCode;
+    // CORS-open like /health: the /characters wall (served from one port)
+    // fetches every session's doll metadata cross-port. Token-gated either
+    // way, so the header only permits reads the token already allows.
     if !params
         .get("token")
         .is_some_and(|t| token_matches(t, &state.auth_token))
     {
         return (
             StatusCode::FORBIDDEN,
-            [(header::CONTENT_TYPE, "text/plain")],
+            [
+                (header::CONTENT_TYPE, "text/plain"),
+                (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+            ],
             String::new(),
         );
     }
     let payload = super::doll::active_payload();
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/json")],
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+        ],
         serde_json::to_string(&payload).unwrap_or_else(|_| r#"{"base":false}"#.to_string()),
     )
 }
@@ -756,14 +733,23 @@ fn gather_snapshot(state: &WebState) -> (Vec<String>, Vec<RemoteLine>, u64) {
 
 /// Build the snapshot reply for a `resume { seq }` request. Locks the
 /// buffer briefly; never holds it across an await.
-fn build_resume_reply(state: &WebState, resume_seq: u64) -> String {
+fn build_resume_reply(
+    state: &WebState,
+    resume_seq: u64,
+    sub: protocol::SubscribeMode,
+) -> String {
     let buffer = state
         .handles
         .buffer
         .lock()
         .expect("remote buffer lock poisoned");
     let last_seq = buffer.last_seq();
-    let (mode, lines) = if resume_seq == 0 {
+    // A watcher has no scrollback to resume, so skip the tail walk entirely
+    // and always report Full -- there is no gap to signal when the client
+    // was never rendering text.
+    let (mode, lines) = if sub == protocol::SubscribeMode::Watch {
+        (SnapshotMode::Full, Vec::new())
+    } else if resume_seq == 0 {
         (SnapshotMode::Full, buffer.snapshot_tail(SNAPSHOT_LINES_PER_STREAM))
     } else {
         match buffer.lines_since(resume_seq) {
@@ -773,17 +759,30 @@ fn build_resume_reply(state: &WebState, resume_seq: u64) -> String {
     };
     drop(buffer);
     let game_state = state.handles.state_rx.borrow().clone();
-    protocol::snapshot(&game_state, lines, mode, last_seq)
+    protocol::snapshot_for(&game_state, lines, mode, last_seq, sub)
 }
 
 async fn send_snapshot(
     socket: &mut WebSocket,
     state: &WebState,
     mode: SnapshotMode,
+    sub: protocol::SubscribeMode,
 ) -> Result<(), axum::Error> {
-    let (_, lines, last_seq) = gather_snapshot(state);
+    // A watcher never renders scrollback, so do not even gather it -- that
+    // walk is 300 lines per stream under the buffer lock.
+    let (lines, last_seq) = if sub == protocol::SubscribeMode::Watch {
+        let buffer = state
+            .handles
+            .buffer
+            .lock()
+            .expect("remote buffer lock poisoned");
+        (Vec::new(), buffer.last_seq())
+    } else {
+        let (_, lines, last_seq) = gather_snapshot(state);
+        (lines, last_seq)
+    };
     let game_state = state.handles.state_rx.borrow().clone();
-    let msg = protocol::snapshot(&game_state, lines, mode, last_seq);
+    let msg = protocol::snapshot_for(&game_state, lines, mode, last_seq, sub);
     socket.send(Message::Text(msg.into())).await
 }
 
@@ -794,10 +793,18 @@ async fn handle_client_message(
     state: &WebState,
     client_id: u64,
     msg: ClientMessage,
+    sub: &mut protocol::SubscribeMode,
 ) -> bool {
     match msg {
         // Already authenticated; a stray re-auth is harmless.
         ClientMessage::Auth { .. } => true,
+        ClientMessage::Subscribe { mode } => {
+            // Declares what this connection is for. Takes effect from here
+            // on; the client sends it before `resume` so its snapshot is
+            // already tailored.
+            *sub = mode;
+            true
+        }
         ClientMessage::Cmd { text } => {
             // Forward into the main loop; it runs the same path as local
             // input. Send fails only if the app is shutting down.
@@ -808,7 +815,7 @@ async fn handle_client_message(
                 .is_ok()
         }
         ClientMessage::Resume { seq } => {
-            let reply = build_resume_reply(state, seq);
+            let reply = build_resume_reply(state, seq, *sub);
             socket.send(Message::Text(reply.into())).await.is_ok()
         }
         ClientMessage::LinkTap {
@@ -1242,31 +1249,76 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
         return;
     }
 
-    // The client answers hello with `resume { seq }` (0 = fresh). Fall
-    // back to a full snapshot for clients that never send one.
-    let first = tokio::time::timeout(RESUME_WAIT, socket.recv()).await;
-    match first {
-        Ok(None) | Ok(Some(Err(_))) | Ok(Some(Ok(Message::Close(_)))) => return,
-        Ok(Some(Ok(Message::Text(text)))) => {
-            match protocol::parse_client_message(&text) {
-                Some(msg) => {
-                    if !handle_client_message(&mut socket, &state, client_id, msg).await {
-                        return;
-                    }
-                }
-                None => {
-                    if send_snapshot(&mut socket, &state, SnapshotMode::Full).await.is_err() {
-                        return;
-                    }
-                }
-            }
-        }
-        Ok(Some(Ok(_))) | Err(_) => {
-            // Non-text frame or timeout: treat as a fresh client.
-            if send_snapshot(&mut socket, &state, SnapshotMode::Full).await.is_err() {
+    // What this connection is for. Defaults to the full feed, which is what
+    // every client that predates `subscribe` implies.
+    let mut sub = protocol::SubscribeMode::default();
+
+    // The client answers hello with `resume { seq }` (0 = fresh), optionally
+    // preceded by `subscribe { mode }`. Fall back to a full snapshot for
+    // clients that never send one.
+    //
+    // The loop exists so `subscribe` can arrive first without consuming the
+    // client's one shot at a snapshot: it sets the mode and we wait again for
+    // the `resume` that actually triggers the reply. BOUNDED: a client that
+    // streams subscribe frames back-to-back would otherwise spin this task
+    // forever without ever reaching the main loop -- after the budget it is
+    // treated as a fresh client and handed a snapshot.
+    let mut handshake_budget: u8 = 8;
+    loop {
+        if handshake_budget == 0 {
+            if send_snapshot(&mut socket, &state, SnapshotMode::Full, sub)
+                .await
+                .is_err()
+            {
                 return;
             }
+            break;
         }
+        handshake_budget -= 1;
+        let first = tokio::time::timeout(RESUME_WAIT, socket.recv()).await;
+        match first {
+            Ok(None) | Ok(Some(Err(_))) | Ok(Some(Ok(Message::Close(_)))) => return,
+            Ok(Some(Ok(Message::Text(text)))) => {
+                match protocol::parse_client_message(&text) {
+                    Some(ClientMessage::Subscribe { mode }) => {
+                        sub = mode;
+                        // Keep waiting for the resume.
+                        continue;
+                    }
+                    Some(msg) => {
+                        if !handle_client_message(
+                            &mut socket,
+                            &state,
+                            client_id,
+                            msg,
+                            &mut sub,
+                        )
+                        .await
+                        {
+                            return;
+                        }
+                    }
+                    None => {
+                        if send_snapshot(&mut socket, &state, SnapshotMode::Full, sub)
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
+            }
+            Ok(Some(Ok(_))) | Err(_) => {
+                // Non-text frame or timeout: treat as a fresh client.
+                if send_snapshot(&mut socket, &state, SnapshotMode::Full, sub)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }
+        break;
     }
 
     // Macro and wheel definitions follow the snapshot; updates arrive as
@@ -1306,6 +1358,27 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                             continue;
                         }
                     }
+                    // A watcher gets the status set only; the text stream and
+                    // the map are the bulk of the traffic and it renders
+                    // neither.
+                    if !sub.wants(&d) {
+                        continue;
+                    }
+                    // A watcher wants to know WHERE a peer is, not the prose
+                    // describing it -- slim the Room delta down to name + id
+                    // before encoding, mirroring what the watch snapshot does.
+                    let d = match (&d, sub) {
+                        (
+                            RemoteDelta::Room { name, id, .. },
+                            protocol::SubscribeMode::Watch,
+                        ) => RemoteDelta::Room {
+                            name: name.clone(),
+                            id: id.clone(),
+                            exits: Vec::new(),
+                            description: Vec::new(),
+                        },
+                        _ => d,
+                    };
                     let last_seq = state
                         .handles
                         .buffer
@@ -1321,7 +1394,10 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                     tracing::debug!("web client lagged {missed} deltas; re-syncing");
                     // Gap mode: the client keeps its pane, shows a missed-
                     // output marker, and seq-dedupes the overlap.
-                    if send_snapshot(&mut socket, &state, SnapshotMode::Gap).await.is_err() {
+                    if send_snapshot(&mut socket, &state, SnapshotMode::Gap, sub)
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -1331,7 +1407,15 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                 None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
                 Some(Ok(Message::Text(text))) => {
                     if let Some(msg) = protocol::parse_client_message(&text) {
-                        if !handle_client_message(&mut socket, &state, client_id, msg).await {
+                        if !handle_client_message(
+                            &mut socket,
+                            &state,
+                            client_id,
+                            msg,
+                            &mut sub,
+                        )
+                        .await
+                        {
                             break;
                         }
                     }

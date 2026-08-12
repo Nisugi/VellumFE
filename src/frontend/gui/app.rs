@@ -144,6 +144,11 @@ pub(super) struct WidgetRenderSettings {
     /// Server "now" for ticking effect bars between refreshes; None when
     /// ui.effect_countdown is off (bars show the server's last snapshot).
     effect_countdown_now: Option<i64>,
+    /// This frame's sibling-instance status, for multiaccount windows.
+    /// Snapshotted once per frame and shared by Arc: settings are rebuilt per
+    /// window, and cloning a six-peer map per window per frame is waste.
+    multiaccount_peers:
+        std::sync::Arc<std::collections::BTreeMap<u16, crate::core::multiaccount::PeerStatus>>,
 }
 
 /// Stable widget id for the command-input TextEdit, wherever it renders
@@ -315,6 +320,12 @@ pub struct VellumGuiApp {
     detached_tabs: HashMap<TabKey, DetachedWindowState>,
     /// Map Explorer native window (separate OS viewport).
     map_explorer: map_explorer::MapExplorerState,
+    /// Watches the other VellumFE instances on this machine. None when the
+    /// multi-account display is off or no pairing token is available.
+    multiaccount: Option<crate::core::multiaccount::MultiAccountHub>,
+    /// Last peer snapshot, refreshed once per frame in update().
+    multiaccount_peers:
+        std::sync::Arc<std::collections::BTreeMap<u16, crate::core::multiaccount::PeerStatus>>,
     detached_context_menu: Option<DetachedMenuState>,
     /// Which detached tab's viewport hosts the game popup menus. The menu
     /// stack renders inside that OS window (at its local click coords);
@@ -693,7 +704,7 @@ impl VellumGuiApp {
 
         // Start the web frontend sidecar if enabled (off by default); it
         // runs on this GUI-owned runtime.
-        let web_event_rx = if app_core.config.web.enabled {
+        let web_event_rx = if app_core.config.web.should_serve() {
             let _guard = runtime.enter();
             let session_label = app_core
                 .config
@@ -706,6 +717,30 @@ impl VellumGuiApp {
                 crate::frontend::web::start(&app_core.config.web, session_label);
             app_core.enable_remote(sink);
             Some(event_rx)
+        } else {
+            None
+        };
+
+        // Multi-account status. Rides the same sidecar: every instance on
+        // this machine reads one pairing-token file, so no pairing step is
+        // needed, and the registry is what makes discovery automatic. The
+        // hub requires BOTH the feature flag AND the sidecar actually
+        // serving -- the sidecar is what publishes OUR registry entry, and a
+        // hub without it would be a silent one-way watcher (sees everyone,
+        // seen by no one). should_serve() is implied by `multiaccount` today,
+        // but the predicate states the dependency rather than relying on
+        // that implication holding forever.
+        let multiaccount = if app_core.config.web.multiaccount
+            && app_core.config.web.should_serve()
+        {
+            let _guard = runtime.enter();
+            match crate::config::Config::load_or_create_web_token() {
+                Ok(token) => Some(crate::core::multiaccount::MultiAccountHub::start(token)),
+                Err(err) => {
+                    tracing::warn!("multi-account display disabled (no web token): {err}");
+                    None
+                }
+            }
         } else {
             None
         };
@@ -920,6 +955,8 @@ impl VellumGuiApp {
             close_requested: false,
             detached_tabs,
             map_explorer: Default::default(),
+            multiaccount,
+            multiaccount_peers: Default::default(),
             detached_context_menu: None,
             popup_menu_host: None,
             available_tabs,
@@ -2026,6 +2063,43 @@ impl eframe::App for VellumGuiApp {
         // Process CPU/RSS (rate-limited to 1 Hz internally) and buffered
         // content totals for the performance monitor.
         self.app_core.perf_stats.sample_sysinfo();
+
+        // Refresh the sibling-instance snapshot once per frame -- render
+        // paths are `&self`, so this is the one place it can be taken. The
+        // self card is built HERE too: building it in the widget rebuilt it
+        // per window per frame, cloning effects/injuries/group each time.
+        // Skipped entirely when no multiaccount window is on screen.
+        if let Some(hub) = &self.multiaccount {
+            let wants_cards = self
+                .app_core
+                .ui_state
+                .windows
+                .values()
+                .any(|w| matches!(w.content, crate::data::WindowContent::MultiAccount));
+            if wants_cards {
+                let now_ms = crate::core::multiaccount::hub::now_ms();
+                let peers = hub.reap_and_snapshot(now_ms);
+                let mut combined = (*peers).clone();
+                combined.insert(
+                    crate::core::multiaccount::SELF_PORT,
+                    crate::core::multiaccount::PeerStatus::from_local(
+                        &self.app_core.game_state,
+                        self.app_core
+                            .config
+                            .connection
+                            .character
+                            .as_deref()
+                            .or(self.app_core.config.character.as_deref()),
+                        self.app_core
+                            .nav_room_id
+                            .clone()
+                            .or_else(|| self.app_core.lich_room_id.clone()),
+                        now_ms,
+                    ),
+                );
+                self.multiaccount_peers = std::sync::Arc::new(combined);
+            }
+        }
         {
             let total_lines: usize = self
                 .app_core

@@ -375,6 +375,25 @@ impl MessageProcessor {
                     game_state.silver = Some(silver);
                 }
 
+                // Group events apply in order: a `group` reply stages its
+                // roster on the "You are leading/grouped with" line and
+                // commits on the status sentinel, so the two must not be
+                // reordered. The staging cursor is local to this drain, so a
+                // reply split across prompts cannot leave the roster
+                // half-applied -- it just fails to commit and stays
+                // unconfirmed, which the display reports honestly.
+                if !self.pending_group.is_empty() {
+                    let mut roster_pending = None;
+                    for (event, members) in self.pending_group.drain(..) {
+                        crate::core::group::apply_event(
+                            &mut game_state.group,
+                            &event,
+                            &members,
+                            &mut roster_pending,
+                        );
+                    }
+                }
+
                 // Container contents extracted from a main-stream look line
                 // during flush (which lacks game_state) land here.
                 self.drain_pending_container_ingest(game_state);
@@ -966,6 +985,12 @@ impl MessageProcessor {
                     "encumlevel" => {
                         game_state.encumbrance.update_level(*value, text.clone());
                     }
+                    // The stance bar renders into a window widget above, but
+                    // it also belongs in game state: headless and remote
+                    // clients have no stance window to read it from.
+                    "pbarStance" => {
+                        game_state.stance.update(*value, text);
+                    }
                     _ => {}
                 }
             }
@@ -1010,21 +1035,31 @@ impl MessageProcessor {
             ParsedElement::StatusIndicator { id, active } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
-                // Update game state. The parser strips the "Icon" prefix
-                // but preserves casing (e.g. "BLEEDING"), so match
-                // case-insensitively like the indicator widgets below do.
-                match id.to_ascii_lowercase().as_str() {
-                    "stunned" => game_state.status.stunned = *active,
-                    "bleeding" => game_state.status.bleeding = *active,
-                    "hidden" => game_state.status.hidden = *active,
-                    "invisible" => game_state.status.invisible = *active,
-                    "webbed" => game_state.status.webbed = *active,
-                    "dead" => game_state.status.dead = *active,
-                    "standing" => game_state.status.standing = *active,
-                    "kneeling" => game_state.status.kneeling = *active,
-                    "sitting" => game_state.status.sitting = *active,
-                    "prone" => game_state.status.prone = *active,
-                    _ => {}
+                // Store every indicator the game sends, whatever its id.
+                // `set` normalizes case and the "Icon" prefix, so the parser's
+                // casing does not matter here. Previously this was a fixed
+                // match that silently dropped JOINED, POISONED, DISEASED and
+                // anything new Simu added.
+                game_state.status.set(id, *active);
+
+                // JOINED going off is the one authoritative "you are in no
+                // group" signal the feed gives us -- more reliable than
+                // waiting for a leave message that may never arrive (death,
+                // linkdeath). Clear the roster on the falling edge.
+                if id.eq_ignore_ascii_case("joined") {
+                    if *active {
+                        // We are in a group but the roster is not known --
+                        // being ADDED by someone else produces this
+                        // indicator with no message naming the members. Mark
+                        // it unconfirmed so the display says so, and so a
+                        // watcher can tell "grouped, roster pending" from
+                        // "not grouped".
+                        if !game_state.group.is_grouped() {
+                            game_state.group.mark_joined_unconfirmed();
+                        }
+                    } else {
+                        game_state.group.clear();
+                    }
                 }
 
                 // Update Indicator windows whose indicator_id matches
@@ -1472,6 +1507,16 @@ impl MessageProcessor {
                         None => dialog.progress_bars.push(bar),
                     }
                 }
+
+                // Stance arrives by either route depending on how the server
+                // frames the dialog, so mirror it into game state from both.
+                // Everything else here is dialog-slot rendering only.
+                for pb in progress_bars {
+                    if pb.id == "pbarStance" {
+                        game_state.stance.update(pb.value, &pb.text);
+                    }
+                }
+
                 self.sync_shown_dialog(ui_state, id, show);
             }
             ParsedElement::DialogLabelList { id, clear, labels } => {

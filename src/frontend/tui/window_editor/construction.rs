@@ -173,6 +173,9 @@ impl WindowEditor {
 
         // Special section fields appended at end
         match window_def {
+            // Multi-account cards are GUI-only and configured there; the TUI
+            // editor exposes only the shared base fields.
+            WindowDef::MultiAccount { .. } => {}
             WindowDef::CommandInput { .. } => {
                 fields.push(FieldRef::PromptIcon);
                 fields.push(FieldRef::PromptIconColor);

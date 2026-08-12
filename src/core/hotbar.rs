@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn indicator_and_inverted() {
         let mut gs = GameState::new();
-        gs.status.hidden = true;
+        gs.status.set("hidden", true);
         let hidden = Condition::Indicator {
             id: "hidden".to_string(),
             active: true,
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn all_any_nesting() {
         let mut gs = GameState::new();
-        gs.status.stunned = true;
+        gs.status.set("stunned", true);
         gs.roundtime_end = Some(NOW + 5);
 
         let cond = Condition::Any {
@@ -314,7 +314,7 @@ mod tests {
             ],
         };
         assert!(eval_condition(&cond, &gs, NOW, None));
-        gs.status.stunned = false;
+        gs.status.set("stunned", false);
         assert!(!eval_condition(&cond, &gs, NOW, None));
     }
 
@@ -336,7 +336,7 @@ mod tests {
     fn first_matching_state_wins_and_style_falls_through() {
         let mut gs = GameState::new();
         gs.roundtime_end = Some(NOW + 5);
-        gs.status.hidden = true;
+        gs.status.set("hidden", true);
 
         let bar = HotbarDef {
             name: "test".to_string(),
