@@ -269,7 +269,7 @@ async fn async_run(
     // Start the web frontend sidecar if enabled (off by default). The
     // server runs as a tokio task; core feeds it via the attached sink,
     // and remote client commands arrive on remote_rx.
-    let mut remote_rx = if app_core.config.web.enabled {
+    let mut remote_rx = if app_core.config.web.should_serve() {
         let session_label = character
             .clone()
             .or_else(|| app_core.config.connection.character.clone())

@@ -700,7 +700,7 @@ impl VellumGuiApp {
 
         // Start the web frontend sidecar if enabled (off by default); it
         // runs on this GUI-owned runtime.
-        let web_event_rx = if app_core.config.web.enabled {
+        let web_event_rx = if app_core.config.web.should_serve() {
             let _guard = runtime.enter();
             let session_label = app_core
                 .config
@@ -722,7 +722,7 @@ impl VellumGuiApp {
         // needed, and the registry is what makes discovery automatic. Gated
         // on the sidecar being enabled because that is also what publishes
         // OUR registry entry -- a one-way watcher would be a surprise.
-        let multiaccount = if app_core.config.web.enabled {
+        let multiaccount = if app_core.config.web.multiaccount {
             let _guard = runtime.enter();
             match crate::config::Config::load_or_create_web_token() {
                 Ok(token) => Some(crate::core::multiaccount::MultiAccountHub::start(

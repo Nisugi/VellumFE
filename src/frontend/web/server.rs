@@ -103,7 +103,7 @@ pub async fn serve(
         config.port.saturating_add(PORT_WALK_RANGE)
     };
     for port in config.port..=last {
-        match tokio::net::TcpListener::bind((config.bind.as_str(), port)).await {
+        match tokio::net::TcpListener::bind((config.effective_bind(), port)).await {
             Ok(l) => {
                 listener = Some(l);
                 bound_port = port;
@@ -130,11 +130,19 @@ pub async fn serve(
     };
 
     tracing::info!(
-        "web server listening on http://{}:{}",
-        config.bind,
-        bound_port
+        "web server listening on http://{}:{} ({})",
+        config.effective_bind(),
+        bound_port,
+        if config.local_status_only() {
+            "multi-account status only"
+        } else {
+            "phone client + status"
+        }
     );
-    if bound_port != config.port {
+    // Only surface the port walk to a user who is trying to reach a URL. In
+    // status-only mode the port is an implementation detail -- siblings find
+    // each other through the registry, not by typing it.
+    if bound_port != config.port && !config.local_status_only() {
         let _ = handles.event_tx.send(RemoteEvent::Notice(format!(
             "Web server on port {} (base {} was taken)",
             bound_port, config.port
