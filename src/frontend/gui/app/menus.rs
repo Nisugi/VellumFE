@@ -163,6 +163,7 @@ pub(super) enum GuiWindowMenuCommand {
     /// gs4_experience display toggles + bar colors.
     SetExperienceConfig(super::window_config::ExperienceConfig),
     /// Encumbrance display toggles.
+    SetMultiAccountConfig(super::window_config::MultiAccountConfig),
     SetEncumConfig(super::window_config::EncumConfig),
     /// MiniVitals bar options (GuiUiSettings.vitals).
     SetVitals(crate::frontend::gui::persistence::VitalsConfig),
@@ -513,6 +514,7 @@ impl VellumGuiApp {
             | C::SetTargetsConfig(_)
             | C::SetExperienceConfig(_)
             | C::SetEncumConfig(_)
+            | C::SetMultiAccountConfig(_)
             | C::SetVitals(_) => true,
         }
     }
@@ -745,6 +747,7 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetTargetsConfig(_)
             | GuiWindowMenuCommand::SetExperienceConfig(_)
             | GuiWindowMenuCommand::SetEncumConfig(_)
+            | GuiWindowMenuCommand::SetMultiAccountConfig(_)
             | GuiWindowMenuCommand::SetVitals(_)
             | GuiWindowMenuCommand::DeleteWindow => {
                 let tab_key = request.tab_key.clone();

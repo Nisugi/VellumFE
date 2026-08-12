@@ -999,8 +999,10 @@ pub struct MultiAccountWidgetData {
     pub show_rt: bool,
     /// Compact colored glyph row (stunned, bleeding, hidden, ...).
     pub show_status: bool,
-    /// Injury doll per card. Off by default: it is the tallest element and
-    /// most setups watch more characters than fit with dolls on.
+    /// Injury doll per card, drawn with YOUR installed doll art and the
+    /// peer's reported wounds. Peers ship an injuries map, not art, so a
+    /// character using custom doll art shows on yours -- sending each peer's
+    /// variant and calibration is a later addition.
     pub show_injuries: bool,
     /// Mind state bar.
     pub show_mind: bool,
@@ -1027,14 +1029,14 @@ impl Default for MultiAccountWidgetData {
             show_vitals: true,
             show_rt: true,
             show_status: true,
-            show_injuries: false,
+            show_injuries: true,
             show_mind: false,
             show_stance: false,
             show_encumbrance: false,
             show_room: true,
             show_self: true,
             columns: 0,
-            card_width: 140.0,
+            card_width: 150.0,
         }
     }
 }

@@ -54,7 +54,16 @@ impl VellumGuiApp {
         if data.show_self {
             peers.insert(
                 crate::core::multiaccount::SELF_PORT,
-                PeerStatus::from_local(&app_core.game_state, now_ms),
+                PeerStatus::from_local_named(
+                    &app_core.game_state,
+                    app_core
+                        .config
+                        .connection
+                        .character
+                        .as_deref()
+                        .or(app_core.config.character.as_deref()),
+                    now_ms,
+                ),
             );
         }
         let peers = &peers;
@@ -87,6 +96,9 @@ impl VellumGuiApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
+                    // Keep clusters on one flowing row; each one sizes to its
+                    // own cards rather than claiming the remaining width.
+                    ui.spacing_mut().item_spacing.x = 6.0;
                     for (idx, cluster) in clusters.iter().enumerate() {
                         Self::render_cluster(
                             ui,
@@ -149,7 +161,7 @@ impl VellumGuiApp {
                 });
             }
 
-            ui.horizontal_wrapped(|ui| {
+            ui.horizontal_top(|ui| {
                 for port in &cluster.members {
                     let Some(peer) = peers.get(port) else { continue };
                     Self::render_peer_card(
@@ -159,13 +171,30 @@ impl VellumGuiApp {
             });
         };
 
+        // A cluster occupies exactly its cards' width. Without this the
+        // enclosing layout hands it the full row and the next cluster is
+        // pushed onto a new line, which is what made the cards stair-step.
+        let card_span = |n: usize| data.card_width.max(80.0) * n as f32 + 28.0;
+
         if cluster.is_solo() {
-            draw_cards(ui);
+            ui.allocate_ui(
+                egui::vec2(card_span(cluster.members.len()), ui.available_height()),
+                |ui| ui.vertical(draw_cards),
+            );
         } else {
-            egui::Frame::group(ui.style())
-                .show(ui, |ui| {
-                    ui.push_id(("multiaccount_cluster", cluster_idx), draw_cards);
-                });
+            ui.allocate_ui(
+                egui::vec2(card_span(cluster.members.len()) + 12.0, ui.available_height()),
+                |ui| {
+                    let accent = widget_accent(ui.ctx(), ui.visuals());
+                    egui::Frame::group(ui.style())
+                        .stroke(egui::Stroke::new(1.5, accent))
+                        .show(ui, |ui| {
+                        ui.push_id(("multiaccount_cluster", cluster_idx), |ui| {
+                            ui.vertical(draw_cards);
+                        });
+                    });
+                },
+            );
         }
     }
 
@@ -282,18 +311,27 @@ impl VellumGuiApp {
                         );
                     }
 
-                    if data.show_injuries && !peer.injuries.is_empty() {
-                        // Neutral doll: variant resolution reads OUR
+                    if data.show_injuries {
+                        // Peers ship wounds, not art, so the doll is drawn
+                        // with OUR installed art. Variant stays None: variant
+                        // rules resolve against the local character's
                         // conditions, which would be wrong for a peer.
-                        Self::render_injury_doll(
-                            ui,
-                            &peer.injuries,
-                            None,
-                            None,
-                            &Default::default(),
-                            false,
-                            &Self::default_injury_palette(),
-                        );
+                        //
+                        // Height-capped so the doll sits inside the card
+                        // rather than consuming the window -- it sizes to the
+                        // space it is given.
+                        let doll_h = (data.card_width * 0.9).clamp(60.0, 160.0);
+                        ui.allocate_ui(egui::vec2(ui.available_width(), doll_h), |ui| {
+                            Self::render_injury_doll(
+                                ui,
+                                &peer.injuries,
+                                settings.skin_art.as_deref(),
+                                None,
+                                &Default::default(),
+                                false,
+                                &Self::default_injury_palette(),
+                            );
+                        });
                     }
 
                     if data.show_room {

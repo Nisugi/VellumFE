@@ -72,6 +72,21 @@ pub(super) struct EncumConfig {
     pub(super) show_label: bool,
 }
 
+/// Multi-account card contents (MultiAccountWidgetData).
+#[derive(Clone, Debug)]
+pub(super) struct MultiAccountConfig {
+    pub(super) show_vitals: bool,
+    pub(super) show_rt: bool,
+    pub(super) show_status: bool,
+    pub(super) show_injuries: bool,
+    pub(super) show_mind: bool,
+    pub(super) show_stance: bool,
+    pub(super) show_encumbrance: bool,
+    pub(super) show_room: bool,
+    pub(super) show_self: bool,
+    pub(super) card_width: f32,
+}
+
 /// Everything the Window and widget sections of the context menu render,
 /// resolved up front so the menu body stays a static fn.
 pub(super) struct WindowConfigView {
@@ -104,6 +119,7 @@ pub(super) struct WindowConfigView {
     pub(super) targets: Option<TargetsConfig>,
     pub(super) experience: Option<ExperienceConfig>,
     pub(super) encum: Option<EncumConfig>,
+    pub(super) multiaccount: Option<MultiAccountConfig>,
     /// MiniVitals: the shared vitals options (GuiUiSettings.vitals).
     pub(super) vitals: Option<crate::frontend::gui::persistence::VitalsConfig>,
     /// Widget types with a dedicated editor reachable from the menu.
@@ -156,6 +172,7 @@ fn widget_section_label(widget_type: &crate::data::WidgetType) -> Option<&'stati
         W::Compass => "Compass",
         W::Hand => "Hand",
         W::Dashboard => "Dashboard",
+        W::MultiAccount => "Characters",
         _ => return None,
     })
 }
@@ -256,6 +273,7 @@ impl VellumGuiApp {
             targets: None,
             experience: None,
             encum: None,
+            multiaccount: None,
             vitals: None,
             is_tabbed: matches!(window.content, WindowContent::TabbedText(_)),
             is_hotkeybar: window.widget_type == crate::data::WidgetType::Hotkeybar,
@@ -340,7 +358,21 @@ impl VellumGuiApp {
                     exp_bar_color: data.exp_bar_color.clone().unwrap_or_default(),
                 });
             }
-            Some(crate::config::WindowDef::Encumbrance { data, .. }) => {
+            Some(crate::config::WindowDef::MultiAccount { data, .. }) => {
+            view.multiaccount = Some(MultiAccountConfig {
+                show_vitals: data.show_vitals,
+                show_rt: data.show_rt,
+                show_status: data.show_status,
+                show_injuries: data.show_injuries,
+                show_mind: data.show_mind,
+                show_stance: data.show_stance,
+                show_encumbrance: data.show_encumbrance,
+                show_room: data.show_room,
+                show_self: data.show_self,
+                card_width: data.card_width,
+            });
+        }
+        Some(crate::config::WindowDef::Encumbrance { data, .. }) => {
                 view.encum = Some(EncumConfig {
                     show_bar: data.show_bar,
                     show_label: data.show_label,
@@ -654,6 +686,23 @@ impl VellumGuiApp {
                     };
                     data.mind_bar_color = opt(&experience.mind_bar_color);
                     data.exp_bar_color = opt(&experience.exp_bar_color);
+                    self.app_core.schedule_layout_autosave();
+                }
+            }
+            GuiWindowMenuCommand::SetMultiAccountConfig(ma) => {
+                if let Some(crate::config::WindowDef::MultiAccount { data, .. }) =
+                    self.layout_def_mut(&name)
+                {
+                    data.show_vitals = ma.show_vitals;
+                    data.show_rt = ma.show_rt;
+                    data.show_status = ma.show_status;
+                    data.show_injuries = ma.show_injuries;
+                    data.show_mind = ma.show_mind;
+                    data.show_stance = ma.show_stance;
+                    data.show_encumbrance = ma.show_encumbrance;
+                    data.show_room = ma.show_room;
+                    data.show_self = ma.show_self;
+                    data.card_width = ma.card_width;
                     self.app_core.schedule_layout_autosave();
                 }
             }
@@ -1093,6 +1142,34 @@ impl VellumGuiApp {
                 }
             });
         }
+        if let Some(ma) = &view.multiaccount {
+            ui.label("Card contents");
+            let mut next = ma.clone();
+            let mut changed = false;
+            changed |= ui.checkbox(&mut next.show_self, "Your own card").changed();
+            changed |= ui.checkbox(&mut next.show_vitals, "Vitals").changed();
+            changed |= ui.checkbox(&mut next.show_status, "Status glyphs").changed();
+            changed |= ui.checkbox(&mut next.show_rt, "Roundtime").changed();
+            changed |= ui.checkbox(&mut next.show_injuries, "Injury doll").changed();
+            changed |= ui.checkbox(&mut next.show_room, "Room").changed();
+            changed |= ui.checkbox(&mut next.show_mind, "Mind state").changed();
+            changed |= ui.checkbox(&mut next.show_stance, "Stance").changed();
+            changed |= ui
+                .checkbox(&mut next.show_encumbrance, "Encumbrance")
+                .changed();
+            ui.separator();
+            changed |= ui
+                .add(
+                    egui::Slider::new(&mut next.card_width, 90.0..=320.0)
+                        .text("Card width")
+                        .suffix(" px"),
+                )
+                .changed();
+            if changed {
+                command = Some(GuiWindowMenuCommand::SetMultiAccountConfig(next));
+            }
+        }
+
         if let Some(encum) = &view.encum {
             let mut show_bar = encum.show_bar;
             if ui.checkbox(&mut show_bar, "Level bar").changed() {

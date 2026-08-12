@@ -1971,11 +1971,11 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
   show_vitals = true
   show_rt = true
   show_status = true
-  show_injuries = false
+  show_injuries = true
   show_mind = false
   show_stance = false
   show_encumbrance = false
   show_room = true
   show_self = true
   columns = 0
-  card_width = 140.0
+  card_width = 150.0

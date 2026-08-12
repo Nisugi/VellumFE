@@ -87,6 +87,21 @@ impl PeerStatus {
     /// sidecar still binding, or disabled entirely -- it is read from memory,
     /// not from a loopback socket.
     pub fn from_local(game_state: &crate::core::state::GameState, now_ms: u64) -> Self {
+        Self::from_local_named(game_state, None, now_ms)
+    }
+
+    /// As `from_local`, with a configured character name to fall back on.
+    ///
+    /// `game_state.character_name` comes only from the feed's `<app>` tag,
+    /// which does not always arrive (notably through Lich). The OS window
+    /// title already falls back to the configured name for the same reason;
+    /// without this the card reads "You" while the title bar reads "Abem",
+    /// and two cards on one screen become indistinguishable.
+    pub fn from_local_named(
+        game_state: &crate::core::state::GameState,
+        configured: Option<&str>,
+        now_ms: u64,
+    ) -> Self {
         let gauge = |value: u32, text: &str| {
             (!text.is_empty()).then(|| Gauge {
                 value,
@@ -97,6 +112,7 @@ impl PeerStatus {
             character: game_state
                 .character_name
                 .clone()
+                .or_else(|| configured.map(str::to_string))
                 .unwrap_or_else(|| "You".to_string()),
             port: SELF_PORT,
             connected: true,
