@@ -253,10 +253,20 @@ pub fn silver_cost(db: &MapDb, rooms: &[u32]) -> u64 {
         let prefix = format!("silver-cost:{next}:");
         for tag in &room.tags {
             if let Some(value) = tag.strip_prefix(&prefix) {
-                if let Ok(n) = value.parse::<u64>() {
+                // go2 evals non-numeric values as StringProcs
+                // (go2.lic:958-964). The live mapdb has ZERO such tags
+                // (checked 2026-08-12), so full parity is: plain integers,
+                // Ruby underscore literals ("2_500"), and a loud warning for
+                // anything else so a future dynamic tag is never a silent 0.
+                let cleaned: String = value.chars().filter(|c| *c != '_').collect();
+                if let Ok(n) = cleaned.trim().parse::<u64>() {
                     total += n;
+                } else {
+                    tracing::warn!(
+                        "unevaluatable silver-cost tag on room {}: {tag:?} (counted as 0)",
+                        pair[0]
+                    );
                 }
-                // A non-numeric value is a dynamic-cost StringProc; skip (0).
             }
         }
     }

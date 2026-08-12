@@ -32,8 +32,12 @@ pub enum BuyEvent {
     /// sack (the `pass` noun doesn't work for `_drag`). `None` if we never
     /// captured an id (shouldn't happen once in-hand).
     Traveled { pass_id: Option<String> },
-    /// Give up (too poor with no funding, or a timeout). Carries a reason.
+    /// Give up (a timeout or unexpected response). Carries a reason.
     Failed(String),
+    /// Give up because silver ran out (no funding, or the bank couldn't
+    /// cover it). The executor disables day-pass buying for the session
+    /// (Lich: "Turning off buy_day_pass setting.", map_strategies.rb:740).
+    FailedTooPoor(String),
 }
 
 /// The buy conversation's phases.
@@ -416,7 +420,7 @@ impl BuyState {
                     self.phase = Phase::ToWaitingRoom { sent_ms: None, sent_from: None };
                     self.tick_to_waiting_room(&ctx, &mut out);
                 } else if saw(&F::DayPassTooPoor) {
-                    out.push(BuyEvent::Failed(
+                    out.push(BuyEvent::FailedTooPoor(
                         "still too poor for the pass at the offer".into(),
                     ));
                 } else if saw(&F::DayPassOffered) {
@@ -438,7 +442,7 @@ impl BuyState {
                     if self.funded {
                         // Already withdrew once and it's STILL not enough —
                         // don't loop bank trips (Lich bails here too).
-                        out.push(BuyEvent::Failed(
+                        out.push(BuyEvent::FailedTooPoor(
                             "still too poor after withdrawing - the bank can't cover the pass".into(),
                         ));
                     } else if ctx.get_silvers {
@@ -446,7 +450,7 @@ impl BuyState {
                         self.phase = Phase::ToBank { i: 0, sent_from: None, sent_ms: ctx.now_ms };
                         self.tick_to_bank(&ctx, &mut out);
                     } else {
-                        out.push(BuyEvent::Failed(
+                        out.push(BuyEvent::FailedTooPoor(
                             "not enough silver for the pass and Get Silvers is off".into(),
                         ));
                     }

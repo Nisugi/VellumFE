@@ -118,6 +118,20 @@ pub struct Stowed {
     retrieve: Retrieve,
 }
 
+impl Stowed {
+    /// The command that gets this item back in hand. Used by the normal
+    /// Fill phase and by the executor's abort path (Lich runs
+    /// $fill_hands_actions before every exit, success or not).
+    pub fn retrieve_command(&self) -> String {
+        match &self.retrieve {
+            Retrieve::Get(id) => format!("get #{id}"),
+            Retrieve::Remove(id) => format!("remove #{id}"),
+            Retrieve::RubTattoo(noun) => format!("rub {noun} tattoo"),
+            Retrieve::RubBandolier { bag_id } => format!("rub #{bag_id}"),
+        }
+    }
+}
+
 /// Direction of the current operation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum StashOp {
@@ -308,13 +322,7 @@ impl StashTask {
 
         // Retrieve the next item (LIFO).
         if let Some(stowed) = self.to_retrieve.pop() {
-            let command = match &stowed.retrieve {
-                Retrieve::Get(id) => format!("get #{id}"),
-                Retrieve::Remove(id) => format!("remove #{id}"),
-                Retrieve::RubTattoo(noun) => format!("rub {noun} tattoo"),
-                Retrieve::RubBandolier { bag_id } => format!("rub #{bag_id}"),
-            };
-            events.push(StashEvent::Send(command));
+            events.push(StashEvent::Send(stowed.retrieve_command()));
             self.phase = Phase::Await {
                 hand: stowed.hand,
                 item_id: stowed.item.id.clone(),

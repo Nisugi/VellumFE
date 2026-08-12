@@ -236,8 +236,11 @@ impl AppCore {
                 .is_some_and(|g| g.contains("plat"));
             set_mapdb_var("platinum", plat.then(|| "true".into()));
         }
-        let fwi = (!self.config.go2.fwi_trinket.trim().is_empty())
-            .then(|| objects.find_item(self.config.go2.fwi_trinket.trim()))
+        // go2 treats the literal "off" the same as unset (go2.lic:448-449) —
+        // its UI's documented way to disable the trinket without clearing it.
+        let fwi_setting = self.config.go2.fwi_trinket.trim();
+        let fwi = (!fwi_setting.is_empty() && !fwi_setting.eq_ignore_ascii_case("off"))
+            .then(|| objects.find_item(fwi_setting))
             .flatten()
             .map(|(item, loc)| {
                 use crate::core::game_objects::Location;
@@ -320,7 +323,12 @@ impl AppCore {
             db: &db,
             current_room: self.map.current_room_id,
             dead: self.game_state.status.dead(),
-            muckled: self.game_state.status.stunned() || self.game_state.status.webbed(),
+            // Lich's Status.muckled?: stunned/webbed indicators plus the
+            // Bind (214) and Sleep (501) debuff-board entries (status.rb:46).
+            muckled: self.game_state.status.stunned()
+                || self.game_state.status.webbed()
+                || self.game_state.debuff_active("Bind")
+                || self.game_state.debuff_active("Sleep"),
             standing: self.game_state.status.standing(),
             sitting: self.game_state.status.sitting(),
             kneeling: self.game_state.status.kneeling(),
@@ -372,7 +380,13 @@ impl AppCore {
             }),
             day_pass: Some(crate::core::travel::executor::DayPassInputs {
                 sack_id: day_pass_sack.as_deref(),
-                buy_day_pass: &self.config.go2.buy_day_pass,
+                // A too-poor buy this session flipped the setting off in
+                // memory (Lich parity); held passes still route.
+                buy_day_pass: if self.game_state.day_passes.buy_disabled() {
+                    ""
+                } else {
+                    &self.config.go2.buy_day_pass
+                },
                 get_silvers: self.config.go2.get_silvers,
                 cache: &self.game_state.day_passes,
                 now_epoch: chrono::Utc::now().timestamp(),
@@ -406,6 +420,11 @@ impl AppCore {
                         std::time::Duration::ZERO,
                         format!(";go2 {destination}"),
                     );
+                }
+                crate::core::travel::TravelEvent::DisableDayPassBuy => {
+                    // Lich parity: a too-poor buy turns the setting off for
+                    // the session (config on disk stays untouched).
+                    self.game_state.day_passes.disable_buy();
                 }
                 crate::core::travel::TravelEvent::Send(_) => unreachable!("queued by the service"),
             }

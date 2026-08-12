@@ -331,6 +331,9 @@ pub enum TravelEvent {
     Arrived { destination: u32, seconds: f64 },
     /// Trip abandoned.
     Failed(String),
+    /// A day-pass buy failed on silver: the owner disables day-pass buying
+    /// for the rest of the session (Lich turns the setting off).
+    DisableDayPassBuy,
     /// Native travel can't cross an edge; hand the whole trip to Lich's
     /// `;go2 <destination>` (the P6 fallback bandaid). The owner sends it and
     /// drops the native task.
@@ -577,6 +580,10 @@ pub struct TravelTask {
     /// the stand-before-move check for the rest of the trip - a mounted
     /// character can't stand and doesn't need to.
     mounted: bool,
+    /// Standing is impossible where we are ("not enough room", "tip the
+    /// boat", overburdened) - go2 proceeds with the move anyway. Cleared the
+    /// moment we're observed standing again.
+    stand_waived: bool,
     /// Blocked-but-transient retries on the current edge (Lich retries these
     /// in place with sleep 1; only exhaustion re-paths, and NEVER bans).
     keep_retries: u32,
@@ -655,6 +662,7 @@ impl TravelTask {
             bank_detour_done: false,
             tried_open: false,
             mounted: false,
+            stand_waived: false,
             keep_retries: 0,
             hold_until_ms: 0,
             funding_bank: None,
@@ -713,6 +721,30 @@ impl TravelTask {
     /// `Failed` is always the last event of a finished task, and the caller
     /// drops the task after either.
     pub fn tick(&mut self, ctx: TravelContext) -> Vec<TravelEvent> {
+        let mut events = self.tick_inner(ctx);
+        // Lich runs $fill_hands_actions before EVERY exit, success or not.
+        // Our Fill step covers the success path; this covers aborts and the
+        // Lich handoff — a trip must never end with the walker's items still
+        // stowed. Fire-and-forget retrievals (LIFO, mirroring the Fill order);
+        // there is no task left alive to confirm them.
+        if matches!(
+            events.last(),
+            Some(TravelEvent::Failed(_) | TravelEvent::LichFallback { .. })
+        ) && !self.stash_stack.is_empty()
+        {
+            let terminal = events.pop().expect("just matched");
+            events.push(TravelEvent::Status(
+                "retrieving stowed items before stopping".to_string(),
+            ));
+            while let Some(stowed) = self.stash_stack.pop() {
+                events.push(TravelEvent::Send(stowed.retrieve_command()));
+            }
+            events.push(terminal);
+        }
+        events
+    }
+
+    fn tick_inner(&mut self, ctx: TravelContext) -> Vec<TravelEvent> {
         let mut events = Vec::new();
 
         if ctx.dead {
@@ -788,6 +820,16 @@ impl TravelTask {
                 if ctx.standing {
                     self.step = Step::Prepare;
                     self.tick_prepare(current, ctx, &mut events);
+                } else if ctx.saw(&crate::core::move_feedback::MoveFeedback::StandBlocked) {
+                    // Standing is impossible here (no room / boat / burden) —
+                    // go2's stand_regex accepts these and moves anyway
+                    // (go2.lic:2328-2332). Proceed without standing.
+                    events.push(TravelEvent::Status(
+                        "can't stand here - moving on anyway".to_string(),
+                    ));
+                    self.stand_waived = true;
+                    self.step = Step::Prepare;
+                    self.tick_prepare(current, ctx, &mut events);
                 } else if ctx.now_ms.saturating_sub(sent_ms) > STAND_TIMEOUT_MS {
                     if attempts >= MAX_STAND_ATTEMPTS {
                         events.push(TravelEvent::Failed(
@@ -828,6 +870,12 @@ impl TravelTask {
                 // the SAME action (RT-gated) instead of skipping ahead or
                 // waiting out a timeout.
                 if ctx.saw(&F::RtWait) {
+                    // Hold for the game's own "...wait N seconds" number so
+                    // the resend can't hot-loop if the RT feed reads zero.
+                    if let Some(secs) = rt_wait_secs(&ctx) {
+                        self.hold_until_ms =
+                            self.hold_until_ms.max(ctx.now_ms + secs * 1000 + 200);
+                    }
                     self.tick_script(actions, sent_pc, None, expected, from, None, ctx, &mut events);
                     return events;
                 }
@@ -971,6 +1019,10 @@ impl TravelTask {
                 // out the 8s step timeout. Not counted as a retry: the edge
                 // did not fail.
                 if ctx.saw(&MoveFeedback::RtWait) {
+                    if let Some(secs) = rt_wait_secs(&ctx) {
+                        self.hold_until_ms =
+                            self.hold_until_ms.max(ctx.now_ms + secs * 1000 + 200);
+                    }
                     self.step = Step::Prepare;
                     self.tick_prepare(current, ctx, &mut events);
                     return events;
@@ -1631,8 +1683,8 @@ impl TravelTask {
                     // Paced walk step: send it, then suspend until the room
                     // changes before running the next action (so a multi-room
                     // crossing doesn't flood commands ahead of arrival).
-                    if ctx.rt_remaining > 0.0 {
-                        break; // wait out RT; resume this same StepMove next tick
+                    if ctx.rt_remaining > 0.0 || ctx.now_ms < self.hold_until_ms {
+                        break; // wait out RT (or an RtWait hold); resume next tick
                     }
                     events.push(TravelEvent::Send(cmd));
                     self.step = Step::ScriptWalk {
@@ -1652,7 +1704,7 @@ impl TravelTask {
                     // rooms — the fixed exit is the wrong one). Compass dirs
                     // arrive short ("nw"); the mapdb names them long
                     // ("northwest"), so compare normalized.
-                    if ctx.rt_remaining > 0.0 {
+                    if ctx.rt_remaining > 0.0 || ctx.now_ms < self.hold_until_ms {
                         break;
                     }
                     let avoid = short_dir(&not_dir);
@@ -1684,7 +1736,7 @@ impl TravelTask {
                     // The wander step of a shifting-area hunt (Karazja's
                     // `walk`): any compass exit — random, matching Lich, so a
                     // static room still eventually tries every door.
-                    if ctx.rt_remaining > 0.0 {
+                    if ctx.rt_remaining > 0.0 || ctx.now_ms < self.hold_until_ms {
                         break;
                     }
                     let Some(dir) = pick_random_exit(ctx.compass_dirs, from) else {
@@ -1707,7 +1759,7 @@ impl TravelTask {
                     return;
                 }
                 WalkAction::WaitRt => {
-                    if ctx.rt_remaining > 0.0 {
+                    if ctx.rt_remaining > 0.0 || ctx.now_ms < self.hold_until_ms {
                         break;
                     }
                     pc += 1;
@@ -2702,6 +2754,18 @@ impl TravelTask {
                 self.banned.insert((self.day_pass_buy_from, self.day_pass_buy_dest));
                 self.repath(ctx.db, current, ctx.lich_fallback, events);
             }
+            BuyEvent::FailedTooPoor(why) => {
+                // Lich turns buy_day_pass off for the session here
+                // (map_strategies.rb:740) so later trips stop planning
+                // through buy edges they can't pay for.
+                events.push(TravelEvent::Status(format!(
+                    "day pass: {why} - disabling day-pass buying for this session and re-pathing"
+                )));
+                events.push(TravelEvent::DisableDayPassBuy);
+                self.flush_day_pass_close(events);
+                self.banned.insert((self.day_pass_buy_from, self.day_pass_buy_dest));
+                self.repath(ctx.db, current, ctx.lich_fallback, events);
+            }
         }
     }
 
@@ -2760,10 +2824,14 @@ impl TravelTask {
                 // Short on silver.
                 let get_silvers = funding.map(|f| f.get_silvers).unwrap_or(false);
                 if !get_silvers {
+                    // go2: "Continuing anyway in 10 seconds..." + sleep 10
+                    // (go2.lic:2286-2289) - a window to stop the trip or top
+                    // up before the walker marches into the paid crossing.
                     events.push(TravelEvent::Status(format!(
-                        "trip costs {} silver, you have {silver} - short; enable Get Silvers to auto-withdraw. Continuing anyway.",
+                        "trip costs {} silver, you have {silver} - short; enable Get Silvers to auto-withdraw. Continuing anyway in 10 seconds...",
                         self.silver_need
                     )));
+                    self.hold_until_ms = self.hold_until_ms.max(ctx.now_ms + 10_000);
                     self.begin_walk(current, ctx, events);
                     return;
                 }
@@ -2808,9 +2876,23 @@ impl TravelTask {
                             ));
                             return;
                         };
+                        // go2's bank-detour ETA line (go2.lic:2235): time to
+                        // the bank plus time from the bank to the destination.
+                        let leg1: Vec<u32> = std::iter::once(current)
+                            .chain(bank_path.iter().copied())
+                            .collect();
+                        let mut eta = pathing::estimate_time(ctx.db, &leg1);
+                        let mut rooms = bank_path.len();
+                        if let Some(leg2) = pathing::path_to(ctx.db, bank, real_dest) {
+                            let full: Vec<u32> =
+                                std::iter::once(bank).chain(leg2.iter().copied()).collect();
+                            eta += pathing::estimate_time(ctx.db, &full);
+                            rooms += leg2.len();
+                        }
                         events.push(TravelEvent::Status(format!(
-                            "short {} silver - routing to the nearest bank (room {bank}) to withdraw",
-                            need.saturating_sub(silver)
+                            "short {} silver - routing to the nearest bank (room {bank}) to withdraw. ETA {} ({rooms} rooms via the bank)",
+                            need.saturating_sub(silver),
+                            fmt_eta(eta)
                         )));
                         self.path = bank_path;
                         self.idx = 0;
@@ -2996,9 +3078,15 @@ impl TravelTask {
             return;
         };
 
-        // go2: swim/pedal edges skip the stand dance.
-        let needs_stand =
-            !ctx.standing && !self.mounted && !command_is_swim_or_pedal(&command);
+        // go2: swim/pedal edges skip the stand dance; a room where standing
+        // is impossible waives it for the trip (cleared when we stand again).
+        if ctx.standing {
+            self.stand_waived = false;
+        }
+        let needs_stand = !ctx.standing
+            && !self.mounted
+            && !self.stand_waived
+            && !command_is_swim_or_pedal(&command);
         if ctx.rt_remaining > 0.0 {
             return; // waitrt?
         }
@@ -3378,6 +3466,14 @@ impl TravelTask {
             !banned.contains(&(a, b))
         }) {
             Some(path) => {
+                // go2 prints a fresh ETA on every restart (go2.lic:2296-2298).
+                let full_eta: Vec<u32> =
+                    std::iter::once(current).chain(path.iter().copied()).collect();
+                events.push(TravelEvent::Status(format!(
+                    "re-routed: ETA {} ({} rooms)",
+                    fmt_eta(pathing::estimate_time(db, &full_eta)),
+                    path.len()
+                )));
                 self.path = path;
                 self.idx = 0;
                 // go2 re-runs its wealth check on EVERY restart, not just at
@@ -3470,6 +3566,28 @@ fn day_pass_tick_inputs<'a>(ctx: &TravelContext<'a>) -> super::day_pass_buy::Buy
         left_hand: ctx.hands.and_then(|h| hand_ref(h.left_hand)),
         right_hand: ctx.hands.and_then(|h| hand_ref(h.right_hand)),
         hidden: ctx.day_pass.map(|i| i.hidden).unwrap_or(false),
+    }
+}
+
+/// The N from the newest "...wait N seconds." line, if one is in the ring.
+/// The RT prompt feed usually covers this, but the wait line is the game's
+/// own number — used as a hold floor so an RtWait resend can't hot-loop when
+/// the RT feed reads zero.
+fn rt_wait_secs(ctx: &TravelContext) -> Option<u64> {
+    ctx.recent_lines.iter().rev().find_map(|(_, l)| {
+        let idx = l.find("...wait ")?;
+        l[idx + 8..].split_whitespace().next()?.parse().ok()
+    })
+}
+
+/// Human ETA for status lines (go2's `as_time`): "1h 02m" past an hour,
+/// "3m 05s" otherwise.
+fn fmt_eta(seconds: f64) -> String {
+    let s = seconds.max(0.0).round() as u64;
+    if s >= 3600 {
+        format!("{}h {:02}m", s / 3600, (s % 3600) / 60)
+    } else {
+        format!("{}m {:02}s", s / 60, s % 60)
     }
 }
 
@@ -3792,8 +3910,10 @@ mod tests {
         sim.current = 5;
         sim.now += 100;
         let events = task.tick(sim.ctx(&db));
+        // The re-path announces itself and prints the fresh ETA (go2 parity).
         assert!(
-            matches!(&events[..], [TravelEvent::Status(s)] if s.contains("re-pathing")),
+            matches!(&events[..], [TravelEvent::Status(s), TravelEvent::Status(eta)]
+                if s.contains("re-pathing") && eta.contains("ETA")),
             "{events:?}"
         );
         // The new route leaves from room 5.
@@ -4889,7 +5009,13 @@ mod tests {
             events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("short"))),
             "warns about being short"
         );
-        assert_eq!(sent(&events), ["board"], "proceeds anyway");
+        // go2's 10-second grace (go2.lic:2288-2289): nothing sent during it...
+        assert_eq!(sent(&events), Vec::<String>::new(), "holds during the grace");
+        sim.now += 5_000;
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), Vec::<String>::new());
+        // ...then the walk proceeds anyway.
+        sim.now += 6_000;
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["board"], "proceeds after 10s");
     }
 
     #[test]

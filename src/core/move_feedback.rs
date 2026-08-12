@@ -47,6 +47,11 @@ pub enum MoveFeedback {
     /// A postural rejection ("will have to stand up first") - stand and
     /// retry (global_defs.rb:714-717).
     MustStand,
+    /// Standing is impossible HERE and won't become possible ("not enough
+    /// room to stand up", "You'd tip the boat over!", overburdened). go2
+    /// accepts these in its stand_regex and proceeds with the move anyway
+    /// (go2.lic:2321-2335) - never an abort.
+    StandBlocked,
     /// "Sorry, you may only type ahead" - back off ~1s and re-send; never a
     /// failure (global_defs.rb:729-731).
     TypeAhead,
@@ -192,6 +197,13 @@ patterns! {
         "You can't do that while lying down",
         "You must be standing",
         "You can't do that from that position",
+    ],
+    StandBlocked => [
+        "There's not enough room to do that",
+        "There is not enough room to stand up in here",
+        "You'd tip the boat over",
+        "You are overburdened and cannot manage to stand",
+        "slip and fall flat in the slippery green gook",
     ],
     TypeAhead => [
         "Sorry, you may only type ahead",
@@ -393,5 +405,24 @@ mod tests {
         );
         // Ordinary prose doesn't match.
         assert_eq!(classify_line("A cat wanders by."), None);
+    }
+
+    #[test]
+    fn stand_blocked_rooms_classify_as_stand_blocked_not_must_stand() {
+        // go2's stand_regex accepts these and proceeds without standing
+        // (go2.lic:2328-2332); they must never loop `stand` or abort a trip.
+        for line in [
+            "There is not enough room to stand up in here.",
+            "There's not enough room to do that!",
+            "You'd tip the boat over!",
+            "You are overburdened and cannot manage to stand.",
+            "You attempt to stand, but slip and fall flat in the slippery green gook!",
+        ] {
+            assert_eq!(
+                classify_line(line),
+                Some(MoveFeedback::StandBlocked),
+                "{line}"
+            );
+        }
     }
 }

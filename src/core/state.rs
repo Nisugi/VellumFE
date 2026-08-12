@@ -1129,6 +1129,23 @@ impl GameState {
         }
     }
 
+    /// Whether a named debuff is on the Debuffs board right now. Lich's
+    /// `Status.bound?`/`Status.sleeping?` gate on the Bind/Sleep debuff
+    /// entries; the feed removes expired entries, so presence is the signal.
+    /// Matches the display text exactly or as a leading word ("Bind" also
+    /// matches "Bind (214)").
+    pub fn debuff_active(&self, name: &str) -> bool {
+        self.effects
+            .get("Debuffs")
+            .map(|c| {
+                c.effects.iter().any(|e| {
+                    let t = e.text.trim();
+                    t == name || t.starts_with(&format!("{name} "))
+                })
+            })
+            .unwrap_or(false)
+    }
+
     pub fn new() -> Self {
         Self {
             connected: false,
