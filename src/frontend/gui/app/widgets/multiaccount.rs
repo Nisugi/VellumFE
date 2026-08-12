@@ -435,10 +435,17 @@ impl VellumGuiApp {
                                     ui.allocate_ui(
                                         egui::vec2(share, ui.available_height()),
                                         |ui| {
-                                            Self::render_card_row(
-                                                ui, settings, data, peer, row,
-                                                now_server,
-                                            );
+                                            // allocate_ui inherits the line's
+                                            // horizontal layout; without this
+                                            // the vitals bars fan out side by
+                                            // side instead of stacking.
+                                            ui.vertical(|ui| {
+                                                ui.set_width(share);
+                                                Self::render_card_row(
+                                                    ui, settings, data, peer,
+                                                    row, now_server,
+                                                );
+                                            });
                                         },
                                     );
                                 } else {

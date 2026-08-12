@@ -1243,7 +1243,11 @@ impl VellumGuiApp {
                         if shares {
                             // Visual cue: this row draws on the line opened
                             // by the row above it (Group list convention).
-                            ui.label("\u{2514}");
+                            // U+00BB, not U+2514 -- the box-drawing corner
+                            // is missing from the bundled fonts and rendered
+                            // as a tofu square.
+                            ui.label(RichText::new("\u{00BB}").weak())
+                                .on_hover_text("Shares the line above");
                         }
                         let mut on = *shown;
                         if ui.checkbox(&mut on, row.label()).changed() {
@@ -1261,7 +1265,9 @@ impl VellumGuiApp {
                             if ui
                                 .checkbox(&mut share, "Share line with the row above")
                                 .on_hover_text(if row.full_width() {
-                                    "Vitals and the injury doll only pair with each                                      other (doll left, bars beside it) -- joining a                                      compact row would crush them."
+                                    "Vitals and the injury doll only pair with \
+                                     each other (doll left, bars beside it) -- \
+                                     joining a compact row would crush them."
                                 } else {
                                     "Compact rows mix freely on one line."
                                 })
