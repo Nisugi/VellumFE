@@ -218,6 +218,12 @@ impl TravelContext<'_> {
                 let want = name.to_lowercase();
                 n == want || n.contains(&want)
             }),
+            // Captures live on the executor, not the context; the If arm in
+            // tick_script evaluates them via eval_cond_with_captures before
+            // falling through to here. Reaching this arm means a CaptureIs
+            // leaked somewhere capture-less (a Repeat until, an
+            // override) — unknown answers false, as everywhere.
+            Cond::CaptureIs(..) => false,
         }
     }
 
@@ -1633,7 +1639,8 @@ impl TravelTask {
                     }
                 },
                 WalkAction::If { cond, then, els } => {
-                    let branch = if ctx.eval(&cond) { then } else { els };
+                    let taken = eval_cond_with_captures(&cond, &self.captures, &ctx);
+                    let branch = if taken { then } else { els };
                     actions.splice(pc..=pc, branch);
                 }
                 WalkAction::EmptyHands | WalkAction::FillHands => {
@@ -3190,6 +3197,27 @@ fn command_is_swim_or_pedal(command: &str) -> bool {
 /// fallback (Ruby: `look` the compass, `move options[rand(length)]`). `_room`
 /// is unused but kept for a possible future seed; the pick is uniform-random
 /// over the live `<dir>` values.
+/// Evaluate a condition where `CaptureIs` can see the current edge's Await
+/// captures; everything else defers to the context. `Not`/`Any` recurse here
+/// so a capture test composes under negation and disjunction.
+fn eval_cond_with_captures(
+    cond: &crate::core::pathing::edge::Cond,
+    captures: &Captures,
+    ctx: &TravelContext,
+) -> bool {
+    use crate::core::pathing::edge::Cond;
+    match cond {
+        Cond::CaptureIs(name, want) => captures
+            .iter()
+            .any(|(n, v)| n == name && v.eq_ignore_ascii_case(want)),
+        Cond::Not(inner) => !eval_cond_with_captures(inner, captures, ctx),
+        Cond::Any(any) => any
+            .iter()
+            .any(|c| eval_cond_with_captures(c, captures, ctx)),
+        other => ctx.eval(other),
+    }
+}
+
 /// Normalize a direction to its compass short form, so mapdb long names
 /// ("northwest") compare against live compass dirs ("nw"). Non-compass
 /// strings pass through unchanged.

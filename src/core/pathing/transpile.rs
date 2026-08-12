@@ -528,6 +528,24 @@ re!(
     ROGUE_GUILD,
     r##"^if UserVars\.rogue_password\.nil\? or UserVars\.rogue_password\.empty\?; echo [^;]+; echo [^;]+; exit; end; fput 'lean door'; UserVars\.rogue_password\.split\(/, \*/\)\.each \{ \|verb\| fput "#\{verb\} door" \}; fput 'go door'$"##
 );
+// The Rift sphere (2636 -> a random Rift entry): enter, then press north
+// until the tear teleports you.
+re!(
+    RIFT_SPHERE,
+    r"(?s)^fput 'go sphere'\s+loop do\s+result = dothistimeout\('(\w+)', (\d+), /[^/]+/\)\s+break if result =~ /[^/]+/\s+break unless XMLData\.room_description\.empty\?\s+end\s+sleep\(\d+\) while XMLData\.room_description\.empty\?\s+fput 'stand' unless standing\?\s*$"
+);
+// Koar's Shrine (2658): look, read which of the four staircases sits on the
+// northern wall, climb that one — a branch on WHAT WAS SEEN, via captures.
+re!(
+    KOAR_STEPS,
+    r"(?s)^clear\s+put 'look'\s+loop \{\s+line = get\s+if line =~ /a flight of \(ascending\|descending\) steps.*if \$3 == 'northern'\s+move 'climb steps'\s+elsif \$6 == 'northern'\s+move 'climb second steps'\s+elsif \$9 == 'northern'\s+move 'climb third steps'\s+elsif \$12 == 'northern'\s+move 'climb fourth steps'\s+else.*$"
+);
+// Ta'Vaalor's vaalorn door (14060): open it; if it refuses, a gem must be
+// sacrificed into it first.
+re!(
+    VAALORN_GEM,
+    r#"(?s)^fput "open door"\s+while line = get\s+if line =~ /That is already open\\\./\s+break\s+elsif line =~ /There doesn't seem to be any way to do that\\\./\s+if GameObj\.right_hand\.type == "gem".*fput "go door"\s*$"#
+);
 // Dark niche (5922): enter, wait for your eyes to adjust, enter again.
 re!(
     NICHE_EYES,
@@ -1972,6 +1990,97 @@ fn transpile_block_families(body: &str) -> Option<Vec<WalkAction>> {
         }
         actions.push(WalkAction::Move("go door".into()));
         return Some(actions);
+    }
+    // The Rift sphere: enter, press the direction until the tear teleports
+    // us (the teleport IS the room change; the desc-empty polling in the
+    // script is its way of noticing the between-state has resolved).
+    if let Some(c) = RIFT_SPHERE.captures(body) {
+        return Some(vec![
+            WalkAction::Put("go sphere".into()),
+            WalkAction::Sleep(1.0),
+            WalkAction::Repeat {
+                body: vec![
+                    WalkAction::Await {
+                        cmd: Some(c[1].to_string()),
+                        pattern: Box::new(AwaitPattern::new(
+                            "torn to tiny pieces and reformed|you are nothing",
+                        )?),
+                        timeout: c[2].parse().ok()?,
+                        on_timeout: OnTimeout::Continue,
+                        if_match: None,
+                    },
+                    WalkAction::Sleep(0.5),
+                ],
+                until: RepeatUntil::RoomChanged,
+                max: MAX_RETRY_LOOP,
+            },
+            WalkAction::If {
+                cond: Cond::Not(Box::new(Cond::Standing)),
+                then: vec![WalkAction::Put("stand".into())],
+                els: Vec::new(),
+            },
+        ]);
+    }
+    // Koar's Shrine: read which staircase faces the northern wall, climb
+    // that one. Four wall words come back as named captures; the elsif
+    // ladder becomes nested If/els on CaptureIs.
+    if KOAR_STEPS.is_match(body) {
+        let pattern = "a flight of (?:ascending|descending) steps \
+             (?:curving along|leading straight through) the (?P<w1>\\w+) wall, \
+             a flight of (?:ascending|descending) steps \
+             (?:curving along|leading straight through) the (?P<w2>\\w+) wall, \
+             a flight of (?:ascending|descending) steps \
+             (?:curving along|leading straight through) the (?P<w3>\\w+) wall \
+             and a flight of (?:ascending|descending) steps \
+             (?:curving along|leading straight through) the (?P<w4>\\w+) wall\\.";
+        let climb = |cmd: &str| vec![WalkAction::Move(cmd.to_string())];
+        let chain = WalkAction::If {
+            cond: Cond::CaptureIs("w1".into(), "northern".into()),
+            then: climb("climb steps"),
+            els: vec![WalkAction::If {
+                cond: Cond::CaptureIs("w2".into(), "northern".into()),
+                then: climb("climb second steps"),
+                els: vec![WalkAction::If {
+                    cond: Cond::CaptureIs("w3".into(), "northern".into()),
+                    then: climb("climb third steps"),
+                    els: climb("climb fourth steps"),
+                }],
+            }],
+        };
+        return Some(vec![
+            WalkAction::Await {
+                cmd: Some("look".into()),
+                pattern: Box::new(AwaitPattern::new(pattern)?),
+                timeout: 10.0,
+                on_timeout: OnTimeout::Retry,
+                if_match: None,
+            },
+            chain,
+        ]);
+    }
+    // Vaalorn door: open, sacrificing a held gem when it refuses. Gemless
+    // attempts fail the edge closed.
+    if VAALORN_GEM.is_match(body) {
+        return Some(vec![
+            WalkAction::Await {
+                cmd: Some("open door".into()),
+                pattern: Box::new(AwaitPattern::new(
+                    "That is already open|There doesn't seem to be any way to do that",
+                )?),
+                timeout: 10.0,
+                on_timeout: OnTimeout::Fail,
+                if_match: Some((
+                    Box::new(AwaitPattern::new(
+                        "There doesn't seem to be any way to do that",
+                    )?),
+                    vec![
+                        WalkAction::Put("put my gem in vaalorn door".into()),
+                        WalkAction::Sleep(1.0),
+                    ],
+                )),
+            },
+            WalkAction::Move("go door".into()),
+        ]);
     }
     // Dark niche: enter, wait for eyes to adjust, enter again.
     if let Some(c) = NICHE_EYES.captures(body) {

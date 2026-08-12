@@ -334,6 +334,12 @@ pub enum Cond {
     Not(Box<Cond>),
     /// True when any member holds (Ruby's `a or b`). Empty is false.
     Any(Vec<Cond>),
+    /// A named `Await` capture on the current edge equals this value
+    /// (case-insensitive). How a script that READS the world then branches
+    /// on what it saw is expressed: Koar's Shrine reads which staircase
+    /// faces the northern wall, then climbs that one. Unbound answers
+    /// false, like every other unknown.
+    CaptureIs(String, String),
     /// Standing in this specific room. `try_move`'s "did that work?" test and
     /// the guard on a trailing replan.
     InRoom(u32),
