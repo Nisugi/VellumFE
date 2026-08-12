@@ -98,6 +98,11 @@ fn real_mapdb_coverage() {
     // the load rather than implying the transpiler does all of it.
     let mut by_strategy: std::collections::HashMap<EdgeCrossing, usize> =
         std::collections::HashMap::new();
+    // Every uncrossable edge, verbatim, when VELLUM_RESIDUE_DUMP names a file.
+    // The clustered report above names families; recognizer work needs the raw
+    // bodies. Written once at the end — appending per edge across runs is how
+    // a 484-edge residue turned into a 1880-line file.
+    let mut dumped: Vec<String> = Vec::new();
     // Graph reachability: an edge whose timeto resolves to a number.
     let mut graph_routable = 0usize;
     let mut ids: Vec<u32> = Vec::new();
@@ -121,6 +126,7 @@ fn real_mapdb_coverage() {
                     proc_supported += 1;
                 } else {
                     proc_unsupported += 1;
+                    dumped.push(format!("{}\t{dest}\t{command}", room.id));
                     let entry = residue
                         .entry(residue_key(command))
                         .or_insert_with(|| (0, format!("{}:{dest} {command}", room.id)));
@@ -186,11 +192,18 @@ fn real_mapdb_coverage() {
         println!("     e.g. {sample}");
     }
 
+    if let Ok(file) = std::env::var("VELLUM_RESIDUE_DUMP") {
+        match std::fs::write(&file, dumped.join("\n")) {
+            Ok(()) => println!("\nwrote {} residue edges to {file}", dumped.len()),
+            Err(e) => println!("\ncould not write {file}: {e}"),
+        }
+    }
+
     // The measured corpus shapes must stay covered; dropping below this
     // after a mapdb rebuild means new idioms appeared — extend the
     // transpiler.
     assert!(
-        proc_supported as f64 / total_procs.max(1) as f64 > 0.93,
+        proc_supported as f64 / total_procs.max(1) as f64 > 0.95,
         "execution coverage regressed: {proc_supported}/{total_procs}"
     );
     // Graph coverage should be high — most edges have a numeric timeto.

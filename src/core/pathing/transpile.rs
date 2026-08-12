@@ -307,6 +307,38 @@ re!(
 );
 re!(QUOTED_ITEM, r#"['"]([^'"]+)['"]"#);
 
+// --- Statement-level vocabulary -------------------------------------------
+//
+// These match ONE statement of a straight-line body, not a whole edge. The
+// full-body recognizers elsewhere in this file each pin a fixed arity, so
+// `fput 'search'; move 'go path'; move 'ne'; move 'ne'` matches none of them.
+// Splitting first and matching per statement makes arity irrelevant, which is
+// what the corpus actually needs: a third of the residue is this shape.
+
+// Any control-flow keyword disqualifies statement-splitting: concatenating
+// the statements of `if x; move 'n'; end` would drop the condition and cross
+// an edge the script gated. Word-boundary anchored so `endless` and
+// `Spell[...].active?` don't trip it.
+re!(
+    CONTROL_FLOW,
+    r"(?:^|[^\w.])(?:if|elsif|else|end|unless|loop|while|until|begin|rescue|case|when|break|next|return|exit|pause_script)(?:[^\w?!]|$)|\.times|\.each|\|\||&&"
+);
+// Script bookkeeping with no travel meaning. `$go2_restart = true` and
+// `$SILVERWOOD_TOWN=:imt` are Lich-side flags; a comment or bare `nil` is
+// nothing. These are dropped, not refused.
+re!(
+    IGNORABLE_STATEMENT,
+    r"^(?:#.*|nil|true|\$\w+\s*=.*|UserVars\.\w+\s*=.*)$"
+);
+re!(STMT_MOVE, r#"^move\s*\(?\s*(['"][^'"]+['"])\s*\)?$"#);
+re!(STMT_FPUT, r#"^(?:fput|put)\s*\(?\s*(['"][^'"]+['"])\s*\)?$"#);
+re!(STMT_MULTIFPUT, r#"^multifput\s+(['"].*['"])$"#);
+re!(STMT_WAITFOR, r#"^waitfor\s*\(?\s*(['"][^'"]+['"])\s*\)?$"#);
+re!(STMT_WAITRT, r"^waitrt\??$");
+re!(STMT_SLEEP, r"^(?:sleep|pause)\s*\(?\s*([0-9.]+)\s*\)?$");
+re!(STMT_EMPTY_HANDS, r"^empty_hands?(?:\s*\(\s*\))?$");
+re!(STMT_FILL_HANDS, r"^fill_hands?(?:\s*\(\s*\))?$");
+
 // 1x directly (plus 29 delegations to it): the Isle of Four Winds trinket
 // portal. Matched by its distinctive UserVar rather than the whole ~1.5KB
 // body, which is inventory-link scraping we replace with registry lookups.
@@ -946,7 +978,161 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
     if let Some(c) = BARE_FPUT_ANY.captures(src) {
         return Some(vec![WalkAction::Put(c[1].to_string())]);
     }
+    // Last resort: a straight-line sequence of statements we each understand.
+    // Every recognizer above matches a whole body at a fixed arity, so a body
+    // that is merely `fput 'search'; move 'go path'; move 'ne'; move 'ne'` has
+    // no rule and fails outright — 34% of the residue is exactly this shape.
+    transpile_sequence(src)
+}
+
+/// Split a body on top-level `;` / newline, respecting quotes and nesting.
+///
+/// Naive splitting corrupts `dothistimeout 'x', 3, /a;b/` and every block
+/// containing a `;`, so depth and quote state are tracked. Regex literals are
+/// NOT tracked (`/` is ambiguous with division without a full lexer); bodies
+/// whose regexes contain `;` therefore split wrongly, which is safe here only
+/// because the resulting fragments fail to transpile and the whole body is
+/// rejected — the same outcome as today.
+fn split_statements(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut chars = body.chars();
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(q) => {
+                cur.push(c);
+                if c == '\\' {
+                    if let Some(esc) = chars.next() {
+                        cur.push(esc);
+                    }
+                } else if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '\'' | '"' => {
+                    quote = Some(c);
+                    cur.push(c);
+                }
+                '{' | '[' | '(' => {
+                    depth += 1;
+                    cur.push(c);
+                }
+                '}' | ']' | ')' => {
+                    depth -= 1;
+                    cur.push(c);
+                }
+                ';' | '\n' if depth == 0 => {
+                    out.push(std::mem::take(&mut cur));
+                }
+                _ => cur.push(c),
+            },
+        }
+    }
+    out.push(cur);
+    out.into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Transpile a body as a sequence of independently-understood statements.
+///
+/// Returns `None` unless EVERY statement is recognized: a partial crossing
+/// that silently drops a step would strand the walker somewhere unmapped,
+/// which is worse than declining the edge and letting the router re-path.
+fn transpile_sequence(src: &str) -> Option<Vec<WalkAction>> {
+    let body = src.strip_prefix(";e").unwrap_or(src).trim();
+    // Control flow needs an interpreter, not concatenation. Reject early so a
+    // body like `if x; move 'n'; end` can't be mistaken for three statements
+    // and lose its condition — silently ignoring an `if` would cross an edge
+    // the script deliberately gated.
+    if CONTROL_FLOW.is_match(body) {
+        return None;
+    }
+    let statements = split_statements(body);
+    if statements.is_empty() {
+        return None;
+    }
+    // A single statement still goes through `transpile_statement` — that is
+    // where variadic `multifput` lives, and the fixed-arity recognizers above
+    // decline it. Safe from recursion because `transpile_statement` never
+    // calls back into the full-body chain.
+    let mut actions = Vec::new();
+    for statement in &statements {
+        actions.extend(transpile_statement(statement)?);
+    }
+    if actions.is_empty() {
+        return None;
+    }
+    Some(actions)
+}
+
+/// One statement of a straight-line body.
+fn transpile_statement(statement: &str) -> Option<Vec<WalkAction>> {
+    let s = statement.trim().trim_end_matches(';').trim();
+    if s.is_empty() || IGNORABLE_STATEMENT.is_match(s) {
+        // Script bookkeeping with no travel meaning: `$go2_restart = true`,
+        // comments, bare `nil`. Dropping these is what lets an otherwise
+        // ordinary body stop being residue.
+        return Some(Vec::new());
+    }
+    if let Some(c) = STMT_MOVE.captures(s) {
+        return Some(vec![WalkAction::Move(unquote(&c[1]))]);
+    }
+    if let Some(c) = STMT_FPUT.captures(s) {
+        return Some(vec![WalkAction::Put(unquote(&c[1]))]);
+    }
+    if let Some(c) = STMT_MULTIFPUT.captures(s) {
+        // Variadic by construction. The two fixed-arity MULTIFPUT recognizers
+        // above miss every three-or-more-argument call.
+        let args: Vec<WalkAction> = QUOTED_ITEM
+            .captures_iter(&c[1])
+            .map(|m| WalkAction::Put(m[1].to_string()))
+            .collect();
+        return if args.is_empty() { None } else { Some(args) };
+    }
+    if let Some(c) = STMT_WAITFOR.captures(s) {
+        // Passive await: the command that provokes the line is a separate
+        // statement that already ran. `Fail` on timeout matches the other
+        // waitfor recognizers — a missed arrival line means we are not where
+        // the script thinks we are.
+        return Some(vec![WalkAction::Await {
+            cmd: None,
+            pattern: Box::new(AwaitPattern::new(&regex::escape(&unquote(&c[1])))?),
+            timeout: WAITFOR_TIMEOUT_SECS,
+            on_timeout: OnTimeout::Fail,
+            if_match: None,
+        }]);
+    }
+    if STMT_WAITRT.is_match(s) {
+        return Some(vec![WalkAction::WaitRt]);
+    }
+    if let Some(c) = STMT_SLEEP.captures(s) {
+        return Some(vec![WalkAction::Sleep(c[1].parse().ok()?)]);
+    }
+    if STMT_EMPTY_HANDS.is_match(s) {
+        return Some(vec![WalkAction::EmptyHands]);
+    }
+    if STMT_FILL_HANDS.is_match(s) {
+        return Some(vec![WalkAction::FillHands]);
+    }
     None
+}
+
+/// Strip one layer of matching quotes from a captured argument.
+fn unquote(raw: &str) -> String {
+    let t = raw.trim();
+    let t = t.strip_prefix('(').unwrap_or(t).trim();
+    let t = t.strip_suffix(')').unwrap_or(t).trim();
+    for q in ['\'', '"'] {
+        if let Some(inner) = t.strip_prefix(q).and_then(|r| r.strip_suffix(q)) {
+            return inner.to_string();
+        }
+    }
+    t.to_string()
 }
 
 /// Cheap admission check for the pathfinder: can this scripted edge be
@@ -2191,5 +2377,129 @@ mod tests {
         .unwrap();
         let r1 = db.room(1).unwrap();
         assert_eq!(resolve_timeto(&db, r1, 2), None);
+    }
+
+    // --- statement sequences ---------------------------------------------
+
+    #[test]
+    fn sequence_of_moves_after_a_search() {
+        use WalkAction::*;
+        // The shape that made up a third of the residue: no fixed-arity
+        // recognizer matches it, but every statement is known.
+        assert_eq!(
+            transpile(";e fput 'search';move 'go path';move 'northeast';move 'northeast'"),
+            Some(vec![
+                Put("search".into()),
+                Move("go path".into()),
+                Move("northeast".into()),
+                Move("northeast".into()),
+            ])
+        );
+    }
+
+    #[test]
+    fn multifput_is_variadic() {
+        use WalkAction::*;
+        // Three arguments: both fixed-arity MULTIFPUT recognizers miss this.
+        assert_eq!(
+            transpile(";e multifput 'unlatch door', 'open door', 'go door'"),
+            Some(vec![
+                Put("unlatch door".into()),
+                Put("open door".into()),
+                Put("go door".into()),
+            ])
+        );
+    }
+
+    #[test]
+    fn hand_management_around_a_climb() {
+        use WalkAction::*;
+        assert_eq!(
+            transpile(";e empty_hands\nmove \"climb well\"\nwaitrt?\nfill_hands"),
+            Some(vec![
+                EmptyHands,
+                Move("climb well".into()),
+                WaitRt,
+                FillHands,
+            ])
+        );
+    }
+
+    #[test]
+    fn script_bookkeeping_is_dropped_not_refused() {
+        use WalkAction::*;
+        // `$go2_restart = true` has no travel meaning; refusing the whole body
+        // over it is what kept these edges in the residue.
+        assert_eq!(
+            transpile(";e fput 'go vortex';fput 'go vortex';$go2_restart=true"),
+            Some(vec![Put("go vortex".into()), Put("go vortex".into())])
+        );
+        assert_eq!(
+            transpile(";e $SILVERWOOD_TOWN=:imt;move 'go door'"),
+            Some(vec![Move("go door".into())])
+        );
+    }
+
+    #[test]
+    fn parenthesised_and_double_quoted_arguments() {
+        use WalkAction::*;
+        assert_eq!(
+            transpile(";e empty_hand;fput('go river');move('go river')"),
+            Some(vec![
+                EmptyHands,
+                Put("go river".into()),
+                Move("go river".into())
+            ])
+        );
+    }
+
+    #[test]
+    fn control_flow_is_still_refused() {
+        // Concatenating these statements would drop the condition and cross an
+        // edge the script deliberately gated.
+        assert_eq!(
+            transpile(";e if checksitting; fput 'stand'; end; move 'north'"),
+            None
+        );
+        assert_eq!(
+            transpile(";e 5.times { move 'north' }; move 'east'; move 'west'"),
+            None
+        );
+    }
+
+    #[test]
+    fn an_unknown_statement_refuses_the_whole_body() {
+        // Partial crossings are worse than none: dropping the unrecognized
+        // step would leave the walker somewhere the router does not expect.
+        assert_eq!(
+            transpile(";e fput 'search'; frobnicate 'widget'; move 'north'"),
+            None
+        );
+    }
+
+    #[test]
+    fn splitter_respects_quotes_and_nesting() {
+        // A `;` inside a quoted argument must not split the statement.
+        assert_eq!(
+            split_statements("fput 'say a;b'; move 'north'"),
+            vec!["fput 'say a;b'".to_string(), "move 'north'".to_string()]
+        );
+        // ...nor one inside a block.
+        assert_eq!(
+            split_statements("foo { a; b }; move 'north'"),
+            vec!["foo { a; b }".to_string(), "move 'north'".to_string()]
+        );
+        // Escaped quotes do not end the string.
+        assert_eq!(
+            split_statements(r#"fput "say \"x;y\""; move 'north'"#),
+            vec![r#"fput "say \"x;y\"""#.to_string(), "move 'north'".to_string()]
+        );
+    }
+
+    #[test]
+    fn single_statement_bodies_do_not_recurse() {
+        // A lone unrecognized statement must return None rather than loop
+        // back into the chain that just declined it.
+        assert_eq!(transpile(";e frobnicate 'widget'"), None);
     }
 }
