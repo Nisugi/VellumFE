@@ -1086,6 +1086,123 @@ impl Default for MultiAccountWidgetData {
     }
 }
 
+
+impl MultiAccountWidgetData {
+    /// Canonical row ids, in their default top-to-bottom order.
+    pub const ROWS: &'static [&'static str] = &[
+        "status",
+        "vitals",
+        "rt",
+        "hands",
+        "effects",
+        "mind",
+        "stance",
+        "field_exp",
+        "encumbrance",
+        "injuries",
+        "room",
+    ];
+
+    /// Human label for a row id, for the editor list.
+    pub fn row_label(row: &str) -> &'static str {
+        match row {
+            "status" => "Status icons",
+            "vitals" => "Vitals",
+            "rt" => "Roundtime",
+            "hands" => "Hands / casting",
+            "effects" => "Debuffs & cooldowns",
+            "mind" => "Mind state",
+            "stance" => "Stance",
+            "field_exp" => "Field experience",
+            "encumbrance" => "Encumbrance",
+            "injuries" => "Injury doll",
+            "room" => "Room",
+            _ => "Unknown row",
+        }
+    }
+
+    /// Rows in display order, paired with whether each is shown. Rows missing
+    /// from `row_order` keep their default position, so a partial list never
+    /// hides anything -- the checkbox is what hides.
+    pub fn ordered_rows(&self) -> Vec<(String, bool)> {
+        let mut order: Vec<String> = self
+            .row_order
+            .iter()
+            .filter(|name| Self::ROWS.contains(&name.as_str()))
+            .cloned()
+            .collect();
+        for row in Self::ROWS {
+            if !order.iter().any(|name| name == row) {
+                order.push((*row).to_string());
+            }
+        }
+        order
+            .into_iter()
+            .map(|row| {
+                let shown = self.row_shown(&row);
+                (row, shown)
+            })
+            .collect()
+    }
+
+    /// Whether a row is currently enabled.
+    pub fn row_shown(&self, row: &str) -> bool {
+        match row {
+            "status" => self.show_status,
+            "vitals" => self.show_vitals,
+            "rt" => self.show_rt,
+            "hands" => self.show_hands,
+            "effects" => self.show_effects,
+            "mind" => self.show_mind,
+            "stance" => self.show_stance,
+            "field_exp" => self.show_field_exp,
+            "encumbrance" => self.show_encumbrance,
+            "injuries" => self.show_injuries,
+            "room" => self.show_room,
+            _ => false,
+        }
+    }
+
+    /// Enable or disable a row by id.
+    pub fn set_row_shown(&mut self, row: &str, on: bool) {
+        match row {
+            "status" => self.show_status = on,
+            "vitals" => self.show_vitals = on,
+            "rt" => self.show_rt = on,
+            "hands" => self.show_hands = on,
+            "effects" => self.show_effects = on,
+            "mind" => self.show_mind = on,
+            "stance" => self.show_stance = on,
+            "field_exp" => self.show_field_exp = on,
+            "encumbrance" => self.show_encumbrance = on,
+            "injuries" => self.show_injuries = on,
+            "room" => self.show_room = on,
+            _ => {}
+        }
+    }
+
+    /// Move a row one place up or down, materializing the full order first so
+    /// a previously-empty `row_order` becomes explicit rather than shifting
+    /// against an implied list.
+    pub fn move_row(&mut self, row: &str, up: bool) {
+        let mut order: Vec<String> = self.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        let Some(idx) = order.iter().position(|r| r == row) else {
+            return;
+        };
+        let target = if up {
+            idx.checked_sub(1)
+        } else if idx + 1 < order.len() {
+            Some(idx + 1)
+        } else {
+            None
+        };
+        if let Some(target) = target {
+            order.swap(idx, target);
+            self.row_order = order;
+        }
+    }
+}
+
 /// Text replacement rule for perception widget
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextReplacement {
@@ -1491,5 +1608,88 @@ mod visibility_tests {
         let none = parse_base("");
         assert!(none.binding.is_none());
         assert!(!toml::to_string(&none).unwrap().contains("binding"));
+    }
+}
+
+#[cfg(test)]
+mod multiaccount_row_tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_order_yields_every_row_in_default_order() {
+        let data = MultiAccountWidgetData::default();
+        let rows: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(rows, MultiAccountWidgetData::ROWS);
+    }
+
+    #[test]
+    fn a_partial_order_keeps_unlisted_rows() {
+        // Omitting a row must not hide it -- the checkbox is what hides.
+        let mut data = MultiAccountWidgetData::default();
+        data.row_order = vec!["room".to_string(), "vitals".to_string()];
+        let rows: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(&rows[..2], &["room".to_string(), "vitals".to_string()]);
+        assert_eq!(
+            rows.len(),
+            MultiAccountWidgetData::ROWS.len(),
+            "every row still present: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_row_names_are_dropped() {
+        // A stale config naming a row that no longer exists must not add a
+        // phantom entry the editor would render as "Unknown row".
+        let mut data = MultiAccountWidgetData::default();
+        data.row_order = vec!["nonsense".to_string(), "room".to_string()];
+        let rows: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert!(!rows.iter().any(|r| r == "nonsense"));
+        assert_eq!(rows[0], "room");
+    }
+
+    #[test]
+    fn moving_a_row_materializes_the_full_order() {
+        // Starting from an empty (implied) order, one move must write the
+        // whole list, or later moves would shift against a different list.
+        let mut data = MultiAccountWidgetData::default();
+        assert!(data.row_order.is_empty());
+        data.move_row("rt", true);
+        assert_eq!(data.row_order.len(), MultiAccountWidgetData::ROWS.len());
+        // "rt" was third by default; up one puts it second.
+        assert_eq!(data.row_order[1], "rt");
+        assert_eq!(data.row_order[2], "vitals");
+    }
+
+    #[test]
+    fn moving_past_an_edge_is_a_no_op() {
+        let mut data = MultiAccountWidgetData::default();
+        data.move_row("status", true);
+        let first: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(first[0], "status", "already first, stays first");
+
+        data.move_row("room", false);
+        let last: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(last[last.len() - 1], "room", "already last, stays last");
+    }
+
+    #[test]
+    fn row_visibility_round_trips_through_the_helpers() {
+        let mut data = MultiAccountWidgetData::default();
+        assert!(data.row_shown("vitals"));
+        data.set_row_shown("vitals", false);
+        assert!(!data.row_shown("vitals"));
+        assert!(!data.show_vitals, "the helper writes the real field");
+
+        // Every canonical row must be addressable, or the editor would show
+        // a checkbox that silently does nothing.
+        for row in MultiAccountWidgetData::ROWS {
+            data.set_row_shown(row, true);
+            assert!(data.row_shown(row), "{row} is not wired");
+            assert_ne!(
+                MultiAccountWidgetData::row_label(row),
+                "Unknown row",
+                "{row} has no label"
+            );
+        }
     }
 }

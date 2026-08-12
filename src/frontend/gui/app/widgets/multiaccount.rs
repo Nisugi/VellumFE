@@ -200,14 +200,25 @@ impl VellumGuiApp {
                         );
                     }
                     if let Some(name) = &cluster.leader_name {
-                        let own = cluster.leader.is_some();
+                        // "not yours" means the leader is not one of OUR
+                        // characters -- decided by name, because
+                        // `cluster.leader` is only set when that character's
+                        // own roster says SelfLed. An unconfirmed roster left
+                        // it None and mislabelled your own character.
+                        let own = peers
+                            .values()
+                            .any(|p| p.character.eq_ignore_ascii_case(name));
                         let label = if own {
                             format!("\u{2691} {name}")
                         } else {
-                            // Following someone who is not one of ours.
                             format!("\u{2691} {name} (not yours)")
                         };
-                        ui.label(RichText::new(label).strong().small());
+                        ui.label(RichText::new(label).strong().small())
+                            .on_hover_text(if own {
+                                "Group leader"
+                            } else {
+                                "Leader is not one of your characters"
+                            });
                     }
                     if !cluster.confirmed {
                         ui.label(
@@ -338,7 +349,7 @@ impl VellumGuiApp {
                     // lead with whatever that user reads first. Anything not
                     // listed keeps its default position, so a partial or
                     // absent list still shows every enabled row.
-                    for row in Self::multiaccount_row_order(data) {
+                    for (row, _) in data.ordered_rows() {
                         Self::render_card_row(
                             ui, settings, data, peer, row, now_server, elsewhere,
                         );
@@ -346,42 +357,6 @@ impl VellumGuiApp {
                 });
             });
         });
-    }
-
-    /// Default top-to-bottom row order. Identity first, then the things that
-    /// change fastest, then the slow context.
-    const DEFAULT_ROWS: &'static [&'static str] = &[
-        "status",
-        "vitals",
-        "rt",
-        "hands",
-        "effects",
-        "mind",
-        "stance",
-        "field_exp",
-        "encumbrance",
-        "injuries",
-        "room",
-    ];
-
-    /// The configured order, with any unlisted rows appended in their default
-    /// position. A name the user omits is not hidden -- hiding is what the
-    /// per-row toggles are for.
-    fn multiaccount_row_order(
-        data: &crate::config::MultiAccountWidgetData,
-    ) -> Vec<String> {
-        let mut order: Vec<String> = data
-            .row_order
-            .iter()
-            .filter(|name| Self::DEFAULT_ROWS.contains(&name.as_str()))
-            .cloned()
-            .collect();
-        for row in Self::DEFAULT_ROWS {
-            if !order.iter().any(|name| name == row) {
-                order.push((*row).to_string());
-            }
-        }
-        order
     }
 
     #[allow(clippy::too_many_arguments)]

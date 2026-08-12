@@ -87,12 +87,29 @@ pub(super) struct MultiAccountConfig {
     pub(super) show_absolute_vitals: bool,
     pub(super) show_hands: bool,
     pub(super) show_field_exp: bool,
-    pub(super) row_order: String,
+    /// Rows in display order, each with whether it is currently shown.
+    pub(super) rows: Vec<(String, bool)>,
     pub(super) sort_by: String,
     pub(super) show_effects: bool,
     pub(super) effect_filter: String,
     pub(super) max_effects: usize,
     pub(super) card_width: f32,
+}
+
+impl MultiAccountConfig {
+    /// Flip one row's checkbox in the view's copy of the order.
+    pub(super) fn set_row_shown(&mut self, row: &str, on: bool) {
+        if let Some(entry) = self.rows.iter_mut().find(|(name, _)| name == row) {
+            entry.1 = on;
+        }
+    }
+
+    /// Push the view's per-row checkboxes back into the widget data.
+    pub(super) fn apply_row_visibility(&self, data: &mut crate::config::MultiAccountWidgetData) {
+        for (row, shown) in &self.rows {
+            data.set_row_shown(row, *shown);
+        }
+    }
 }
 
 /// Everything the Window and widget sections of the context menu render,
@@ -380,9 +397,7 @@ impl VellumGuiApp {
                 show_absolute_vitals: data.show_absolute_vitals,
                 show_hands: data.show_hands,
                 show_field_exp: data.show_field_exp,
-                // One comma-separated line: a drag-to-reorder list for ten
-                // fixed names would be more UI than the feature deserves.
-                row_order: data.row_order.join(", "),
+                rows: crate::config::MultiAccountWidgetData::ordered_rows(data),
                 sort_by: data.sort_by.clone(),
                 show_effects: data.show_effects,
                 // Edited as one comma-separated line: a list editor for a
@@ -709,6 +724,14 @@ impl VellumGuiApp {
                     self.app_core.schedule_layout_autosave();
                 }
             }
+            GuiWindowMenuCommand::MoveMultiAccountRow { row, up } => {
+                if let Some(crate::config::WindowDef::MultiAccount { data, .. }) =
+                    self.layout_def_mut(&name)
+                {
+                    data.move_row(&row, up);
+                    self.app_core.schedule_layout_autosave();
+                }
+            }
             GuiWindowMenuCommand::SetMultiAccountConfig(ma) => {
                 if let Some(crate::config::WindowDef::MultiAccount { data, .. }) =
                     self.layout_def_mut(&name)
@@ -725,13 +748,8 @@ impl VellumGuiApp {
                     data.show_absolute_vitals = ma.show_absolute_vitals;
                     data.show_hands = ma.show_hands;
                     data.show_field_exp = ma.show_field_exp;
-                    data.row_order = ma
-                        .row_order
-                        .split(',')
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .map(str::to_string)
-                        .collect();
+                    data.row_order = ma.rows.iter().map(|(r, _)| r.clone()).collect();
+                    ma.apply_row_visibility(data);
                     data.sort_by = ma.sort_by.clone();
                     data.show_effects = ma.show_effects;
                     data.effect_filter = ma
@@ -1187,22 +1205,13 @@ impl VellumGuiApp {
             let mut next = ma.clone();
             let mut changed = false;
             changed |= ui.checkbox(&mut next.show_self, "Your own card").changed();
-            changed |= ui.checkbox(&mut next.show_vitals, "Vitals").changed();
             if next.show_vitals {
                 ui.indent("ma_vitals", |ui| {
                     changed |= ui
-                        .checkbox(&mut next.show_absolute_vitals, "Show numbers (51/51)")
+                        .checkbox(&mut next.show_absolute_vitals, "Vitals as numbers (51/51)")
                         .changed();
                 });
             }
-            changed |= ui.checkbox(&mut next.show_status, "Status glyphs").changed();
-            changed |= ui.checkbox(&mut next.show_rt, "Roundtime").changed();
-            changed |= ui.checkbox(&mut next.show_injuries, "Injury doll").changed();
-            changed |= ui.checkbox(&mut next.show_room, "Room").changed();
-            changed |= ui.checkbox(&mut next.show_hands, "Hands / casting").changed();
-            changed |= ui
-                .checkbox(&mut next.show_effects, "Debuffs & cooldowns")
-                .changed();
             if next.show_effects {
                 ui.indent("ma_effects", |ui| {
                     ui.label(RichText::new("Only show effects matching:").small());
@@ -1222,22 +1231,47 @@ impl VellumGuiApp {
                     }
                 });
             }
-            changed |= ui.checkbox(&mut next.show_mind, "Mind state").changed();
-            changed |= ui.checkbox(&mut next.show_stance, "Stance").changed();
-            changed |= ui
-                .checkbox(&mut next.show_field_exp, "Field experience")
-                .changed();
-            changed |= ui
-                .checkbox(&mut next.show_encumbrance, "Encumbrance")
-                .changed();
             ui.separator();
-            ui.label(RichText::new("Row order (top to bottom)").small());
-            changed |= ui
-                .text_edit_singleline(&mut next.row_order)
-                .on_hover_text(
-                    "Comma-separated: status, vitals, rt, hands, effects, mind,                      stance, field_exp, encumbrance, injuries, room.                      Anything you leave out keeps its usual place.",
-                )
-                .changed();
+            ui.label(RichText::new("Rows (top to bottom)").small());
+            {
+                // Arrows + a tick per row, matching the group-order list in
+                // this same menu. A text field for a fixed set of ten names
+                // was the wrong shape: nothing to type, easy to typo.
+                let last = ma.rows.len().saturating_sub(1);
+                for (index, (row, shown)) in ma.rows.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(index > 0, egui::Button::new("\u{2B06}").small())
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::MoveMultiAccountRow {
+                                row: row.clone(),
+                                up: true,
+                            });
+                        }
+                        if ui
+                            .add_enabled(index < last, egui::Button::new("\u{2B07}").small())
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::MoveMultiAccountRow {
+                                row: row.clone(),
+                                up: false,
+                            });
+                        }
+                        let mut on = *shown;
+                        if ui
+                            .checkbox(
+                                &mut on,
+                                crate::config::MultiAccountWidgetData::row_label(row),
+                            )
+                            .changed()
+                        {
+                            next.set_row_shown(row, on);
+                            changed = true;
+                        }
+                    });
+                }
+            }
             ui.horizontal(|ui| {
                 ui.label("Card order");
                 for (value, label) in [

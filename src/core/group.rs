@@ -202,6 +202,12 @@ pub enum GroupEvent {
     NoGroup,
     /// The `group` reply's final line -- the completion sentinel.
     StatusLine,
+    /// We took someone's hand: we lead, they follow.
+    HeldTheirHand,
+    /// Someone took our hand: they lead, we follow.
+    TheyHeldOurHand,
+    /// A hand was released, ending the grouping.
+    Released,
     /// A member is gone for a reason the game does not announce as a leave:
     /// death or disconnect. Lich has no equivalent; without it the roster
     /// silently keeps a corpse.
@@ -229,6 +235,37 @@ static RE_LEADER_ADDS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(.+) adds (.+) to (.+) group\.$").unwrap());
 static RE_LEADER_REMOVES: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(.+) removes (.+) from the group\.$").unwrap());
+// Hand-holding groups you exactly like `group` does, and it is how a duo
+// most often forms. Four demeanor variants (reserved/neutral/friendly/warm)
+// x three persons, matching Lich's set.
+//
+// First person -- WE take their hand, so we lead.
+static RE_HOLD_FIRST: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^You (?:grab|reach out and hold|gently take hold of|clasp) (.+?) hand(?: tenderly)?\.$",
+    )
+    .unwrap()
+});
+// Second person -- THEY take ours, so they lead.
+static RE_HOLD_SECOND: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^(.+?) (?:grabs|reaches out and holds|gently takes hold of|clasps) your hand(?: tenderly)?\.$",
+    )
+    .unwrap()
+});
+// Third person -- two other people, which tells us nothing about our own
+// group but must not be mistaken for either case above.
+static RE_HOLD_THIRD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^(.+?) (?:grabs|reaches out and holds|gently takes hold of|clasps) (.+?) hand(?: tenderly)?\.$",
+    )
+    .unwrap()
+});
+// Letting go ends the grouping the same way leaving does.
+static RE_RELEASE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:You let go of (.+?)|(.+?) lets go of your) hand\.$").unwrap()
+});
+
 static RE_ROSTER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^You are (leading|grouped with) ").unwrap());
 // NOT `$`-anchored: the real line continues past the period --
@@ -248,6 +285,8 @@ fn might_be_group_line(line: &str) -> bool {
         || line.contains("You join ")
         || line.starts_with("You are leading ")
         || line.contains("designates you as the new leader")
+        // Hand-holding is a grouping action with no "group" in the sentence.
+        || line.contains(" hand")
 }
 
 /// Classify every group event in a flushed chunk.
@@ -315,6 +354,22 @@ pub fn classify_line(line: &str) -> Option<GroupEvent> {
     }
     if RE_OTHER_JOINS.is_match(line) {
         return Some(GroupEvent::Joined);
+    }
+
+    // Hand-holding, before the generic group forms: these sentences share no
+    // wording with them, but ordering keeps intent obvious.
+    if RE_RELEASE.is_match(line) {
+        return Some(GroupEvent::Released);
+    }
+    if RE_HOLD_FIRST.is_match(line) {
+        return Some(GroupEvent::HeldTheirHand);
+    }
+    if RE_HOLD_SECOND.is_match(line) {
+        return Some(GroupEvent::TheyHeldOurHand);
+    }
+    if RE_HOLD_THIRD.is_match(line) {
+        // Two other people held hands. Our own roster is unaffected.
+        return None;
     }
 
     if RE_JOINS_YOUR_GROUP.is_match(line) || RE_YOU_ADD.is_match(line) {
@@ -408,6 +463,34 @@ pub fn apply_event(
                 // said we are in no group; `NoGroup` already cleared it. Mark
                 // confirmed so the display stops hedging.
                 state.confirmed = true;
+            }
+        }
+        GroupEvent::HeldTheirHand => {
+            // We took their hand: we lead them. This is a complete, known
+            // two-person group -- unlike being added to someone else's, we
+            // can see both ends of it.
+            if let Some(other) = members.first() {
+                state.replace(GroupLeader::SelfLed, vec![other.clone()]);
+            }
+        }
+        GroupEvent::TheyHeldOurHand => {
+            // They took ours: they lead. We can see who, but not who else is
+            // already in their group, so the roster stays unconfirmed.
+            if let Some(leader) = members.first() {
+                state.leader = GroupLeader::Other(leader.clone());
+                state.members.clear();
+                state.confirmed = false;
+                state.generation += 1;
+            }
+        }
+        GroupEvent::Released => {
+            // A released hand ends the pairing. Remove the named person if we
+            // have them, then clear outright if nothing is left -- leading an
+            // empty group is not being in a group, and `remove` deliberately
+            // leaves the leader alone for the multi-member case.
+            let removed = members.iter().any(|m| state.remove(&m.id));
+            if !removed || (state.members.is_empty() && state.leads()) {
+                state.clear();
             }
         }
         GroupEvent::Departure => {
@@ -549,6 +632,102 @@ mod tests {
         // treated as separators.
         let mixed = "You see nothing unusual.\r\nBob joins your group.\r\n";
         assert_eq!(classify_chunk(mixed), vec![GroupEvent::Joined]);
+    }
+
+    /// Hand-holding groups you exactly like `group` does, and it is how a
+    /// duo most often forms. Wording taken verbatim from a live session.
+    #[test]
+    fn classifies_hand_holding_in_every_person() {
+        // First person: we take theirs, so we lead.
+        assert_eq!(
+            classify_line("You reach out and hold Abem's hand."),
+            Some(GroupEvent::HeldTheirHand)
+        );
+        assert_eq!(
+            classify_line("You grab Abem's hand."),
+            Some(GroupEvent::HeldTheirHand)
+        );
+        assert_eq!(
+            classify_line("You gently take hold of Abem's hand."),
+            Some(GroupEvent::HeldTheirHand)
+        );
+        assert_eq!(
+            classify_line("You clasp Abem's hand tenderly."),
+            Some(GroupEvent::HeldTheirHand)
+        );
+
+        // Second person: they take ours, so they lead.
+        assert_eq!(
+            classify_line("Ultz reaches out and holds your hand."),
+            Some(GroupEvent::TheyHeldOurHand)
+        );
+        assert_eq!(
+            classify_line("Ultz grabs your hand."),
+            Some(GroupEvent::TheyHeldOurHand)
+        );
+        assert_eq!(
+            classify_line("Ultz clasps your hand tenderly."),
+            Some(GroupEvent::TheyHeldOurHand)
+        );
+
+        // Third person: two other people. Our roster is unaffected, and this
+        // must NOT be mistaken for either case above.
+        assert_eq!(
+            classify_line("Wilhelm reaches out and holds Walker's hand."),
+            None
+        );
+    }
+
+    #[test]
+    fn classifies_releasing_a_hand() {
+        assert_eq!(
+            classify_line("You let go of Abem's hand."),
+            Some(GroupEvent::Released)
+        );
+        assert_eq!(
+            classify_line("Ultz lets go of your hand."),
+            Some(GroupEvent::Released)
+        );
+    }
+
+    #[test]
+    fn holding_a_hand_makes_a_confirmed_two_person_group() {
+        // Unlike being added to someone else's group, both ends of a
+        // hand-hold are visible, so the roster is genuinely known.
+        let g = drive(&[(GroupEvent::HeldTheirHand, vec![member("-1", "Abem")])]);
+        assert!(g.leads());
+        assert_eq!(g.members, vec![member("-1", "Abem")]);
+        assert!(g.confirmed);
+    }
+
+    #[test]
+    fn having_our_hand_held_makes_us_a_follower() {
+        let g = drive(&[(GroupEvent::TheyHeldOurHand, vec![member("-1", "Ultz")])]);
+        assert_eq!(g.leader, GroupLeader::Other(member("-1", "Ultz")));
+        assert!(
+            !g.confirmed,
+            "we cannot see the rest of their group from the hold alone"
+        );
+    }
+
+    #[test]
+    fn releasing_a_hand_ends_the_pairing() {
+        let mut state = GroupState::default();
+        let mut pending = None;
+        apply_event(
+            &mut state,
+            &GroupEvent::HeldTheirHand,
+            &[member("-1", "Abem")],
+            &mut pending,
+        );
+        assert!(state.is_grouped());
+        apply_event(
+            &mut state,
+            &GroupEvent::Released,
+            &[member("-1", "Abem")],
+            &mut pending,
+        );
+        assert!(!state.is_grouped());
     }
 
     #[test]
