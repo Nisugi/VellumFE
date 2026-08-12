@@ -2054,14 +2054,41 @@ impl eframe::App for VellumGuiApp {
         // content totals for the performance monitor.
         self.app_core.perf_stats.sample_sysinfo();
 
-        // Refresh the sibling-instance snapshot once per frame. Render paths
-        // are `&self` and settings are rebuilt per window, so this is the one
-        // place it can be taken -- and taking it once means the peer lock is
-        // never held while drawing.
+        // Refresh the sibling-instance snapshot once per frame -- render
+        // paths are `&self`, so this is the one place it can be taken. The
+        // self card is built HERE too: building it in the widget rebuilt it
+        // per window per frame, cloning effects/injuries/group each time.
+        // Skipped entirely when no multiaccount window is on screen.
         if let Some(hub) = &self.multiaccount {
-            let now_ms = crate::core::multiaccount::hub::now_ms();
-            hub.reap(now_ms);
-            self.multiaccount_peers = std::sync::Arc::new(hub.peers());
+            let wants_cards = self
+                .app_core
+                .ui_state
+                .windows
+                .values()
+                .any(|w| matches!(w.content, crate::data::WindowContent::MultiAccount));
+            if wants_cards {
+                let now_ms = crate::core::multiaccount::hub::now_ms();
+                let peers = hub.reap_and_snapshot(now_ms);
+                let mut combined = (*peers).clone();
+                combined.insert(
+                    crate::core::multiaccount::SELF_PORT,
+                    crate::core::multiaccount::PeerStatus::from_local(
+                        &self.app_core.game_state,
+                        self.app_core
+                            .config
+                            .connection
+                            .character
+                            .as_deref()
+                            .or(self.app_core.config.character.as_deref()),
+                        self.app_core
+                            .nav_room_id
+                            .clone()
+                            .or_else(|| self.app_core.lich_room_id.clone()),
+                        now_ms,
+                    ),
+                );
+                self.multiaccount_peers = std::sync::Arc::new(combined);
+            }
         }
         {
             let total_lines: usize = self

@@ -38,6 +38,11 @@ pub type PeerTable = Arc<Mutex<BTreeMap<u16, PeerStatus>>>;
 /// Handle to a running hub. Dropping it stops discovery and every peer task.
 pub struct MultiAccountHub {
     peers: PeerTable,
+    /// Set by every peer mutation; cleared when the render snapshot rebuilds.
+    /// Status changes arrive a few times a second while frames render at 60,
+    /// so most frames reuse the cached Arc instead of cloning the table.
+    dirty: Arc<std::sync::atomic::AtomicBool>,
+    cache: Mutex<Arc<BTreeMap<u16, PeerStatus>>>,
     shutdown: tokio::sync::watch::Sender<bool>,
 }
 
@@ -51,25 +56,41 @@ impl MultiAccountHub {
     /// changes, and the registry already records it.
     pub fn start(token: String) -> Self {
         let peers: PeerTable = Arc::new(Mutex::new(BTreeMap::new()));
+        let dirty = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        tokio::spawn(discovery_loop(peers.clone(), token, shutdown_rx));
+        tokio::spawn(discovery_loop(
+            peers.clone(),
+            dirty.clone(),
+            token,
+            shutdown_rx,
+        ));
 
-        Self { peers, shutdown }
+        Self {
+            peers,
+            dirty,
+            cache: Mutex::new(Arc::new(BTreeMap::new())),
+            shutdown,
+        }
     }
 
-    /// Snapshot of every known peer. Cheap clone; the display reads this once
-    /// per frame rather than holding the lock while rendering.
-    pub fn peers(&self) -> BTreeMap<u16, PeerStatus> {
-        self.peers.lock().expect("peer table poisoned").clone()
-    }
-
-    /// Drop peers that have been gone long enough to not be coming back.
-    /// Called by the display; kept separate from freshness so a peer dims for
-    /// a while before it disappears.
-    pub fn reap(&self, now_ms: u64) {
+    /// Reap lost peers and hand back the render snapshot, in ONE lock
+    /// acquisition. The old shape took the mutex twice per frame (reap, then
+    /// a full deep clone) while every socket task contended for the same
+    /// lock; now the clone happens only when something actually changed.
+    pub fn reap_and_snapshot(&self, now_ms: u64) -> Arc<BTreeMap<u16, PeerStatus>> {
+        use std::sync::atomic::Ordering;
         let mut peers = self.peers.lock().expect("peer table poisoned");
+        let before = peers.len();
         peers.retain(|_, p| p.freshness(now_ms) != super::Freshness::Lost);
+        if peers.len() != before {
+            self.dirty.store(true, Ordering::Relaxed);
+        }
+        let mut cache = self.cache.lock().expect("hub cache poisoned");
+        if self.dirty.swap(false, Ordering::Relaxed) {
+            *cache = Arc::new(peers.clone());
+        }
+        cache.clone()
     }
 }
 
@@ -82,6 +103,7 @@ impl Drop for MultiAccountHub {
 /// Re-read the registry on an interval, starting a task for each new peer.
 async fn discovery_loop(
     peers: PeerTable,
+    dirty: Arc<std::sync::atomic::AtomicBool>,
     token: String,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
@@ -117,6 +139,7 @@ async fn discovery_loop(
                 entry.character.clone(),
                 token.clone(),
                 peers.clone(),
+                dirty.clone(),
                 watching.clone(),
                 shutdown.clone(),
             ));
@@ -137,6 +160,7 @@ async fn peer_task(
     character: String,
     token: String,
     peers: PeerTable,
+    dirty: Arc<std::sync::atomic::AtomicBool>,
     watching: Arc<Mutex<std::collections::HashSet<u16>>>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
@@ -151,7 +175,7 @@ async fn peer_task(
             return;
         }
 
-        match run_peer(port, &character, &token, &peers, &mut sent_group).await {
+        match run_peer(port, &character, &token, &peers, &dirty, &mut sent_group).await {
             Ok(()) => {
                 consecutive_failures = 0;
                 tracing::debug!("multiaccount: peer {character} on {port} closed");
@@ -171,6 +195,7 @@ async fn peer_task(
             if let Some(peer) = table.get_mut(&port) {
                 peer.connected = false;
                 peer.last_update_ms = now_ms();
+                dirty.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }
 
@@ -196,6 +221,7 @@ async fn run_peer(
     character: &str,
     token: &str,
     peers: &PeerTable,
+    dirty: &std::sync::atomic::AtomicBool,
     sent_group: &mut bool,
 ) -> anyhow::Result<()> {
     let url = format!("ws://127.0.0.1:{port}/ws");
@@ -235,6 +261,7 @@ async fn run_peer(
         peer.character = character.to_string();
         peer.connected = true;
         peer.last_update_ms = now_ms();
+        dirty.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     while let Some(frame) = socket.next().await {
@@ -256,6 +283,7 @@ async fn run_peer(
                             ..Default::default()
                         });
                         apply_frame(peer, &value);
+                        dirty.store(true, std::sync::atomic::Ordering::Relaxed);
                         needs_roster =
                             is_snapshot && peer.group.is_grouped() && !peer.group.confirmed;
                     }
@@ -418,38 +446,32 @@ fn apply_char_info(peer: &mut PeerStatus, v: Option<&serde_json::Value>) {
     let Some(gauges) = v.and_then(|v| v.get("gauges")) else {
         return;
     };
-    // Absent gauges leave the previous value alone rather than clearing it:
-    // char_info ships only when something in it changed, and a missing
-    // section means "unchanged", not "now unknown".
-    if let Some(g) = read_gauge(gauges.get("mind")) {
-        peer.mind = Some(g);
+    // Typed decode against the SAME struct the encoder serializes, so a
+    // field rename is a parse difference here rather than a silent stale
+    // value. Absent fields deserialize to None and leave the previous value
+    // alone: char_info ships only on change, and a missing section means
+    // "unchanged", not "now unknown".
+    let Ok(gauges) =
+        serde_json::from_value::<crate::core::remote::RemoteGauges>(gauges.clone())
+    else {
+        return;
+    };
+    let to_gauge = |g: crate::core::remote::RemoteGauge| Gauge {
+        value: g.value,
+        text: g.text,
+    };
+    if let Some(g) = gauges.mind {
+        peer.mind = Some(to_gauge(g));
     }
-    if let Some(g) = read_gauge(gauges.get("encumbrance")) {
-        peer.encumbrance = Some(g);
+    if let Some(g) = gauges.encumbrance {
+        peer.encumbrance = Some(to_gauge(g));
     }
-    if let Some(g) = read_gauge(gauges.get("stance")) {
-        peer.stance = Some(g);
+    if let Some(g) = gauges.stance {
+        peer.stance = Some(to_gauge(g));
     }
-    if let Some(fxp) = gauges.get("field_exp") {
-        if let (Some(value), Some(max)) = (
-            fxp.get("value").and_then(|v| v.as_u64()),
-            fxp.get("max").and_then(|v| v.as_u64()),
-        ) {
-            peer.field_exp = Some((value, max));
-        }
+    if let Some(fxp) = gauges.field_exp {
+        peer.field_exp = Some((fxp.value, fxp.max));
     }
-}
-
-fn read_gauge(v: Option<&serde_json::Value>) -> Option<Gauge> {
-    let v = v?;
-    Some(Gauge {
-        value: v.get("value")?.as_u64()? as u32,
-        text: v
-            .get("text")
-            .and_then(|t| t.as_str())
-            .unwrap_or_default()
-            .to_string(),
-    })
 }
 
 /// Effects ship as a flat array of category blocks; the card indexes them by
@@ -467,20 +489,15 @@ fn apply_effects(peer: &mut PeerStatus, v: Option<&serde_json::Value>) {
 }
 
 fn apply_minivitals(peer: &mut PeerStatus, v: Option<&serde_json::Value>) {
-    let Some(arr) = v.and_then(|v| v.as_array()) else {
+    let Some(v) = v else { return };
+    let Ok(vitals) =
+        serde_json::from_value::<Vec<crate::core::remote::RemoteVital>>(v.clone())
+    else {
         return;
     };
-    peer.minivitals = arr
-        .iter()
-        .filter_map(|entry| {
-            Some((
-                entry.get("id")?.as_str()?.to_string(),
-                (
-                    entry.get("value")?.as_u64()? as u32,
-                    entry.get("max")?.as_u64()? as u32,
-                ),
-            ))
-        })
+    peer.minivitals = vitals
+        .into_iter()
+        .map(|vital| (vital.id, (vital.value, vital.max)))
         .collect();
 }
 

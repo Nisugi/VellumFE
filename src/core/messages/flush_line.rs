@@ -29,6 +29,20 @@ impl MessageProcessor {
     fn buffer_group_events(&mut self, full_text: &str) {
         use crate::core::group::{classify_line, GroupMember};
 
+        // Classify FIRST -- it is pure &str work. The gate upstream is a
+        // substring check, so any room description mentioning a "group" of
+        // creatures lands here; building per-line member vecs (three String
+        // clones per link) before knowing whether anything matched paid that
+        // allocation on every such line.
+        let events: Vec<(usize, crate::core::group::GroupEvent)> = full_text
+            .lines()
+            .enumerate()
+            .filter_map(|(idx, line)| classify_line(line).map(|e| (idx, e)))
+            .collect();
+        if events.is_empty() {
+            return;
+        }
+
         // Links, bucketed by which line of the chunk they appeared on.
         let mut per_line: Vec<Vec<GroupMember>> = Vec::new();
         let mut current: Vec<GroupMember> = Vec::new();
@@ -54,11 +68,12 @@ impl MessageProcessor {
             per_line.push(current);
         }
 
-        for (idx, line) in full_text.lines().enumerate() {
-            if let Some(event) = classify_line(line) {
-                let members = per_line.get(idx).cloned().unwrap_or_default();
-                self.pending_group.push((event, members));
-            }
+        for (idx, event) in events {
+            let members = per_line
+                .get_mut(idx)
+                .map(std::mem::take)
+                .unwrap_or_default();
+            self.pending_group.push((event, members));
         }
     }
 

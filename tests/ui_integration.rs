@@ -3312,7 +3312,11 @@ fn ordinary_prose_mentioning_group_does_not_touch_the_roster() {
     );
 
     assert!(!group.is_grouped());
-    assert_eq!(group.generation, 0, "no spurious roster churn");
+    assert_eq!(
+        group,
+        vellum_fe::core::group::GroupState::default(),
+        "no spurious roster churn"
+    );
 }
 
 #[test]

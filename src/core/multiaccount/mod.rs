@@ -93,45 +93,21 @@ impl PeerStatus {
     /// Build the local character's card from game state.
     ///
     /// The hub deliberately never dials our own instance, so this is the only
-    /// source for our own card. It also means the self card works with the
-    /// sidecar still binding, or disabled entirely -- it is read from memory,
-    /// not from a loopback socket.
-    pub fn from_local(game_state: &crate::core::state::GameState, now_ms: u64) -> Self {
-        Self::from_local_named(game_state, None, now_ms)
-    }
-
-    /// As `from_local`, with a configured character name to fall back on.
-    ///
-    /// `game_state.character_name` comes only from the feed's `<app>` tag,
-    /// which does not always arrive (notably through Lich). The OS window
-    /// title already falls back to the configured name for the same reason;
-    /// without this the card reads "You" while the title bar reads "Abem",
-    /// and two cards on one screen become indistinguishable.
-    pub fn from_local_named(
-        game_state: &crate::core::state::GameState,
-        configured: Option<&str>,
-        now_ms: u64,
-    ) -> Self {
-        Self::from_local_full(game_state, configured, None, now_ms)
-    }
-
-    /// As `from_local_named`, with the room id supplied by the caller.
-    ///
-    /// `GameState.room_id` is never written -- the real id comes from the nav
-    /// or Lich feed and lives on `AppCore`, which is why the remote snapshot
-    /// overlays it. Peers therefore had a room id while the self card did
-    /// not, so the room row silently vanished on your own card and proximity
-    /// could never be computed.
-    pub fn from_local_full(
+    /// source for our own card -- read from memory, not a loopback socket.
+    /// Two inputs cannot come from `GameState` and must be passed in:
+    /// `configured` because `character_name` only arrives via the feed's
+    /// `<app>` tag (absent through Lich; the OS title bar falls back to the
+    /// configured name for the same reason), and `room_id` because the real
+    /// id lives on `AppCore` (nav/Lich overlay) -- `GameState.room_id` is
+    /// never written. One constructor, no defaulting wrappers: the earlier
+    /// three-layer chain left the two buggy narrow shapes alive as the only
+    /// ones the tests exercised.
+    pub fn from_local(
         game_state: &crate::core::state::GameState,
         configured: Option<&str>,
         room_id: Option<String>,
         now_ms: u64,
     ) -> Self {
-        // Gate on generation, not on text -- the same fix the wire path got:
-        // a dialog can report a value with an empty label, and stance
-        // routinely does. Gating on text made YOUR card the only one showing
-        // a dash for a gauge every peer rendered as a bar.
         let gauge = |seen: bool, value: u32, text: &str| {
             seen.then(|| Gauge {
                 value,
@@ -539,7 +515,7 @@ mod tests {
         gs.injuries.insert("head".to_string(), 1);
         gs.stance.update(80, "defensive (80%)");
 
-        let me = PeerStatus::from_local(&gs, 1_000);
+        let me = PeerStatus::from_local(&gs, None, None, 1_000);
         assert!(me.is_self());
         assert_eq!(me.character, "Ultz");
         assert_eq!(me.vitals.health, 51);
@@ -559,7 +535,7 @@ mod tests {
         // Before login there is no character name; the card still needs a
         // label rather than rendering blank.
         let gs = crate::core::state::GameState::new();
-        assert_eq!(PeerStatus::from_local(&gs, 0).character, "You");
+        assert_eq!(PeerStatus::from_local(&gs, None, None, 0).character, "You");
     }
 
     /// Being ADDED to a group sets the JOINED indicator with no message

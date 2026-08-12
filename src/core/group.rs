@@ -11,9 +11,12 @@
 //! 1. **One identity key.** Lich stores members by `exist` id but its
 //!    staleness probe compares by noun, so the two disagree. Everything here
 //!    keys on the exist id, with the display name carried alongside.
-//! 2. **Departures are detected.** Lich has no death or disconnect pattern at
-//!    all -- a member who dies or linkdeads sits in the roster until an
-//!    explicit leave message that may never come. `Departure` handles it.
+//! 2. **The JOINED indicator is authoritative for OUR membership.** Its
+//!    falling edge clears the roster even when no leave message arrives
+//!    (death, linkdeath). A *member's* silent departure from a group we lead
+//!    is NOT detected -- the game announces no message to parse -- so a
+//!    roster can go stale until the next `group` reply; the display carries
+//!    `confirmed` precisely so it can hedge instead of asserting.
 //! 3. **Uncertainty is explicit.** Lich's `check` re-sends `group` on any
 //!    read while unconfirmed, which can spam the game. Here an unconfirmed
 //!    roster is simply reported as unconfirmed and the display says so; the
@@ -71,8 +74,6 @@ pub struct GroupState {
     pub members: Vec<GroupMember>,
     /// Whether the roster has been confirmed against a `group` reply.
     pub confirmed: bool,
-    /// Bumped on every change, for delta suppression.
-    pub generation: u64,
 }
 
 impl GroupState {
@@ -98,17 +99,12 @@ impl GroupState {
         out
     }
 
-    fn bump(&mut self) {
-        self.generation += 1;
-    }
-
     /// Add a member if not already present. Returns true if the roster changed.
     pub fn add(&mut self, member: GroupMember) -> bool {
         if self.members.iter().any(|m| m.id == member.id) {
             return false;
         }
         self.members.push(member);
-        self.bump();
         true
     }
 
@@ -121,12 +117,10 @@ impl GroupState {
             if leader.id == id {
                 self.leader = GroupLeader::None;
                 self.confirmed = false;
-                self.bump();
                 return true;
             }
         }
         if self.members.len() != before {
-            self.bump();
             return true;
         }
         false
@@ -141,7 +135,6 @@ impl GroupState {
         self.leader = GroupLeader::None;
         // An empty group is a known-good state, not an uncertain one.
         self.confirmed = true;
-        self.bump();
     }
 
     /// Replace the roster wholesale from a `group` reply. This is the only
@@ -151,7 +144,6 @@ impl GroupState {
             self.leader = leader;
             self.members = members;
             self.confirmed = true;
-            self.bump();
         }
     }
 
@@ -166,7 +158,6 @@ impl GroupState {
         if !matches!(self.leader, GroupLeader::Unknown) {
             self.leader = GroupLeader::Unknown;
             self.confirmed = false;
-            self.generation += 1;
         }
     }
 
@@ -175,7 +166,6 @@ impl GroupState {
     pub fn mark_unconfirmed(&mut self) {
         if self.confirmed {
             self.confirmed = false;
-            self.bump();
         }
     }
 }
@@ -208,10 +198,6 @@ pub enum GroupEvent {
     TheyHeldOurHand,
     /// A hand was released, ending the grouping.
     Released,
-    /// A member is gone for a reason the game does not announce as a leave:
-    /// death or disconnect. Lich has no equivalent; without it the roster
-    /// silently keeps a corpse.
-    Departure,
 }
 
 // Lich matches these against raw XML because it has no parsed link data. We
@@ -293,21 +279,6 @@ pub fn might_be_group_line(line: &str) -> bool {
         || line.contains("designates you as the new leader")
         // Hand-holding is a grouping action with no "group" in the sentence.
         || line.contains(" hand")
-}
-
-/// Classify every group event in a flushed chunk.
-///
-/// A single flush can carry SEVERAL game lines: nothing flushes on an
-/// embedded newline, so a server burst like "Bob joins your group.\r\nCarol
-/// joins your group.\r\n" arrives as one string. Splitting here is what makes
-/// a multi-event burst work -- matching the whole blob against `$`-anchored
-/// patterns finds nothing.
-///
-/// Returns one event per matching line, in order, since a `group` reply's
-/// roster line and its status sentinel can share a flush and must stay
-/// sequenced.
-pub fn classify_chunk(chunk: &str) -> Vec<GroupEvent> {
-    chunk.lines().filter_map(classify_line).collect()
 }
 
 /// Classify a single game line as a group event, if it is one.
@@ -428,7 +399,6 @@ pub fn apply_event(
                 state.leader = GroupLeader::Other(leader.clone());
                 state.members.clear();
                 state.confirmed = false;
-                state.generation += 1;
             }
         }
         GroupEvent::Disbanded | GroupEvent::NoGroup => state.clear(),
@@ -439,7 +409,6 @@ pub fn apply_event(
                 // We inherit a group whose full membership we may not have
                 // seen, so this is not a confirmed roster.
                 state.confirmed = false;
-                state.generation += 1;
             }
         }
         GroupEvent::RosterLine { self_led } => {
@@ -506,7 +475,6 @@ pub fn apply_event(
                 state.leader = GroupLeader::Other(leader.clone());
                 state.members.clear();
                 state.confirmed = false;
-                state.generation += 1;
             }
         }
         GroupEvent::Released => {
@@ -528,11 +496,6 @@ pub fn apply_event(
                 || (state.members.is_empty() && state.leads())
             {
                 state.clear();
-            }
-        }
-        GroupEvent::Departure => {
-            for m in members {
-                state.remove(&m.id);
             }
         }
     }
@@ -642,37 +605,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn classify_chunk_splits_a_multi_line_burst() {
-        // One flush routinely carries several game lines. Matching the whole
-        // blob against `$`-anchored patterns finds nothing, so the chunk must
-        // be split first -- this is the shape that shipped broken until an
-        // end-to-end test caught it.
-        let chunk = "Bob joins your group.\r\nCarol joins your group.\r\n";
-        assert_eq!(
-            classify_chunk(chunk),
-            vec![GroupEvent::Joined, GroupEvent::Joined]
-        );
-
-        // A `group` reply's roster line and sentinel share a flush and must
-        // stay in order.
-        let reply = "You are leading Bob.\r\nYour group status is currently open.\r\n";
-        assert_eq!(
-            classify_chunk(reply),
-            vec![
-                GroupEvent::RosterLine { self_led: true },
-                GroupEvent::StatusLine
-            ]
-        );
-
-        // Non-group lines interleaved with group lines are skipped, not
-        // treated as separators.
-        let mixed = "You see nothing unusual.\r\nBob joins your group.\r\n";
-        assert_eq!(classify_chunk(mixed), vec![GroupEvent::Joined]);
-    }
-
-    /// Hand-holding groups you exactly like `group` does, and it is how a
-    /// duo most often forms. Wording taken verbatim from a live session.
     #[test]
     fn classifies_hand_holding_in_every_person() {
         // First person: we take theirs, so we lead.
@@ -881,14 +813,11 @@ mod tests {
     }
 
     #[test]
-    fn generation_only_bumps_on_real_change() {
+    fn no_op_mutations_report_no_change() {
         let mut g = GroupState::default();
-        g.add(member("-1", "Bob"));
-        let gen = g.generation;
-        g.add(member("-1", "Bob"));
-        assert_eq!(g.generation, gen, "no-op add must not bump");
-        g.remove("-999");
-        assert_eq!(g.generation, gen, "removing a non-member must not bump");
+        assert!(g.add(member("-1", "Bob")));
+        assert!(!g.add(member("-1", "Bob")), "duplicate add is a no-op");
+        assert!(!g.remove("-999"), "removing a non-member is a no-op");
     }
 
     /// Drive a sequence of (event, links) through `apply_event` the way the
@@ -998,25 +927,6 @@ mod tests {
             &mut pending,
         );
         assert_eq!(state.members, vec![member("-1", "Bob")]);
-    }
-
-    #[test]
-    fn departure_removes_without_a_leave_message() {
-        // Death and linkdeath produce no leave line. Lich has no pattern for
-        // this at all and keeps a stale member forever; we remove explicitly.
-        let mut state = GroupState::default();
-        let mut pending = None;
-        state.replace(
-            GroupLeader::SelfLed,
-            vec![member("-1", "Bob"), member("-2", "Carol")],
-        );
-        apply_event(
-            &mut state,
-            &GroupEvent::Departure,
-            &[member("-1", "Bob")],
-            &mut pending,
-        );
-        assert_eq!(state.members, vec![member("-2", "Carol")]);
     }
 
     #[test]

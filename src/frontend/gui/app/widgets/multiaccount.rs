@@ -70,32 +70,21 @@ impl VellumGuiApp {
     ) {
         let now_ms = crate::core::multiaccount::hub::now_ms();
 
-        // Our own status never arrives over a socket -- the hub deliberately
-        // does not dial itself -- so the self card is built from game state
-        // here. That also makes it work while the sidecar is still binding.
-        let mut peers = (*settings.multiaccount_peers).clone();
-        if data.show_self {
-            peers.insert(
-                crate::core::multiaccount::SELF_PORT,
-                PeerStatus::from_local_full(
-                    &app_core.game_state,
-                    app_core
-                        .config
-                        .connection
-                        .character
-                        .as_deref()
-                        .or(app_core.config.character.as_deref()),
-                    // The real room id lives on AppCore, not GameState --
-                    // same overlay the remote snapshot does.
-                    app_core
-                        .nav_room_id
-                        .clone()
-                        .or_else(|| app_core.lich_room_id.clone()),
-                    now_ms,
-                ),
-            );
-        }
-        let peers = &peers;
+        // The snapshot -- peers plus the self card -- is assembled once per
+        // frame in update(); this render path only borrows it. The one case
+        // that still copies is show_self=false, which must subtract a card.
+        let all = &*settings.multiaccount_peers;
+        let filtered;
+        let peers: &std::collections::BTreeMap<u16, PeerStatus> = if data.show_self {
+            all
+        } else {
+            filtered = all
+                .iter()
+                .filter(|(port, _)| **port != crate::core::multiaccount::SELF_PORT)
+                .map(|(port, peer)| (*port, peer.clone()))
+                .collect();
+            &filtered
+        };
 
         if peers.is_empty() {
             ui.vertical_centered(|ui| {

@@ -17,7 +17,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::config::{Config, MacrosConfig};
@@ -902,7 +902,7 @@ pub struct RemoteCharInfo {
 /// Numeric character gauges: percent plus the label the game gave it.
 /// Every field is optional because a session may not have reported one yet,
 /// and a display should show "unknown" rather than a confident zero.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RemoteGauges {
     /// Mind state 0-100 with its text ("clear", "muddled", ...).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -921,7 +921,7 @@ pub struct RemoteGauges {
 }
 
 /// Unabsorbed field experience and the character's own cap.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteFieldExp {
     pub value: u64,
     pub max: u64,
@@ -938,7 +938,7 @@ impl RemoteGauges {
 
 /// One vital with its absolute numbers. Percentages already ride `vitals`;
 /// this is the "226/226" a card shows when the ratio alone is not enough.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteVital {
     /// "health", "mana", "stamina", "spirit" (DR concentration maps to mana).
     pub id: String,
@@ -969,7 +969,7 @@ impl RemoteVital {
 }
 
 /// One numeric gauge: a percent and the game's own word for it.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RemoteGauge {
     pub value: u32,
     #[serde(skip_serializing_if = "String::is_empty")]

@@ -14,11 +14,18 @@
 /// the process table once per call; asking pid-by-pid would rescan for each.
 #[cfg(feature = "desktop")]
 pub fn live_pids(pids: &[u32]) -> std::collections::HashSet<u32> {
-    let mut system = sysinfo::System::new();
-    system.refresh_processes();
+    use std::sync::Mutex;
+    // One System, reused: this runs on a 5-second discovery poll for the
+    // app's whole lifetime, and the old shape built a fresh System and
+    // walked the ENTIRE process table each call to answer "are these five
+    // pids alive". refresh_process is O(asked pids) and its return value is
+    // the liveness answer.
+    static SYSTEM: Mutex<Option<sysinfo::System>> = Mutex::new(None);
+    let mut guard = SYSTEM.lock().expect("process probe poisoned");
+    let system = guard.get_or_insert_with(sysinfo::System::new);
     pids.iter()
         .copied()
-        .filter(|pid| system.process(sysinfo::Pid::from_u32(*pid)).is_some())
+        .filter(|pid| system.refresh_process(sysinfo::Pid::from_u32(*pid)))
         .collect()
 }
 

@@ -22,10 +22,17 @@ pub struct SessionEntry {
     pub started_at: String,
 }
 
+/// The registry directory, resolved once. Creation is `write_entry`'s job --
+/// readers only list, and the old shape issued a create_dir_all syscall on
+/// every 5-second discovery poll for a directory that exists after first use.
 pub fn dir() -> Option<PathBuf> {
-    let dir = crate::config::Config::base_dir().ok()?.join("web-sessions");
-    fs::create_dir_all(&dir).ok()?;
-    Some(dir)
+    static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        crate::config::Config::base_dir()
+            .ok()
+            .map(|base| base.join("web-sessions"))
+    })
+    .clone()
 }
 
 fn entry_path(pid: u32) -> Option<PathBuf> {
@@ -41,6 +48,10 @@ pub fn write_entry(port: u16, character: &str) {
         started_at: chrono::Utc::now().to_rfc3339(),
     };
     let Some(path) = entry_path(pid) else { return };
+    // The one path that needs the directory to exist.
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
     if let Ok(json) = serde_json::to_string_pretty(&entry) {
         if let Err(e) = fs::write(&path, json) {
             tracing::warn!("failed to write session registry entry: {e}");
