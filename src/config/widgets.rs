@@ -984,6 +984,56 @@ pub struct SpellsWidgetData {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MissingSpellsWidgetData {}
 
+/// Multi-account cards: which rows each character's card shows.
+///
+/// Every element is opt-in per field rather than a fixed card template,
+/// because what matters differs by playstyle -- a healer wants dolls, a
+/// caster wants mind state. Defaults are the four that answer "is this
+/// character in trouble right now": vitals, RT, status glyphs and the group.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MultiAccountWidgetData {
+    /// Health/mana/stamina/spirit bars.
+    pub show_vitals: bool,
+    /// Roundtime and casttime, interpolated from the peer's own clock.
+    pub show_rt: bool,
+    /// Compact colored glyph row (stunned, bleeding, hidden, ...).
+    pub show_status: bool,
+    /// Injury doll per card. Off by default: it is the tallest element and
+    /// most setups watch more characters than fit with dolls on.
+    pub show_injuries: bool,
+    /// Mind state bar.
+    pub show_mind: bool,
+    /// Combat stance bar.
+    pub show_stance: bool,
+    /// Encumbrance bar.
+    pub show_encumbrance: bool,
+    /// Room name, and the "not with you" cue when it differs from yours.
+    pub show_room: bool,
+    /// Cards per row before wrapping. 0 means fit as many as the window is
+    /// wide enough for.
+    pub columns: usize,
+    /// Card width in points.
+    pub card_width: f32,
+}
+
+impl Default for MultiAccountWidgetData {
+    fn default() -> Self {
+        Self {
+            show_vitals: true,
+            show_rt: true,
+            show_status: true,
+            show_injuries: false,
+            show_mind: false,
+            show_stance: false,
+            show_encumbrance: false,
+            show_room: true,
+            columns: 0,
+            card_width: 140.0,
+        }
+    }
+}
+
 /// Text replacement rule for perception widget
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextReplacement {

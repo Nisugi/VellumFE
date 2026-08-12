@@ -144,6 +144,11 @@ pub(super) struct WidgetRenderSettings {
     /// Server "now" for ticking effect bars between refreshes; None when
     /// ui.effect_countdown is off (bars show the server's last snapshot).
     effect_countdown_now: Option<i64>,
+    /// This frame's sibling-instance status, for multiaccount windows.
+    /// Snapshotted once per frame and shared by Arc: settings are rebuilt per
+    /// window, and cloning a six-peer map per window per frame is waste.
+    multiaccount_peers:
+        std::sync::Arc<std::collections::BTreeMap<u16, crate::core::multiaccount::PeerStatus>>,
 }
 
 /// Stable widget id for the command-input TextEdit, wherever it renders
@@ -315,6 +320,12 @@ pub struct VellumGuiApp {
     detached_tabs: HashMap<TabKey, DetachedWindowState>,
     /// Map Explorer native window (separate OS viewport).
     map_explorer: map_explorer::MapExplorerState,
+    /// Watches the other VellumFE instances on this machine. None when the
+    /// multi-account display is off or no pairing token is available.
+    multiaccount: Option<crate::core::multiaccount::MultiAccountHub>,
+    /// Last peer snapshot, refreshed once per frame in update().
+    multiaccount_peers:
+        std::sync::Arc<std::collections::BTreeMap<u16, crate::core::multiaccount::PeerStatus>>,
     detached_context_menu: Option<DetachedMenuState>,
     /// Which detached tab's viewport hosts the game popup menus. The menu
     /// stack renders inside that OS window (at its local click coords);
@@ -706,6 +717,27 @@ impl VellumGuiApp {
             None
         };
 
+        // Multi-account status. Rides the same sidecar: every instance on
+        // this machine reads one pairing-token file, so no pairing step is
+        // needed, and the registry is what makes discovery automatic. Gated
+        // on the sidecar being enabled because that is also what publishes
+        // OUR registry entry -- a one-way watcher would be a surprise.
+        let multiaccount = if app_core.config.web.enabled {
+            let _guard = runtime.enter();
+            match crate::config::Config::load_or_create_web_token() {
+                Ok(token) => Some(crate::core::multiaccount::MultiAccountHub::start(
+                    app_core.remote_bound_port(),
+                    token,
+                )),
+                Err(err) => {
+                    tracing::warn!("multi-account display disabled (no web token): {err}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let (server_tx, mut network_rx) =
             mpsc::channel::<ServerMessage>(crate::network::SERVER_CHANNEL_CAPACITY);
         let (command_tx, command_rx) = mpsc::unbounded_channel::<String>();
@@ -916,6 +948,8 @@ impl VellumGuiApp {
             close_requested: false,
             detached_tabs,
             map_explorer: Default::default(),
+            multiaccount,
+            multiaccount_peers: Default::default(),
             detached_context_menu: None,
             popup_menu_host: None,
             available_tabs,
@@ -2022,6 +2056,16 @@ impl eframe::App for VellumGuiApp {
         // Process CPU/RSS (rate-limited to 1 Hz internally) and buffered
         // content totals for the performance monitor.
         self.app_core.perf_stats.sample_sysinfo();
+
+        // Refresh the sibling-instance snapshot once per frame. Render paths
+        // are `&self` and settings are rebuilt per window, so this is the one
+        // place it can be taken -- and taking it once means the peer lock is
+        // never held while drawing.
+        if let Some(hub) = &self.multiaccount {
+            let now_ms = crate::core::multiaccount::hub::now_ms();
+            hub.reap(now_ms);
+            self.multiaccount_peers = std::sync::Arc::new(hub.peers());
+        }
         {
             let total_lines: usize = self
                 .app_core

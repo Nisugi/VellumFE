@@ -10,6 +10,7 @@ mod command_widget;
 mod injury;
 mod links_bars;
 mod map_compass;
+mod multiaccount;
 mod panels;
 mod text;
 pub(super) use text::LineInset;
@@ -132,6 +133,20 @@ impl VellumGuiApp {
             }
             WindowContent::MiniVitals => {
                 Self::render_vitals_content(app_core, ui, &settings);
+                None
+            }
+            WindowContent::MultiAccount => {
+                let data = app_core
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|def| def.name() == window.name)
+                    .and_then(|def| match def {
+                        crate::config::WindowDef::MultiAccount { data, .. } => Some(data.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                Self::render_multiaccount_content(app_core, ui, &settings, &data);
                 None
             }
             WindowContent::MissingSpells => {

@@ -446,6 +446,9 @@ impl AppCore {
             "map" => (10, 5),
             "injury_doll" => (20, 10),
             "dashboard" => (15, 3),
+            // A card is ~140pt wide and stacks several bars; below this the
+            // cards clip rather than wrap.
+            "multiaccount" => (24, 6),
             "command_input" => (20, 1),
             "quickbar" => (20, 1),
             "hotkeybar" => (20, 1),
