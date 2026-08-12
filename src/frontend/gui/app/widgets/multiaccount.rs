@@ -45,7 +45,20 @@ impl VellumGuiApp {
         settings: &WidgetRenderSettings,
         data: &crate::config::MultiAccountWidgetData,
     ) {
-        let peers = &settings.multiaccount_peers;
+        let now_ms = crate::core::multiaccount::hub::now_ms();
+
+        // Our own status never arrives over a socket -- the hub deliberately
+        // does not dial itself -- so the self card is built from game state
+        // here. That also makes it work while the sidecar is still binding.
+        let mut peers = (*settings.multiaccount_peers).clone();
+        if data.show_self {
+            peers.insert(
+                crate::core::multiaccount::SELF_PORT,
+                PeerStatus::from_local(&app_core.game_state, now_ms),
+            );
+        }
+        let peers = &peers;
+
         if peers.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(8.0);
@@ -63,7 +76,6 @@ impl VellumGuiApp {
             return;
         }
 
-        let now_ms = crate::core::multiaccount::hub::now_ms();
         // Our own clock, for interpolating each peer's roundtime. Peers ship
         // absolute end stamps, so nothing streams a countdown.
         let now_server = app_core.game_state.game_time;
@@ -172,13 +184,22 @@ impl VellumGuiApp {
 
         // A different room is the "not with you" cue: it is the thing you
         // most want to notice without reading anything.
-        let elsewhere = match (my_room, peer.room_id.as_deref()) {
-            (Some(mine), Some(theirs)) => mine != theirs,
-            _ => false,
-        };
+        let elsewhere = !peer.is_self()
+            && match (my_room, peer.room_id.as_deref()) {
+                (Some(mine), Some(theirs)) => mine != theirs,
+                _ => false,
+            };
 
         let mut frame = egui::Frame::group(ui.style());
-        if elsewhere {
+        if peer.is_self() {
+            // Gold marks "this is you" -- the reference point the other cards
+            // are read against. Takes precedence over the different-room
+            // stroke: you are never in a different room from yourself.
+            frame = frame.stroke(egui::Stroke::new(
+                2.0,
+                Color32::from_rgb(0xFF, 0xD7, 0x00),
+            ));
+        } else if elsewhere {
             frame = frame.stroke(egui::Stroke::new(
                 1.5,
                 Color32::from_rgb(0xFF, 0x44, 0x44),
@@ -196,7 +217,17 @@ impl VellumGuiApp {
                     }
 
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(&peer.character).strong());
+                        let name = RichText::new(&peer.character).strong();
+                        let name = if peer.is_self() {
+                            name.color(Color32::from_rgb(0xFF, 0xD7, 0x00))
+                        } else {
+                            name
+                        };
+                        ui.label(name);
+                        if peer.is_self() {
+                            // Not color alone: a marker that reads without it.
+                            ui.label(RichText::new("(you)").weak().small());
+                        }
                         if freshness == Freshness::Stale {
                             ui.label(
                                 RichText::new("\u{25CF}")

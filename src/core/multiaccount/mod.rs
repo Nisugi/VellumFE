@@ -72,6 +72,59 @@ pub struct PeerStatus {
     pub server_time: i64,
 }
 
+/// The port a self-card is filed under.
+///
+/// Our own status never arrives over a socket, so it has no real port. 0 is
+/// never a bound port, which makes it a safe key that also sorts first --
+/// exactly where the self card belongs.
+pub const SELF_PORT: u16 = 0;
+
+impl PeerStatus {
+    /// Build the local character's card from game state.
+    ///
+    /// The hub deliberately never dials our own instance, so this is the only
+    /// source for our own card. It also means the self card works with the
+    /// sidecar still binding, or disabled entirely -- it is read from memory,
+    /// not from a loopback socket.
+    pub fn from_local(game_state: &crate::core::state::GameState, now_ms: u64) -> Self {
+        let gauge = |value: u32, text: &str| {
+            (!text.is_empty()).then(|| Gauge {
+                value,
+                text: text.to_string(),
+            })
+        };
+        Self {
+            character: game_state
+                .character_name
+                .clone()
+                .unwrap_or_else(|| "You".to_string()),
+            port: SELF_PORT,
+            connected: true,
+            last_update_ms: now_ms,
+            vitals: game_state.vitals.clone(),
+            indicators: game_state.status.clone(),
+            injuries: game_state.injuries.clone(),
+            group: game_state.group.clone(),
+            mind: gauge(
+                game_state.gs4_experience.mind_state_value,
+                &game_state.gs4_experience.mind_state_text,
+            ),
+            encumbrance: gauge(game_state.encumbrance.value, &game_state.encumbrance.text),
+            stance: gauge(game_state.stance.value, &game_state.stance.text),
+            room_name: game_state.room_name.clone(),
+            room_id: game_state.room_id.clone(),
+            roundtime_end: game_state.roundtime_end,
+            casttime_end: game_state.casttime_end,
+            server_time: game_state.game_time,
+        }
+    }
+
+    /// Whether this card is the local character rather than a peer.
+    pub fn is_self(&self) -> bool {
+        self.port == SELF_PORT
+    }
+}
+
 /// How current a peer's data is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Freshness {
@@ -315,6 +368,76 @@ mod tests {
 
     fn peers(list: Vec<PeerStatus>) -> BTreeMap<u16, PeerStatus> {
         list.into_iter().map(|p| (p.port, p)).collect()
+    }
+
+    #[test]
+    fn the_self_card_sorts_first() {
+        // SELF_PORT is 0, below any bound port, so the self card leads its
+        // cluster AND its cluster leads the list. That fixed position is what
+        // makes it a reference point rather than something to hunt for.
+        let me = peer(SELF_PORT, "Ultz");
+        let other = peer(8041, "Abem");
+
+        let clusters = cluster_peers(&peers(vec![other, me]));
+        assert_eq!(clusters.len(), 2, "ungrouped: two solo cards");
+        assert_eq!(clusters[0].members, vec![SELF_PORT]);
+        assert_eq!(clusters[1].members, vec![8041]);
+    }
+
+    #[test]
+    fn the_self_card_clusters_with_its_group() {
+        // Self is an ordinary member for grouping purposes: when we lead, our
+        // card leads the frame.
+        let mut me = peer(SELF_PORT, "Ultz");
+        me.group
+            .replace(GroupLeader::SelfLed, vec![member("Abem")]);
+        let mut them = peer(8041, "Abem");
+        them.group
+            .replace(GroupLeader::Other(member("Ultz")), vec![]);
+
+        let clusters = cluster_peers(&peers(vec![them, me]));
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].members, vec![SELF_PORT, 8041]);
+        assert_eq!(clusters[0].leader, Some(SELF_PORT));
+        assert_eq!(clusters[0].leader_name.as_deref(), Some("Ultz"));
+    }
+
+    #[test]
+    fn is_self_distinguishes_the_local_card() {
+        assert!(peer(SELF_PORT, "Ultz").is_self());
+        assert!(!peer(8041, "Abem").is_self());
+    }
+
+    #[test]
+    fn from_local_reads_game_state_and_leaves_unreported_gauges_unknown() {
+        let mut gs = crate::core::state::GameState::new();
+        gs.character_name = Some("Ultz".to_string());
+        gs.vitals.health = 51;
+        gs.status.set("IconSTUNNED", true);
+        gs.injuries.insert("head".to_string(), 1);
+        gs.stance.update(80, "defensive (80%)");
+
+        let me = PeerStatus::from_local(&gs, 1_000);
+        assert!(me.is_self());
+        assert_eq!(me.character, "Ultz");
+        assert_eq!(me.vitals.health, 51);
+        assert!(me.indicators.stunned());
+        assert_eq!(me.injuries.get("head"), Some(&1));
+        assert_eq!(me.stance.as_ref().map(|g| g.value), Some(80));
+        // Never reported: stays unknown rather than reading as 0%.
+        assert!(me.mind.is_none());
+        assert!(me.encumbrance.is_none());
+        // Always current -- it is read from memory, not a socket.
+        assert!(me.connected);
+        assert_eq!(me.freshness(1_000), Freshness::Live);
+    }
+
+    #[test]
+    fn from_local_falls_back_when_the_character_is_unnamed() {
+        // Before login there is no character name; the card still needs a
+        // label rather than rendering blank.
+        let gs = crate::core::state::GameState::new();
+        assert_eq!(PeerStatus::from_local(&gs, 0).character, "You");
     }
 
     #[test]

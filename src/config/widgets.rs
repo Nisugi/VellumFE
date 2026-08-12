@@ -1010,6 +1010,10 @@ pub struct MultiAccountWidgetData {
     pub show_encumbrance: bool,
     /// Room name, and the "not with you" cue when it differs from yours.
     pub show_room: bool,
+    /// Include a card for this character, sorted first and accent-marked.
+    /// On by default: without it a group of three shows only two cards, and
+    /// the others have nothing to be compared against.
+    pub show_self: bool,
     /// Cards per row before wrapping. 0 means fit as many as the window is
     /// wide enough for.
     pub columns: usize,
@@ -1028,6 +1032,7 @@ impl Default for MultiAccountWidgetData {
             show_stance: false,
             show_encumbrance: false,
             show_room: true,
+            show_self: true,
             columns: 0,
             card_width: 140.0,
         }

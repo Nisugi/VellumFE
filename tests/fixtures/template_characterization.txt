@@ -1976,5 +1976,6 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
   show_stance = false
   show_encumbrance = false
   show_room = true
+  show_self = true
   columns = 0
   card_width = 140.0

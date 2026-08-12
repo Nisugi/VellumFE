@@ -44,20 +44,16 @@ pub struct MultiAccountHub {
 impl MultiAccountHub {
     /// Start discovering and connecting to sibling instances.
     ///
-    /// `own_port` is this instance's own sidecar port, skipped during
-    /// discovery. Pass `None` when the web sidecar is disabled -- the hub
-    /// still works, since reading other instances does not require serving
-    /// one ourselves.
-    pub fn start(own_port: Option<u16>, token: String) -> Self {
+    /// Self-exclusion keys on PID, not port. The port is not known until our
+    /// own sidecar finishes binding, and discovery can tick first -- when it
+    /// does, nothing matches "self" and the instance opens a websocket to
+    /// itself, showing a duplicate card. The pid is known immediately, never
+    /// changes, and the registry already records it.
+    pub fn start(token: String) -> Self {
         let peers: PeerTable = Arc::new(Mutex::new(BTreeMap::new()));
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        tokio::spawn(discovery_loop(
-            peers.clone(),
-            own_port,
-            token,
-            shutdown_rx,
-        ));
+        tokio::spawn(discovery_loop(peers.clone(), token, shutdown_rx));
 
         Self { peers, shutdown }
     }
@@ -86,10 +82,10 @@ impl Drop for MultiAccountHub {
 /// Re-read the registry on an interval, starting a task for each new peer.
 async fn discovery_loop(
     peers: PeerTable,
-    own_port: Option<u16>,
     token: String,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
+    let own_pid = std::process::id();
     let mut connected: std::collections::HashSet<u16> = std::collections::HashSet::new();
     let mut ticker = tokio::time::interval(DISCOVERY_INTERVAL);
 
@@ -103,7 +99,9 @@ async fn discovery_loop(
         // instance stops being advertised without our help.
         let entries = crate::core::session_registry::list_and_gc();
         for entry in entries {
-            if Some(entry.port) == own_port {
+            // Never dial ourselves: our own status is read locally, and a
+            // loopback socket would render a second card for this character.
+            if entry.pid == own_pid {
                 continue;
             }
             if !connected.insert(entry.port) {

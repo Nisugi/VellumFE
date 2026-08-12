@@ -725,10 +725,7 @@ impl VellumGuiApp {
         let multiaccount = if app_core.config.web.multiaccount {
             let _guard = runtime.enter();
             match crate::config::Config::load_or_create_web_token() {
-                Ok(token) => Some(crate::core::multiaccount::MultiAccountHub::start(
-                    app_core.remote_bound_port(),
-                    token,
-                )),
+                Ok(token) => Some(crate::core::multiaccount::MultiAccountHub::start(token)),
                 Err(err) => {
                     tracing::warn!("multi-account display disabled (no web token): {err}");
                     None
