@@ -1075,7 +1075,7 @@ impl Default for MultiAccountWidgetData {
             show_mind: false,
             show_stance: false,
             show_field_exp: false,
-            merged_rows: vec!["rt".to_string()],
+            merged_rows: vec!["status".to_string()],
             row_order: Vec::new(),
             sort_by: "group".to_string(),
             show_encumbrance: false,
@@ -1097,11 +1097,13 @@ impl Default for MultiAccountWidgetData {
 impl MultiAccountWidgetData {
     /// Canonical row ids, in their default top-to-bottom order.
     pub const ROWS: &'static [&'static str] = &[
-        "status",
-        // Directly after status: both are short, and they share a line by
-        // default. Order and merge have to agree or the pairing lands on the
-        // wrong neighbour.
+        // Roundtime leads: it is the most time-critical thing on the card and
+        // the only value that is actionable within seconds. Status icons
+        // follow and share its line by default -- both are short, and order
+        // and merge have to agree or the pairing lands on the wrong
+        // neighbour.
         "rt",
+        "status",
         "vitals",
         "hands",
         "effects",
@@ -1736,7 +1738,7 @@ mod multiaccount_row_tests {
         let lines = data.row_lines();
         assert_eq!(
             lines[0],
-            vec!["status".to_string(), "rt".to_string()],
+            vec!["rt".to_string(), "status".to_string()],
             "{lines:?}"
         );
     }
@@ -1746,9 +1748,9 @@ mod multiaccount_row_tests {
         // Otherwise "rt" would dangle as a continuation of a line that is no
         // longer drawn.
         let mut data = MultiAccountWidgetData::default();
-        data.set_row_shown("status", false);
+        data.set_row_shown("rt", false);
         let lines = data.row_lines();
-        assert_eq!(lines[0], vec!["rt".to_string()], "{lines:?}");
+        assert_eq!(lines[0], vec!["status".to_string()], "{lines:?}");
     }
 
     #[test]
@@ -1756,11 +1758,11 @@ mod multiaccount_row_tests {
         // There is nothing above it to join; a stale config saying otherwise
         // must not produce an empty leading line.
         let mut data = MultiAccountWidgetData::default();
-        data.row_order = vec!["rt".to_string()];
-        data.set_row_merged("rt", true);
-        assert!(!data.row_merged("rt"));
+        data.row_order = vec!["status".to_string()];
+        data.set_row_merged("status", true);
+        assert!(!data.row_merged("status"));
         let lines = data.row_lines();
-        assert_eq!(lines[0], vec!["rt".to_string()]);
+        assert_eq!(lines[0], vec!["status".to_string()]);
     }
 
     #[test]

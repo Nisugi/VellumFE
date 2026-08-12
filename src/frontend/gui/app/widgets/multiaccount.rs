@@ -367,20 +367,39 @@ impl VellumGuiApp {
                             // Split the width evenly, minus the spacing
                             // between items, so a bar sharing a line does not
                             // claim the whole row.
+                            // Bars need an explicit share or the first one
+                            // swallows the line; labels and icon strips size
+                            // themselves and should not be padded out. Split
+                            // the width only among the rows that stretch.
+                            let stretchy = line
+                                .iter()
+                                .filter(|row| Self::row_stretches(row))
+                                .count();
                             let count = line.len() as f32;
                             let gap = ui.spacing().item_spacing.x * (count - 1.0);
-                            let share = ((ui.available_width() - gap) / count).max(28.0);
+                            let share = if stretchy > 0 {
+                                ((ui.available_width() - gap) / stretchy as f32).max(28.0)
+                            } else {
+                                0.0
+                            };
                             ui.horizontal(|ui| {
                                 for row in line {
-                                    ui.allocate_ui(
-                                        egui::vec2(share, ui.available_height()),
-                                        |ui| {
-                                            Self::render_card_row(
-                                                ui, settings, data, peer, row,
-                                                now_server, elsewhere,
-                                            );
-                                        },
-                                    );
+                                    if Self::row_stretches(&row) {
+                                        ui.allocate_ui(
+                                            egui::vec2(share, ui.available_height()),
+                                            |ui| {
+                                                Self::render_card_row(
+                                                    ui, settings, data, peer, row,
+                                                    now_server, elsewhere,
+                                                );
+                                            },
+                                        );
+                                    } else {
+                                        Self::render_card_row(
+                                            ui, settings, data, peer, row, now_server,
+                                            elsewhere,
+                                        );
+                                    }
                                 }
                             });
                         }
@@ -388,6 +407,16 @@ impl VellumGuiApp {
                 });
             });
         });
+    }
+
+    /// Whether a row fills the width it is given (a bar) or sizes to its own
+    /// content (a label or icon strip). Only the former needs an explicit
+    /// share when several rows sit on one line.
+    fn row_stretches(row: &str) -> bool {
+        matches!(
+            row,
+            "vitals" | "mind" | "stance" | "field_exp" | "encumbrance" | "injuries"
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -605,7 +634,10 @@ impl VellumGuiApp {
         let rt = peer.roundtime_remaining(now_server);
         let ct = peer.casttime_remaining(now_server);
         if rt <= 0.0 && ct <= 0.0 {
-            ui.label(RichText::new(" ").small());
+            // A thin placeholder rather than nothing: the row keeps its slot
+            // so the icons beside it do not jump left and back every time a
+            // roundtime starts and ends.
+            ui.add_space(2.0);
             return;
         }
         ui.horizontal(|ui| {
