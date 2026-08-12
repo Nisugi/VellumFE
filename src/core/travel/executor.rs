@@ -1557,6 +1557,64 @@ impl TravelTask {
                     };
                     return;
                 }
+                WalkAction::MoveExitExcept(not_dir) => {
+                    // Whichever compass exit is NOT the named one, resolved
+                    // from live room state (the Hidden Plateau's shifting
+                    // rooms — the fixed exit is the wrong one). Compass dirs
+                    // arrive short ("nw"); the mapdb names them long
+                    // ("northwest"), so compare normalized.
+                    if ctx.rt_remaining > 0.0 {
+                        break;
+                    }
+                    let avoid = short_dir(&not_dir);
+                    let Some(dir) = ctx
+                        .compass_dirs
+                        .iter()
+                        .find(|d| short_dir(d) != avoid)
+                        .cloned()
+                    else {
+                        events.push(TravelEvent::Status(format!(
+                            "edge {from} -> {expected}: no exit other than {not_dir} on offer"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    events.push(TravelEvent::Send(dir));
+                    self.step = Step::ScriptWalk {
+                        actions,
+                        pc: pc + 1,
+                        expected,
+                        from,
+                        sent_from: ctx.current_room.unwrap_or(from),
+                        sent_ms: ctx.now_ms,
+                    };
+                    return;
+                }
+                WalkAction::MoveAnyExit => {
+                    // The wander step of a shifting-area hunt (Karazja's
+                    // `walk`): any compass exit — random, matching Lich, so a
+                    // static room still eventually tries every door.
+                    if ctx.rt_remaining > 0.0 {
+                        break;
+                    }
+                    let Some(dir) = pick_random_exit(ctx.compass_dirs, from) else {
+                        events.push(TravelEvent::Status(format!(
+                            "edge {from} -> {expected}: no compass exits to wander"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    events.push(TravelEvent::Send(dir));
+                    self.step = Step::ScriptWalk {
+                        actions,
+                        pc: pc + 1,
+                        expected,
+                        from,
+                        sent_from: ctx.current_room.unwrap_or(from),
+                        sent_ms: ctx.now_ms,
+                    };
+                    return;
+                }
                 WalkAction::WaitRt => {
                     if ctx.rt_remaining > 0.0 {
                         break;
@@ -3132,6 +3190,25 @@ fn command_is_swim_or_pedal(command: &str) -> bool {
 /// fallback (Ruby: `look` the compass, `move options[rand(length)]`). `_room`
 /// is unused but kept for a possible future seed; the pick is uniform-random
 /// over the live `<dir>` values.
+/// Normalize a direction to its compass short form, so mapdb long names
+/// ("northwest") compare against live compass dirs ("nw"). Non-compass
+/// strings pass through unchanged.
+fn short_dir(dir: &str) -> &str {
+    match dir {
+        "north" => "n",
+        "northeast" => "ne",
+        "east" => "e",
+        "southeast" => "se",
+        "south" => "s",
+        "southwest" => "sw",
+        "west" => "w",
+        "northwest" => "nw",
+        "up" => "u",
+        "down" => "d",
+        other => other,
+    }
+}
+
 fn pick_random_exit(compass_dirs: &[String], _room: u32) -> Option<String> {
     use rand::seq::IndexedRandom;
     compass_dirs.choose(&mut rand::rng()).cloned()

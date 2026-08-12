@@ -22,6 +22,18 @@ pub enum WalkAction {
     StepMove(String),
     /// Send a command with no room-change expectation ("push wall").
     Put(String),
+    /// Move through whichever compass exit is NOT the named direction,
+    /// resolved from live room state at execution (`move
+    /// (XMLData.room_exits - ['west']).first` — the Hidden Plateau's
+    /// shifting rooms, where the one fixed exit is the wrong one). Paced
+    /// like `StepMove`. Fails the edge when no other exit is offered.
+    MoveExitExcept(String),
+    /// Move through the first compass exit on offer, whatever it is — the
+    /// wander step of a shifting-area hunt (Karazja's `walk`). The area
+    /// re-rolls its rooms on every move, so a deterministic pick still
+    /// wanders. Paced like `StepMove`; fails when the room has no compass
+    /// exits at all.
+    MoveAnyExit,
     /// Wait out roundtime (`waitrt?`).
     WaitRt,
     /// Fixed pause in seconds (`pause 0.5`).

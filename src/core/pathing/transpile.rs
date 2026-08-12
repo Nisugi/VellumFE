@@ -366,7 +366,7 @@ re!(
 // the body.
 re!(
     COND_BLOCK,
-    r"(?s)^(?:(.+?);)?\s*(if|unless|while|until)\s+([^;]+?)\s*;(.+?);?\s*end;?$"
+    r"(?s)^(?:(.+?);)?\s*(if|unless|while|until)\s+([^;]+?)\s*;(.+?);?\s*end(?:;(.+))?;?$"
 );
 // ---- family recognizers, pinned to verbatim mapdb text ------------------
 // Krag slopes crevice hunt (6135): group preamble, search-or-step-n/s loop
@@ -414,7 +414,105 @@ re!(
 // Red Forest fog (7892): retry `go fog` until it stops bouncing us back.
 re!(
     FOG_RETRY,
-    r#"(?s)^(?:UserVars\.\w+ = '[^']*';)?result = nil;until result =~ /[^/]+/;fput "stand" until standing\?;result = dothistimeout "([^"]+)", ([\d.]+), /([^/]+)/;if result =~ /[^/]+/;sleep [\d.]+;waitrt\?;end;end$"#
+    r#"(?s)^(?:UserVars\.\w+ = '[^']*';)?result = nil;until result =~ /[^/]+/;fput "stand" until standing\?;result = dothistimeout "([^"]+)", ([\d.]+), /([^/]+)/;if result =~ /[^/]+/;sleep [\d.]+;waitrt\?;end;end(?:;\s*UserVars\.\w+\s*=\s*\S+?)?(?:;\s*\$go2_restart\s*=\s*true)?;?\s*$"#
+);
+// `begin; fput 'search'; r = waitfor '…', '…'; waitrt?; end until r =~ /found/;
+// move 'go X'` — the begin-until spelling of the search hunt (Vipershroud,
+// Spider Temple x3).
+re!(
+    BEGIN_SEARCH_UNTIL,
+    r#"(?s)^begin; fput '([^']+)'; (\w+) = waitfor .+?; waitrt\?; end until (\w+) =~ /([^/]+)/; move '([^']+)'$"#
+);
+// Spell-prep prefix: `if b = Spell[N] and b.known? …; b.cast; end; <rest>` —
+// the buff speeds the crossing up, it does not gate it (BUFF_THEN_MOVE
+// stance), so strip it and transpile the rest.
+re!(
+    SPELL_PREP_PREFIX,
+    r"(?s)^if \w+ = Spell\[\d+\][^;]*;\s*\w+\.cast;\s*end;\s*(.+)$"
+);
+// `if <cond>; <A>; else; <B>; end` — both arms straight-line.
+re!(
+    IF_ELSE_BLOCK,
+    r"(?s)^if\s+([^;]+?)\s*;(.+?);\s*else\s*;(.+?);?\s*end;?$"
+);
+// `loop { move 'a'; break if Room.current.id != N; move 'b'; break if …; }` —
+// try the shifting exits in turn until one takes (Lower Dragonsclaw).
+re!(
+    LOOP_TRY_EXITS,
+    r"(?s)^loop \{ (?:move '[^']+'; break if Room\.current\.id != \d+; ?)+\}$"
+);
+re!(LOOP_TRY_EXITS_STEP, r"move '([^']+)'; break if Room\.current\.id != (\d+)");
+// `N.times do; <prefix>; r = dothistimeout "CMD", T, /…/; break if r =~ /…/;end`
+// — the do…end spelling, success = the room changes (Coastal Cliffs climb).
+re!(
+    TIMES_DO_CLIMB,
+    r#"(?s)^(\d+)\.times do;(.+?)(\w+) = dothistimeout "([^"]+)", ([\d.]+), /([^/]+)/;\s*break if (\w+) =~ /([^/]+)/\s*;?\s*end$"#
+);
+// WL sewers trapdoor (22349): search past the junk finds until the trapdoor
+// line, then in.
+re!(
+    WL_TRAPDOOR,
+    r#"(?s)^put "search";while line=get;if line=~ /[^/]+/;put "search";elsif line=~/([^/!]+)!?\$?/;put "go (\w+)";break;end;end$"#
+);
+// `fput 'lie' until checkprone; r = dothistimeout 'search',T, /X/ until r;
+// waitrt?; fput 'stand' until standing?; waitrt?; fput 'go X'` (30581).
+re!(
+    LIE_SEARCH_ENTER,
+    r"(?s)^fput 'lie' until checkprone; ?(\w+) = dothistimeout '([^']+)',\s*([\d.]+),\s*/(\w+)/ until (\w+);waitrt\?;fput 'stand' until standing\?;waitrt\?;fput 'go (\w+)'$"
+);
+// Citadel ledge (11355): offensive stance, climb until it takes, restore.
+// We can't read the previous stance, so restore to defensive — the safe
+// traveling stance — rather than leave the user parked offensive.
+re!(
+    STANCE_CLIMB,
+    r"(?s)^empty_hands\s+old_stance = XMLData\.stance_text\s+fput 'stance offensive' unless old_stance == 'offensive'\s+until !checkpaths\s+fput 'stand' unless standing\?\s+fput '([^']+)'\s+sleep ([\d.]+)\s+waitrt\?\s+end\s+fput 'stance ' \+ old_stance unless old_stance == 'offensive'$"
+);
+// Darkstone drawbridge (6997): short races jump, everyone else pulls the
+// rope, until the bridge answers. We pull — the jump is a body-size
+// alternative for the same lever — and gate the exit on the drawbridge
+// becoming a room object. Short characters whose pull draws "what were you
+// referring to" run out the retry budget and fail closed.
+re!(
+    DARKSTONE_BRIDGE,
+    r"(?s)^bridgedown = false; until bridgedown; if \[[^\]]+\]\.include\?\(Stats\.race\); fput 'jump'; else; fput 'pull rope'; end; bridgedown = matchtimeout\([\d.]+, /[^/]+/i?\); unless standing\?; fput 'stand'; waitrt\?; end; waitrt\?; end; move '([^']+)';.*$"
+);
+// `move (XMLData.room_exits - [ 'west' ]).first` — take whichever compass
+// exit is NOT the named one (Hidden Plateau's shifting rooms).
+re!(
+    MOVE_EXIT_EXCEPT,
+    r"^move \(XMLData\.room_exits - \[ '(\w+)' \]\)\.first$"
+);
+// `Spell[N].cast` as its own statement (guarded or not): optional prep,
+// dropped — the BUFF_THEN_MOVE stance.
+re!(STMT_SPELL_CAST, r"^Spell\[\d+\]\.cast$");
+// A skill-check modifier (`fput 'stance offensive' if Skills.climbing < 20`):
+// unevaluable natively, but when it guards pure preparation the cautious
+// branch — always do the prep — is safe for everyone.
+re!(SKILL_COND, r"^Skills\.\w+\s*[<>=]");
+// `loop { r = dothistimeout 'CMD', T, /…/; waitrt?; break if r =~ /good/ };
+// move 'M'` — retry a lever/mechanism until it answers, then through
+// (Darkstone's second drawbridge lever).
+re!(
+    LOOP_DOTHIS_BREAK,
+    r"(?s)^loop \{ (\w+) = dothistimeout '([^']+)', ([\d.]+), /([^/]+)/; waitrt\?; break if (\w+) =~ /([^/]+)/ \}; move '([^']+)'$"
+);
+// `while XMLData.room_title == '…'; <stmts>; end` — work the room until we
+// leave it: the title comparison is just "still here" (Citadel ravine).
+re!(
+    WHILE_TITLE_BLOCK,
+    r"(?s)^(?:(.+?);)?\s*while XMLData\.room_title == '[^']+'\s*;(.+?);\s*end(?:;(.+))?;?$"
+);
+// Melgorehn's Reach bridge (14726): `go bridge` normally just works; when
+// the bridge is pulled open, detour up the platform and turn the wheel.
+re!(
+    MELGOREHN_BRIDGE,
+    r"(?s)^flip_tags = !Script\.current\.want_downstream_xml;\s*status_tags if flip_tags;\s*go_result = dothistimeout 'go bridge',[\d.]+,/[^/]+/;.*climb platform.*turn wheel.*$"
+);
+// `walk until checkloot.include?('trail'); move 'go trail'` — wander the
+// shifting jungle until the feature shows (Karazja).
+re!(
+    WALK_UNTIL_LOOT,
+    r"(?s)^walk until checkloot\.include\?\('(\w+)'\); move '([^']+)'$"
 );
 // The group-follow preamble + wait: scrape who followed us in, move, then
 // wait for each follower's arrival line. A native walker does not escort
@@ -442,7 +540,7 @@ re!(COND_ROOM_OBJ, r"^Room\.current\s*(==|!=)\s*Room\[(\d+)\]$");
 re!(COND_CHECKPATHS, r#"^checkpaths\.include\?\s*\(\s*['"]([^'"]+)['"]\s*\)$"#);
 re!(
     COND_LOOT_FIND,
-    r#"^GameObj\.loot\.find\s*\{\s*\|\w+\|\s*\w+\.name\s*==\s*['"]([^'"]+)['"]\s*\}$"#
+    r#"^GameObj\.loot\.find\s*\{\s*\|\w+\|\s*\w+\.(?:name|noun)\s*==\s*['"]([^'"]+)['"]\s*\}$"#
 );
 re!(
     COND_INV_NOUN,
@@ -456,7 +554,7 @@ re!(
 );
 re!(STMT_MOVE, r#"^move\s*\(?\s*(['"][^'"]+['"])\s*\)?$"#);
 re!(STMT_FPUT, r#"^(?:fput|put)\s*\(?\s*(['"][^'"]+['"])\s*\)?$"#);
-re!(STMT_MULTIFPUT, r#"^multifput\s+(['"].*['"])$"#);
+re!(STMT_MULTIFPUT, r#"^multifput\s*\(?\s*(['"].*['"])\s*\)?$"#);
 // `waitfor 'a'` and `waitfor 'a','b','c'` alike: Lich's waitfor takes any
 // number of alternatives and returns on the first to appear. The single-arg
 // form alone missed the Hinterwilds caravans, which gate a whole region.
@@ -1178,6 +1276,19 @@ fn transpile_sequence(src: &str) -> Option<Vec<WalkAction>> {
     if let Some(actions) = transpile_block_families(body) {
         return Some(actions);
     }
+    // Buff-if-you-can prefix: strip it and transpile what remains. The cast
+    // is an optimization, not a gate (the BUFF_THEN_MOVE stance).
+    if let Some(c) = SPELL_PREP_PREFIX.captures(body) {
+        return transpile_sequence(&c[1]);
+    }
+    // `if <cond>; <A>; else; <B>; end` with both arms straight-line.
+    if let Some(c) = IF_ELSE_BLOCK.captures(body) {
+        if let Some(cond) = statement_condition(&c[1]) {
+            let then = transpile_fragment(&c[2])?;
+            let els = transpile_fragment(&c[3])?;
+            return Some(vec![WalkAction::If { cond, then, els }]);
+        }
+    }
     // `loop { <statements>; if Room.current.id == N; break; end }` — retry a
     // known body until it lands in a specific room (the Sea Caves swim).
     if let Some(c) = LOOP_BREAK_ROOM.captures(body) {
@@ -1229,6 +1340,12 @@ fn transpile_sequence(src: &str) -> Option<Vec<WalkAction>> {
         };
         let mut actions = prefix;
         actions.extend(block);
+        // Straight-line statements after the block (`...end; fill_hands`) —
+        // the Lysierian swim ends with one, and truncating it would strand
+        // the stowed gear.
+        if let Some(suffix) = c.get(5) {
+            actions.extend(transpile_fragment(suffix.as_str())?);
+        }
         return Some(actions);
     }
     transpile_fragment(body)
@@ -1448,6 +1565,264 @@ fn transpile_block_families(body: &str) -> Option<Vec<WalkAction>> {
             WalkAction::Move(c[7].to_string()),
         ]);
     }
+    // `begin; search; waitfor …; end until found; move` — the begin-until
+    // spelling of the search hunt (Vipershroud path, Spider Temple tunnel).
+    if let Some(c) = BEGIN_SEARCH_UNTIL.captures(body) {
+        if c[2] != c[3] {
+            return None;
+        }
+        let noun = c[5].rsplit(' ').next()?.to_string();
+        return Some(vec![
+            WalkAction::Repeat {
+                body: vec![
+                    WalkAction::Await {
+                        cmd: Some(c[1].to_string()),
+                        pattern: Box::new(AwaitPattern::new(&c[4])?),
+                        timeout: 10.0,
+                        on_timeout: OnTimeout::Continue,
+                        if_match: None,
+                    },
+                    WalkAction::WaitRt,
+                ],
+                until: RepeatUntil::Cond(Cond::RoomHasObject(noun)),
+                max: MAX_RETRY_LOOP,
+            },
+            WalkAction::Move(c[5].to_string()),
+        ]);
+    }
+    // Shifting exits tried in turn until one takes (Lower Dragonsclaw).
+    if LOOP_TRY_EXITS.is_match(body) {
+        let mut steps = Vec::new();
+        let mut room = None;
+        for c in LOOP_TRY_EXITS_STEP.captures_iter(body) {
+            let id: u32 = c[2].parse().ok()?;
+            room = Some(id);
+            // Guard each alternative on still being in the start room, so a
+            // successful early step doesn't walk us further off the edge.
+            steps.push(WalkAction::If {
+                cond: Cond::InRoom(id),
+                then: vec![WalkAction::StepMove(c[1].to_string())],
+                els: Vec::new(),
+            });
+        }
+        let room = room?;
+        return Some(vec![WalkAction::Repeat {
+            body: steps,
+            until: RepeatUntil::Cond(Cond::Not(Box::new(Cond::InRoom(room)))),
+            max: MAX_RETRY_LOOP,
+        }]);
+    }
+    // The do…end spelling of the retry-climb (Coastal Cliffs): prefix
+    // statements each lap, then the attempt; success = the room changes.
+    if let Some(c) = TIMES_DO_CLIMB.captures(body) {
+        if c[3] != c[7] {
+            return None;
+        }
+        let max: u32 = c[1].parse().ok()?;
+        let mut lap = transpile_fragment(&c[2])?;
+        lap.push(WalkAction::Await {
+            cmd: Some(c[4].to_string()),
+            pattern: Box::new(AwaitPattern::new(&c[6])?),
+            timeout: c[5].parse().ok()?,
+            on_timeout: OnTimeout::Continue,
+            if_match: None,
+        });
+        return Some(vec![WalkAction::Repeat {
+            body: lap,
+            until: RepeatUntil::RoomChanged,
+            max: max.clamp(1, MAX_RETRY_LOOP),
+        }]);
+    }
+    // WL sewers: search past the junk finds until the trapdoor line.
+    if let Some(c) = WL_TRAPDOOR.captures(body) {
+        return Some(vec![
+            WalkAction::Repeat {
+                body: vec![
+                    WalkAction::Await {
+                        cmd: Some("search".into()),
+                        pattern: Box::new(AwaitPattern::new(&regex::escape(
+                            c[1].trim_end_matches(['!', '$']),
+                        ))?),
+                        timeout: 10.0,
+                        on_timeout: OnTimeout::Continue,
+                        if_match: None,
+                    },
+                    WalkAction::WaitRt,
+                ],
+                until: RepeatUntil::Cond(Cond::RoomHasObject(c[2].to_string())),
+                max: MAX_RETRY_LOOP,
+            },
+            WalkAction::Move(format!("go {}", &c[2])),
+        ]);
+    }
+    // Lie down, search out the staircase, stand, descend (30581).
+    if let Some(c) = LIE_SEARCH_ENTER.captures(body) {
+        if c[1] != c[5] {
+            return None;
+        }
+        return Some(vec![
+            WalkAction::Put("lie".into()),
+            WalkAction::WaitRt,
+            WalkAction::Repeat {
+                body: vec![
+                    WalkAction::Await {
+                        cmd: Some(c[2].to_string()),
+                        pattern: Box::new(AwaitPattern::new(&c[4])?),
+                        timeout: c[3].parse().ok()?,
+                        on_timeout: OnTimeout::Continue,
+                        if_match: None,
+                    },
+                    WalkAction::WaitRt,
+                ],
+                until: RepeatUntil::Cond(Cond::RoomHasObject(c[4].to_string())),
+                max: MAX_RETRY_LOOP,
+            },
+            WalkAction::If {
+                cond: Cond::Not(Box::new(Cond::Standing)),
+                then: vec![WalkAction::Put("stand".into()), WalkAction::WaitRt],
+                els: Vec::new(),
+            },
+            WalkAction::Move(format!("go {}", &c[6])),
+        ]);
+    }
+    // Citadel ledge: offensive stance, climb until it takes. We can't read
+    // the previous stance, so restore to defensive — the safe traveling
+    // stance — rather than leave the user parked offensive.
+    if let Some(c) = STANCE_CLIMB.captures(body) {
+        return Some(vec![
+            WalkAction::EmptyHands,
+            WalkAction::Put("stance offensive".into()),
+            WalkAction::Repeat {
+                body: vec![
+                    WalkAction::If {
+                        cond: Cond::Not(Box::new(Cond::Standing)),
+                        then: vec![WalkAction::Put("stand".into())],
+                        els: Vec::new(),
+                    },
+                    WalkAction::StepMove(c[1].to_string()),
+                    WalkAction::WaitRt,
+                ],
+                until: RepeatUntil::RoomChanged,
+                max: MAX_RETRY_LOOP,
+            },
+            WalkAction::Put("stance defensive".into()),
+            WalkAction::FillHands,
+        ]);
+    }
+    // Darkstone drawbridge: pull the rope until the bridge answers, then
+    // cross. (Short races jump instead — same lever, body-size variant — and
+    // a shorty's failed pull runs out the retry budget and fails closed.)
+    if let Some(c) = DARKSTONE_BRIDGE.captures(body) {
+        let found = Cond::RoomHasObject("drawbridge".into());
+        return Some(vec![
+            WalkAction::Repeat {
+                body: vec![
+                    WalkAction::Put("pull rope".into()),
+                    WalkAction::Sleep(1.0),
+                    WalkAction::WaitRt,
+                    WalkAction::If {
+                        cond: Cond::Not(Box::new(Cond::Standing)),
+                        then: vec![WalkAction::Put("stand".into()), WalkAction::WaitRt],
+                        els: Vec::new(),
+                    },
+                ],
+                until: RepeatUntil::Cond(found),
+                max: MAX_RETRY_LOOP,
+            },
+            WalkAction::Move(c[1].to_string()),
+        ]);
+    }
+    // Darkstone's inner lever: pull until it gives, then through the
+    // portcullis. Await's Retry re-sends once; a lever that won't budge
+    // twice (a strength check) fails the edge closed.
+    if let Some(c) = LOOP_DOTHIS_BREAK.captures(body) {
+        if c[1] != c[5] {
+            return None;
+        }
+        return Some(vec![
+            WalkAction::Await {
+                cmd: Some(c[2].to_string()),
+                pattern: Box::new(AwaitPattern::new(&c[6])?),
+                timeout: c[3].parse().ok()?,
+                on_timeout: OnTimeout::Retry,
+                if_match: None,
+            },
+            WalkAction::WaitRt,
+            WalkAction::Move(c[7].to_string()),
+        ]);
+    }
+    // Citadel ravine: search-and-climb until we're out of the room.
+    if let Some(c) = WHILE_TITLE_BLOCK.captures(body) {
+        let mut actions = match c.get(1) {
+            Some(p) => transpile_fragment(p.as_str())?,
+            None => Vec::new(),
+        };
+        let inner = transpile_fragment(&c[2])?;
+        if inner.is_empty() {
+            return None;
+        }
+        actions.push(WalkAction::Repeat {
+            body: moves_to_steps(inner),
+            until: RepeatUntil::RoomChanged,
+            max: MAX_RETRY_LOOP,
+        });
+        if let Some(suffix) = c.get(3) {
+            actions.extend(transpile_fragment(suffix.as_str())?);
+        }
+        return Some(actions);
+    }
+    // Melgorehn's Reach bridge: normally one command; the pulled-open detour
+    // climbs the platform and turns the wheel, then crosses from above.
+    if MELGOREHN_BRIDGE.is_match(body) {
+        return Some(vec![WalkAction::TryMove {
+            cmd: "go bridge".into(),
+            fallback: vec![
+                WalkAction::EmptyHands,
+                WalkAction::StepMove("go opening".into()),
+                WalkAction::Repeat {
+                    body: vec![
+                        WalkAction::Await {
+                            cmd: Some("climb platform".into()),
+                            pattern: Box::new(AwaitPattern::new(
+                                "you were able to pull yourself up\
+                                 |I could not find what you were referring to",
+                            )?),
+                            timeout: 2.0,
+                            on_timeout: OnTimeout::Continue,
+                            if_match: None,
+                        },
+                        WalkAction::WaitRt,
+                    ],
+                    until: RepeatUntil::RoomChanged,
+                    max: MAX_RETRY_LOOP,
+                },
+                WalkAction::Await {
+                    cmd: Some("turn wheel".into()),
+                    pattern: Box::new(AwaitPattern::new(
+                        "The wheel begins to move|already been turned",
+                    )?),
+                    timeout: 3.0,
+                    on_timeout: OnTimeout::Retry,
+                    if_match: None,
+                },
+                WalkAction::StepMove("down".into()),
+                WalkAction::StepMove("out".into()),
+                WalkAction::Move("go bridge".into()),
+                WalkAction::FillHands,
+            ],
+        }]);
+    }
+    // Karazja: wander the shifting jungle until the feature shows.
+    if let Some(c) = WALK_UNTIL_LOOT.captures(body) {
+        return Some(vec![
+            WalkAction::Repeat {
+                body: vec![WalkAction::MoveAnyExit, WalkAction::WaitRt],
+                until: RepeatUntil::Cond(Cond::RoomHasObject(c[1].to_string())),
+                max: MAX_RETRY_LOOP,
+            },
+            WalkAction::Move(c[2].to_string()),
+        ]);
+    }
     // Red Forest fog: keep trying `go fog` until it stops bouncing us back
     // (success = the room actually changes; the paths-line the script keys
     // on is just its way of noticing that).
@@ -1484,12 +1859,23 @@ fn transpile_statement(statement: &str) -> Option<Vec<WalkAction>> {
         // ordinary body stop being residue.
         return Some(Vec::new());
     }
+    if STMT_SPELL_CAST.is_match(s) {
+        // A cast is optional preparation, never the crossing itself — the
+        // BUFF_THEN_MOVE stance, statement-sized.
+        return Some(Vec::new());
+    }
     // Peel a trailing modifier before the bare forms match, so the condition
     // survives instead of the statement running unconditionally.
     if let Some((left, keyword, cond_src)) = split_modifier(s) {
         // Only when the guarded part is itself a statement we understand;
         // otherwise fall through and let the whole body be refused.
         if let Some(inner) = transpile_statement(left) {
+            // A dropped statement stays dropped under any guard —
+            // `Spell[N].cast if Spell[N].known? and …` needs no condition
+            // because either answer produces nothing.
+            if inner.is_empty() {
+                return Some(Vec::new());
+            }
             // `... if group_members` runs only when grouped. A native walker
             // does not escort groups, so the solo behavior — skip it — is the
             // crossing; `unless group_members` inverts to "always".
@@ -1499,7 +1885,20 @@ fn transpile_statement(statement: &str) -> Option<Vec<WalkAction>> {
                     _ => inner,
                 });
             }
-            let cond = statement_condition(cond_src)?;
+            let Some(cond) = statement_condition(cond_src) else {
+                // A skill check guarding pure preparation (`fput 'stance
+                // offensive' if Skills.climbing < 20`): unevaluable, but the
+                // cautious branch — always do the prep — is safe for the
+                // skilled and required for the rest. Only for command-only
+                // statements; a guarded MOVE must never run unconditionally.
+                if SKILL_COND.is_match(cond_src.trim())
+                    && keyword == "if"
+                    && inner.iter().all(|a| matches!(a, WalkAction::Put(_)))
+                {
+                    return Some(inner);
+                }
+                return None;
+            };
             return Some(match keyword {
                 "if" => vec![WalkAction::If {
                     cond,
@@ -1544,6 +1943,11 @@ fn transpile_statement(statement: &str) -> Option<Vec<WalkAction>> {
     }
     if let Some(c) = STMT_MOVE.captures(s) {
         return Some(vec![WalkAction::Move(unquote(&c[1]))]);
+    }
+    if let Some(c) = MOVE_EXIT_EXCEPT.captures(s) {
+        // `move (XMLData.room_exits - ['west']).first` — resolved from the
+        // live compass at walk time.
+        return Some(vec![WalkAction::MoveExitExcept(c[1].to_string())]);
     }
     if let Some(c) = STMT_FPUT.captures(s) {
         return Some(vec![WalkAction::Put(unquote(&c[1]))]);
@@ -3381,10 +3785,12 @@ mod tests {
     #[test]
     fn while_room_object_block_repeats_the_swim() {
         use WalkAction::*;
-        // 6481 -> 6484 (Lysierian Hills): swim until it takes.
+        // 6481 -> 6484 (Lysierian Hills): swim until it takes. The VERBATIM
+        // mapdb body — it ends with a fill_hands AFTER the block, which a
+        // truncated test body once hid.
         assert_eq!(
             transpile(
-                ";e empty_hands; while Room.current == Room[6481]; put 'swim opening'; sleep 1; waitrt?; end"
+                ";e empty_hands; while Room.current == Room[6481]; put 'swim opening'; sleep 1; waitrt?; end; fill_hands"
             ),
             Some(vec![
                 EmptyHands,
@@ -3393,6 +3799,7 @@ mod tests {
                     until: RepeatUntil::Cond(Cond::Not(Box::new(Cond::InRoom(6481)))),
                     max: MAX_RETRY_LOOP,
                 },
+                FillHands,
             ])
         );
     }

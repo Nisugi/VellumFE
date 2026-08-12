@@ -174,6 +174,32 @@ fn residue_costs_reachability() {
         );
     }
 
+    // The full CUT: every banned edge leading from reachable ground into the
+    // lost region — including ones that restore nothing alone because a
+    // parallel or serial partner is also banned. When the single-edge payoff
+    // list goes quiet while thousands stay stranded, this is where the
+    // multi-edge cuts hide (two gates in series both being residue).
+    let mut cut: Vec<(u32, u32)> = banned
+        .iter()
+        .filter(|(from, to)| degraded.contains(from) && lost_set.contains(to))
+        .copied()
+        .collect();
+    cut.sort();
+    println!("\nfull cut into the lost region: {} edges", cut.len());
+    for (from, to) in &cut {
+        let body = db
+            .room(*from)
+            .and_then(|r| r.wayto.get(to).cloned())
+            .unwrap_or_default();
+        println!(
+            "  {from} -> {to}  [{}]  {}",
+            db.room(*to)
+                .and_then(|r| r.location.as_deref())
+                .unwrap_or("?"),
+            body.replace('\n', " ").chars().take(110).collect::<String>()
+        );
+    }
+
     // Sanity: banning edges can only ever remove reachability, never add it.
     assert!(
         degraded.len() <= full.len(),
