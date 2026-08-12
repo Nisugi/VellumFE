@@ -121,12 +121,11 @@ impl AppCore {
             .iter()
             .any(|f| matches!(f, crate::core::move_feedback::MoveFeedback::ContainerAlreadyOpen))
         {
-            if let Some(pending) = self.pending_day_pass_scan.as_mut() {
-                pending.3 = true;
+            if let Some(open) = self.day_pass_scan_open.as_mut() {
+                open.1 = true;
             }
         }
-        let Some((destination, deadline, ids, was_open)) = self.pending_day_pass_scan.clone()
-        else {
+        let Some((destination, deadline, ids)) = self.pending_day_pass_scan.clone() else {
             return;
         };
         let learned = !ids.is_empty()
@@ -136,23 +135,25 @@ impl AppCore {
         // known ones proceed straight to planning (don't sit out the
         // deadline). An empty sack still waits the deadline (we can't tell
         // "no passes" from "contents not seen yet").
-        let (target, _, probe_any) = self.day_pass_scan_targets();
+        let (_, _, probe_any) = self.day_pass_scan_targets();
         let probe_done = ids.is_empty() && probe_any;
         let expired = std::time::Instant::now() >= deadline;
         if learned || probe_done || expired {
             // Clear FIRST so the re-invoked start_travel plans (or queues the
             // next scan round) instead of re-deferring.
             self.pending_day_pass_scan = None;
-            // Restore the sack to how we found it: close only if OUR open
-            // actually opened it. (On a probe→look transition this closes and
-            // the look round re-opens — once per session, and each round
-            // re-decides its own close, so the user's state is preserved.)
-            if !was_open {
-                if let Some(target) = target {
-                    self.travel.queue_command(format!("close #{target}"));
+            self.start_travel(destination);
+            // Only when start_travel queued NO further round is the scan
+            // truly over — then restore the sack to how we found it (close
+            // only if OUR open opened it). Closing between rounds churned
+            // the sack: every round closed it and the next reopened it.
+            if self.pending_day_pass_scan.is_none() {
+                if let Some((sack, was_open)) = self.day_pass_scan_open.take() {
+                    if !was_open {
+                        self.travel.queue_command(format!("close #{sack}"));
+                    }
                 }
             }
-            self.start_travel(destination);
         }
     }
 
@@ -549,17 +550,27 @@ impl AppCore {
             if let Some(target) = target {
                 if !unknown.is_empty() {
                     self.add_system_message("[go2] checking your Chronomage day passes...");
-                    self.travel.queue_command(format!("open #{target}"));
-                    for id in &unknown {
-                        self.travel.queue_command(format!("look #{id}"));
+                    // One `open` for the WHOLE scan (all rounds); the close
+                    // is queued once by tick_day_pass_scan at the true end.
+                    if self.day_pass_scan_open.is_none() {
+                        self.travel.queue_command(format!("open #{target}"));
+                        self.day_pass_scan_open = Some((target.clone(), false));
                     }
-                    // The close (if the sack wasn't already open) is queued at
-                    // scan completion by tick_day_pass_scan.
+                    // Pace the looks: a burst trips the game's type-ahead
+                    // limit ("Sorry, you may only type ahead 1 command") and
+                    // the dropped look forces a whole re-scan round.
+                    for (i, id) in unknown.iter().enumerate() {
+                        self.queue_timed_command(
+                            std::time::Duration::from_millis(700 * (i as u64 + 1)),
+                            format!("look #{id}"),
+                        );
+                    }
                     self.pending_day_pass_scan = Some((
                         destination,
-                        std::time::Instant::now() + std::time::Duration::from_secs(5),
+                        std::time::Instant::now()
+                            + std::time::Duration::from_secs(5)
+                            + std::time::Duration::from_millis(700 * unknown.len() as u64),
                         unknown,
-                        false,
                     ));
                     return;
                 }
@@ -568,13 +579,15 @@ impl AppCore {
                     // re-plan (a discovered pass triggers the look round).
                     self.day_pass_sack_probed = true;
                     self.add_system_message("[go2] checking the day-pass sack...");
-                    self.travel.queue_command(format!("open #{target}"));
+                    if self.day_pass_scan_open.is_none() {
+                        self.travel.queue_command(format!("open #{target}"));
+                        self.day_pass_scan_open = Some((target.clone(), false));
+                    }
                     self.travel.queue_command(format!("look in #{target}"));
                     self.pending_day_pass_scan = Some((
                         destination,
                         std::time::Instant::now() + std::time::Duration::from_secs(4),
                         Vec::new(),
-                        false,
                     ));
                     return;
                 }

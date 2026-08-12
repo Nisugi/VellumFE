@@ -144,7 +144,12 @@ pub struct AppCore {
     /// routes at 0.8. Empty ids = the one-time contents probe (open + look in).
     /// The bool records whether the sack was ALREADY open ("That is already
     /// open" seen) — then the scan doesn't close it (the user keeps it open).
-    pending_day_pass_scan: Option<(u32, std::time::Instant, Vec<String>, bool)>,
+    pending_day_pass_scan: Option<(u32, std::time::Instant, Vec<String>)>,
+    /// The scan is holding the sack open across its rounds: (sack id, was it
+    /// ALREADY open - "That is already open" seen). One `open` for the whole
+    /// scan, one `close` at the true end (skipped when the user keeps the
+    /// sack open) - the old round-by-round close/open churned the sack live.
+    day_pass_scan_open: Option<(String, bool)>,
     /// The day-pass sack contents probe has run this session (the container
     /// stream keeps contents fresh after the first open).
     day_pass_sack_probed: bool,
@@ -411,6 +416,7 @@ impl AppCore {
             travel: Default::default(),
             pending_urchin_refresh: None,
             pending_day_pass_scan: None,
+            day_pass_scan_open: None,
             day_pass_sack_probed: false,
             timed_commands: Vec::new(),
             remote_map_cache: None,
@@ -604,6 +610,7 @@ impl AppCore {
             travel: Default::default(),
             pending_urchin_refresh: None,
             pending_day_pass_scan: None,
+            day_pass_scan_open: None,
             day_pass_sack_probed: false,
             timed_commands: Vec::new(),
             remote_map_cache: None,
