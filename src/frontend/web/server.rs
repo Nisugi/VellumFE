@@ -756,14 +756,23 @@ fn gather_snapshot(state: &WebState) -> (Vec<String>, Vec<RemoteLine>, u64) {
 
 /// Build the snapshot reply for a `resume { seq }` request. Locks the
 /// buffer briefly; never holds it across an await.
-fn build_resume_reply(state: &WebState, resume_seq: u64) -> String {
+fn build_resume_reply(
+    state: &WebState,
+    resume_seq: u64,
+    sub: protocol::SubscribeMode,
+) -> String {
     let buffer = state
         .handles
         .buffer
         .lock()
         .expect("remote buffer lock poisoned");
     let last_seq = buffer.last_seq();
-    let (mode, lines) = if resume_seq == 0 {
+    // A watcher has no scrollback to resume, so skip the tail walk entirely
+    // and always report Full -- there is no gap to signal when the client
+    // was never rendering text.
+    let (mode, lines) = if sub == protocol::SubscribeMode::Watch {
+        (SnapshotMode::Full, Vec::new())
+    } else if resume_seq == 0 {
         (SnapshotMode::Full, buffer.snapshot_tail(SNAPSHOT_LINES_PER_STREAM))
     } else {
         match buffer.lines_since(resume_seq) {
@@ -773,17 +782,30 @@ fn build_resume_reply(state: &WebState, resume_seq: u64) -> String {
     };
     drop(buffer);
     let game_state = state.handles.state_rx.borrow().clone();
-    protocol::snapshot(&game_state, lines, mode, last_seq)
+    protocol::snapshot_for(&game_state, lines, mode, last_seq, sub)
 }
 
 async fn send_snapshot(
     socket: &mut WebSocket,
     state: &WebState,
     mode: SnapshotMode,
+    sub: protocol::SubscribeMode,
 ) -> Result<(), axum::Error> {
-    let (_, lines, last_seq) = gather_snapshot(state);
+    // A watcher never renders scrollback, so do not even gather it -- that
+    // walk is 300 lines per stream under the buffer lock.
+    let (lines, last_seq) = if sub == protocol::SubscribeMode::Watch {
+        let buffer = state
+            .handles
+            .buffer
+            .lock()
+            .expect("remote buffer lock poisoned");
+        (Vec::new(), buffer.last_seq())
+    } else {
+        let (_, lines, last_seq) = gather_snapshot(state);
+        (lines, last_seq)
+    };
     let game_state = state.handles.state_rx.borrow().clone();
-    let msg = protocol::snapshot(&game_state, lines, mode, last_seq);
+    let msg = protocol::snapshot_for(&game_state, lines, mode, last_seq, sub);
     socket.send(Message::Text(msg.into())).await
 }
 
@@ -794,10 +816,18 @@ async fn handle_client_message(
     state: &WebState,
     client_id: u64,
     msg: ClientMessage,
+    sub: &mut protocol::SubscribeMode,
 ) -> bool {
     match msg {
         // Already authenticated; a stray re-auth is harmless.
         ClientMessage::Auth { .. } => true,
+        ClientMessage::Subscribe { mode } => {
+            // Declares what this connection is for. Takes effect from here
+            // on; the client sends it before `resume` so its snapshot is
+            // already tailored.
+            *sub = mode;
+            true
+        }
         ClientMessage::Cmd { text } => {
             // Forward into the main loop; it runs the same path as local
             // input. Send fails only if the app is shutting down.
@@ -808,7 +838,7 @@ async fn handle_client_message(
                 .is_ok()
         }
         ClientMessage::Resume { seq } => {
-            let reply = build_resume_reply(state, seq);
+            let reply = build_resume_reply(state, seq, *sub);
             socket.send(Message::Text(reply.into())).await.is_ok()
         }
         ClientMessage::LinkTap {
@@ -1242,31 +1272,62 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
         return;
     }
 
-    // The client answers hello with `resume { seq }` (0 = fresh). Fall
-    // back to a full snapshot for clients that never send one.
-    let first = tokio::time::timeout(RESUME_WAIT, socket.recv()).await;
-    match first {
-        Ok(None) | Ok(Some(Err(_))) | Ok(Some(Ok(Message::Close(_)))) => return,
-        Ok(Some(Ok(Message::Text(text)))) => {
-            match protocol::parse_client_message(&text) {
-                Some(msg) => {
-                    if !handle_client_message(&mut socket, &state, client_id, msg).await {
-                        return;
+    // What this connection is for. Defaults to the full feed, which is what
+    // every client that predates `subscribe` implies.
+    let mut sub = protocol::SubscribeMode::default();
+
+    // The client answers hello with `resume { seq }` (0 = fresh), optionally
+    // preceded by `subscribe { mode }`. Fall back to a full snapshot for
+    // clients that never send one.
+    //
+    // The loop exists so `subscribe` can arrive first without consuming the
+    // client's one shot at a snapshot: it sets the mode and we wait again for
+    // the `resume` that actually triggers the reply.
+    loop {
+        let first = tokio::time::timeout(RESUME_WAIT, socket.recv()).await;
+        match first {
+            Ok(None) | Ok(Some(Err(_))) | Ok(Some(Ok(Message::Close(_)))) => return,
+            Ok(Some(Ok(Message::Text(text)))) => {
+                match protocol::parse_client_message(&text) {
+                    Some(ClientMessage::Subscribe { mode }) => {
+                        sub = mode;
+                        // Keep waiting for the resume.
+                        continue;
                     }
-                }
-                None => {
-                    if send_snapshot(&mut socket, &state, SnapshotMode::Full).await.is_err() {
-                        return;
+                    Some(msg) => {
+                        if !handle_client_message(
+                            &mut socket,
+                            &state,
+                            client_id,
+                            msg,
+                            &mut sub,
+                        )
+                        .await
+                        {
+                            return;
+                        }
+                    }
+                    None => {
+                        if send_snapshot(&mut socket, &state, SnapshotMode::Full, sub)
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
                     }
                 }
             }
-        }
-        Ok(Some(Ok(_))) | Err(_) => {
-            // Non-text frame or timeout: treat as a fresh client.
-            if send_snapshot(&mut socket, &state, SnapshotMode::Full).await.is_err() {
-                return;
+            Ok(Some(Ok(_))) | Err(_) => {
+                // Non-text frame or timeout: treat as a fresh client.
+                if send_snapshot(&mut socket, &state, SnapshotMode::Full, sub)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
             }
         }
+        break;
     }
 
     // Macro and wheel definitions follow the snapshot; updates arrive as
@@ -1306,6 +1367,12 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                             continue;
                         }
                     }
+                    // A watcher gets the status set only; the text stream and
+                    // the map are the bulk of the traffic and it renders
+                    // neither.
+                    if !sub.wants(&d) {
+                        continue;
+                    }
                     let last_seq = state
                         .handles
                         .buffer
@@ -1321,7 +1388,10 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                     tracing::debug!("web client lagged {missed} deltas; re-syncing");
                     // Gap mode: the client keeps its pane, shows a missed-
                     // output marker, and seq-dedupes the overlap.
-                    if send_snapshot(&mut socket, &state, SnapshotMode::Gap).await.is_err() {
+                    if send_snapshot(&mut socket, &state, SnapshotMode::Gap, sub)
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -1331,7 +1401,15 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                 None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
                 Some(Ok(Message::Text(text))) => {
                     if let Some(msg) = protocol::parse_client_message(&text) {
-                        if !handle_client_message(&mut socket, &state, client_id, msg).await {
+                        if !handle_client_message(
+                            &mut socket,
+                            &state,
+                            client_id,
+                            msg,
+                            &mut sub,
+                        )
+                        .await
+                        {
                             break;
                         }
                     }
