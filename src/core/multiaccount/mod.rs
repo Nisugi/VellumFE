@@ -73,6 +73,9 @@ pub struct PeerStatus {
     pub mind: Option<Gauge>,
     pub encumbrance: Option<Gauge>,
     pub stance: Option<Gauge>,
+    /// Unabsorbed field experience as (current, max). "How close to capped",
+    /// which is what decides whether a character should go absorb.
+    pub field_exp: Option<(u64, u64)>,
 
     pub room_name: Option<String>,
     pub room_id: Option<String>,
@@ -147,6 +150,13 @@ impl PeerStatus {
             ),
             encumbrance: gauge(game_state.encumbrance.value, &game_state.encumbrance.text),
             stance: gauge(game_state.stance.value, &game_state.stance.text),
+            field_exp: match (
+                game_state.gs4_experience.field_exp,
+                game_state.gs4_experience.max_field_exp,
+            ) {
+                (Some(value), Some(max)) if max > 0 => Some((value, max)),
+                _ => None,
+            },
             room_name: game_state.room_name.clone(),
             room_id: game_state.room_id.clone(),
             roundtime_end: game_state.roundtime_end,

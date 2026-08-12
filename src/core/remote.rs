@@ -913,11 +913,26 @@ pub struct RemoteGauges {
     /// Stance 0-100 (percent contributing to defense) with its name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stance: Option<RemoteGauge>,
+    /// Unabsorbed field experience, as current/max rather than a percent --
+    /// "how close to capped" is the number that matters, and the cap varies
+    /// by character.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_exp: Option<RemoteFieldExp>,
+}
+
+/// Unabsorbed field experience and the character's own cap.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct RemoteFieldExp {
+    pub value: u64,
+    pub max: u64,
 }
 
 impl RemoteGauges {
     fn is_empty(&self) -> bool {
-        self.mind.is_none() && self.encumbrance.is_none() && self.stance.is_none()
+        self.mind.is_none()
+            && self.encumbrance.is_none()
+            && self.stance.is_none()
+            && self.field_exp.is_none()
     }
 }
 
@@ -1228,6 +1243,16 @@ impl RemoteStateSnapshot {
                         value: enc.value,
                         text: enc.text.clone(),
                     });
+                }
+                // Both halves must be known: a value with no cap cannot be
+                // drawn as a bar, and a cap alone says nothing.
+                if let (Some(value), Some(max)) = (
+                    exp.field_exp,
+                    exp.max_field_exp,
+                ) {
+                    if max > 0 {
+                        info.gauges.field_exp = Some(RemoteFieldExp { value, max });
+                    }
                 }
                 let stance = &game_state.stance;
                 if !stance.text.is_empty() {

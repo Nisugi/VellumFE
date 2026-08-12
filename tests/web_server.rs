@@ -1260,3 +1260,45 @@ async fn hub_receives_effects_hands_and_absolute_vitals() {
         "absolute expiry is what lets the card count down locally"
     );
 }
+
+#[tokio::test]
+async fn hub_receives_field_exp_and_joined_indicator() {
+    use vellum_fe::core::multiaccount::PeerStatus;
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    let mut gs = GameState::new();
+    gs.gs4_experience.field_exp = Some(1_200);
+    gs.gs4_experience.max_field_exp = Some(1_500);
+    gs.status.set("IconJOINED", true);
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let (_client, snapshot) = connect_watching(addr).await;
+    let mut peer = PeerStatus::default();
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &snapshot);
+
+    assert_eq!(peer.field_exp, Some((1_200, 1_500)));
+    assert!(
+        peer.indicators.joined(),
+        "JOINED must survive the wire -- it is the game's own 'is grouped'"
+    );
+}
+
+#[tokio::test]
+async fn field_exp_is_absent_until_both_halves_are_known() {
+    use vellum_fe::core::multiaccount::PeerStatus;
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    // A value with no cap cannot be drawn as a bar, so it must not ship as a
+    // half-populated gauge that renders at a made-up ratio.
+    let mut gs = GameState::new();
+    gs.gs4_experience.field_exp = Some(900);
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let (_client, snapshot) = connect_watching(addr).await;
+    let mut peer = PeerStatus::default();
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &snapshot);
+
+    assert_eq!(peer.field_exp, None);
+}

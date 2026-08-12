@@ -1974,6 +1974,7 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
   show_injuries = true
   show_mind = false
   show_stance = false
+  show_field_exp = false
   show_encumbrance = false
   show_room = true
   show_self = true

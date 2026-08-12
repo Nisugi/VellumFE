@@ -335,6 +335,14 @@ fn apply_char_info(peer: &mut PeerStatus, v: Option<&serde_json::Value>) {
     if let Some(g) = read_gauge(gauges.get("stance")) {
         peer.stance = Some(g);
     }
+    if let Some(fxp) = gauges.get("field_exp") {
+        if let (Some(value), Some(max)) = (
+            fxp.get("value").and_then(|v| v.as_u64()),
+            fxp.get("max").and_then(|v| v.as_u64()),
+        ) {
+            peer.field_exp = Some((value, max));
+        }
+    }
 }
 
 fn read_gauge(v: Option<&serde_json::Value>) -> Option<Gauge> {

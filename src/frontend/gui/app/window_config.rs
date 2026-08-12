@@ -86,6 +86,7 @@ pub(super) struct MultiAccountConfig {
     pub(super) show_self: bool,
     pub(super) show_absolute_vitals: bool,
     pub(super) show_hands: bool,
+    pub(super) show_field_exp: bool,
     pub(super) show_effects: bool,
     pub(super) effect_filter: String,
     pub(super) max_effects: usize,
@@ -376,6 +377,7 @@ impl VellumGuiApp {
                 show_self: data.show_self,
                 show_absolute_vitals: data.show_absolute_vitals,
                 show_hands: data.show_hands,
+                show_field_exp: data.show_field_exp,
                 show_effects: data.show_effects,
                 // Edited as one comma-separated line: a list editor for a
                 // handful of substrings would be heavier than the feature.
@@ -716,6 +718,7 @@ impl VellumGuiApp {
                     data.show_self = ma.show_self;
                     data.show_absolute_vitals = ma.show_absolute_vitals;
                     data.show_hands = ma.show_hands;
+                    data.show_field_exp = ma.show_field_exp;
                     data.show_effects = ma.show_effects;
                     data.effect_filter = ma
                         .effect_filter
@@ -1207,6 +1210,9 @@ impl VellumGuiApp {
             }
             changed |= ui.checkbox(&mut next.show_mind, "Mind state").changed();
             changed |= ui.checkbox(&mut next.show_stance, "Stance").changed();
+            changed |= ui
+                .checkbox(&mut next.show_field_exp, "Field experience")
+                .changed();
             changed |= ui
                 .checkbox(&mut next.show_encumbrance, "Encumbrance")
                 .changed();

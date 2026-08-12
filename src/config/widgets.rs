@@ -1008,6 +1008,9 @@ pub struct MultiAccountWidgetData {
     pub show_mind: bool,
     /// Combat stance bar.
     pub show_stance: bool,
+    /// Unabsorbed field experience, with a warning when at or near the cap --
+    /// the point of watching it is knowing when to go absorb.
+    pub show_field_exp: bool,
     /// Encumbrance bar.
     pub show_encumbrance: bool,
     /// Room name, and the "not with you" cue when it differs from yours.
@@ -1054,6 +1057,7 @@ impl Default for MultiAccountWidgetData {
             show_injuries: true,
             show_mind: false,
             show_stance: false,
+            show_field_exp: false,
             show_encumbrance: false,
             show_room: true,
             show_self: true,

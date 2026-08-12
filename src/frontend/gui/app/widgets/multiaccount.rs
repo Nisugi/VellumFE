@@ -26,7 +26,18 @@ const STATUS_GLYPHS: &[(&str, &str, Color32)] = &[
     ("invisible", "i", Color32::from_rgb(0xAD, 0xD8, 0xE6)),
     ("poisoned", "T", Color32::from_rgb(0x32, 0xCD, 0x32)),
     ("diseased", "D", Color32::from_rgb(0x8B, 0x45, 0x13)),
+    // Grouped. Worth showing even though the card also draws group frames:
+    // the frame proves WE think they are grouped, this is the game saying so
+    // -- and they disagree exactly when a roster is stale.
+    ("joined", "J", Color32::from_rgb(0x00, 0xBF, 0xFF)),
 ];
+
+/// Indicators the game sends that are deliberately not drawn.
+///
+/// STANDING is the normal state; a glyph on every card at all times carries
+/// no information. The postures that DO matter (kneeling/sitting/prone) each
+/// have their own glyph above.
+const IGNORED_GLYPHS: &[&str] = &["standing"];
 
 /// Compact duration: seconds under a minute, else m:ss. A card has no room
 /// for "01:23:45" next to a spell name.
@@ -97,9 +108,12 @@ impl VellumGuiApp {
             return;
         }
 
-        // Our own clock, for interpolating each peer's roundtime. Peers ship
-        // absolute end stamps, so nothing streams a countdown.
-        let now_server = app_core.game_state.game_time;
+        // Server "now", for interpolating every peer's roundtime and effect
+        // timers. Peers ship absolute end stamps, so nothing streams a
+        // countdown -- but this must be a LIVE clock, not
+        // `game_state.game_time`, which only advances when a prompt arrives.
+        // Using the prompt clock froze every peer's RT between prompts.
+        let now_server = chrono::Utc::now().timestamp() + app_core.server_time_offset;
         let my_room = app_core.game_state.room_id.clone();
 
         let clusters = cluster_peers(peers);
@@ -326,6 +340,9 @@ impl VellumGuiApp {
                             Color32::from_rgb(0x5C, 0xAC, 0xEE),
                         );
                     }
+                    if data.show_field_exp {
+                        Self::render_peer_field_exp(ui, settings, peer);
+                    }
                     if data.show_encumbrance {
                         Self::render_peer_gauge(
                             ui,
@@ -384,7 +401,23 @@ impl VellumGuiApp {
             .iter()
             .filter(|(id, _, _)| peer.indicators.get(id))
             .collect();
-        if active.is_empty() {
+
+        // Anything the game reports that has no glyph of its own. StatusInfo
+        // is a general map, so a new indicator reaches us without a code
+        // change -- this makes it VISIBLE without one too, rather than
+        // silently dropping it.
+        let unknown: Vec<&str> = peer
+            .indicators
+            .iter()
+            .filter(|(id, active)| {
+                *active
+                    && !IGNORED_GLYPHS.contains(id)
+                    && !STATUS_GLYPHS.iter().any(|(known, _, _)| known == id)
+            })
+            .map(|(id, _)| id)
+            .collect();
+
+        if active.is_empty() && unknown.is_empty() {
             // A placeholder keeps the card height stable as conditions come
             // and go, so a row of cards does not jitter.
             ui.label(RichText::new("\u{00B7}").weak().small());
@@ -394,6 +427,13 @@ impl VellumGuiApp {
             ui.spacing_mut().item_spacing.x = 3.0;
             for (id, glyph, color) in active {
                 ui.label(RichText::new(*glyph).color(*color).strong().small())
+                    .on_hover_text(*id);
+            }
+            for id in unknown.iter() {
+                // First letter, uppercased, in a neutral color: enough to
+                // notice something is on, with the full id on hover.
+                let glyph: String = id.chars().next().unwrap_or('?').to_uppercase().collect();
+                ui.label(RichText::new(glyph).strong().small())
                     .on_hover_text(*id);
             }
         });
@@ -554,6 +594,41 @@ impl VellumGuiApp {
                     .italics(),
             )
             .on_hover_text("Raise the effect limit or narrow the filter in this window's menu");
+        }
+    }
+
+    /// Unabsorbed field experience, colored by how close to the cap it is.
+    /// Capped FXP is wasted FXP, so the bar turns urgent rather than just
+    /// full -- the whole reason to watch it on someone else's card.
+    fn render_peer_field_exp(
+        ui: &mut egui::Ui,
+        settings: &WidgetRenderSettings,
+        peer: &PeerStatus,
+    ) {
+        let Some((value, max)) = peer.field_exp else {
+            ui.label(RichText::new("FXP \u{2014}").weak().small())
+                .on_hover_text("Not reported by this character yet");
+            return;
+        };
+        let fraction = (value as f32 / max as f32).clamp(0.0, 1.0);
+        let fill = if fraction >= 0.95 {
+            Color32::from_rgb(0xFF, 0x44, 0x44)
+        } else if fraction >= 0.75 {
+            Color32::from_rgb(0xFF, 0xB0, 0x00)
+        } else {
+            Color32::from_rgb(0xFF, 0xD7, 0x00)
+        };
+        let bar = Self::styled_progress_bar(
+            ui,
+            settings,
+            fraction,
+            fill,
+            format!("FXP {value}/{max}"),
+        );
+        let resp = ui.add_sized([ui.available_width().max(40.0), 12.0], bar);
+        Self::overlay_progress_frame(ui, resp.rect, settings.skin_art.as_deref());
+        if fraction >= 0.95 {
+            resp.on_hover_text("At or near the field-experience cap \u{2014} time to absorb");
         }
     }
 
