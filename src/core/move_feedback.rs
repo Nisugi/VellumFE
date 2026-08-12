@@ -37,6 +37,10 @@ pub enum MoveFeedback {
     /// The command landed during roundtime ("...wait 2 seconds."): nothing
     /// failed, re-send once the RT clears instead of waiting out a timeout.
     RtWait,
+    /// A purchase was refused for lack of silver ("You don't have enough
+    /// silvers") - the generic fare/ticket form, distinct from the
+    /// day-pass clerk's DayPassTooPoor phrasing.
+    TooPoor,
     /// A hard failure ("You can't go there", impassable, …). The edge is bad;
     /// safe to remove from the graph (Lich's `move` returns `false`).
     MoveFailedRemovable,
@@ -187,6 +191,10 @@ patterns! {
     ],
     RtWait => [
         "...wait",
+    ],
+    TooPoor => [
+        "You don't have enough silvers",
+        "you don't have enough silver",
     ],
     MoveFailedRemovable => [
         "You can't go there",

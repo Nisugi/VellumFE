@@ -488,6 +488,10 @@ enum MazePhase {
 /// How long a move may take before it counts as failed. Generous: RT from
 /// the move itself plus lag both land inside this window.
 const STEP_TIMEOUT_MS: u64 = 8_000;
+/// Withdrawal floor when a fare's price isn't in the route model (no
+/// silver-cost tag): enough for any cart/ferry ticket plus change, matching
+/// the corpus's own errands (River's Rest withdraws 2000).
+const GENERIC_FARE_SILVERS: u64 = 2_000;
 /// Slow crossings (urchin guide, portmaster escort, pass-through) can take many
 /// seconds to confirm in a busy room; they get a longer arrival window so a
 /// slow-but-fine crossing isn't re-sent.
@@ -558,6 +562,10 @@ pub struct TravelTask {
     stash_stack: Vec<super::stash::Stowed>,
     /// The silver the trip needs (0 = free). Set at start; drives funding.
     silver_need: u64,
+    /// A mid-script "not enough silvers" already triggered one bank detour;
+    /// a second means the withdrawal cannot cover the fare - fail the edge
+    /// rather than loop bank trips (the day-pass buyer's `funded` guard).
+    fare_funded: bool,
     /// True while walking the funding detour to a bank (so arrival there
     /// triggers the withdraw rather than a normal arrival).
     funding_bank: Option<u32>,
@@ -626,6 +634,7 @@ impl TravelTask {
             stash: None,
             stash_stack: Vec::new(),
             silver_need,
+            fare_funded: false,
             funding_bank: None,
             confluence: None,
             minotaur: None,
@@ -1806,6 +1815,44 @@ impl TravelTask {
                         continue;
                     }
                     if ctx.now_ms < state.deadline_ms {
+                        // A refused purchase mid-await ("You don't have
+                        // enough silvers" - the mining-cart ticket, ferry
+                        // fares): with Get Silvers on, detour to the bank
+                        // via the same funding pipeline the paid-route
+                        // pre-check uses, then re-plan - the replanned route
+                        // re-crosses this edge with money in pocket. Without
+                        // it (or after one failed attempt), the edge fails
+                        // closed with the reason named.
+                        if ctx.saw(&crate::core::move_feedback::MoveFeedback::TooPoor) {
+                            let get_silvers =
+                                ctx.funding.map(|f| f.get_silvers).unwrap_or(false);
+                            if !get_silvers {
+                                events.push(TravelEvent::Status(
+                                    "not enough silver for this crossing and Get Silvers is off"
+                                        .into(),
+                                ));
+                                self.handle_uncrossable_edge(from, expected, ctx, events);
+                                return;
+                            }
+                            if self.fare_funded {
+                                events.push(TravelEvent::Status(
+                                    "still too poor after withdrawing - the bank can't cover this fare"
+                                        .into(),
+                                ));
+                                self.handle_uncrossable_edge(from, expected, ctx, events);
+                                return;
+                            }
+                            self.fare_funded = true;
+                            self.silver_need = self.silver_need.max(GENERIC_FARE_SILVERS);
+                            events.push(TravelEvent::Status(
+                                "not enough silver for this crossing - detouring to the bank"
+                                    .into(),
+                            ));
+                            self.step = Step::Funding(FundingPhase::AwaitWealth {
+                                sent_ms: self.started_ms,
+                            });
+                            return;
+                        }
                         // Still waiting: suspend with the state intact.
                         awaiting = Some(state);
                         break;
