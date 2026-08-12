@@ -384,6 +384,10 @@ pub enum RemoteDelta {
         right: Option<String>,
     },
     Indicators(StatusInfo),
+    /// Absolute vitals changed (current/max per vital).
+    MiniVitals(Vec<RemoteVital>),
+    /// The spell being prepared changed (None = stopped preparing).
+    PreparedSpell(Option<String>),
     /// Group roster changed. Small and infrequent, so it ships whole rather
     /// than as a member diff.
     Group(crate::core::group::GroupState),
@@ -778,6 +782,12 @@ pub struct RemoteStateSnapshot {
     pub left_hand: Option<String>,
     pub right_hand: Option<String>,
     pub indicators: StatusInfo,
+    /// Absolute vitals (current/max), where percentages are not enough --
+    /// "51/51" tells a healer what "100%" cannot. Empty until the minivitals
+    /// dialog has reported.
+    pub minivitals: Vec<RemoteVital>,
+    /// Spell currently being prepared, if any.
+    pub prepared_spell: Option<String>,
     /// Group roster. Carries `confirmed` so a viewer can distinguish a known
     /// roster from a partial one rather than presenting a guess as fact.
     pub group: crate::core::group::GroupState,
@@ -908,6 +918,38 @@ pub struct RemoteGauges {
 impl RemoteGauges {
     fn is_empty(&self) -> bool {
         self.mind.is_none() && self.encumbrance.is_none() && self.stance.is_none()
+    }
+}
+
+/// One vital with its absolute numbers. Percentages already ride `vitals`;
+/// this is the "226/226" a card shows when the ratio alone is not enough.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct RemoteVital {
+    /// "health", "mana", "stamina", "spirit" (DR concentration maps to mana).
+    pub id: String,
+    pub value: u32,
+    pub max: u32,
+}
+
+impl RemoteVital {
+    /// Build the wire list, skipping vitals the session has not reported --
+    /// `max == 0` means "never seen", and shipping 0/0 would render as a dead
+    /// character.
+    pub fn from_state(state: &crate::core::state::MiniVitalsState) -> Vec<Self> {
+        [
+            ("health", &state.health),
+            ("mana", &state.mana),
+            ("stamina", &state.stamina),
+            ("spirit", &state.spirit),
+        ]
+        .into_iter()
+        .filter(|(_, entry)| entry.max > 0)
+        .map(|(id, entry)| Self {
+            id: id.to_string(),
+            value: entry.value,
+            max: entry.max,
+        })
+        .collect()
     }
 }
 
@@ -1070,6 +1112,8 @@ impl RemoteStateSnapshot {
             left_hand: game_state.left_hand.clone(),
             right_hand: game_state.right_hand.clone(),
             indicators: game_state.status.clone(),
+            minivitals: RemoteVital::from_state(&game_state.minivitals),
+            prepared_spell: game_state.spell.clone(),
             group: game_state.group.clone(),
             roundtime_end: game_state.roundtime_end,
             casttime_end: game_state.casttime_end,
@@ -1652,6 +1696,16 @@ impl RemoteSink {
             let _ = self
                 .delta_tx
                 .send(RemoteDelta::Indicators(snap.indicators.clone()));
+        }
+        if snap.minivitals != self.last.minivitals {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::MiniVitals(snap.minivitals.clone()));
+        }
+        if snap.prepared_spell != self.last.prepared_spell {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::PreparedSpell(snap.prepared_spell.clone()));
         }
         if snap.group != self.last.group {
             let _ = self.delta_tx.send(RemoteDelta::Group(snap.group.clone()));

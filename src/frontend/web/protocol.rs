@@ -115,6 +115,11 @@ struct SnapshotPayload {
     room: RoomPayload,
     hands: HandsPayload,
     indicators: StatusInfo,
+    /// Absolute vitals; omitted until the minivitals dialog reports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    minivitals: Vec<crate::core::remote::RemoteVital>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prepared_spell: Option<String>,
     /// Group roster. Omitted when not grouped, so existing clients that do
     /// not read it see no change on the wire.
     #[serde(default, skip_serializing_if = "group_is_empty")]
@@ -222,6 +227,8 @@ pub fn snapshot_for(
             right: state.right_hand.clone(),
         },
         indicators: state.indicators.clone(),
+        minivitals: state.minivitals.clone(),
+        prepared_spell: state.prepared_spell.clone(),
         group: state.group.clone(),
         rt: RtPayload {
             roundtime_end: state.roundtime_end,
@@ -323,6 +330,12 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
         ),
         RemoteDelta::Indicators(status) => encode("indicators", last_seq, status.clone()),
         RemoteDelta::Group(group) => encode("group", last_seq, group.clone()),
+        RemoteDelta::MiniVitals(vitals) => encode("minivitals", last_seq, vitals.clone()),
+        RemoteDelta::PreparedSpell(spell) => encode(
+            "prepared_spell",
+            last_seq,
+            serde_json::json!({ "spell": spell }),
+        ),
         RemoteDelta::Rt {
             roundtime_end,
             casttime_end,
@@ -653,6 +666,8 @@ impl SubscribeMode {
             Self::Watch => matches!(
                 delta,
                 D::Vitals(_)
+                    | D::MiniVitals(_)
+                    | D::PreparedSpell(_)
                     | D::Indicators(_)
                     | D::Group(_)
                     | D::Rt { .. }

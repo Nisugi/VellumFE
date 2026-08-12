@@ -1977,5 +1977,11 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
   show_encumbrance = false
   show_room = true
   show_self = true
+  show_absolute_vitals = true
+  show_hands = false
+  show_effects = true
+  effect_categories = ["Debuffs", "Cooldowns"]
+  effect_filter = []
+  max_effects = 4
   columns = 0
   card_width = 150.0

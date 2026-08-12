@@ -28,6 +28,18 @@ const STATUS_GLYPHS: &[(&str, &str, Color32)] = &[
     ("diseased", "D", Color32::from_rgb(0x8B, 0x45, 0x13)),
 ];
 
+/// Compact duration: seconds under a minute, else m:ss. A card has no room
+/// for "01:23:45" next to a spell name.
+fn fmt_duration(seconds: i64) -> String {
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 3600 {
+        format!("{}:{:02}", seconds / 60, seconds % 60)
+    } else {
+        format!("{}h", seconds / 3600)
+    }
+}
+
 /// Health band colors. Only health is banded -- the other vitals read as
 /// "how much is left", but health reads as "how much trouble".
 fn health_color(percent: u8) -> Color32 {
@@ -276,11 +288,24 @@ impl VellumGuiApp {
                     }
 
                     if data.show_vitals {
-                        Self::render_peer_vitals(ui, settings, peer);
+                        Self::render_peer_vitals(
+                            ui,
+                            settings,
+                            peer,
+                            data.show_absolute_vitals,
+                        );
                     }
 
                     if data.show_rt {
                         Self::render_peer_rt(ui, settings, peer, now_server);
+                    }
+
+                    if data.show_hands {
+                        Self::render_peer_hands(ui, peer);
+                    }
+
+                    if data.show_effects {
+                        Self::render_peer_effects(ui, data, peer, now_server);
                     }
 
                     if data.show_mind {
@@ -378,27 +403,31 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         settings: &WidgetRenderSettings,
         peer: &PeerStatus,
+        absolute: bool,
     ) {
         let v = &peer.vitals;
         let bars = [
-            ("hp", v.health, health_color(v.health)),
-            ("mp", v.mana, Color32::from_rgb(0x4A, 0x90, 0xD9)),
-            ("st", v.stamina, Color32::from_rgb(0x90, 0xEE, 0x90)),
-            ("sp", v.spirit, Color32::from_rgb(0xDD, 0xA0, 0xDD)),
+            ("hp", "health", v.health, health_color(v.health)),
+            ("mp", "mana", v.mana, Color32::from_rgb(0x4A, 0x90, 0xD9)),
+            ("st", "stamina", v.stamina, Color32::from_rgb(0x90, 0xEE, 0x90)),
+            ("sp", "spirit", v.spirit, Color32::from_rgb(0xDD, 0xA0, 0xDD)),
         ];
-        for (label, percent, fill) in bars {
+        for (label, id, percent, fill) in bars {
+            // Absolute numbers when the peer reported them; percentages are
+            // always available, so they stay the fallback rather than
+            // leaving a blank bar.
+            let text = match (absolute, peer.minivitals.get(id)) {
+                (true, Some((cur, max))) if *max > 0 => {
+                    format!("{} {}/{}", label.to_uppercase(), cur, max)
+                }
+                _ => format!("{} {}%", label.to_uppercase(), percent),
+            };
             let fraction = (percent as f32 / 100.0).clamp(0.0, 1.0);
             // Animation ids MUST be per-character: a shared id would make all
             // six cards animate as one bar.
             let id = format!("ma_{}_{}", peer.port, label);
             let fraction = Self::animated_fraction(ui, &id, fraction);
-            let bar = Self::styled_progress_bar(
-                ui,
-                settings,
-                fraction,
-                fill,
-                format!("{} {}%", label.to_uppercase(), percent),
-            );
+            let bar = Self::styled_progress_bar(ui, settings, fraction, fill, text);
             let resp = ui.add_sized([ui.available_width().max(40.0), 12.0], bar);
             Self::overlay_progress_frame(ui, resp.rect, settings.skin_art.as_deref());
         }
@@ -434,6 +463,98 @@ impl VellumGuiApp {
                 );
             }
         });
+    }
+
+    fn render_peer_hands(ui: &mut egui::Ui, peer: &PeerStatus) {
+        // Only draw what is there: two "empty" lines per card, times six
+        // cards, is noise.
+        for (slot, item) in [("L", &peer.left_hand), ("R", &peer.right_hand)] {
+            if let Some(item) = item.as_deref().filter(|s| !s.is_empty()) {
+                ui.label(RichText::new(format!("{slot} {item}")).small().weak())
+                    .on_hover_text(item);
+            }
+        }
+        if let Some(spell) = peer.prepared_spell.as_deref().filter(|s| !s.is_empty()) {
+            ui.label(
+                RichText::new(format!("\u{25C6} {spell}"))
+                    .small()
+                    .color(Color32::from_rgb(0x9A, 0x7C, 0xE0)),
+            );
+        }
+    }
+
+    /// Debuffs and cooldowns, filtered and capped.
+    ///
+    /// Six characters with unfiltered spell lists is unreadable, so this
+    /// shows only the configured categories, applies the user's name filter,
+    /// and caps the count -- surfacing "+N more" rather than silently
+    /// truncating.
+    fn render_peer_effects(
+        ui: &mut egui::Ui,
+        data: &crate::config::MultiAccountWidgetData,
+        peer: &PeerStatus,
+        now_server: i64,
+    ) {
+        let mut shown = 0usize;
+        let mut hidden = 0usize;
+
+        for category in &data.effect_categories {
+            let Some(content) = peer.effects.get(category) else {
+                continue;
+            };
+            for effect in &content.effects {
+                // Expired entries linger until the game clears them.
+                if let Some(end) = effect.expires_at {
+                    if end <= now_server {
+                        continue;
+                    }
+                }
+                if !data.effect_filter.is_empty() {
+                    let name = effect.text.to_ascii_lowercase();
+                    if !data
+                        .effect_filter
+                        .iter()
+                        .any(|needle| name.contains(&needle.to_ascii_lowercase()))
+                    {
+                        continue;
+                    }
+                }
+                if shown >= data.max_effects {
+                    hidden += 1;
+                    continue;
+                }
+                shown += 1;
+
+                let remaining = effect
+                    .expires_at
+                    .map(|end| (end - now_server).max(0))
+                    .unwrap_or(0);
+                let label = if remaining > 0 {
+                    format!("{} {}", effect.text, fmt_duration(remaining))
+                } else {
+                    effect.text.clone()
+                };
+                // Cooldowns read as "not ready yet", debuffs as "in trouble":
+                // different urgency, different color.
+                let color = if category.eq_ignore_ascii_case("cooldowns") {
+                    Color32::from_rgb(0x8A, 0x9B, 0xB0)
+                } else {
+                    Color32::from_rgb(0xE0, 0x7A, 0x5F)
+                };
+                ui.label(RichText::new(label).small().color(color))
+                    .on_hover_text(format!("{category}: {}", effect.text));
+            }
+        }
+
+        if hidden > 0 {
+            ui.label(
+                RichText::new(format!("+{hidden} more"))
+                    .small()
+                    .weak()
+                    .italics(),
+            )
+            .on_hover_text("Raise the effect limit or narrow the filter in this window's menu");
+        }
     }
 
     /// A gauge the peer has never reported renders as unknown rather than as

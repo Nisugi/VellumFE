@@ -251,6 +251,13 @@ fn apply_frame(peer: &mut PeerStatus, frame: &serde_json::Value) {
             apply_rt(peer, d.get("rt"));
             apply_char_info(peer, d.get("char_info"));
             apply_room(peer, d.get("room"));
+            apply_effects(peer, d.get("effects"));
+            apply_hands(peer, d.get("hands"));
+            apply_minivitals(peer, d.get("minivitals"));
+            peer.prepared_spell = d
+                .get("prepared_spell")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
         }
         "vitals" => apply_vitals(peer, Some(d)),
         "indicators" => apply_indicators(peer, Some(d)),
@@ -259,6 +266,15 @@ fn apply_frame(peer: &mut PeerStatus, frame: &serde_json::Value) {
         "rt" => apply_rt(peer, Some(d)),
         "char_info" => apply_char_info(peer, Some(d)),
         "room" => apply_room(peer, Some(d)),
+        "effects" => apply_effects(peer, Some(d)),
+        "hands" => apply_hands(peer, Some(d)),
+        "minivitals" => apply_minivitals(peer, Some(d)),
+        "prepared_spell" => {
+            peer.prepared_spell = d
+                .get("spell")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+        }
         _ => return,
     }
 
@@ -331,6 +347,46 @@ fn read_gauge(v: Option<&serde_json::Value>) -> Option<Gauge> {
             .unwrap_or_default()
             .to_string(),
     })
+}
+
+/// Effects ship as a flat array of category blocks; the card indexes them by
+/// category, so they are re-keyed here rather than at every read.
+fn apply_effects(peer: &mut PeerStatus, v: Option<&serde_json::Value>) {
+    let Some(v) = v else { return };
+    let Ok(list) = serde_json::from_value::<Vec<crate::data::ActiveEffectsContent>>(v.clone())
+    else {
+        return;
+    };
+    peer.effects = list
+        .into_iter()
+        .map(|content| (content.category.clone(), content))
+        .collect();
+}
+
+fn apply_minivitals(peer: &mut PeerStatus, v: Option<&serde_json::Value>) {
+    let Some(arr) = v.and_then(|v| v.as_array()) else {
+        return;
+    };
+    peer.minivitals = arr
+        .iter()
+        .filter_map(|entry| {
+            Some((
+                entry.get("id")?.as_str()?.to_string(),
+                (
+                    entry.get("value")?.as_u64()? as u32,
+                    entry.get("max")?.as_u64()? as u32,
+                ),
+            ))
+        })
+        .collect();
+}
+
+fn apply_hands(peer: &mut PeerStatus, v: Option<&serde_json::Value>) {
+    let Some(v) = v else { return };
+    // Absent means empty-handed, not unchanged: the delta carries both slots
+    // every time, so a missing key is a genuine "nothing there".
+    peer.left_hand = v.get("left").and_then(|x| x.as_str()).map(str::to_string);
+    peer.right_hand = v.get("right").and_then(|x| x.as_str()).map(str::to_string);
 }
 
 fn apply_room(peer: &mut PeerStatus, v: Option<&serde_json::Value>) {

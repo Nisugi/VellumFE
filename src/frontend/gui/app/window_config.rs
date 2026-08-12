@@ -84,6 +84,11 @@ pub(super) struct MultiAccountConfig {
     pub(super) show_encumbrance: bool,
     pub(super) show_room: bool,
     pub(super) show_self: bool,
+    pub(super) show_absolute_vitals: bool,
+    pub(super) show_hands: bool,
+    pub(super) show_effects: bool,
+    pub(super) effect_filter: String,
+    pub(super) max_effects: usize,
     pub(super) card_width: f32,
 }
 
@@ -369,6 +374,13 @@ impl VellumGuiApp {
                 show_encumbrance: data.show_encumbrance,
                 show_room: data.show_room,
                 show_self: data.show_self,
+                show_absolute_vitals: data.show_absolute_vitals,
+                show_hands: data.show_hands,
+                show_effects: data.show_effects,
+                // Edited as one comma-separated line: a list editor for a
+                // handful of substrings would be heavier than the feature.
+                effect_filter: data.effect_filter.join(", "),
+                max_effects: data.max_effects,
                 card_width: data.card_width,
             });
         }
@@ -702,6 +714,17 @@ impl VellumGuiApp {
                     data.show_encumbrance = ma.show_encumbrance;
                     data.show_room = ma.show_room;
                     data.show_self = ma.show_self;
+                    data.show_absolute_vitals = ma.show_absolute_vitals;
+                    data.show_hands = ma.show_hands;
+                    data.show_effects = ma.show_effects;
+                    data.effect_filter = ma
+                        .effect_filter
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    data.max_effects = ma.max_effects.max(1);
                     data.card_width = ma.card_width;
                     self.app_core.schedule_layout_autosave();
                 }
@@ -1148,10 +1171,40 @@ impl VellumGuiApp {
             let mut changed = false;
             changed |= ui.checkbox(&mut next.show_self, "Your own card").changed();
             changed |= ui.checkbox(&mut next.show_vitals, "Vitals").changed();
+            if next.show_vitals {
+                ui.indent("ma_vitals", |ui| {
+                    changed |= ui
+                        .checkbox(&mut next.show_absolute_vitals, "Show numbers (51/51)")
+                        .changed();
+                });
+            }
             changed |= ui.checkbox(&mut next.show_status, "Status glyphs").changed();
             changed |= ui.checkbox(&mut next.show_rt, "Roundtime").changed();
             changed |= ui.checkbox(&mut next.show_injuries, "Injury doll").changed();
             changed |= ui.checkbox(&mut next.show_room, "Room").changed();
+            changed |= ui.checkbox(&mut next.show_hands, "Hands / casting").changed();
+            changed |= ui
+                .checkbox(&mut next.show_effects, "Debuffs & cooldowns")
+                .changed();
+            if next.show_effects {
+                ui.indent("ma_effects", |ui| {
+                    ui.label(RichText::new("Only show effects matching:").small());
+                    changed |= ui
+                        .text_edit_singleline(&mut next.effect_filter)
+                        .on_hover_text(
+                            "Comma-separated name fragments, e.g. \"sleep, bind, web\".                              Leave empty to show everything.",
+                        )
+                        .changed();
+                    let mut cap = next.max_effects as u32;
+                    if ui
+                        .add(egui::Slider::new(&mut cap, 1..=12).text("Max per card"))
+                        .changed()
+                    {
+                        next.max_effects = cap as usize;
+                        changed = true;
+                    }
+                });
+            }
             changed |= ui.checkbox(&mut next.show_mind, "Mind state").changed();
             changed |= ui.checkbox(&mut next.show_stance, "Stance").changed();
             changed |= ui

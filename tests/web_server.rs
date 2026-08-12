@@ -1203,3 +1203,60 @@ async fn hub_tracks_live_status_deltas_from_a_real_server() {
     assert!(!peer.group.leads(), "now following Zed");
     assert_eq!(peer.vitals.health, 12, "unrelated state must persist");
 }
+
+#[tokio::test]
+async fn hub_receives_effects_hands_and_absolute_vitals() {
+    use vellum_fe::core::multiaccount::PeerStatus;
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    let mut gs = GameState::new();
+    gs.left_hand = Some("a reinforced shield".to_string());
+    gs.right_hand = Some("a longsword".to_string());
+    gs.spell = Some("Spirit Warding I".to_string());
+    gs.minivitals
+        .update_vital("health", 51, 51, "health 51/51".to_string());
+    gs.minivitals
+        .update_vital("mana", 32, 64, "mana 32/64".to_string());
+    gs.effects.insert(
+        "Cooldowns".to_string(),
+        vellum_fe::data::ActiveEffectsContent {
+            category: "Cooldowns".to_string(),
+            effects: vec![vellum_fe::data::ActiveEffect {
+                id: "1".to_string(),
+                text: "Berserk".to_string(),
+                value: 50,
+                time: "00:01:00".to_string(),
+                expires_at: Some(1_760),
+                bar_color: None,
+                text_color: None,
+            }],
+            generation: 1,
+        },
+    );
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let (_client, snapshot) = connect_watching(addr).await;
+
+    let mut peer = PeerStatus::default();
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &snapshot);
+
+    // Absolute vitals: the "51/51" a percentage cannot express.
+    assert_eq!(peer.minivitals.get("health"), Some(&(51, 51)));
+    assert_eq!(peer.minivitals.get("mana"), Some(&(32, 64)));
+    // Stamina/spirit never reported: absent, not 0/0, which would render as
+    // a dead character.
+    assert!(peer.minivitals.get("stamina").is_none());
+
+    assert_eq!(peer.left_hand.as_deref(), Some("a reinforced shield"));
+    assert_eq!(peer.right_hand.as_deref(), Some("a longsword"));
+    assert_eq!(peer.prepared_spell.as_deref(), Some("Spirit Warding I"));
+
+    let cooldowns = peer.effects.get("Cooldowns").expect("cooldowns category");
+    assert_eq!(cooldowns.effects[0].text, "Berserk");
+    assert_eq!(
+        cooldowns.effects[0].expires_at,
+        Some(1_760),
+        "absolute expiry is what lets the card count down locally"
+    );
+}

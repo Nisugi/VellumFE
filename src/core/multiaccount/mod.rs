@@ -58,6 +58,18 @@ pub struct PeerStatus {
     pub injuries: HashMap<String, u8>,
     pub group: GroupState,
 
+    /// Active effects by category ("ActiveSpells", "Buffs", "Debuffs",
+    /// "Cooldowns"). Entries carry an absolute `expires_at`, so a card counts
+    /// down locally rather than the peer streaming ticks.
+    pub effects: HashMap<String, crate::data::ActiveEffectsContent>,
+    /// What the character is holding, and what they are preparing.
+    /// Absolute vitals by id ("health" -> (current, max)). Empty until the
+    /// peer's minivitals dialog reports; percentages in `vitals` always work.
+    pub minivitals: BTreeMap<String, (u32, u32)>,
+    pub left_hand: Option<String>,
+    pub right_hand: Option<String>,
+    pub prepared_spell: Option<String>,
+
     pub mind: Option<Gauge>,
     pub encumbrance: Option<Gauge>,
     pub stance: Option<Gauge>,
@@ -121,6 +133,14 @@ impl PeerStatus {
             indicators: game_state.status.clone(),
             injuries: game_state.injuries.clone(),
             group: game_state.group.clone(),
+            effects: game_state.effects.clone(),
+            minivitals: crate::core::remote::RemoteVital::from_state(&game_state.minivitals)
+                .into_iter()
+                .map(|v| (v.id, (v.value, v.max)))
+                .collect(),
+            left_hand: game_state.left_hand.clone(),
+            right_hand: game_state.right_hand.clone(),
+            prepared_spell: game_state.spell.clone(),
             mind: gauge(
                 game_state.gs4_experience.mind_state_value,
                 &game_state.gs4_experience.mind_state_text,

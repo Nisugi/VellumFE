@@ -1016,6 +1016,28 @@ pub struct MultiAccountWidgetData {
     /// On by default: without it a group of three shows only two cards, and
     /// the others have nothing to be compared against.
     pub show_self: bool,
+    /// Show absolute vitals ("51/51") instead of percentages, where the peer
+    /// has reported them. Percentages remain the fallback.
+    pub show_absolute_vitals: bool,
+    /// Hands, and the spell being prepared.
+    pub show_hands: bool,
+    /// Debuffs and cooldowns, filtered by `effect_filter`.
+    pub show_effects: bool,
+    /// Which effect categories to draw, in order. Defaults to the two that
+    /// answer "is this character in trouble" -- active spells and buffs are
+    /// long lists that would bury the card.
+    pub effect_categories: Vec<String>,
+    /// Case-insensitive substrings; an effect shows only if its name contains
+    /// one of these. Empty means show everything in the chosen categories.
+    ///
+    /// A filter rather than a fixed list because effect names vary by
+    /// profession and society, and a hardcoded set would be wrong for
+    /// somebody. Empty-means-all keeps the first run useful: you see
+    /// everything, then narrow it.
+    pub effect_filter: Vec<String>,
+    /// Cap on effects drawn per card, after filtering. Six characters with
+    /// unbounded lists is unreadable regardless of the filter.
+    pub max_effects: usize,
     /// Cards per row before wrapping. 0 means fit as many as the window is
     /// wide enough for.
     pub columns: usize,
@@ -1035,6 +1057,12 @@ impl Default for MultiAccountWidgetData {
             show_encumbrance: false,
             show_room: true,
             show_self: true,
+            show_absolute_vitals: true,
+            show_hands: false,
+            show_effects: true,
+            effect_categories: vec!["Debuffs".to_string(), "Cooldowns".to_string()],
+            effect_filter: Vec::new(),
+            max_effects: 4,
             columns: 0,
             card_width: 150.0,
         }
