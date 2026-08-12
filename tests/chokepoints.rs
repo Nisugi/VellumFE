@@ -200,6 +200,42 @@ fn residue_costs_reachability() {
         );
     }
 
+    // Peel the onion: repeatedly un-ban the current cut and recompute, so
+    // SERIAL gates show as successive waves instead of one layer per fix.
+    // Each wave prints what crossing it would unlock — the roadmap for the
+    // remaining hard edges.
+    let mut peeled = banned.clone();
+    let mut wave = 0;
+    loop {
+        wave += 1;
+        let now = reachable(&db, source, &peeled);
+        let cut_now: Vec<(u32, u32)> = peeled
+            .iter()
+            .filter(|(f, t)| now.contains(f) && !now.contains(t))
+            .copied()
+            .collect();
+        if cut_now.is_empty() || wave > 12 {
+            println!("\nafter wave {wave}: {} rooms still unreachable, cut empty or depth cap", full.len() - now.len());
+            break;
+        }
+        let before = now.len();
+        for e in &cut_now {
+            peeled.remove(e);
+        }
+        let after = reachable(&db, source, &peeled).len();
+        println!("\nwave {wave}: crossing {} edges unlocks {} rooms:", cut_now.len(), after - before);
+        let mut cut_now = cut_now;
+        cut_now.sort();
+        for (f, t) in &cut_now {
+            println!(
+                "    {f} -> {t}  [{}]",
+                db.room(*t)
+                    .and_then(|r| r.location.as_deref())
+                    .unwrap_or("?")
+            );
+        }
+    }
+
     // Sanity: banning edges can only ever remove reachability, never add it.
     assert!(
         degraded.len() <= full.len(),

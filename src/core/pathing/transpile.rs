@@ -331,12 +331,46 @@ re!(
 re!(BLOCK_OPEN, r"^(if|unless|while|until)\s+(.+)$");
 // `XMLData.room_title == '…'` — "still in the starting room".
 re!(ROOM_TITLE_COND, r"^XMLData\.room_title\s*==\s*'[^']*'$");
+// A move used AS a condition (`unless move 'go door'` = "if it failed").
+re!(COND_MOVE, r#"^move\s*\(?\s*['"]([^'"]+)['"]\s*\)?$"#);
+// Group scaffolding, stripped textually before parsing. The preamble scrapes
+// who followed us in; the wait block holds for their arrival lines. A native
+// walker does not escort groups, so solo semantics — neither block runs —
+// are the crossing. Both the `group_members` and `$group_members` spellings
+// occur.
+re!(
+    GROUP_PREAMBLE_STRIP,
+    r"(?s)^\$?group_members = nil;\s*clear\.reverse\.each \{[^{}]*(?:\{[^{}]*\}[^{}]*)*\};(.*)$"
+);
+re!(
+    GROUP_WAIT_STRIP,
+    r"(?s)(?:if \$?group_members\b.*?end while \$?group_members\.length > 0\s*;?\s*end;?|begin\b.*?end while \$?group_members\.length > 0\s*;?\s*end;?)"
+);
+// Locksmehr mist trail (1042): the trail's direction is read from a look,
+// then walked — the capture machinery's home turf.
+re!(
+    MIST_TRAIL,
+    r#"(?s)^move 'climb boulder'\s+fput 'look trail'\s+dir = matchfindword "You peer into the mist and see that the trail heads off to the \?"\s+move 'down'\s+sleep \d+ if running\?\('[^']+'\)\s+move dir$"#
+);
+// Melgorehn's Reach cable cab, boarding side (18180): if the cab isn't
+// here, close the dam and wait out its multi-minute crawl up; then open the
+// dam and board.
+re!(
+    MELGOREHN_CAB,
+    r#"(?s)^sleep\(0\.2\);\s*refill_hands=false;\(refill_hands = true;empty_hands;\) if GameObj\.right_hand\.id or GameObj\.left_hand\.id;\s*if !GameObj\.loot\.find\{\|o\| o\.name=='wooden cab'\};\s*dothistimeout "close dam",3,/[^/]+/;\s*_respond [^;]+;\s*waitfor "([^"]+)";\s*end;\s*fput "open dam";\s*sleep\(0\.5\);\s*waitrt\?;\s*fill_hands if refill_hands;\s*move\('go cab'\);?\s*$"#
+);
+// The dothistimeout spelling of the begin-until search hunt (Vipershroud
+// crack, 1230).
+re!(
+    BEGIN_DOTHIS_UNTIL,
+    r"(?s)^begin;\s*(\w+) = dothistimeout '([^']+)', ([\d.]+), /([^/]+)/;\s*waitrt\?;\s*end until (\w+) =~ /([^/]+)/;\s*move\s*\(?'([^']+)'\)?$"
+);
 // Script bookkeeping with no travel meaning. `$go2_restart = true` and
 // `$SILVERWOOD_TOWN=:imt` are Lich-side flags; a comment or bare `nil` is
 // nothing. These are dropped, not refused.
 re!(
     IGNORABLE_STATEMENT,
-    r#"^(?:#.*|nil|true|\$\w+\s*=.*|UserVars\.\w+\s*=.*|echo\s+['"].*)$"#
+    r#"^(?:#.*|nil|true|\$\w+\s*=.*|UserVars\.\w+\s*=.*|echo\s+['"].*|_respond.*)$"#
 );
 // `dothistimeout 'cmd', 10, /pattern/` as a lone statement: send and await,
 // advisory on timeout — matching the full-body DOTHIS treatment, where the
@@ -485,6 +519,8 @@ re!(STMT_SPELL_CAST, r"^Spell\[\d+\]\.cast$");
 // unevaluable natively, but when it guards pure preparation the cautious
 // branch — always do the prep — is safe for everyone.
 re!(SKILL_COND, r"^Skills\.\w+\s*[<>=]");
+// `running?('agoto')` — is a Lich script running? Natively: never.
+re!(RUNNING_COND, r"^running\?\('[^']+'\)$");
 // `loop { r = dothistimeout 'CMD', T, /…/; waitrt?; break if r =~ /good/ };
 // move 'M'` — retry a lever/mechanism until it answers, then through
 // (Darkstone's second drawbridge lever).
@@ -1273,6 +1309,17 @@ fn transpile_sequence(src: &str) -> Option<Vec<WalkAction>> {
     if let Some(c) = SPELL_PREP_PREFIX.captures(body) {
         return transpile_sequence(&c[1]);
     }
+    // Group scaffolding strips: solo semantics are the crossing (see the
+    // regex comments). Textual, before parsing, because the wait block's
+    // innards (begin…end while, elsif) are beyond the unit parser and never
+    // need to run.
+    if let Some(c) = GROUP_PREAMBLE_STRIP.captures(body) {
+        return transpile_sequence(c[1].trim());
+    }
+    if GROUP_WAIT_STRIP.is_match(body) {
+        let stripped = GROUP_WAIT_STRIP.replace_all(body, "").to_string();
+        return transpile_sequence(stripped.trim());
+    }
     transpile_fragment(body)
 }
 
@@ -1375,6 +1422,19 @@ fn transpile_units(units: &[Unit]) -> Option<Vec<WalkAction>> {
                         body: moves_to_steps(then),
                         until: RepeatUntil::RoomChanged,
                         max: MAX_RETRY_LOOP,
+                    });
+                    continue;
+                }
+                // `unless move 'go door'; <recovery>; end` — a move as the
+                // condition is Ruby for "if it didn't work": TryMove, with
+                // the block as the fallback.
+                if let Some(m) = COND_MOVE.captures(cond) {
+                    if kw != "unless" || !els.is_empty() || then.is_empty() {
+                        return None;
+                    }
+                    actions.push(WalkAction::TryMove {
+                        cmd: m[1].to_string(),
+                        fallback: then,
                     });
                     continue;
                 }
@@ -1765,6 +1825,30 @@ fn transpile_block_families(body: &str) -> Option<Vec<WalkAction>> {
             WalkAction::Move(c[1].to_string()),
         ]);
     }
+    // The dothistimeout spelling of the begin-until hunt (Vipershroud crack).
+    if let Some(c) = BEGIN_DOTHIS_UNTIL.captures(body) {
+        if c[1] != c[5] {
+            return None;
+        }
+        let noun = c[7].rsplit(' ').next()?.to_string();
+        return Some(vec![
+            WalkAction::Repeat {
+                body: vec![
+                    WalkAction::Await {
+                        cmd: Some(c[2].to_string()),
+                        pattern: Box::new(AwaitPattern::new(&c[6])?),
+                        timeout: c[3].parse().ok()?,
+                        on_timeout: OnTimeout::Continue,
+                        if_match: None,
+                    },
+                    WalkAction::WaitRt,
+                ],
+                until: RepeatUntil::Cond(Cond::RoomHasObject(noun)),
+                max: MAX_RETRY_LOOP,
+            },
+            WalkAction::Move(c[7].to_string()),
+        ]);
+    }
     // Darkstone's inner lever: pull until it gives, then through the
     // portcullis. Await's Retry re-sends once; a lever that won't budge
     // twice (a strength check) fails the edge closed.
@@ -1824,6 +1908,59 @@ fn transpile_block_families(body: &str) -> Option<Vec<WalkAction>> {
                 WalkAction::FillHands,
             ],
         }]);
+    }
+    // Locksmehr mist trail: climb the boulder, read which way the trail
+    // heads, climb down, walk that way. The direction is a named capture
+    // interpolated into the final move.
+    if MIST_TRAIL.is_match(body) {
+        return Some(vec![
+            WalkAction::StepMove("climb boulder".into()),
+            WalkAction::Await {
+                cmd: Some("look trail".into()),
+                pattern: Box::new(AwaitPattern::new(
+                    r"You peer into the mist and see that the trail heads off to the (?P<dir>\w+)",
+                )?),
+                timeout: 10.0,
+                on_timeout: OnTimeout::Retry,
+                if_match: None,
+            },
+            WalkAction::StepMove("down".into()),
+            WalkAction::Move("{capture:dir}".into()),
+        ]);
+    }
+    // Melgorehn's cable cab, boarding side: summon the cab if it isn't
+    // here (close dam, wait out the ~4.5 minute crawl), then open and board.
+    if let Some(c) = MELGOREHN_CAB.captures(body) {
+        return Some(vec![
+            WalkAction::EmptyHands,
+            WalkAction::If {
+                cond: Cond::Not(Box::new(Cond::RoomHasObject("wooden cab".into()))),
+                then: vec![
+                    WalkAction::Await {
+                        cmd: Some("close dam".into()),
+                        pattern: Box::new(AwaitPattern::new(
+                            "slides closed|already closed",
+                        )?),
+                        timeout: 5.0,
+                        on_timeout: OnTimeout::Retry,
+                        if_match: None,
+                    },
+                    WalkAction::Await {
+                        cmd: None,
+                        pattern: Box::new(AwaitPattern::new(&regex::escape(&c[1]))?),
+                        timeout: WAITFOR_TIMEOUT_SECS,
+                        on_timeout: OnTimeout::Fail,
+                        if_match: None,
+                    },
+                ],
+                els: Vec::new(),
+            },
+            WalkAction::Put("open dam".into()),
+            WalkAction::Sleep(0.5),
+            WalkAction::WaitRt,
+            WalkAction::FillHands,
+            WalkAction::Move("go cab".into()),
+        ]);
     }
     // Karazja: wander the shifting jungle until the feature shows.
     if let Some(c) = WALK_UNTIL_LOOT.captures(body) {
@@ -1954,8 +2091,14 @@ fn transpile_statement(statement: &str) -> Option<Vec<WalkAction>> {
             }
             // `... if group_members` runs only when grouped. A native walker
             // does not escort groups, so the solo behavior — skip it — is the
-            // crossing; `unless group_members` inverts to "always".
-            if cond_src.trim() == "group_members" {
+            // crossing; `unless group_members` inverts to "always". The same
+            // logic covers `running?('script')`: no Lich script runs here,
+            // so the condition is simply false.
+            let cond_trim = cond_src.trim();
+            if cond_trim == "group_members"
+                || cond_trim == "$group_members"
+                || RUNNING_COND.is_match(cond_trim)
+            {
                 return Some(match keyword {
                     "if" => Vec::new(),
                     _ => inner,
@@ -2109,6 +2252,10 @@ fn transpile_statement(statement: &str) -> Option<Vec<WalkAction>> {
 /// step it required.
 fn statement_condition(raw: &str) -> Option<Cond> {
     let c = raw.trim().trim_end_matches(';').trim();
+    // `!cond` — plain Ruby negation.
+    if let Some(rest) = c.strip_prefix('!') {
+        return statement_condition(rest).map(|inner| Cond::Not(Box::new(inner)));
+    }
     if COND_STANDING.is_match(c) {
         return Some(Cond::Standing);
     }
