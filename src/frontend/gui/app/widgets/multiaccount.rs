@@ -343,6 +343,46 @@ impl VellumGuiApp {
                                 "Disconnected \u{2014} last known values"
                             });
                         }
+                        // Room id, right-aligned opposite the name -- bare
+                        // number, no label; the room NAME rides the hover.
+                        // Red is the "not with you" cue.
+                        if data.show_room {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if let Some(id) = &peer.room_id {
+                                        let text = RichText::new(id.as_str()).small();
+                                        let text = if elsewhere {
+                                            text.color(Color32::from_rgb(0xFF, 0x88, 0x88))
+                                        } else {
+                                            text.weak()
+                                        };
+                                        let hover = match (&peer.room_name, elsewhere) {
+                                            (Some(name), true) => {
+                                                format!("{name} \u{2014} not with you")
+                                            }
+                                            (Some(name), false) => {
+                                                format!("{name} \u{2014} here with you")
+                                            }
+                                            (None, true) => {
+                                                "In a different room from you".to_string()
+                                            }
+                                            (None, false) => "Here with you".to_string(),
+                                        };
+                                        ui.label(text).on_hover_text(hover);
+                                    } else if peer.room_name.is_some() {
+                                        // Name but no id (direct connect
+                                        // without Lich): a marker beats a
+                                        // blank corner; the name is on hover.
+                                        ui.label(RichText::new("?").weak().small())
+                                            .on_hover_text(format!(
+                                                "{} \u{2014} room id unknown",
+                                                peer.room_name.as_deref().unwrap_or("")
+                                            ));
+                                    }
+                                },
+                            );
+                        }
                     });
 
                     // Rows are drawn in the configured order so a card can
@@ -480,35 +520,10 @@ impl VellumGuiApp {
                     );
                 });
             }
-            "room" if data.show_room => Self::render_peer_room(ui, peer, elsewhere),
             _ => {}
         }
     }
 
-    /// Room id, colored by whether they are with you. The id is what the
-    /// proximity check compares and what you would type to travel there; the
-    /// name rides the hover.
-    fn render_peer_room(ui: &mut egui::Ui, peer: &PeerStatus, elsewhere: bool) {
-        if let Some(id) = &peer.room_id {
-            let text = RichText::new(format!("#{id}")).small();
-            let text = if elsewhere {
-                text.color(Color32::from_rgb(0xFF, 0x88, 0x88))
-            } else {
-                text.weak()
-            };
-            let hover = match (&peer.room_name, elsewhere) {
-                (Some(name), true) => format!("{name} \u{2014} not with you"),
-                (Some(name), false) => format!("{name} \u{2014} here with you"),
-                (None, true) => "In a different room from you".to_string(),
-                (None, false) => "Here with you".to_string(),
-            };
-            ui.label(text).on_hover_text(hover);
-        } else if let Some(name) = &peer.room_name {
-            // No id (direct connect without Lich): the name beats nothing.
-            ui.label(RichText::new(name).small().weak())
-                .on_hover_text("Room id unknown \u{2014} proximity not checked");
-        }
-    }
 
     /// Active conditions as pictograms, falling back to a letter for ids the
     /// icon set does not cover.

@@ -666,6 +666,11 @@ impl SubscribeMode {
             Self::Watch => matches!(
                 delta,
                 D::Vitals(_)
+                    // Room identity drives the card's "not with you" cue; the
+                    // server slims the prose out of the delta for watchers
+                    // before encoding, so this ships name + id, not the
+                    // description.
+                    | D::Room { .. }
                     | D::MiniVitals(_)
                     | D::PreparedSpell(_)
                     | D::Indicators(_)

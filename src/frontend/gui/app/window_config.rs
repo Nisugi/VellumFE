@@ -1221,6 +1221,12 @@ impl VellumGuiApp {
             let mut next = ma.clone();
             let mut changed = false;
             changed |= ui.checkbox(&mut next.show_self, "Your own card").changed();
+            changed |= ui
+                .checkbox(&mut next.show_room, "Room id in header")
+                .on_hover_text(
+                    "The room number, top-right, red when that character is                      not in your room. Hover it for the room name.",
+                )
+                .changed();
             if next.show_vitals {
                 ui.indent("ma_vitals", |ui| {
                     changed |= ui

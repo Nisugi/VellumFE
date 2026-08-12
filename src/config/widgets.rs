@@ -1049,7 +1049,8 @@ pub struct MultiAccountWidgetData {
     pub merged_rows: Vec<String>,
     /// Row order within a card, top to bottom. Names match the toggles:
     /// "status", "vitals", "rt", "hands", "effects", "mind", "stance",
-    /// "field_exp", "encumbrance", "injuries", "room".
+    /// "field_exp", "encumbrance", "injuries". The room id is not a row --
+    /// it renders in the card header, gated by `show_room`.
     ///
     /// Rows not listed are appended in their default order, so an old config
     /// (or a partial list) still shows everything -- a missing name hides
@@ -1112,7 +1113,6 @@ impl MultiAccountWidgetData {
         "field_exp",
         "encumbrance",
         "injuries",
-        "room",
     ];
 
     /// Human label for a row id, for the editor list.
@@ -1679,9 +1679,9 @@ mod multiaccount_row_tests {
     fn a_partial_order_keeps_unlisted_rows() {
         // Omitting a row must not hide it -- the checkbox is what hides.
         let mut data = MultiAccountWidgetData::default();
-        data.row_order = vec!["room".to_string(), "vitals".to_string()];
+        data.row_order = vec!["injuries".to_string(), "vitals".to_string()];
         let rows: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
-        assert_eq!(&rows[..2], &["room".to_string(), "vitals".to_string()]);
+        assert_eq!(&rows[..2], &["injuries".to_string(), "vitals".to_string()]);
         assert_eq!(
             rows.len(),
             MultiAccountWidgetData::ROWS.len(),
@@ -1694,10 +1694,10 @@ mod multiaccount_row_tests {
         // A stale config naming a row that no longer exists must not add a
         // phantom entry the editor would render as "Unknown row".
         let mut data = MultiAccountWidgetData::default();
-        data.row_order = vec!["nonsense".to_string(), "room".to_string()];
+        data.row_order = vec!["nonsense".to_string(), "injuries".to_string()];
         let rows: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
         assert!(!rows.iter().any(|r| r == "nonsense"));
-        assert_eq!(rows[0], "room");
+        assert_eq!(rows[0], "injuries");
     }
 
     #[test]
@@ -1725,9 +1725,9 @@ mod multiaccount_row_tests {
         let first: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
         assert_eq!(first[0], "status", "already first, stays first");
 
-        data.move_row("room", false);
+        data.move_row("injuries", false);
         let last: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
-        assert_eq!(last[last.len() - 1], "room", "already last, stays last");
+        assert_eq!(last[last.len() - 1], "injuries", "already last, stays last");
     }
 
     #[test]

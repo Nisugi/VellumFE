@@ -1302,3 +1302,44 @@ async fn field_exp_is_absent_until_both_halves_are_known() {
 
     assert_eq!(peer.field_exp, None);
 }
+
+#[tokio::test]
+async fn watchers_receive_room_changes_without_the_prose() {
+    use vellum_fe::core::multiaccount::PeerStatus;
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    let (mut client, _) = connect_watching(addr).await;
+
+    // A room change after connect. Before the fix, Room was not in the watch
+    // whitelist at all, so a watcher's room froze at whatever the connect
+    // snapshot held -- or stayed empty forever if the peer had not logged in
+    // yet. That is why the card's room number never appeared.
+    let mut gs = GameState::new();
+    gs.room_name = Some("Town Square".to_string());
+    gs.room_id = Some("12345".to_string());
+    gs.exits = vec!["north".to_string()];
+    gs.room_description = vec![StyledLine {
+        segments: vec![TextSegment::plain("A wide plaza bustles with traffic.")],
+        stream: "main".to_string(),
+        timestamp: None,
+    }];
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let frame = read_json_timeout(&mut client).await;
+    assert_eq!(frame["t"], "room", "got {}", frame["t"]);
+    assert_eq!(frame["d"]["id"], "12345");
+    assert_eq!(frame["d"]["name"], "Town Square");
+    // The prose is the bulk; a watcher must not pay for it.
+    assert!(
+        frame["d"].get("description").is_none()
+            || frame["d"]["description"].as_array().is_some_and(|a| a.is_empty()),
+        "prose must be stripped for watchers: {}",
+        frame["d"]
+    );
+
+    // And the hub applies it.
+    let mut peer = PeerStatus::default();
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &frame);
+    assert_eq!(peer.room_id.as_deref(), Some("12345"));
+    assert_eq!(peer.room_name.as_deref(), Some("Town Square"));
+}

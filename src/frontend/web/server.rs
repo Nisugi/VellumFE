@@ -1297,6 +1297,21 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                     if !sub.wants(&d) {
                         continue;
                     }
+                    // A watcher wants to know WHERE a peer is, not the prose
+                    // describing it -- slim the Room delta down to name + id
+                    // before encoding, mirroring what the watch snapshot does.
+                    let d = match (&d, sub) {
+                        (
+                            RemoteDelta::Room { name, id, .. },
+                            protocol::SubscribeMode::Watch,
+                        ) => RemoteDelta::Room {
+                            name: name.clone(),
+                            id: id.clone(),
+                            exits: Vec::new(),
+                            description: Vec::new(),
+                        },
+                        _ => d,
+                    };
                     let last_seq = state
                         .handles
                         .buffer
