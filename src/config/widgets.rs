@@ -1095,119 +1095,181 @@ impl Default for MultiAccountWidgetData {
 }
 
 
-impl MultiAccountWidgetData {
-    /// Canonical row ids, in their default top-to-bottom order.
-    pub const ROWS: &'static [&'static str] = &[
-        // Roundtime leads: it is the most time-critical thing on the card and
-        // the only value that is actionable within seconds. Status icons
-        // follow and share its line by default -- both are short, and order
-        // and merge have to agree or the pairing lands on the wrong
-        // neighbour.
-        "rt",
-        "status",
-        "vitals",
-        "hands",
-        "effects",
-        "mind",
-        "stance",
-        "field_exp",
-        "encumbrance",
-        "injuries",
+
+/// One row of a multi-account card, as a real type.
+///
+/// Rows used to be bare strings matched in SIX parallel tables across three
+/// files (order list, label, shown, set_shown, stretches, render arm), and
+/// five of the six failed silently on a missed arm -- a checkbox that
+/// toggled nothing, a row that never drew. The enum makes every table an
+/// exhaustive match the compiler enforces; the TOML representation stays the
+/// same strings via `id`/`from_id`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CardRow {
+    Rt,
+    Status,
+    Vitals,
+    Hands,
+    Effects,
+    Mind,
+    Stance,
+    FieldExp,
+    Encumbrance,
+    Injuries,
+}
+
+impl CardRow {
+    /// Default top-to-bottom order. Roundtime leads -- the most time-critical
+    /// value on the card -- with the status icons sharing its line.
+    pub const ALL: [CardRow; 10] = [
+        CardRow::Rt,
+        CardRow::Status,
+        CardRow::Vitals,
+        CardRow::Hands,
+        CardRow::Effects,
+        CardRow::Mind,
+        CardRow::Stance,
+        CardRow::FieldExp,
+        CardRow::Encumbrance,
+        CardRow::Injuries,
     ];
 
-    /// Human label for a row id, for the editor list.
-    pub fn row_label(row: &str) -> &'static str {
-        match row {
-            "status" => "Status icons",
-            "vitals" => "Vitals",
-            "rt" => "Roundtime",
-            "hands" => "Hands / casting",
-            "effects" => "Debuffs & cooldowns",
-            "mind" => "Mind state",
-            "stance" => "Stance",
-            "field_exp" => "Field experience",
-            "encumbrance" => "Encumbrance",
-            "injuries" => "Injury doll",
-            "room" => "Room",
-            _ => "Unknown row",
+    /// The TOML/config string for this row (row_order, merged_rows).
+    pub fn id(self) -> &'static str {
+        match self {
+            CardRow::Rt => "rt",
+            CardRow::Status => "status",
+            CardRow::Vitals => "vitals",
+            CardRow::Hands => "hands",
+            CardRow::Effects => "effects",
+            CardRow::Mind => "mind",
+            CardRow::Stance => "stance",
+            CardRow::FieldExp => "field_exp",
+            CardRow::Encumbrance => "encumbrance",
+            CardRow::Injuries => "injuries",
         }
     }
 
+    /// Parse a config string; unknown (stale) names yield None and are
+    /// dropped rather than rendering as phantom rows.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|row| row.id() == id)
+    }
+
+    /// Human label for the editor list.
+    pub fn label(self) -> &'static str {
+        match self {
+            CardRow::Rt => "Roundtime",
+            CardRow::Status => "Status icons",
+            CardRow::Vitals => "Vitals",
+            CardRow::Hands => "Hands / casting",
+            CardRow::Effects => "Debuffs & cooldowns",
+            CardRow::Mind => "Mind state",
+            CardRow::Stance => "Stance",
+            CardRow::FieldExp => "Field experience",
+            CardRow::Encumbrance => "Encumbrance",
+            CardRow::Injuries => "Injury doll",
+        }
+    }
+
+    /// Whether the row fills the width it is given (bars and the doll) or
+    /// sizes to its own content (labels, icon strips). Decides width shares
+    /// when rows share a line.
+    pub fn stretches(self) -> bool {
+        match self {
+            CardRow::Vitals
+            | CardRow::Mind
+            | CardRow::Stance
+            | CardRow::FieldExp
+            | CardRow::Encumbrance
+            | CardRow::Injuries => true,
+            CardRow::Rt | CardRow::Status | CardRow::Hands | CardRow::Effects => false,
+        }
+    }
+}
+
+impl MultiAccountWidgetData {
     /// Rows in display order, paired with whether each is shown. Rows missing
     /// from `row_order` keep their default position, so a partial list never
     /// hides anything -- the checkbox is what hides.
-    pub fn ordered_rows(&self) -> Vec<(String, bool)> {
-        let mut order: Vec<String> = self
+    pub fn ordered_rows(&self) -> Vec<(CardRow, bool)> {
+        let mut order: Vec<CardRow> = self
             .row_order
             .iter()
-            .filter(|name| Self::ROWS.contains(&name.as_str()))
-            .cloned()
+            .filter_map(|name| CardRow::from_id(name))
             .collect();
-        for row in Self::ROWS {
-            if !order.iter().any(|name| name == row) {
-                order.push((*row).to_string());
+        for row in CardRow::ALL {
+            if !order.contains(&row) {
+                order.push(row);
             }
         }
         order
             .into_iter()
-            .map(|row| {
-                let shown = self.row_shown(&row);
-                (row, shown)
-            })
+            .map(|row| (row, self.row_shown(row)))
             .collect()
     }
 
-    /// Whether a row is currently enabled.
-    pub fn row_shown(&self, row: &str) -> bool {
+    /// Whether a row is currently enabled. Exhaustive: a new row cannot ship
+    /// with a checkbox that silently toggles nothing.
+    pub fn row_shown(&self, row: CardRow) -> bool {
         match row {
-            "status" => self.show_status,
-            "vitals" => self.show_vitals,
-            "rt" => self.show_rt,
-            "hands" => self.show_hands,
-            "effects" => self.show_effects,
-            "mind" => self.show_mind,
-            "stance" => self.show_stance,
-            "field_exp" => self.show_field_exp,
-            "encumbrance" => self.show_encumbrance,
-            "injuries" => self.show_injuries,
-            "room" => self.show_room,
-            _ => false,
+            CardRow::Status => self.show_status,
+            CardRow::Vitals => self.show_vitals,
+            CardRow::Rt => self.show_rt,
+            CardRow::Hands => self.show_hands,
+            CardRow::Effects => self.show_effects,
+            CardRow::Mind => self.show_mind,
+            CardRow::Stance => self.show_stance,
+            CardRow::FieldExp => self.show_field_exp,
+            CardRow::Encumbrance => self.show_encumbrance,
+            CardRow::Injuries => self.show_injuries,
         }
     }
 
-    /// Enable or disable a row by id.
-    pub fn set_row_shown(&mut self, row: &str, on: bool) {
+    /// Enable or disable a row.
+    pub fn set_row_shown(&mut self, row: CardRow, on: bool) {
         match row {
-            "status" => self.show_status = on,
-            "vitals" => self.show_vitals = on,
-            "rt" => self.show_rt = on,
-            "hands" => self.show_hands = on,
-            "effects" => self.show_effects = on,
-            "mind" => self.show_mind = on,
-            "stance" => self.show_stance = on,
-            "field_exp" => self.show_field_exp = on,
-            "encumbrance" => self.show_encumbrance = on,
-            "injuries" => self.show_injuries = on,
-            "room" => self.show_room = on,
-            _ => {}
+            CardRow::Status => self.show_status = on,
+            CardRow::Vitals => self.show_vitals = on,
+            CardRow::Rt => self.show_rt = on,
+            CardRow::Hands => self.show_hands = on,
+            CardRow::Effects => self.show_effects = on,
+            CardRow::Mind => self.show_mind = on,
+            CardRow::Stance => self.show_stance = on,
+            CardRow::FieldExp => self.show_field_exp = on,
+            CardRow::Encumbrance => self.show_encumbrance = on,
+            CardRow::Injuries => self.show_injuries = on,
         }
     }
 
+    /// Raw membership in the merge set -- what the config STORES. The editor
+    /// reads and writes this; only the renderer applies the positional "first
+    /// row cannot merge" rule. Conflating the two was a data-loss bug: the
+    /// view snapshot read the positional answer (false for whatever row was
+    /// first) and wrote it back on any unrelated edit, deleting the stored
+    /// flag.
+    pub fn row_merge_flag(&self, row: CardRow) -> bool {
+        self.merged_rows.iter().any(|r| r == row.id())
+    }
 
-    /// Whether this row shares a line with the row above it. The first row
-    /// can never merge -- there is nothing above it to join.
-    pub fn row_merged(&self, row: &str) -> bool {
-        if self.ordered_rows().first().is_some_and(|(first, _)| first == row) {
+    /// Whether this row RENDERS on the line above it: stored flag, unless the
+    /// row is first (nothing above it to join).
+    pub fn row_merged(&self, row: CardRow) -> bool {
+        if self
+            .ordered_rows()
+            .first()
+            .is_some_and(|(first, _)| *first == row)
+        {
             return false;
         }
-        self.merged_rows.iter().any(|r| r == row)
+        self.row_merge_flag(row)
     }
 
     /// Set or clear a row's merge-with-above flag.
-    pub fn set_row_merged(&mut self, row: &str, merged: bool) {
-        let present = self.merged_rows.iter().position(|r| r == row);
+    pub fn set_row_merged(&mut self, row: CardRow, merged: bool) {
+        let present = self.merged_rows.iter().position(|r| r == row.id());
         match (merged, present) {
-            (true, None) => self.merged_rows.push(row.to_string()),
+            (true, None) => self.merged_rows.push(row.id().to_string()),
             (false, Some(idx)) => {
                 self.merged_rows.remove(idx);
             }
@@ -1220,13 +1282,13 @@ impl MultiAccountWidgetData {
     /// Hidden rows are dropped BEFORE grouping, so hiding the row a merged
     /// row was attached to promotes it to its own line rather than leaving a
     /// dangling continuation.
-    pub fn row_lines(&self) -> Vec<Vec<String>> {
-        let mut lines: Vec<Vec<String>> = Vec::new();
+    pub fn row_lines(&self) -> Vec<Vec<CardRow>> {
+        let mut lines: Vec<Vec<CardRow>> = Vec::new();
         for (row, shown) in self.ordered_rows() {
             if !shown {
                 continue;
             }
-            if self.row_merged(&row) && !lines.is_empty() {
+            if self.row_merged(row) && !lines.is_empty() {
                 lines.last_mut().expect("non-empty").push(row);
             } else {
                 lines.push(vec![row]);
@@ -1234,12 +1296,13 @@ impl MultiAccountWidgetData {
         }
         lines
     }
+
     /// Move a row one place up or down, materializing the full order first so
     /// a previously-empty `row_order` becomes explicit rather than shifting
     /// against an implied list.
-    pub fn move_row(&mut self, row: &str, up: bool) {
-        let mut order: Vec<String> = self.ordered_rows().into_iter().map(|(r, _)| r).collect();
-        let Some(idx) = order.iter().position(|r| r == row) else {
+    pub fn move_row(&mut self, row: CardRow, up: bool) {
+        let mut order: Vec<CardRow> = self.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        let Some(idx) = order.iter().position(|r| *r == row) else {
             return;
         };
         let target = if up {
@@ -1251,7 +1314,7 @@ impl MultiAccountWidgetData {
         };
         if let Some(target) = target {
             order.swap(idx, target);
-            self.row_order = order;
+            self.row_order = order.into_iter().map(|r| r.id().to_string()).collect();
         }
     }
 }
@@ -1667,12 +1730,13 @@ mod visibility_tests {
 #[cfg(test)]
 mod multiaccount_row_tests {
     use super::*;
+    use CardRow as R;
 
     #[test]
     fn an_empty_order_yields_every_row_in_default_order() {
         let data = MultiAccountWidgetData::default();
-        let rows: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
-        assert_eq!(rows, MultiAccountWidgetData::ROWS);
+        let rows: Vec<R> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(rows, R::ALL);
     }
 
     #[test]
@@ -1680,24 +1744,30 @@ mod multiaccount_row_tests {
         // Omitting a row must not hide it -- the checkbox is what hides.
         let mut data = MultiAccountWidgetData::default();
         data.row_order = vec!["injuries".to_string(), "vitals".to_string()];
-        let rows: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
-        assert_eq!(&rows[..2], &["injuries".to_string(), "vitals".to_string()]);
-        assert_eq!(
-            rows.len(),
-            MultiAccountWidgetData::ROWS.len(),
-            "every row still present: {rows:?}"
-        );
+        let rows: Vec<R> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(&rows[..2], &[R::Injuries, R::Vitals]);
+        assert_eq!(rows.len(), R::ALL.len(), "every row still present: {rows:?}");
     }
 
     #[test]
     fn unknown_row_names_are_dropped() {
         // A stale config naming a row that no longer exists must not add a
-        // phantom entry the editor would render as "Unknown row".
+        // phantom entry the editor would render blank.
         let mut data = MultiAccountWidgetData::default();
         data.row_order = vec!["nonsense".to_string(), "injuries".to_string()];
-        let rows: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
-        assert!(!rows.iter().any(|r| r == "nonsense"));
-        assert_eq!(rows[0], "injuries");
+        let rows: Vec<R> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(rows[0], R::Injuries);
+        assert_eq!(rows.len(), R::ALL.len());
+    }
+
+    #[test]
+    fn every_row_round_trips_through_its_id() {
+        // The wire/TOML representation stays strings; the enum must map onto
+        // them losslessly or a saved order comes back rearranged.
+        for row in R::ALL {
+            assert_eq!(R::from_id(row.id()), Some(row));
+        }
+        assert_eq!(R::from_id("not_a_row"), None);
     }
 
     #[test]
@@ -1706,28 +1776,25 @@ mod multiaccount_row_tests {
         // whole list, or later moves would shift against a different list.
         let mut data = MultiAccountWidgetData::default();
         assert!(data.row_order.is_empty());
-        // Derive the expected positions rather than hardcoding them, so
-        // changing the default order does not break this test.
-        let before: Vec<&str> = MultiAccountWidgetData::ROWS.to_vec();
-        let idx = before.iter().position(|r| *r == "vitals").expect("vitals");
-        let above = before[idx - 1];
+        let idx = R::ALL.iter().position(|r| *r == R::Vitals).expect("vitals");
+        let above = R::ALL[idx - 1];
 
-        data.move_row("vitals", true);
-        assert_eq!(data.row_order.len(), MultiAccountWidgetData::ROWS.len());
-        assert_eq!(data.row_order[idx - 1], "vitals", "moved up one");
-        assert_eq!(data.row_order[idx], above, "displaced its neighbour");
+        data.move_row(R::Vitals, true);
+        assert_eq!(data.row_order.len(), R::ALL.len());
+        assert_eq!(data.row_order[idx - 1], R::Vitals.id(), "moved up one");
+        assert_eq!(data.row_order[idx], above.id(), "displaced its neighbour");
     }
 
     #[test]
     fn moving_past_an_edge_is_a_no_op() {
         let mut data = MultiAccountWidgetData::default();
-        data.move_row("status", true);
-        let first: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
-        assert_eq!(first[0], "status", "already first, stays first");
+        data.move_row(R::Rt, true);
+        let first: Vec<R> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(first[0], R::Rt, "already first, stays first");
 
-        data.move_row("injuries", false);
-        let last: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
-        assert_eq!(last[last.len() - 1], "injuries", "already last, stays last");
+        data.move_row(R::Injuries, false);
+        let last: Vec<R> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(last[last.len() - 1], R::Injuries, "already last, stays last");
     }
 
     #[test]
@@ -1736,66 +1803,56 @@ mod multiaccount_row_tests {
         // each is wasted space on an already narrow card.
         let data = MultiAccountWidgetData::default();
         let lines = data.row_lines();
-        assert_eq!(
-            lines[0],
-            vec!["rt".to_string(), "status".to_string()],
-            "{lines:?}"
-        );
+        assert_eq!(lines[0], vec![R::Rt, R::Status], "{lines:?}");
     }
 
     #[test]
     fn hiding_the_row_above_promotes_a_merged_row_to_its_own_line() {
-        // Otherwise "rt" would dangle as a continuation of a line that is no
-        // longer drawn.
+        // Otherwise "status" would dangle as a continuation of a line that
+        // is no longer drawn.
         let mut data = MultiAccountWidgetData::default();
-        data.set_row_shown("rt", false);
+        data.set_row_shown(R::Rt, false);
         let lines = data.row_lines();
-        assert_eq!(lines[0], vec!["status".to_string()], "{lines:?}");
+        assert_eq!(lines[0], vec![R::Status], "{lines:?}");
     }
 
     #[test]
-    fn the_first_row_can_never_merge() {
-        // There is nothing above it to join; a stale config saying otherwise
-        // must not produce an empty leading line.
+    fn the_first_row_never_renders_merged_but_keeps_its_flag() {
+        // Positional rule for RENDERING only. The stored flag must survive a
+        // stint at the top -- the old positional read-back deleted it when
+        // any unrelated option changed while the row sat first.
         let mut data = MultiAccountWidgetData::default();
+        data.set_row_merged(R::Status, true);
         data.row_order = vec!["status".to_string()];
-        data.set_row_merged("status", true);
-        assert!(!data.row_merged("status"));
-        let lines = data.row_lines();
-        assert_eq!(lines[0], vec!["status".to_string()]);
+        assert!(!data.row_merged(R::Status), "first row cannot render merged");
+        assert!(
+            data.row_merge_flag(R::Status),
+            "the stored flag survives being first"
+        );
+        // Move it back down: the pairing resumes without re-configuring.
+        data.row_order = vec!["rt".to_string(), "status".to_string()];
+        assert!(data.row_merged(R::Status));
     }
 
     #[test]
     fn merging_round_trips_and_hidden_rows_never_appear() {
         let mut data = MultiAccountWidgetData::default();
-        data.set_row_merged("vitals", true);
-        assert!(data.row_merged("vitals"));
-        data.set_row_merged("vitals", false);
-        assert!(!data.row_merged("vitals"));
+        data.set_row_merged(R::Vitals, true);
+        assert!(data.row_merged(R::Vitals));
+        data.set_row_merged(R::Vitals, false);
+        assert!(!data.row_merged(R::Vitals));
 
-        data.set_row_shown("injuries", false);
-        let flat: Vec<String> = data.row_lines().into_iter().flatten().collect();
-        assert!(!flat.iter().any(|r| r == "injuries"));
+        data.set_row_shown(R::Injuries, false);
+        let flat: Vec<R> = data.row_lines().into_iter().flatten().collect();
+        assert!(!flat.contains(&R::Injuries));
     }
 
     #[test]
     fn row_visibility_round_trips_through_the_helpers() {
         let mut data = MultiAccountWidgetData::default();
-        assert!(data.row_shown("vitals"));
-        data.set_row_shown("vitals", false);
-        assert!(!data.row_shown("vitals"));
+        assert!(data.row_shown(R::Vitals));
+        data.set_row_shown(R::Vitals, false);
+        assert!(!data.row_shown(R::Vitals));
         assert!(!data.show_vitals, "the helper writes the real field");
-
-        // Every canonical row must be addressable, or the editor would show
-        // a checkbox that silently does nothing.
-        for row in MultiAccountWidgetData::ROWS {
-            data.set_row_shown(row, true);
-            assert!(data.row_shown(row), "{row} is not wired");
-            assert_ne!(
-                MultiAccountWidgetData::row_label(row),
-                "Unknown row",
-                "{row} has no label"
-            );
-        }
     }
 }

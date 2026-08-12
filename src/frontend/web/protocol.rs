@@ -200,27 +200,15 @@ pub fn snapshot_for(
     seq: u64,
     sub: SubscribeMode,
 ) -> String {
-    let watching = sub == SubscribeMode::Watch;
-    let payload = SnapshotPayload {
+    let mut payload = SnapshotPayload {
         mode,
         character: state.character.clone(),
         vitals: state.vitals.clone(),
-        room: if watching {
-            // A watcher still wants to know WHERE a character is (the
-            // "different room" cue), just not the prose describing it.
-            RoomPayload {
-                name: state.room_name.clone(),
-                exits: Vec::new(),
-                id: state.room_id.clone(),
-                description: Vec::new(),
-            }
-        } else {
-            RoomPayload {
-                name: state.room_name.clone(),
-                exits: state.exits.clone(),
-                id: state.room_id.clone(),
-                description: state.room_description.clone(),
-            }
+        room: RoomPayload {
+            name: state.room_name.clone(),
+            exits: state.exits.clone(),
+            id: state.room_id.clone(),
+            description: state.room_description.clone(),
         },
         hands: HandsPayload {
             left: state.left_hand.clone(),
@@ -236,60 +224,54 @@ pub fn snapshot_for(
             server_time: state.server_time,
         },
         effects: state.effects.clone(),
-        spellbook: if watching {
-            Vec::new()
-        } else {
-            state.spellbook.clone()
-        },
+        spellbook: state.spellbook.clone(),
         injuries: state.injuries.clone(),
         doll_variant: state.doll_variant.clone(),
         doll_hidden: state.doll_hidden.clone(),
-        targets: if watching {
-            Vec::new()
-        } else {
-            state.targets.clone()
-        },
-        entities: if watching {
-            Default::default()
-        } else {
-            state.entities.clone()
-        },
-        portals: if watching {
-            Vec::new()
-        } else {
-            state.portals.clone()
-        },
+        targets: state.targets.clone(),
+        entities: state.entities.clone(),
+        portals: state.portals.clone(),
         char_info: state.char_info.clone(),
         session: state.session.clone(),
-        webui_pages: if watching {
-            Vec::new()
-        } else {
-            state.webui_pages.clone()
-        },
-        map_scene: if watching {
-            None
-        } else {
-            state.map_scene.0.clone()
-        },
-        map_state: if watching {
-            Default::default()
-        } else {
-            state.map_state.clone()
-        },
-        text: if watching {
-            Vec::new()
-        } else {
-            lines
-                .into_iter()
-                .map(|l| SnapshotLine {
-                    seq: l.seq,
-                    stream: l.stream,
-                    line: l.line,
-                })
-                .collect()
-        },
+        webui_pages: state.webui_pages.clone(),
+        map_scene: state.map_scene.0.clone(),
+        map_state: state.map_state.clone(),
+        text: lines
+            .into_iter()
+            .map(|l| SnapshotLine {
+                seq: l.seq,
+                stream: l.stream,
+                line: l.line,
+            })
+            .collect(),
     };
+    if sub == SubscribeMode::Watch {
+        payload.strip_for_watch();
+    }
     encode("snapshot", seq, payload)
+}
+
+impl SnapshotPayload {
+    /// Everything a Watch client does not pay for, in ONE place.
+    ///
+    /// The old shape was nine inline `if watching` ternaries inside the
+    /// struct literal, which meant every FUTURE payload field shipped to
+    /// watchers by default and invisibly -- with six sibling instances, six
+    /// copies of it per connect. `watch_snapshot_key_allowlist` in the tests
+    /// fails on any new field until it is classified here or there.
+    fn strip_for_watch(&mut self) {
+        // Room identity (name + id) stays: it drives the "not with you" cue.
+        self.room.exits = Vec::new();
+        self.room.description = Vec::new();
+        self.spellbook = Vec::new();
+        self.targets = Vec::new();
+        self.entities = Default::default();
+        self.portals = Vec::new();
+        self.webui_pages = Vec::new();
+        self.map_scene = None;
+        self.map_state = Default::default();
+        self.text = Vec::new();
+    }
 }
 
 /// Encode a broadcast delta. `last_seq` is used as the envelope seq for
@@ -1256,6 +1238,75 @@ mod tests {
         let raw = snapshot_for(state, lines, SnapshotMode::Full, 1, sub);
         let v: serde_json::Value = serde_json::from_str(&raw).expect("valid json");
         v["d"].clone()
+    }
+
+    /// The mechanical guard behind strip_for_watch: a watch snapshot built
+    /// from a FULLY populated state must serialize only allowlisted keys.
+    /// Adding a field to SnapshotPayload fails this test until the field is
+    /// classified -- either stripped for watchers or added here on purpose.
+    /// Without it, every new payload field shipped to watchers by default,
+    /// invisibly, times one copy per sibling instance per connect.
+    #[test]
+    fn watch_snapshot_key_allowlist() {
+        let mut state = RemoteStateSnapshot::default();
+        // Populate every bulk field so a leak cannot hide behind
+        // skip_serializing_if on an empty default.
+        state.room_name = Some("Town Square".to_string());
+        state.room_id = Some("1".to_string());
+        state.exits = vec!["north".to_string()];
+        state.room_description = vec![crate::data::widget::StyledLine {
+            segments: vec![TextSegment::plain("prose")],
+            stream: "main".to_string(),
+            timestamp: None,
+        }];
+        state.spellbook = state.room_description.clone();
+        state.portals = vec!["portal".to_string()];
+        state.webui_pages = Vec::new();
+        state.prepared_spell = Some("Spirit Warding I".to_string());
+
+        let lines = vec![RemoteLine {
+            seq: 1,
+            stream: "main".to_string(),
+            line: Arc::new(crate::data::widget::StyledLine {
+                segments: vec![TextSegment::plain("scrollback")],
+                stream: "main".to_string(),
+                timestamp: None,
+            }),
+        }];
+        let raw = snapshot_for(&state, lines, SnapshotMode::Full, 1, SubscribeMode::Watch);
+        let v: serde_json::Value = serde_json::from_str(&raw).expect("json");
+        let allowed = [
+            "mode",
+            "character",
+            "vitals",
+            "room",
+            "hands",
+            "indicators",
+            "minivitals",
+            "prepared_spell",
+            "group",
+            "rt",
+            "effects",
+            "injuries",
+            "doll_variant",
+            "doll_hidden",
+            "targets",
+            "entities",
+            "portals",
+            "char_info",
+            "session",
+            "map_state",
+        ];
+        for key in v["d"].as_object().expect("object").keys() {
+            assert!(
+                allowed.contains(&key.as_str()),
+                "unclassified snapshot field shipped to watchers: {key} --                  strip it in strip_for_watch or allowlist it deliberately"
+            );
+        }
+        // And the stripped bulk stays stripped.
+        assert!(v["d"].get("text").is_none());
+        assert!(v["d"].get("map_scene").is_none());
+        assert!(v["d"]["room"].get("description").is_none());
     }
 
     #[test]

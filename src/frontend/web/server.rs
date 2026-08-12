@@ -165,7 +165,7 @@ pub async fn serve(
         }
     };
 
-    serve_listener_with_token(listener, handles, auth_token).await
+    serve_listener_with_token_mode(listener, handles, auth_token, config.local_status_only()).await
 }
 
 /// Session registry: files in ~/.vellum-fe/web-sessions/, one per running
@@ -190,12 +190,41 @@ pub async fn serve_listener_with_token(
     handles: RemoteServerHandles,
     auth_token: String,
 ) -> Result<()> {
+    serve_listener_with_token_mode(listener, handles, auth_token, false).await
+}
+
+/// As above, with `status_only` selecting the reduced router.
+///
+/// In status-only mode (multiaccount on, phone server off -- the default
+/// config) the listener exists solely so sibling instances can watch this
+/// session. Serving the whole phone surface there -- /play, assets,
+/// /sessions, doll art -- exposed far more than the feature needs to a mode
+/// the user never opted into; the reduced router is /ws (still
+/// token-authenticated) plus /health for the dashboard's liveness probes.
+pub async fn serve_listener_with_token_mode(
+    listener: tokio::net::TcpListener,
+    handles: RemoteServerHandles,
+    auth_token: String,
+    status_only: bool,
+) -> Result<()> {
     let state = Arc::new(WebState {
         handles,
         auth_token,
         auth_failures: std::sync::Mutex::new(Vec::new()),
     });
-    let router = Router::new()
+    let router = if status_only {
+        Router::new()
+            .route("/health", get(health))
+            .route("/ws", get(ws_upgrade))
+            .with_state(state)
+    } else {
+        full_router(state)
+    };
+    serve_router(listener, router).await
+}
+
+fn full_router(state: Arc<WebState>) -> Router {
+    Router::new()
         .route("/", get(dashboard_html))
         .route("/play", get(index_html))
         .route("/sessions", get(sessions_json))
@@ -214,7 +243,10 @@ pub async fn serve_listener_with_token(
         .route("/doll.json", get(doll_json))
         .route("/doll/image", get(doll_image))
         .route("/ws", get(ws_upgrade))
-        .with_state(state);
+        .with_state(state)
+}
+
+async fn serve_router(listener: tokio::net::TcpListener, router: Router) -> Result<()> {
     let addr = listener
         .local_addr()
         .context("web listener has no local address")?;
@@ -1206,8 +1238,22 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
     //
     // The loop exists so `subscribe` can arrive first without consuming the
     // client's one shot at a snapshot: it sets the mode and we wait again for
-    // the `resume` that actually triggers the reply.
+    // the `resume` that actually triggers the reply. BOUNDED: a client that
+    // streams subscribe frames back-to-back would otherwise spin this task
+    // forever without ever reaching the main loop -- after the budget it is
+    // treated as a fresh client and handed a snapshot.
+    let mut handshake_budget: u8 = 8;
     loop {
+        if handshake_budget == 0 {
+            if send_snapshot(&mut socket, &state, SnapshotMode::Full, sub)
+                .await
+                .is_err()
+            {
+                return;
+            }
+            break;
+        }
+        handshake_budget -= 1;
         let first = tokio::time::timeout(RESUME_WAIT, socket.recv()).await;
         match first {
             Ok(None) | Ok(Some(Err(_))) | Ok(Some(Ok(Message::Close(_)))) => return,

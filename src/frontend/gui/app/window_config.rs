@@ -75,49 +75,50 @@ pub(super) struct EncumConfig {
 /// Multi-account card contents (MultiAccountWidgetData).
 #[derive(Clone, Debug)]
 pub(super) struct MultiAccountConfig {
-    pub(super) show_vitals: bool,
-    pub(super) show_rt: bool,
-    pub(super) show_status: bool,
-    pub(super) show_injuries: bool,
-    pub(super) show_mind: bool,
-    pub(super) show_stance: bool,
-    pub(super) show_encumbrance: bool,
-    pub(super) show_room: bool,
-    pub(super) show_self: bool,
-    pub(super) show_absolute_vitals: bool,
-    pub(super) show_hands: bool,
-    pub(super) show_field_exp: bool,
-    /// Rows in display order, each with whether it is currently shown.
-    /// Rows in display order: (id, shown, merged-with-row-above).
-    pub(super) rows: Vec<(String, bool, bool)>,
-    pub(super) sort_by: String,
-    pub(super) show_effects: bool,
+    /// The widget data verbatim -- the UI edits this copy directly. The old
+    /// shape mirrored twelve fields with hand-written copy-in and copy-out
+    /// blocks, where a forgotten copy-out meant a checkbox that flipped in
+    /// the menu and was silently discarded on the next frame's rebuild.
+    pub(super) data: crate::config::MultiAccountWidgetData,
+    /// Rows in display order: (row, shown, merge-flag). The merge flag is
+    /// the RAW stored membership (`row_merge_flag`), not the positional
+    /// render answer -- reading the positional answer here and writing it
+    /// back deleted the flag of whichever row sat first whenever any
+    /// unrelated option changed.
+    pub(super) rows: Vec<(crate::config::CardRow, bool, bool)>,
+    /// The effect name filter as one editable comma-separated line.
     pub(super) effect_filter: String,
-    pub(super) max_effects: usize,
-    pub(super) card_width: f32,
 }
 
 impl MultiAccountConfig {
-    /// Flip one row's checkbox in the view's copy of the order.
-    pub(super) fn set_row_shown(&mut self, row: &str, on: bool) {
-        if let Some(entry) = self.rows.iter_mut().find(|(name, _, _)| name == row) {
-            entry.1 = on;
+    pub(super) fn from_data(data: &crate::config::MultiAccountWidgetData) -> Self {
+        Self {
+            data: data.clone(),
+            rows: data
+                .ordered_rows()
+                .into_iter()
+                .map(|(row, shown)| (row, shown, data.row_merge_flag(row)))
+                .collect(),
+            effect_filter: data.effect_filter.join(", "),
         }
     }
 
-    /// Flip one row's same-line flag in the view's copy.
-    pub(super) fn set_row_merged(&mut self, row: &str, merged: bool) {
-        if let Some(entry) = self.rows.iter_mut().find(|(name, _, _)| name == row) {
-            entry.2 = merged;
-        }
-    }
-
-    /// Push the view's per-row checkboxes back into the widget data.
-    pub(super) fn apply_row_visibility(&self, data: &mut crate::config::MultiAccountWidgetData) {
+    /// Write the whole view back into the layout's widget data.
+    pub(super) fn apply_to(&self, data: &mut crate::config::MultiAccountWidgetData) {
+        *data = self.data.clone();
+        data.row_order = self.rows.iter().map(|(r, _, _)| r.id().to_string()).collect();
         for (row, shown, merged) in &self.rows {
-            data.set_row_shown(row, *shown);
-            data.set_row_merged(row, *merged);
+            data.set_row_shown(*row, *shown);
+            data.set_row_merged(*row, *merged);
         }
+        data.effect_filter = self
+            .effect_filter
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        data.max_effects = data.max_effects.max(1);
     }
 }
 
@@ -393,37 +394,9 @@ impl VellumGuiApp {
                 });
             }
             Some(crate::config::WindowDef::MultiAccount { data, .. }) => {
-            view.multiaccount = Some(MultiAccountConfig {
-                show_vitals: data.show_vitals,
-                show_rt: data.show_rt,
-                show_status: data.show_status,
-                show_injuries: data.show_injuries,
-                show_mind: data.show_mind,
-                show_stance: data.show_stance,
-                show_encumbrance: data.show_encumbrance,
-                show_room: data.show_room,
-                show_self: data.show_self,
-                show_absolute_vitals: data.show_absolute_vitals,
-                show_hands: data.show_hands,
-                show_field_exp: data.show_field_exp,
-                rows: data
-                    .ordered_rows()
-                    .into_iter()
-                    .map(|(row, shown)| {
-                        let merged = data.row_merged(&row);
-                        (row, shown, merged)
-                    })
-                    .collect(),
-                sort_by: data.sort_by.clone(),
-                show_effects: data.show_effects,
-                // Edited as one comma-separated line: a list editor for a
-                // handful of substrings would be heavier than the feature.
-                effect_filter: data.effect_filter.join(", "),
-                max_effects: data.max_effects,
-                card_width: data.card_width,
-            });
-        }
-        Some(crate::config::WindowDef::Encumbrance { data, .. }) => {
+                view.multiaccount = Some(MultiAccountConfig::from_data(data));
+            }
+            Some(crate::config::WindowDef::Encumbrance { data, .. }) => {
                 view.encum = Some(EncumConfig {
                     show_bar: data.show_bar,
                     show_label: data.show_label,
@@ -744,7 +717,7 @@ impl VellumGuiApp {
                 if let Some(crate::config::WindowDef::MultiAccount { data, .. }) =
                     self.layout_def_mut(&name)
                 {
-                    data.move_row(&row, up);
+                    data.move_row(row, up);
                     self.app_core.schedule_layout_autosave();
                 }
             }
@@ -752,31 +725,7 @@ impl VellumGuiApp {
                 if let Some(crate::config::WindowDef::MultiAccount { data, .. }) =
                     self.layout_def_mut(&name)
                 {
-                    data.show_vitals = ma.show_vitals;
-                    data.show_rt = ma.show_rt;
-                    data.show_status = ma.show_status;
-                    data.show_injuries = ma.show_injuries;
-                    data.show_mind = ma.show_mind;
-                    data.show_stance = ma.show_stance;
-                    data.show_encumbrance = ma.show_encumbrance;
-                    data.show_room = ma.show_room;
-                    data.show_self = ma.show_self;
-                    data.show_absolute_vitals = ma.show_absolute_vitals;
-                    data.show_hands = ma.show_hands;
-                    data.show_field_exp = ma.show_field_exp;
-                    data.row_order = ma.rows.iter().map(|(r, _, _)| r.clone()).collect();
-                    ma.apply_row_visibility(data);
-                    data.sort_by = ma.sort_by.clone();
-                    data.show_effects = ma.show_effects;
-                    data.effect_filter = ma
-                        .effect_filter
-                        .split(',')
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .map(str::to_string)
-                        .collect();
-                    data.max_effects = ma.max_effects.max(1);
-                    data.card_width = ma.card_width;
+                    ma.apply_to(data);
                     self.app_core.schedule_layout_autosave();
                 }
             }
@@ -1220,35 +1169,42 @@ impl VellumGuiApp {
             ui.label("Card contents");
             let mut next = ma.clone();
             let mut changed = false;
-            changed |= ui.checkbox(&mut next.show_self, "Your own card").changed();
             changed |= ui
-                .checkbox(&mut next.show_room, "Room id in header")
+                .checkbox(&mut next.data.show_self, "Your own card")
+                .changed();
+            changed |= ui
+                .checkbox(&mut next.data.show_room, "Room id in header")
                 .on_hover_text(
-                    "The room number, top-right, red when that character is                      not in your room. Hover it for the room name.",
+                    "The room number, top-right, red when that character is \
+                     not in your room. Hover it for the room name.",
                 )
                 .changed();
-            if next.show_vitals {
+            if next.data.show_vitals {
                 ui.indent("ma_vitals", |ui| {
                     changed |= ui
-                        .checkbox(&mut next.show_absolute_vitals, "Vitals as numbers (51/51)")
+                        .checkbox(
+                            &mut next.data.show_absolute_vitals,
+                            "Vitals as numbers (51/51)",
+                        )
                         .changed();
                 });
             }
-            if next.show_effects {
+            if next.data.show_effects {
                 ui.indent("ma_effects", |ui| {
                     ui.label(RichText::new("Only show effects matching:").small());
                     changed |= ui
                         .text_edit_singleline(&mut next.effect_filter)
                         .on_hover_text(
-                            "Comma-separated name fragments, e.g. \"sleep, bind, web\".                              Leave empty to show everything.",
+                            "Comma-separated name fragments, e.g. \"sleep, bind, web\". \
+                             Leave empty to show everything.",
                         )
                         .changed();
-                    let mut cap = next.max_effects as u32;
+                    let mut cap = next.data.max_effects as u32;
                     if ui
                         .add(egui::Slider::new(&mut cap, 1..=12).text("Max per card"))
                         .changed()
                     {
-                        next.max_effects = cap as usize;
+                        next.data.max_effects = cap as usize;
                         changed = true;
                     }
                 });
@@ -1257,17 +1213,17 @@ impl VellumGuiApp {
             ui.label(RichText::new("Rows (top to bottom)").small());
             {
                 // Arrows + a tick per row, matching the group-order list in
-                // this same menu. A text field for a fixed set of ten names
-                // was the wrong shape: nothing to type, easy to typo.
+                // this same menu.
                 let last = ma.rows.len().saturating_sub(1);
                 for (index, (row, shown, merged)) in ma.rows.iter().enumerate() {
+                    let row = *row;
                     ui.horizontal(|ui| {
                         if ui
                             .add_enabled(index > 0, egui::Button::new("\u{2B06}").small())
                             .clicked()
                         {
                             command = Some(GuiWindowMenuCommand::MoveMultiAccountRow {
-                                row: row.clone(),
+                                row,
                                 up: true,
                             });
                         }
@@ -1276,23 +1232,22 @@ impl VellumGuiApp {
                             .clicked()
                         {
                             command = Some(GuiWindowMenuCommand::MoveMultiAccountRow {
-                                row: row.clone(),
+                                row,
                                 up: false,
                             });
                         }
                         let mut on = *shown;
-                        if ui
-                            .checkbox(
-                                &mut on,
-                                crate::config::MultiAccountWidgetData::row_label(row),
-                            )
-                            .changed()
-                        {
-                            next.set_row_shown(row, on);
+                        if ui.checkbox(&mut on, row.label()).changed() {
+                            if let Some(entry) =
+                                next.rows.iter_mut().find(|(r, _, _)| *r == row)
+                            {
+                                entry.1 = on;
+                            }
                             changed = true;
                         }
-                        // Short rows pair naturally; the first row has
-                        // nothing above it to join.
+                        // The merge flag is the STORED membership; the first
+                        // row simply does not render merged, but its flag
+                        // survives a stint at the top.
                         if index > 0 && *shown {
                             let mut share = *merged;
                             if ui
@@ -1300,7 +1255,11 @@ impl VellumGuiApp {
                                 .on_hover_text("Draw on the same line as the row above")
                                 .changed()
                             {
-                                next.set_row_merged(row, share);
+                                if let Some(entry) =
+                                    next.rows.iter_mut().find(|(r, _, _)| *r == row)
+                                {
+                                    entry.2 = share;
+                                }
                                 changed = true;
                             }
                         }
@@ -1315,17 +1274,17 @@ impl VellumGuiApp {
                     ("port", "Connected"),
                 ] {
                     if ui
-                        .selectable_label(next.sort_by == value, label)
+                        .selectable_label(next.data.sort_by == value, label)
                         .clicked()
                     {
-                        next.sort_by = value.to_string();
+                        next.data.sort_by = value.to_string();
                         changed = true;
                     }
                 }
             });
             changed |= ui
                 .add(
-                    egui::Slider::new(&mut next.card_width, 90.0..=320.0)
+                    egui::Slider::new(&mut next.data.card_width, 90.0..=320.0)
                         .text("Card width")
                         .suffix(" px"),
                 )

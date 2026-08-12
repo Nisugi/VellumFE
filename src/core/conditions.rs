@@ -343,6 +343,11 @@ fn effect_is_active(effect: &ActiveEffect, now_server: i64) -> bool {
 /// resolve.
 ///
 /// An id the game has never reported reads `false` rather than "unknown".
+/// DELIBERATE TRADE: this means `active: false` on a TYPO'D id matches from
+/// process start (pre-refactor it never matched -- unknown ids were dead in
+/// both directions). We chose cold-start correctness for real rules like
+/// `poisoned == false` over typo-safety; there is no id allowlist anywhere
+/// in the config path to tell the two apart.
 /// That keeps `active: false` conditions working from a cold start: GS4 sends
 /// the posture indicators with explicit `visible="n"` at login, but occasional
 /// ones like POISONED/DISEASED only appear once they happen, so a

@@ -719,10 +719,16 @@ impl VellumGuiApp {
 
         // Multi-account status. Rides the same sidecar: every instance on
         // this machine reads one pairing-token file, so no pairing step is
-        // needed, and the registry is what makes discovery automatic. Gated
-        // on the sidecar being enabled because that is also what publishes
-        // OUR registry entry -- a one-way watcher would be a surprise.
-        let multiaccount = if app_core.config.web.multiaccount {
+        // needed, and the registry is what makes discovery automatic. The
+        // hub requires BOTH the feature flag AND the sidecar actually
+        // serving -- the sidecar is what publishes OUR registry entry, and a
+        // hub without it would be a silent one-way watcher (sees everyone,
+        // seen by no one). should_serve() is implied by `multiaccount` today,
+        // but the predicate states the dependency rather than relying on
+        // that implication holding forever.
+        let multiaccount = if app_core.config.web.multiaccount
+            && app_core.config.web.should_serve()
+        {
             let _guard = runtime.enter();
             match crate::config::Config::load_or_create_web_token() {
                 Ok(token) => Some(crate::core::multiaccount::MultiAccountHub::start(token)),

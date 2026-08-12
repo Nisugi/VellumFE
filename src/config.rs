@@ -80,7 +80,7 @@ pub use widgets::{
     ExperienceWidgetData,
     GS4ExperienceWidgetData, HandIconState, HandWidgetData, HotkeybarWidgetData, IndicatorWidgetData,
     InjuryDollWidgetData, InventoryWidgetData, ItemsWidgetData, MapWidgetData,
-    MiniVitalsWidgetData, MissingSpellsWidgetData, MultiAccountWidgetData,
+    CardRow, MiniVitalsWidgetData, MissingSpellsWidgetData, MultiAccountWidgetData,
     PerceptionWidgetData,
     PerformanceWidgetData, PlayersWidgetData, ProgressWidgetData, QuickbarDefinition,
     QuickbarEntryConfig, QuickbarWidgetData, QuickbarsConfig, RoomWidgetData, SortDirection,

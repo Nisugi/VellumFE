@@ -165,7 +165,7 @@ pub(super) enum GuiWindowMenuCommand {
     /// Encumbrance display toggles.
     SetMultiAccountConfig(super::window_config::MultiAccountConfig),
     /// Move one multiaccount card row up or down.
-    MoveMultiAccountRow { row: String, up: bool },
+    MoveMultiAccountRow { row: crate::config::CardRow, up: bool },
     SetEncumConfig(super::window_config::EncumConfig),
     /// MiniVitals bar options (GuiUiSettings.vitals).
     SetVitals(crate::frontend::gui::persistence::VitalsConfig),

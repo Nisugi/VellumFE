@@ -47,8 +47,36 @@ fn fmt_duration(seconds: i64) -> String {
     } else if seconds < 3600 {
         format!("{}:{:02}", seconds / 60, seconds % 60)
     } else {
-        format!("{}h", seconds / 3600)
+        // Keep the minutes: "2h" hid up to 59 of them, and a cooldown at
+        // 1h59 read the same as one at 1h01.
+        format!("{}h{:02}", seconds / 3600, (seconds % 3600) / 60)
     }
+}
+
+/// A user's indicator-template color for an id, if they set one.
+///
+/// The dedicated indicator widgets honor `[[indicator_template]]`
+/// active_color; the cards previously ignored it, so recoloring "bleeding"
+/// changed every widget except these. Cached for the session: the catalog
+/// walk allocates, and template edits are rare enough that a recolor
+/// showing up on cards after restart is an acceptable trade (noted here so
+/// it is a decision, not a surprise).
+fn template_color(id: &str) -> Option<Color32> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static COLORS: OnceLock<HashMap<String, Color32>> = OnceLock::new();
+    COLORS
+        .get_or_init(|| {
+            crate::config::Config::list_indicator_templates()
+                .into_iter()
+                .filter_map(|t| {
+                    let color = super::parse_hex_color(t.active_color.as_deref()?)?;
+                    Some((t.id.to_ascii_lowercase(), color))
+                })
+                .collect()
+        })
+        .get(&id.to_ascii_lowercase())
+        .copied()
 }
 
 /// Health band colors. Only health is banded -- the other vitals read as
@@ -382,70 +410,48 @@ impl VellumGuiApp {
                     // icons) can share a line instead of each burning a full
                     // one. A single-row line draws exactly as before.
                     for line in data.row_lines() {
-                        if line.len() == 1 {
+                        if let [row] = line[..] {
                             Self::render_card_row(
-                                ui,
-                                settings,
-                                data,
-                                peer,
-                                line[0].clone(),
-                                now_server,
-                                elsewhere,
+                                ui, settings, data, peer, row, now_server,
                             );
-                        } else {
-                            // Split the width evenly, minus the spacing
-                            // between items, so a bar sharing a line does not
-                            // claim the whole row.
-                            // Bars need an explicit share or the first one
-                            // swallows the line; labels and icon strips size
-                            // themselves and should not be padded out. Split
-                            // the width only among the rows that stretch.
-                            let stretchy = line
-                                .iter()
-                                .filter(|row| Self::row_stretches(row))
-                                .count();
-                            let count = line.len() as f32;
-                            let gap = ui.spacing().item_spacing.x * (count - 1.0);
-                            let share = if stretchy > 0 {
-                                ((ui.available_width() - gap) / stretchy as f32).max(28.0)
-                            } else {
-                                0.0
-                            };
-                            ui.horizontal(|ui| {
-                                for row in line {
-                                    if Self::row_stretches(&row) {
-                                        ui.allocate_ui(
-                                            egui::vec2(share, ui.available_height()),
-                                            |ui| {
-                                                Self::render_card_row(
-                                                    ui, settings, data, peer, row,
-                                                    now_server, elsewhere,
-                                                );
-                                            },
-                                        );
-                                    } else {
-                                        Self::render_card_row(
-                                            ui, settings, data, peer, row, now_server,
-                                            elsewhere,
-                                        );
-                                    }
-                                }
-                            });
+                            continue;
                         }
+                        // Bars need an explicit share or the first one
+                        // swallows the line; labels and icon strips size
+                        // themselves and should not be padded out. Split
+                        // the width only among the rows that stretch.
+                        let stretchy =
+                            line.iter().filter(|row| row.stretches()).count();
+                        let count = line.len() as f32;
+                        let gap = ui.spacing().item_spacing.x * (count - 1.0);
+                        let share = if stretchy > 0 {
+                            ((ui.available_width() - gap) / stretchy as f32).max(28.0)
+                        } else {
+                            0.0
+                        };
+                        ui.horizontal(|ui| {
+                            for row in line {
+                                if row.stretches() {
+                                    ui.allocate_ui(
+                                        egui::vec2(share, ui.available_height()),
+                                        |ui| {
+                                            Self::render_card_row(
+                                                ui, settings, data, peer, row,
+                                                now_server,
+                                            );
+                                        },
+                                    );
+                                } else {
+                                    Self::render_card_row(
+                                        ui, settings, data, peer, row, now_server,
+                                    );
+                                }
+                            }
+                        });
                     }
                 });
             });
         });
-    }
-
-    /// Whether a row fills the width it is given (a bar) or sizes to its own
-    /// content (a label or icon strip). Only the former needs an explicit
-    /// share when several rows sit on one line.
-    fn row_stretches(row: &str) -> bool {
-        matches!(
-            row,
-            "vitals" | "mind" | "stance" | "field_exp" | "encumbrance" | "injuries"
-        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -454,45 +460,43 @@ impl VellumGuiApp {
         settings: &WidgetRenderSettings,
         data: &crate::config::MultiAccountWidgetData,
         peer: &PeerStatus,
-        row: String,
+        row: crate::config::CardRow,
         now_server: i64,
-        elsewhere: bool,
     ) {
-        match row.as_str() {
-            "status" if data.show_status => Self::render_status_glyphs(ui, peer),
-            "vitals" if data.show_vitals => {
+        use crate::config::CardRow as R;
+        // Exhaustive on purpose: a new row cannot compile without a renderer.
+        // Visibility was already filtered by row_lines().
+        match row {
+            R::Status => Self::render_status_glyphs(ui, peer),
+            R::Vitals => {
                 Self::render_peer_vitals(ui, settings, peer, data.show_absolute_vitals)
             }
-            "rt" if data.show_rt => Self::render_peer_rt(ui, settings, peer, now_server),
-            "hands" if data.show_hands => Self::render_peer_hands(ui, peer),
-            "effects" if data.show_effects => {
-                Self::render_peer_effects(ui, data, peer, now_server)
-            }
-            "mind" if data.show_mind => Self::render_peer_gauge(
+            R::Rt => Self::render_peer_rt(ui, settings, peer, now_server),
+            R::Hands => Self::render_peer_hands(ui, peer),
+            R::Effects => Self::render_peer_effects(ui, data, peer, now_server),
+            R::Mind => Self::render_peer_gauge(
                 ui,
                 settings,
                 "Mind",
                 peer.mind.as_ref(),
                 Color32::from_rgb(0x7C, 0xCD, 0x7C),
             ),
-            "stance" if data.show_stance => Self::render_peer_gauge(
+            R::Stance => Self::render_peer_gauge(
                 ui,
                 settings,
                 "Stance",
                 peer.stance.as_ref(),
                 Color32::from_rgb(0x5C, 0xAC, 0xEE),
             ),
-            "field_exp" if data.show_field_exp => {
-                Self::render_peer_field_exp(ui, settings, peer)
-            }
-            "encumbrance" if data.show_encumbrance => Self::render_peer_gauge(
+            R::FieldExp => Self::render_peer_field_exp(ui, settings, peer),
+            R::Encumbrance => Self::render_peer_gauge(
                 ui,
                 settings,
                 "Enc",
                 peer.encumbrance.as_ref(),
                 Color32::from_rgb(0xC4, 0xA0, 0x00),
             ),
-            "injuries" if data.show_injuries => {
+            R::Injuries => {
                 // Peers ship wounds, not art, so the doll uses OUR installed
                 // art. Variant stays None: variant rules resolve against the
                 // local character's conditions, wrong for a peer.
@@ -509,7 +513,6 @@ impl VellumGuiApp {
                     );
                 });
             }
-            _ => {}
         }
     }
 
@@ -521,10 +524,12 @@ impl VellumGuiApp {
     /// same art the dedicated indicator widgets use, so a condition looks the
     /// same wherever it appears.
     fn render_status_glyphs(ui: &mut egui::Ui, peer: &PeerStatus) {
-        let active: Vec<(&str, Color32)> = STATUS_GLYPHS
+        let active: Vec<(&str, &str, Color32)> = STATUS_GLYPHS
             .iter()
             .filter(|(id, _, _)| peer.indicators.get(id))
-            .map(|(id, _, color)| (*id, *color))
+            .map(|(id, glyph, color)| {
+                (*id, *glyph, template_color(id).unwrap_or(*color))
+            })
             .collect();
 
         // Anything the game reports that has no glyph of its own. StatusInfo
@@ -552,12 +557,14 @@ impl VellumGuiApp {
         let bg = ui.visuals().panel_fill;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
-            for (id, color) in active {
+            for (id, glyph, color) in active {
                 let (rect, response) =
                     ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
                 if ui.is_rect_visible(rect) {
-                    // Fall back to a letter when the pictogram set has no art
-                    // for this id, rather than leaving a blank gap.
+                    // Fall back to the AUTHORED letter when the pictogram set
+                    // has no art. Deriving it from the id's first character
+                    // rendered bleeding as "B" instead of "!" and collided
+                    // sitting with stunned as the same "S".
                     if !crate::frontend::gui::app::status_icons::paint(
                         ui.painter(),
                         rect,
@@ -568,7 +575,7 @@ impl VellumGuiApp {
                         ui.painter().text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
-                            id.chars().next().unwrap_or('?').to_uppercase().to_string(),
+                            glyph,
                             egui::FontId::proportional(size * 0.8),
                             color,
                         );
@@ -602,11 +609,16 @@ impl VellumGuiApp {
         absolute: bool,
     ) {
         let v = &peer.vitals;
+        use crate::config::VitalKind;
+        // Mana/stamina/spirit take the SAME fills as the vitals window --
+        // one vital, one color, whichever panel you read. Health stays
+        // banded by percent: grading danger at a glance is this card's job,
+        // and that divergence is deliberate.
         let bars = [
             ("hp", "health", v.health, health_color(v.health)),
-            ("mp", "mana", v.mana, Color32::from_rgb(0x4A, 0x90, 0xD9)),
-            ("st", "stamina", v.stamina, Color32::from_rgb(0x90, 0xEE, 0x90)),
-            ("sp", "spirit", v.spirit, Color32::from_rgb(0xDD, 0xA0, 0xDD)),
+            ("mp", "mana", v.mana, Self::vital_fill(VitalKind::Mana)),
+            ("st", "stamina", v.stamina, Self::vital_fill(VitalKind::Stamina)),
+            ("sp", "spirit", v.spirit, Self::vital_fill(VitalKind::Spirit)),
         ];
         for (label, id, percent, fill) in bars {
             // Absolute numbers when the peer reported them; percentages are
