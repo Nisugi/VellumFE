@@ -115,6 +115,10 @@ struct SnapshotPayload {
     room: RoomPayload,
     hands: HandsPayload,
     indicators: StatusInfo,
+    /// Group roster. Omitted when not grouped, so existing clients that do
+    /// not read it see no change on the wire.
+    #[serde(default, skip_serializing_if = "group_is_empty")]
+    group: crate::core::group::GroupState,
     rt: RtPayload,
     effects: Vec<ActiveEffectsContent>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -136,6 +140,12 @@ struct SnapshotPayload {
     map_scene: Option<Arc<crate::core::remote::RemoteMapScene>>,
     map_state: crate::core::remote::RemoteMapState,
     text: Vec<SnapshotLine>,
+}
+
+/// An ungrouped character ships no group object at all, so clients that do
+/// not read it (the phone) see an unchanged wire.
+fn group_is_empty(group: &crate::core::group::GroupState) -> bool {
+    !group.is_grouped()
 }
 
 /// First message on every connection.
@@ -179,6 +189,7 @@ pub fn snapshot(
             right: state.right_hand.clone(),
         },
         indicators: state.indicators.clone(),
+        group: state.group.clone(),
         rt: RtPayload {
             roundtime_end: state.roundtime_end,
             casttime_end: state.casttime_end,
@@ -246,6 +257,7 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
             },
         ),
         RemoteDelta::Indicators(status) => encode("indicators", last_seq, status.clone()),
+        RemoteDelta::Group(group) => encode("group", last_seq, group.clone()),
         RemoteDelta::Rt {
             roundtime_end,
             casttime_end,

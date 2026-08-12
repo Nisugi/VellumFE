@@ -19,6 +19,49 @@ impl MessageProcessor {
         }
     }
 
+    /// Buffer the group events in a flushed chunk, each with the links that
+    /// appear on its own line.
+    ///
+    /// A flush can carry several game lines, and the segments carry no line
+    /// boundaries, so this walks the segments accumulating a per-line link
+    /// list and cuts it at every newline in the segment text. Attributing all
+    /// of a chunk's links to all of its events would merge unrelated joins.
+    fn buffer_group_events(&mut self, full_text: &str) {
+        use crate::core::group::{classify_line, GroupMember};
+
+        // Links, bucketed by which line of the chunk they appeared on.
+        let mut per_line: Vec<Vec<GroupMember>> = Vec::new();
+        let mut current: Vec<GroupMember> = Vec::new();
+        for seg in &self.current_segments {
+            if let Some(l) = &seg.link_data {
+                // Skip the synthetic link sentinels (`_direct_`, `_url_`);
+                // only real game objects carry an exist id.
+                if !l.exist_id.is_empty() && !l.exist_id.starts_with('_') {
+                    current.push(GroupMember {
+                        id: l.exist_id.clone(),
+                        noun: l.noun.clone(),
+                        name: l.text.clone(),
+                    });
+                }
+            }
+            // A segment's text may contain several newlines; each ends a line.
+            for _ in 0..seg.text.matches('\n').count() {
+                per_line.push(std::mem::take(&mut current));
+            }
+        }
+        // Trailing text with no final newline is still a line.
+        if !current.is_empty() {
+            per_line.push(current);
+        }
+
+        for (idx, line) in full_text.lines().enumerate() {
+            if let Some(event) = classify_line(line) {
+                let members = per_line.get(idx).cloned().unwrap_or_default();
+                self.pending_group.push((event, members));
+            }
+        }
+    }
+
     /// Flush exactly the pending line (no injected-line draining).
     pub(super) fn flush_one_line(
         &mut self,
@@ -62,6 +105,24 @@ impl MessageProcessor {
             if let Some(silver) = crate::core::character_state::parse_wealth_line(&full_text) {
                 self.pending_silver = Some(silver);
             }
+        }
+
+        // Group membership. The text says WHAT happened; the line's
+        // `<a exist noun>` links say TO WHOM, so both travel together. Keyed
+        // on exist id rather than name, since two players can share a name.
+        // Buffered here (no game_state) and applied at the prompt in order —
+        // a `group` reply's roster line must land before its status sentinel.
+        //
+        // One flush can hold SEVERAL game lines (nothing flushes on an
+        // embedded newline), so links are attributed per line by walking the
+        // segments and tracking newlines. Attributing every link in the chunk
+        // to every event would put Carol in Bob's join.
+        if full_text.contains("group")
+            || full_text.contains("You join ")
+            || full_text.contains("You are leading ")
+            || full_text.contains("designates you as the new leader")
+        {
+            self.buffer_group_events(&full_text);
         }
 
         // READY/STOW list rows: observe (don't squelch — the player asked for

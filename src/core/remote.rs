@@ -384,6 +384,9 @@ pub enum RemoteDelta {
         right: Option<String>,
     },
     Indicators(StatusInfo),
+    /// Group roster changed. Small and infrequent, so it ships whole rather
+    /// than as a member diff.
+    Group(crate::core::group::GroupState),
     Rt {
         roundtime_end: Option<i64>,
         casttime_end: Option<i64>,
@@ -775,6 +778,9 @@ pub struct RemoteStateSnapshot {
     pub left_hand: Option<String>,
     pub right_hand: Option<String>,
     pub indicators: StatusInfo,
+    /// Group roster. Carries `confirmed` so a viewer can distinguish a known
+    /// roster from a partial one rather than presenting a guess as fact.
+    pub group: crate::core::group::GroupState,
     pub roundtime_end: Option<i64>,
     pub casttime_end: Option<i64>,
     pub server_time: i64,
@@ -1064,6 +1070,7 @@ impl RemoteStateSnapshot {
             left_hand: game_state.left_hand.clone(),
             right_hand: game_state.right_hand.clone(),
             indicators: game_state.status.clone(),
+            group: game_state.group.clone(),
             roundtime_end: game_state.roundtime_end,
             casttime_end: game_state.casttime_end,
             server_time: game_state.game_time,
@@ -1645,6 +1652,9 @@ impl RemoteSink {
             let _ = self
                 .delta_tx
                 .send(RemoteDelta::Indicators(snap.indicators.clone()));
+        }
+        if snap.group != self.last.group {
+            let _ = self.delta_tx.send(RemoteDelta::Group(snap.group.clone()));
         }
         if snap.effects != self.last.effects {
             let _ = self

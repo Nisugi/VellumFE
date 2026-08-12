@@ -195,6 +195,11 @@ pub struct GameState {
     /// Combat stance (from the stance dialog's pbarStance)
     pub stance: StanceState,
 
+    /// Group roster, reconstructed from the game's group messaging. The
+    /// feed's only structured group signal is the JOINED indicator, a bare
+    /// flag with no members, so the roster comes from parsed text.
+    pub group: crate::core::group::GroupState,
+
     /// Betrayer panel state (blood points + items) - GS4 only
     pub betrayer: BetrayerState,
 
@@ -1124,6 +1129,7 @@ impl GameState {
             gs4_experience: GS4ExperienceState::default(),
             encumbrance: EncumbranceState::default(),
             stance: StanceState::default(),
+            group: crate::core::group::GroupState::default(),
             minivitals: MiniVitalsState::default(),
             betrayer: BetrayerState::default(),
             bounty: BountyState::default(),

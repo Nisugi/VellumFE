@@ -28,6 +28,7 @@ pub mod hotbar;
 pub mod input_router;
 pub mod missing_spells;
 pub mod jinx;
+pub mod group;
 pub mod layout_engine;
 pub mod map_service;
 pub mod mapdb;
