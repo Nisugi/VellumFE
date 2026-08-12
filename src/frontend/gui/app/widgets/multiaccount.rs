@@ -402,62 +402,100 @@ impl VellumGuiApp {
                         }
                     });
 
-                    // Rows are drawn in the configured order so a card can
-                    // lead with whatever that user reads first. Anything not
-                    // listed keeps its default position, so a partial or
-                    // absent list still shows every enabled row.
-                    // Rows are grouped into lines so short ones (RT, status
-                    // icons) can share a line instead of each burning a full
-                    // one. A single-row line draws exactly as before.
-                    for line in data.row_lines() {
-                        if let [row] = line[..] {
-                            Self::render_card_row(
-                                ui, settings, data, peer, row, now_server,
+                    // The card body is one or more COLUMNS (the window Group
+                    // model in miniature): each row is assigned a column,
+                    // columns split the card width by their size weights,
+                    // and rows stack top to bottom within their column.
+                    // One column (the default) is the classic vertical
+                    // panel; doll left + everything else right is two.
+                    let weights = data.column_weights();
+                    if let [_] = weights[..] {
+                        for line in data.row_lines(0) {
+                            Self::render_row_line(
+                                ui, settings, data, peer, &line, now_server,
                             );
-                            continue;
                         }
-                        // Bars need an explicit share or the first one
-                        // swallows the line; labels and icon strips size
-                        // themselves and should not be padded out. Split
-                        // the width only among the rows that stretch.
-                        let stretchy =
-                            line.iter().filter(|row| row.stretches()).count();
-                        let count = line.len() as f32;
-                        let gap = ui.spacing().item_spacing.x * (count - 1.0);
-                        let share = if stretchy > 0 {
-                            ((ui.available_width() - gap) / stretchy as f32).max(28.0)
-                        } else {
-                            0.0
-                        };
-                        ui.horizontal(|ui| {
-                            for row in line {
-                                if row.stretches() {
-                                    ui.allocate_ui(
-                                        egui::vec2(share, ui.available_height()),
-                                        |ui| {
-                                            // allocate_ui inherits the line's
-                                            // horizontal layout; without this
-                                            // the vitals bars fan out side by
-                                            // side instead of stacking.
-                                            ui.vertical(|ui| {
-                                                ui.set_width(share);
-                                                Self::render_card_row(
+                    } else {
+                        let total: f32 = weights.iter().sum();
+                        let gaps = ui.spacing().item_spacing.x
+                            * (weights.len() - 1) as f32;
+                        let avail = (ui.available_width() - gaps).max(40.0);
+                        ui.horizontal_top(|ui| {
+                            for (col, weight) in weights.iter().enumerate() {
+                                let col_w = (avail * weight / total).max(28.0);
+                                ui.allocate_ui(
+                                    egui::vec2(col_w, ui.available_height()),
+                                    |ui| {
+                                        // allocate_ui inherits the horizontal
+                                        // layout; the column must stack.
+                                        ui.vertical(|ui| {
+                                            ui.set_width(col_w);
+                                            for line in data.row_lines(col) {
+                                                Self::render_row_line(
                                                     ui, settings, data, peer,
-                                                    row, now_server,
+                                                    &line, now_server,
                                                 );
-                                            });
-                                        },
-                                    );
-                                } else {
-                                    Self::render_card_row(
-                                        ui, settings, data, peer, row, now_server,
-                                    );
-                                }
+                                            }
+                                        });
+                                    },
+                                );
                             }
                         });
                     }
                 });
             });
+        });
+    }
+
+    /// One line of a card column: a single row draws plainly; several rows
+    /// (compact ones sharing a line) lie on one horizontal strip.
+    fn render_row_line(
+        ui: &mut egui::Ui,
+        settings: &WidgetRenderSettings,
+        data: &crate::config::MultiAccountWidgetData,
+        peer: &PeerStatus,
+        line: &[crate::config::CardRow],
+        now_server: i64,
+    ) {
+        if let [row] = line {
+            Self::render_card_row(ui, settings, data, peer, *row, now_server);
+            return;
+        }
+        // Bars need an explicit share or the first one swallows the line;
+        // labels and icon strips size themselves and should not be padded
+        // out. Split the width only among the rows that stretch.
+        let stretchy = line.iter().filter(|row| row.stretches()).count();
+        let count = line.len() as f32;
+        let gap = ui.spacing().item_spacing.x * (count - 1.0);
+        let share = if stretchy > 0 {
+            ((ui.available_width() - gap) / stretchy as f32).max(28.0)
+        } else {
+            0.0
+        };
+        ui.horizontal(|ui| {
+            for row in line {
+                let row = *row;
+                if row.stretches() {
+                    ui.allocate_ui(
+                        egui::vec2(share, ui.available_height()),
+                        |ui| {
+                            // allocate_ui inherits the line's horizontal
+                            // layout; without this gauge bars fan out side
+                            // by side instead of filling their share.
+                            ui.vertical(|ui| {
+                                ui.set_width(share);
+                                Self::render_card_row(
+                                    ui, settings, data, peer, row, now_server,
+                                );
+                            });
+                        },
+                    );
+                } else {
+                    Self::render_card_row(
+                        ui, settings, data, peer, row, now_server,
+                    );
+                }
+            }
         });
     }
 

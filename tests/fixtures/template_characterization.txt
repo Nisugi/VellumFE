@@ -1986,6 +1986,9 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
   max_effects = 4
   merged_rows = ["status"]
   row_order = []
+  card_column_weights = [1.0]
   sort_by = "group"
   columns = 0
   card_width = 150.0
+  
+  [card_row_columns]

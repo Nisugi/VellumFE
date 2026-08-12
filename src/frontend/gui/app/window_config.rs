@@ -1210,13 +1210,62 @@ impl VellumGuiApp {
                 });
             }
             ui.separator();
+            // Card columns, the window Group model in miniature: pick how
+            // many, weight their widths, then assign each row below. One
+            // column is the classic vertical panel; "doll left, info right"
+            // is two.
+            ui.horizontal(|ui| {
+                ui.label("Card columns");
+                let current = next.data.column_weights().len();
+                for n in 1..=3usize {
+                    if ui
+                        .selectable_label(current == n, format!("{n}"))
+                        .clicked()
+                        && current != n
+                    {
+                        let mut weights = next.data.column_weights();
+                        weights.resize(n, 1.0);
+                        next.data.card_column_weights = weights;
+                        changed = true;
+                    }
+                }
+            });
+            if next.data.column_weights().len() > 1 {
+                ui.horizontal(|ui| {
+                    ui.label("Size weights");
+                    let mut weights = next.data.column_weights();
+                    let mut edited = false;
+                    for weight in weights.iter_mut() {
+                        if ui
+                            .add(
+                                egui::DragValue::new(weight)
+                                    .speed(0.05)
+                                    .range(0.2..=5.0)
+                                    .max_decimals(2),
+                            )
+                            .changed()
+                        {
+                            edited = true;
+                        }
+                    }
+                    if edited {
+                        next.data.card_column_weights = weights;
+                        changed = true;
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Relative column widths, like the Group system's size \
+                     weights: 1 and 2 makes the second column twice as wide.",
+                );
+            }
             ui.label(RichText::new("Rows (top to bottom)").small());
             {
                 // Same vocabulary as the Group section above: arrows to
-                // reorder, a "\u{2514}" cue on rows living in the line
-                // above, and a fully-worded share checkbox in an indent --
-                // the previous glyph-labelled box rendered as tofu and read
-                // as a mystery square.
+                // reorder, a cue on rows living in the line above, a
+                // fully-worded share checkbox in an indent, and -- with
+                // several columns -- a column picker per row.
+                let column_count = next.data.column_weights().len();
                 let last = ma.rows.len().saturating_sub(1);
                 for (index, (row, shown, merged)) in ma.rows.iter().enumerate() {
                     let row = *row;
@@ -1258,19 +1307,46 @@ impl VellumGuiApp {
                             }
                             changed = true;
                         }
+                        if column_count > 1 {
+                            // Right-aligned column picker so labels stay in
+                            // a clean left edge.
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let current = next.data.row_column(row);
+                                    for col in (0..column_count).rev() {
+                                        if ui
+                                            .selectable_label(
+                                                current == col,
+                                                format!("{}", col + 1),
+                                            )
+                                            .on_hover_text(format!(
+                                                "Draw this row in column {}",
+                                                col + 1
+                                            ))
+                                            .clicked()
+                                            && current != col
+                                        {
+                                            next.data.set_row_column(row, col);
+                                            changed = true;
+                                        }
+                                    }
+                                },
+                            );
+                        }
                     });
-                    if index > 0 && *shown {
+                    // Big rows (vitals, doll) never squeeze onto a shared
+                    // horizontal strip -- putting things BESIDE them is what
+                    // the columns above are for -- so no share checkbox.
+                    if index > 0 && *shown && !row.full_width() {
                         ui.indent((row.id(), "ma_row_share"), |ui| {
                             let mut share = *merged;
                             if ui
                                 .checkbox(&mut share, "Share line with the row above")
-                                .on_hover_text(if row.full_width() {
-                                    "Vitals and the injury doll only pair with \
-                                     each other (doll left, bars beside it) -- \
-                                     joining a compact row would crush them."
-                                } else {
-                                    "Compact rows mix freely on one line."
-                                })
+                                .on_hover_text(
+                                    "Compact rows mix freely on one line \
+                                     (within the same column).",
+                                )
                                 .changed()
                             {
                                 if let Some(entry) =

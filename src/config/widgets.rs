@@ -1056,6 +1056,15 @@ pub struct MultiAccountWidgetData {
     /// (or a partial list) still shows everything -- a missing name hides
     /// nothing, it just does not reposition it.
     pub row_order: Vec<String>,
+    /// Relative widths of the card's row columns; the LENGTH is the column
+    /// count. `[1.0]` (default) is the classic single vertical panel;
+    /// `[1.0, 1.4]` is a doll column with a wider info column beside it.
+    /// Same idea as the window Group system's size weights.
+    pub card_column_weights: Vec<f32>,
+    /// Row id -> column index (0-based). Rows not listed sit in column 0;
+    /// indices past the last column clamp to it, so shrinking the column
+    /// count never hides a row.
+    pub card_row_columns: std::collections::BTreeMap<String, usize>,
     /// Card order: "group" keeps clustered characters together (default),
     /// "name" sorts alphabetically, "port" is connection order.
     pub sort_by: String,
@@ -1090,6 +1099,8 @@ impl Default for MultiAccountWidgetData {
             max_effects: 4,
             columns: 0,
             card_width: 150.0,
+            card_column_weights: vec![1.0],
+            card_row_columns: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -1173,17 +1184,20 @@ impl CardRow {
     }
 
     /// Whether this is one of the BIG rows -- the vitals block and the
-    /// injury doll. Big rows may share a line with each other (doll left,
-    /// bars beside it: the classic character-panel layout), but never with a
-    /// compact row, where they end up crushed onto an RT label's line.
-    /// Compact rows mix freely among themselves.
+    /// injury doll. A big row never squeezes onto a compact horizontal
+    /// strip (an RT label's line); the doll instead opens a side column
+    /// (see `may_join`).
     pub fn full_width(self) -> bool {
         matches!(self, CardRow::Vitals | CardRow::Injuries)
     }
 
-    /// Whether two rows may sit on one line: like pairs with like.
-    pub fn compatible(self, other: CardRow) -> bool {
-        self.full_width() == other.full_width()
+    /// Whether this row may share the given horizontal line: compact rows
+    /// only. Big rows (vitals, doll) never squeeze onto a strip -- putting
+    /// the doll BESIDE other rows is what card columns are for
+    /// (`card_column_weights` / `card_row_columns`), where each column
+    /// stacks vertically at a proper width.
+    pub fn may_join(self, line: &[CardRow]) -> bool {
+        !self.full_width() && line.iter().all(|other| !other.full_width())
     }
 
     /// Whether the row fills the width it is given (bars and the doll) or
@@ -1291,26 +1305,62 @@ impl MultiAccountWidgetData {
         }
     }
 
-    /// Rows grouped into lines: each inner vec is one horizontal run.
+    /// Column weights sanitized for layout: at least one column, every
+    /// weight positive. Garbage in the config degrades to equal columns
+    /// rather than a zero-width or vanished one.
+    pub fn column_weights(&self) -> Vec<f32> {
+        let mut weights: Vec<f32> = self
+            .card_column_weights
+            .iter()
+            .map(|w| if w.is_finite() && *w > 0.0 { *w } else { 1.0 })
+            .collect();
+        if weights.is_empty() {
+            weights.push(1.0);
+        }
+        weights
+    }
+
+    /// Which column a row renders in, clamped to the columns that exist --
+    /// an assignment to a removed column lands in the last one instead of
+    /// hiding the row.
+    pub fn row_column(&self, row: CardRow) -> usize {
+        let last = self.column_weights().len() - 1;
+        self.card_row_columns
+            .get(row.id())
+            .copied()
+            .unwrap_or(0)
+            .min(last)
+    }
+
+    /// Assign a row to a column. Column 0 is the default, so assigning it
+    /// removes the entry rather than storing a redundant zero.
+    pub fn set_row_column(&mut self, row: CardRow, column: usize) {
+        if column == 0 {
+            self.card_row_columns.remove(row.id());
+        } else {
+            self.card_row_columns.insert(row.id().to_string(), column);
+        }
+    }
+
+    /// One column's rows grouped into lines: each inner vec is one
+    /// horizontal run. Order within the column follows `row_order`.
     ///
     /// Hidden rows are dropped BEFORE grouping, so hiding the row a merged
     /// row was attached to promotes it to its own line rather than leaving a
-    /// dangling continuation.
-    pub fn row_lines(&self) -> Vec<Vec<CardRow>> {
+    /// dangling continuation. The same applies to rows moved to another
+    /// column: "share line with the row above" chains only within a column.
+    pub fn row_lines(&self, column: usize) -> Vec<Vec<CardRow>> {
         let mut lines: Vec<Vec<CardRow>> = Vec::new();
         for (row, shown) in self.ordered_rows() {
-            if !shown {
+            if !shown || self.row_column(row) != column {
                 continue;
             }
-            // A merged row joins the line above only when every row already
-            // on it is compatible (like pairs with like). This is the
-            // data-level guard: a config asking vitals to join the RT line
-            // self-heals to its own line instead of rendering crushed, while
-            // doll + vitals -- the classic character-panel pairing -- works.
+            // A merged row joins the line above only when `may_join` allows
+            // it. This is the data-level guard: a config asking vitals to
+            // join the RT strip self-heals to its own line instead of
+            // rendering crushed.
             let joinable = self.row_merged(row)
-                && lines
-                    .last()
-                    .is_some_and(|line| line.iter().all(|other| row.compatible(*other)));
+                && lines.last().is_some_and(|line| row.may_join(line));
             if joinable {
                 lines.last_mut().expect("non-empty").push(row);
             } else {
@@ -1825,7 +1875,7 @@ mod multiaccount_row_tests {
         // Both are short -- one label and a strip of icons -- so a full line
         // each is wasted space on an already narrow card.
         let data = MultiAccountWidgetData::default();
-        let lines = data.row_lines();
+        let lines = data.row_lines(0);
         assert_eq!(lines[0], vec![R::Rt, R::Status], "{lines:?}");
     }
 
@@ -1835,7 +1885,7 @@ mod multiaccount_row_tests {
         // is no longer drawn.
         let mut data = MultiAccountWidgetData::default();
         data.set_row_shown(R::Rt, false);
-        let lines = data.row_lines();
+        let lines = data.row_lines(0);
         assert_eq!(lines[0], vec![R::Status], "{lines:?}");
     }
 
@@ -1866,33 +1916,30 @@ mod multiaccount_row_tests {
         assert!(!data.row_merged(R::Mind));
 
         data.set_row_shown(R::Injuries, false);
-        let flat: Vec<R> = data.row_lines().into_iter().flatten().collect();
+        let flat: Vec<R> = data.row_lines(0).into_iter().flatten().collect();
         assert!(!flat.contains(&R::Injuries));
     }
 
-    /// Big rows pair with each other -- doll left, vitals beside it, the
-    /// classic character-panel layout -- but never with a compact row, where
-    /// they end up crushed onto an RT label's line.
+    /// Big rows (vitals, doll) never squeeze onto a shared horizontal
+    /// strip -- putting things beside them is what card columns are for.
     #[test]
-    fn big_rows_pair_with_each_other_but_not_with_compact_rows() {
-        let mut data = MultiAccountWidgetData::default();
-        // Doll first, vitals merged onto it.
-        data.row_order = vec!["injuries".to_string(), "vitals".to_string()];
-        data.set_row_merged(R::Vitals, true);
-        let lines = data.row_lines();
-        assert_eq!(
-            lines[0],
-            vec![R::Injuries, R::Vitals],
-            "doll + vitals share a line: {lines:?}"
-        );
-
-        // But vitals asked to join a compact line self-heals to its own.
+    fn big_rows_never_join_a_shared_line() {
+        // Vitals asked to join a compact line self-heals to its own.
         let mut data = MultiAccountWidgetData::default();
         data.set_row_merged(R::Vitals, true); // above it: rt + status
-        let lines = data.row_lines();
+        let lines = data.row_lines(0);
         assert!(
             lines.iter().any(|line| line == &vec![R::Vitals]),
             "vitals must not join the RT line: {lines:?}"
+        );
+
+        // Same for the doll, even directly under the vitals.
+        data.row_order = vec!["vitals".to_string(), "injuries".to_string()];
+        data.set_row_merged(R::Injuries, true);
+        let lines = data.row_lines(0);
+        assert!(
+            lines.iter().any(|line| line == &vec![R::Injuries]),
+            "the doll always gets its own line: {lines:?}"
         );
 
         // Compact rows still mix freely.
@@ -1900,6 +1947,53 @@ mod multiaccount_row_tests {
         data.set_row_shown(R::Stance, true);
         data.set_row_merged(R::Stance, true);
         assert!(data.row_merged(R::Stance));
+    }
+
+    /// Card columns: rows land in their assigned column, assignments to a
+    /// removed column clamp to the last one, and weights are sanitized.
+    #[test]
+    fn rows_split_across_card_columns() {
+        let mut data = MultiAccountWidgetData::default();
+        data.card_column_weights = vec![1.0, 1.4];
+        data.set_row_column(R::Injuries, 1);
+        data.set_row_column(R::Vitals, 1);
+
+        let col0: Vec<R> = data.row_lines(0).into_iter().flatten().collect();
+        let col1: Vec<R> = data.row_lines(1).into_iter().flatten().collect();
+        assert!(!col0.contains(&R::Injuries) && !col0.contains(&R::Vitals));
+        assert_eq!(col1, vec![R::Vitals, R::Injuries], "column order follows row_order");
+
+        // Line sharing chains only within a column: rt+status stay paired
+        // in column 0 regardless of what moved to column 1.
+        assert_eq!(data.row_lines(0)[0], vec![R::Rt, R::Status]);
+
+        // Shrinking to one column strands no rows -- assignments clamp.
+        data.card_column_weights = vec![1.0];
+        let all: Vec<R> = data.row_lines(0).into_iter().flatten().collect();
+        assert!(all.contains(&R::Injuries) && all.contains(&R::Vitals));
+
+        // Garbage weights degrade to usable columns instead of vanishing.
+        data.card_column_weights = vec![0.0, f32::NAN, -2.0];
+        assert_eq!(data.column_weights(), vec![1.0, 1.0, 1.0]);
+        data.card_column_weights = Vec::new();
+        assert_eq!(data.column_weights(), vec![1.0]);
+    }
+
+    /// Column assignment round-trips, and column 0 is stored implicitly.
+    #[test]
+    fn row_column_round_trips_and_zero_is_implicit() {
+        let mut data = MultiAccountWidgetData::default();
+        data.card_column_weights = vec![1.0, 1.0];
+        assert_eq!(data.row_column(R::Mind), 0, "unlisted rows sit in column 0");
+        data.set_row_column(R::Mind, 1);
+        assert_eq!(data.row_column(R::Mind), 1);
+        data.set_row_column(R::Mind, 0);
+        assert_eq!(data.row_column(R::Mind), 0);
+        assert!(
+            data.card_row_columns.is_empty(),
+            "column 0 stores no entry: {:?}",
+            data.card_row_columns
+        );
     }
 
     #[test]
