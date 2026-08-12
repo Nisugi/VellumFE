@@ -34,6 +34,7 @@ pub mod map_service;
 pub mod mapdb;
 pub mod move_feedback;
 pub mod multiaccount;
+pub mod session_registry;
 pub mod mapdb_update;
 pub mod menu_actions;
 pub mod known_windows;

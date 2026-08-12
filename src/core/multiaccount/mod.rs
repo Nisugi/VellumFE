@@ -11,10 +11,14 @@
 //! parsed rosters is the part with real logic in it, and it is much easier to
 //! trust when it can be tested without sockets.
 
+pub mod hub;
+
 use std::collections::{BTreeMap, HashMap};
 
 use crate::core::group::{GroupLeader, GroupState};
 use crate::core::state::{StatusInfo, Vitals};
+
+pub use hub::MultiAccountHub;
 
 /// How long without an update before a peer is shown as stale rather than
 /// current. Lich's groupbar uses 90s for the same purpose; a peer that has

@@ -162,94 +162,10 @@ pub async fn serve(
 
 /// Session registry: files in ~/.vellum-fe/web-sessions/, one per running
 /// instance, keyed by pid.
-pub mod registry {
-    use serde::{Deserialize, Serialize};
-    use std::fs;
-    use std::path::PathBuf;
-
-    #[derive(Clone, Debug, Serialize, Deserialize)]
-    pub struct SessionEntry {
-        pub character: String,
-        pub port: u16,
-        pub pid: u32,
-        pub started_at: String,
-    }
-
-    pub fn dir() -> Option<PathBuf> {
-        let dir = crate::config::Config::base_dir().ok()?.join("web-sessions");
-        fs::create_dir_all(&dir).ok()?;
-        Some(dir)
-    }
-
-    fn entry_path(pid: u32) -> Option<PathBuf> {
-        Some(dir()?.join(format!("{pid}.json")))
-    }
-
-    pub fn write_entry(port: u16, character: &str) {
-        let pid = std::process::id();
-        let entry = SessionEntry {
-            character: character.to_string(),
-            port,
-            pid,
-            started_at: chrono::Utc::now().to_rfc3339(),
-        };
-        let Some(path) = entry_path(pid) else { return };
-        if let Ok(json) = serde_json::to_string_pretty(&entry) {
-            if let Err(e) = fs::write(&path, json) {
-                tracing::warn!("failed to write session registry entry: {e}");
-            }
-        }
-    }
-
-    /// Remove this instance's entry (clean shutdown).
-    pub fn remove_entry() {
-        if let Some(path) = entry_path(std::process::id()) {
-            let _ = fs::remove_file(path);
-        }
-    }
-
-    /// All current entries. Also garbage-collects files whose pid is no
-    /// longer running (crashed instances).
-    pub fn list_and_gc() -> Vec<SessionEntry> {
-        let Some(dir) = dir() else { return Vec::new() };
-        let Ok(read) = fs::read_dir(&dir) else {
-            return Vec::new();
-        };
-        #[cfg(feature = "desktop")]
-        let mut system = sysinfo::System::new();
-        #[cfg(feature = "desktop")]
-        system.refresh_processes();
-        let mut entries = Vec::new();
-        for file in read.flatten() {
-            let path = file.path();
-            if path.extension().is_none_or(|e| e != "json") {
-                continue;
-            }
-            let Ok(text) = fs::read_to_string(&path) else {
-                continue;
-            };
-            let Ok(entry) = serde_json::from_str::<SessionEntry>(&text) else {
-                let _ = fs::remove_file(&path);
-                continue;
-            };
-            #[cfg(feature = "desktop")]
-            let alive = system
-                .process(sysinfo::Pid::from_u32(entry.pid))
-                .is_some();
-            // Without process inspection (Android: single-process app), only
-            // our own entry can be live; anything else is a stale leftover.
-            #[cfg(not(feature = "desktop"))]
-            let alive = entry.pid == std::process::id();
-            if alive {
-                entries.push(entry);
-            } else {
-                let _ = fs::remove_file(&path);
-            }
-        }
-        entries.sort_by(|a, b| a.character.cmp(&b.character));
-        entries
-    }
-}
+/// Session registry, re-exported from core so existing call sites keep
+/// working. The implementation moved to `core::session_registry` because the
+/// multi-account hub needs it and core cannot import from `frontend/`.
+pub use crate::core::session_registry as registry;
 
 /// Serve on an already-bound listener with a fixed token (integration
 /// tests bind port 0 and pass a known token).

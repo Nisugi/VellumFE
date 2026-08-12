@@ -1115,3 +1115,91 @@ async fn a_watcher_and_a_player_share_one_server() {
     assert_eq!(player_frame["t"], "vitals");
     assert_eq!(player_frame["d"]["mana"], 7);
 }
+
+// ==================== Multi-account hub (end-to-end) ====================
+
+/// The hub's frame appliers, driven by a REAL server rather than by
+/// hand-written JSON. The unit tests assert what the hub does with a frame;
+/// this asserts the frames it actually receives match that shape.
+#[tokio::test]
+async fn hub_applies_real_server_frames_to_a_peer() {
+    use vellum_fe::core::multiaccount::PeerStatus;
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    // Push state the way the app does, then connect as a watcher and feed
+    // every frame through the hub's applier.
+    let mut gs = GameState::new();
+    gs.vitals.health = 63;
+    gs.status.set("IconSTUNNED", true);
+    gs.injuries.insert("head".to_string(), 2);
+    gs.stance.update(80, "defensive (80%)");
+    gs.gs4_experience.update_mind_state(42, "muddled".to_string());
+    gs.encumbrance.update_level(17, "Light".to_string());
+    gs.group.replace(
+        vellum_fe::core::group::GroupLeader::SelfLed,
+        vec![vellum_fe::core::group::GroupMember {
+            id: "-1".to_string(),
+            noun: "bob".to_string(),
+            name: "Bob".to_string(),
+        }],
+    );
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let (_client, snapshot) = connect_watching(addr).await;
+
+    let mut peer = PeerStatus {
+        character: "Alice".to_string(),
+        port: 8040,
+        ..Default::default()
+    };
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &snapshot);
+
+    // Every field the display renders, sourced from a real snapshot.
+    assert_eq!(peer.vitals.health, 63);
+    assert!(peer.indicators.stunned(), "indicators survived the wire");
+    assert_eq!(peer.injuries.get("head"), Some(&2));
+    assert!(peer.group.leads());
+    assert_eq!(peer.group.members[0].name, "Bob");
+    assert_eq!(
+        peer.stance.as_ref().map(|g| g.value),
+        Some(80),
+        "numeric stance, not a re-parsed display string"
+    );
+    assert_eq!(peer.stance.as_ref().map(|g| g.text.as_str()), Some("defensive"));
+    assert_eq!(peer.mind.as_ref().map(|g| g.value), Some(42));
+    assert_eq!(peer.encumbrance.as_ref().map(|g| g.value), Some(17));
+    assert!(peer.connected);
+}
+
+#[tokio::test]
+async fn hub_tracks_live_status_deltas_from_a_real_server() {
+    use vellum_fe::core::multiaccount::PeerStatus;
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    let (mut client, _) = connect_watching(addr).await;
+
+    let mut peer = PeerStatus::default();
+
+    let mut gs = GameState::new();
+    gs.vitals.health = 12;
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+    let frame = read_json_timeout(&mut client).await;
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &frame);
+    assert_eq!(peer.vitals.health, 12);
+
+    // A roster change arrives as its own delta and replaces the roster.
+    gs.group.replace(
+        vellum_fe::core::group::GroupLeader::Other(vellum_fe::core::group::GroupMember {
+            id: "-9".to_string(),
+            noun: "zed".to_string(),
+            name: "Zed".to_string(),
+        }),
+        vec![],
+    );
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+    let frame = read_json_timeout(&mut client).await;
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &frame);
+    assert!(!peer.group.leads(), "now following Zed");
+    assert_eq!(peer.vitals.health, 12, "unrelated state must persist");
+}
