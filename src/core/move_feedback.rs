@@ -41,6 +41,36 @@ pub enum MoveFeedback {
     /// silvers") - the generic fare/ticket form, distinct from the
     /// day-pass clerk's DayPassTooPoor phrasing.
     TooPoor,
+    /// A gated entrance refused a hidden/invisible character - `unhide` and
+    /// retry (Lich move(), global_defs.rb:615-617).
+    MustUnhide,
+    /// A postural rejection ("will have to stand up first") - stand and
+    /// retry (global_defs.rb:714-717).
+    MustStand,
+    /// "Sorry, you may only type ahead" - back off ~1s and re-send; never a
+    /// failure (global_defs.rb:729-731).
+    TypeAhead,
+    /// "You are still stunned." - wait the stun out, then retry
+    /// (global_defs.rb:732-734).
+    StillStunned,
+    /// "You're still recovering from your recent..." - short backoff, retry
+    /// (global_defs.rb:718-720).
+    StillRecovering,
+    /// "You don't seem to be able to move to do that." - senses lost;
+    /// brief wait, retry (global_defs.rb:756-762).
+    NoControl,
+    /// A transient environmental refusal - guard check-ins, fog
+    /// entanglement, vertigo backouts, sinking panic, energy fields. Lich
+    /// retries these forever inside move() with sleep 1 (global_defs.rb:
+    /// 639-642); they must NEVER ban or re-path away from the edge.
+    TransientRetry,
+    /// "It's pitch dark and you can't see a thing!" - needs a light source;
+    /// Lich surfaces the message and treats the move as done
+    /// (global_defs.rb:763-765).
+    PitchDark,
+    /// "You are too injured to be doing any climbing!" - Lich casts Resolve
+    /// if known, else keeps the edge (returns nil, global_defs.rb:662-669).
+    TooInjured,
     /// A hard failure ("You can't go there", impassable, …). The edge is bad;
     /// safe to remove from the graph (Lich's `move` returns `false`).
     MoveFailedRemovable,
@@ -127,9 +157,80 @@ patterns! {
         "fall flat on your back",
         "The ground approaches you at an alarming rate",
         "You go flying down several feet",
+        // The climb-failure family (global_defs.rb:643-648): sleep, stand,
+        // retry - never a failure.
+        "slip after a few feet and fall",
+        "but quickly realize",
+        "but without success",
+        "wrong approach",
+        "slowly retreat back, reassessing",
+        "can't seem to find purchase",
+        "you make your way back up",
     ],
     NeedClimb => [
         "have to climb that",
+    ],
+    MustUnhide => [
+        "and remain hidden or invisible",
+        "if he can't see you!",
+        "when you can't be seen",
+        "You can't do that without being seen",
+        "no one can see you right now",
+    ],
+    MustStand => [
+        "will have to stand up first",
+        "must be standing first",
+        "You'll have to get up first",
+        "But you're already sitting!",
+        "Shouldn't you be standing first",
+        "Try standing up",
+        "Perhaps you should stand up",
+        "Standing up might help",
+        "You should really stand up first",
+        "You can't do that while sitting",
+        "You must be standing to do that",
+        "You can't do that while lying down",
+        "You must be standing",
+        "You can't do that from that position",
+    ],
+    TypeAhead => [
+        "Sorry, you may only type ahead",
+    ],
+    StillStunned => [
+        "You are still stunned",
+    ],
+    StillRecovering => [
+        "You're still recovering from your recent",
+    ],
+    NoControl => [
+        "You don't seem to be able to move to do that",
+    ],
+    TransientRetry => [
+        "you begin to sink!",
+        "You need to make sure you check in",
+        "no way to climb the slippery tendrils",
+        "back to safe ground",
+        "your persistence will pay off",
+        "field of magical crimson and gold energy",
+        "quickly become entangled",
+        "A wave of dizziness hits you",
+        "but the steepness is intimidating",
+        "Struck by vertigo",
+        "your footing is questionable",
+        "doesn't budge",
+        "flounder around in the water",
+        "blunder around in the water",
+        "struggle against the swift current to swim",
+        "slap at the water in a sad failure",
+        "work against the swift current to swim",
+        "current catches you and whips you back to shore",
+        "disk only wobbles briefly",
+    ],
+    PitchDark => [
+        "pitch dark and you can't see a thing",
+    ],
+    TooInjured => [
+        "too injured to be doing any climbing",
     ],
     CantClimb => [
         "You can't climb that",
@@ -212,6 +313,13 @@ patterns! {
         "is too far away",
         "You may not pass",
         "become impassable",
+        "is too far above you to attempt that",
+        "Definitely NOT a good idea",
+        "Your attempt fails",
+        "There doesn't seem to be any way to do that at the moment",
+        "You settle yourself on",
+        "You shouldn't annoy",
+        "That's probably not a very good idea",
         "prevents you from entering",
         "There doesn't seem to be any way to do that at the moment",
     ],
@@ -225,6 +333,10 @@ patterns! {
         "preventing him from being dragged",
         "preventing her from being dragged",
         "perhaps you should try again later",
+        "only performers should go",
+        "carelessly bump into the guard",
+        "Your reputation precedes you",
+        "reads, \"Abandoned.\"",
     ],
 }
 

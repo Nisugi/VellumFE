@@ -379,6 +379,11 @@ impl DayPassCache {
         self.passes.contains_key(id)
     }
 
+    /// All learned pass ids, for the sack-sweep prune.
+    pub fn ids(&self) -> impl Iterator<Item = &String> {
+        self.passes.keys()
+    }
+
     pub fn forget(&mut self, id: &str) {
         self.passes.remove(id);
     }

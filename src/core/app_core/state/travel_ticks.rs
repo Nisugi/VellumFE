@@ -72,6 +72,37 @@ impl AppCore {
         (Some(target), unknown, any_pass)
     }
 
+    /// Drop cached day passes whose id is no longer in the sack (given away,
+    /// sold, lost): Lich's sweep prunes `\$mapdb_day_passes` the same way.
+    /// Without this a vanished pass keeps routing a pass edge that then
+    /// fails at `raise` every trip.
+    pub(super) fn prune_missing_day_passes(&mut self) {
+        let name = self.config.go2.day_pass_sack.trim();
+        if name.is_empty() {
+            return;
+        }
+        let Some(sack) = self.game_state.objects.find_container(name) else {
+            return;
+        };
+        let present: std::collections::HashSet<&str> = self
+            .game_state
+            .objects
+            .items_in(&sack.id)
+            .into_iter()
+            .map(|i| i.id.as_str())
+            .collect();
+        let gone: Vec<String> = self
+            .game_state
+            .day_passes
+            .ids()
+            .filter(|id| !present.contains(id.as_str()))
+            .cloned()
+            .collect();
+        for id in gone {
+            self.game_state.day_passes.forget(&id);
+        }
+    }
+
     /// Resolve a deferred `.go2` waiting on the day-pass sack scan (see
     /// start_travel). Done when every looked-at pass has parsed into the cache
     /// (or, for the contents probe, a pass is now visible in the sack), or the
@@ -494,6 +525,7 @@ impl AppCore {
             && self.pending_day_pass_scan.is_none()
             && !self.day_pass_scan_blocked_by_bounty()
         {
+            self.prune_missing_day_passes();
             let (target, unknown, any_pass) = self.day_pass_scan_targets();
             if let Some(target) = target {
                 if !unknown.is_empty() {

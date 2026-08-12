@@ -407,7 +407,19 @@ impl BuyState {
                 out
             }
             Phase::AwaitOffer { sent_ms } => {
-                if saw(&F::DayPassOffered) {
+                if saw(&F::DayPassInHand) {
+                    // The clerk skipped the offer and handed the pass over -
+                    // the post-bank re-ask does this (Lich's proc accepts
+                    // both shapes). Waiting for an offer that never comes
+                    // timed the whole trip out after a full bank round-trip.
+                    self.capture_pass(&ctx);
+                    self.phase = Phase::ToWaitingRoom { sent_ms: None, sent_from: None };
+                    self.tick_to_waiting_room(&ctx, &mut out);
+                } else if saw(&F::DayPassTooPoor) {
+                    out.push(BuyEvent::Failed(
+                        "still too poor for the pass at the offer".into(),
+                    ));
+                } else if saw(&F::DayPassOffered) {
                     // Confirm the purchase.
                     out.push(BuyEvent::Send(self.ask()));
                     self.phase = Phase::AwaitPass { sent_ms: ctx.now_ms };

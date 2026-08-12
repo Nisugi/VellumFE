@@ -566,6 +566,23 @@ pub struct TravelTask {
     /// a second means the withdrawal cannot cover the fare - fail the edge
     /// rather than loop bank trips (the day-pass buyer's `funded` guard).
     fare_funded: bool,
+    /// One bank detour per trip (go2's \$go2_started_go2_bank): short again
+    /// after withdrawing means the bank can't cover it - bail, don't loop.
+    bank_detour_done: bool,
+    /// One `open` per closed door per edge (Lich move()'s `tried_open`): a
+    /// second closed-door line means it's locked - fail the edge, don't loop
+    /// open/go forever. Cleared on arrival.
+    tried_open: bool,
+    /// The character is mounted (Lich's persistent Go2.mounted): suppresses
+    /// the stand-before-move check for the rest of the trip - a mounted
+    /// character can't stand and doesn't need to.
+    mounted: bool,
+    /// Blocked-but-transient retries on the current edge (Lich retries these
+    /// in place with sleep 1; only exhaustion re-paths, and NEVER bans).
+    keep_retries: u32,
+    /// Don't send anything before this instant - the backoff for type-ahead
+    /// throttles, "still recovering", and transient environmental refusals.
+    hold_until_ms: u64,
     /// True while walking the funding detour to a bank (so arrival there
     /// triggers the withdraw rather than a normal arrival).
     funding_bank: Option<u32>,
@@ -635,6 +652,11 @@ impl TravelTask {
             stash_stack: Vec::new(),
             silver_need,
             fare_funded: false,
+            bank_detour_done: false,
+            tried_open: false,
+            mounted: false,
+            keep_retries: 0,
+            hold_until_ms: 0,
             funding_bank: None,
             confluence: None,
             minotaur: None,
@@ -956,11 +978,22 @@ impl TravelTask {
                 let timeout = if slow { SLOW_ARRIVAL_TIMEOUT_MS } else { STEP_TIMEOUT_MS };
                 if ctx.now_ms.saturating_sub(sent_ms) > timeout {
                     if self.edge_retries >= MAX_EDGE_RETRIES {
-                        // go2: "changing Room[..].timeto[..] to nil" + restart.
-                        events.push(TravelEvent::Status(format!(
-                            "move {from} -> {expected} keeps failing - disabling that edge for this session and re-pathing"
-                        )));
-                        self.banned.insert((from, expected));
+                        // A SILENT giveup is Lich's `nil` - the edge is kept
+                        // (global_defs.rb:772-783: "return nil ... to show the
+                        // direction shouldn't be removed"). go2 only nils the
+                        // edge cost when it never left the FIRST room
+                        // (go2.lic:2466-2478). Banning here on lag poisoned
+                        // good edges for the whole session.
+                        if self.idx == 0 {
+                            events.push(TravelEvent::Status(format!(
+                                "move {from} -> {expected} keeps failing - disabling that edge for this session and re-pathing"
+                            )));
+                            self.banned.insert((from, expected));
+                        } else {
+                            events.push(TravelEvent::Status(format!(
+                                "move {from} -> {expected} got no answer - re-pathing (edge kept)"
+                            )));
+                        }
                         self.repath(ctx.db, current, ctx.lich_fallback, &mut events);
                     } else {
                         // Retry the same edge (a scripted edge replays its
@@ -987,6 +1020,8 @@ impl TravelTask {
     fn arrive(&mut self) {
         self.idx += 1;
         self.edge_retries = 0;
+        self.tried_open = false;
+        self.keep_retries = 0;
         // Captures are scoped to the edge that bound them; a value read off a
         // line during the last crossing must not fill a command in the next.
         self.captures.clear();
@@ -2027,19 +2062,43 @@ impl TravelTask {
                 }
                 WalkAction::VolnSeeking { destination } => {
                     // The symbol offers rooms by NAME, so we need the
-                    // destination's title to know when to confirm.
-                    let Some(title) = ctx
+                    // destination's titles to know when to confirm. ALL
+                    // titles, as an alternation (Lich matches
+                    // destination.title.include?), with any trailing
+                    // " (12345)" room-number suffix stripped - a
+                    // roomnumbers-stamped title otherwise never matches and
+                    // the seek burns every cast.
+                    let titles: Vec<String> = ctx
                         .db
                         .room(destination)
-                        .and_then(|r| r.title.first())
-                        .map(|t| t.trim_matches(['[', ']']).to_string())
-                        .filter(|t| !t.is_empty())
-                    else {
+                        .map(|r| {
+                            r.title
+                                .iter()
+                                .map(|t| {
+                                    let t = t.trim_matches(['[', ']']).trim();
+                                    let t = match t.rfind(" (") {
+                                        Some(i)
+                                            if t.ends_with(')')
+                                                && t[i + 2..t.len() - 1]
+                                                    .chars()
+                                                    .all(|c| c.is_ascii_digit()) =>
+                                        {
+                                            &t[..i]
+                                        }
+                                        _ => t,
+                                    };
+                                    regex::escape(t)
+                                })
+                                .filter(|t| !t.is_empty())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if titles.is_empty() {
                         self.handle_uncrossable_edge(from, expected, ctx, events);
                         return;
-                    };
+                    }
                     let Some(pattern) = crate::core::pathing::edge::AwaitPattern::new(
-                        &regex::escape(&title),
+                        &titles.join("|"),
                     ) else {
                         self.handle_uncrossable_edge(from, expected, ctx, events);
                         return;
@@ -2061,6 +2120,12 @@ impl TravelTask {
                                         // somewhere else; cast again.
                                         on_timeout:
                                             crate::core::pathing::edge::OnTimeout::Continue,
+                                        // Confirm ONLY on a match, inside
+                                        // the loop. The old shape confirmed
+                                        // unconditionally AFTER it - an
+                                        // exhausted seek teleported the
+                                        // character to whatever room the
+                                        // last cast happened to offer.
                                         if_match: Some((
                                             Box::new(
                                                 crate::core::pathing::edge::AwaitPattern::new(
@@ -2068,14 +2133,24 @@ impl TravelTask {
                                                 )
                                                 .expect("valid"),
                                             ),
-                                            vec![WalkAction::Break],
+                                            vec![
+                                                WalkAction::StepMove(
+                                                    "symbol of seeking confirm".into(),
+                                                ),
+                                                WalkAction::Break,
+                                            ],
                                         )),
                                     },
                                 ],
                                 until: RepeatUntil::Count,
                                 max: SEEKING_MAX_CASTS,
                             },
-                            WalkAction::StepMove("symbol of seeking confirm".into()),
+                            // Nothing after the loop: a successful confirm
+                            // ends here and the arrival check wins; an
+                            // exhausted seek ends with no room change and
+                            // the arrival timeout re-paths (edge kept). A
+                            // trailing action would also run after SUCCESS -
+                            // Break lands just past the Repeat.
                         ],
                     );
                 }
@@ -2661,6 +2736,18 @@ impl TravelTask {
                     }
                     return;
                 };
+                // Return-trip pre-funding (go2.lic:2210-2218): with the
+                // setting on, the way HOME counts too - go2 runs a second
+                // dijkstra dest->start and adds its fares, so the character
+                // is never stranded at a paid crossing with no fare back.
+                if funding.map(|f| f.get_return_trip).unwrap_or(false) {
+                    if let Some(back) = pathing::path_to(ctx.db, self.destination, current) {
+                        let full: Vec<u32> = std::iter::once(self.destination)
+                            .chain(back.iter().copied())
+                            .collect();
+                        self.silver_need += pathing::silver_cost(ctx.db, &full);
+                    }
+                }
                 if silver >= self.silver_need {
                     // Funded — walk the real trip.
                     events.push(TravelEvent::Status(format!(
@@ -2680,6 +2767,16 @@ impl TravelTask {
                     self.begin_walk(current, ctx, events);
                     return;
                 }
+                // A bank detour already ran this trip and we're short AGAIN:
+                // bail cleanly (go2's \$go2_started_go2_bank guard,
+                // go2.lic:2240-2243) instead of flailing through restarts.
+                if self.bank_detour_done {
+                    events.push(TravelEvent::Failed(
+                        "you're too poor to go to the bank".into(),
+                    ));
+                    return;
+                }
+                self.bank_detour_done = true;
                 // Find the nearest bank we can afford to WALK to (its own path
                 // cost must be within current silver — Lich's affordability
                 // check), then redirect the trip there.
@@ -2743,6 +2840,11 @@ impl TravelTask {
                     } else {
                         format!("withdraw {amount} silvers")
                     };
+                    // A hidden character's withdraw is ignored by the teller —
+                    // go2 unhides first (go2.lic:2274).
+                    if ctx.hidden {
+                        events.push(TravelEvent::Send("unhide".into()));
+                    }
                     events.push(TravelEvent::Send(cmd));
                     // Re-check wealth after withdrawing: the withdraw
                     // confirmation ("hands you N silvers") isn't a wealth line,
@@ -2844,6 +2946,11 @@ impl TravelTask {
     }
 
     fn tick_prepare(&mut self, current: u32, ctx: TravelContext, events: &mut Vec<TravelEvent>) {
+        // Backoff in force (type-ahead throttle, "still recovering",
+        // transient refusals): hold fire; the per-frame tick re-enters.
+        if ctx.now_ms < self.hold_until_ms {
+            return;
+        }
         if ctx.muckled {
             if !self.muckle_announced {
                 events.push(TravelEvent::Status(
@@ -2890,7 +2997,8 @@ impl TravelTask {
         };
 
         // go2: swim/pedal edges skip the stand dance.
-        let needs_stand = !ctx.standing && !command_is_swim_or_pedal(&command);
+        let needs_stand =
+            !ctx.standing && !self.mounted && !command_is_swim_or_pedal(&command);
         if ctx.rt_remaining > 0.0 {
             return; // waitrt?
         }
@@ -2986,6 +3094,11 @@ impl TravelTask {
         // Mounted → urchin travel is incompatible. Drop urchins for the rest
         // of the trip and re-path on foot (Lich go2:2336-2346). Only acts when
         // urchins were actually in play.
+        if ctx.saw(&F::Mounted) {
+            // Persistent for the trip (Lich's Go2.mounted): a mounted
+            // character can't stand, and the stand check must stop firing.
+            self.mounted = true;
+        }
         if ctx.saw(&F::Mounted) && crate::core::pathing::transpile::urchins_valid() {
             crate::core::pathing::transpile::set_urchins_valid(false);
             events.push(TravelEvent::Status(
@@ -3020,12 +3133,72 @@ impl TravelTask {
             }
             return true;
         }
-        // Blocked-but-keep → don't ban; re-path around it for now (Lich `nil`:
-        // "don't delete the edge"). A future attempt may succeed.
-        if ctx.saw(&F::MoveFailedKeep) {
+        // Blocked-but-keep: Lich retries these in place (sleep 1, waitrt,
+        // re-send - global_defs.rb:639-642) and only gives up at its own
+        // timeout, returning nil ("don't delete the edge"). Retry with a
+        // short backoff; exhaustion re-paths WITHOUT banning.
+        if ctx.saw(&F::MoveFailedKeep) || ctx.saw(&F::TransientRetry) {
+            if self.keep_retries >= MAX_EDGE_RETRIES + 2 {
+                events.push(TravelEvent::Status(format!(
+                    "move {from} -> {expected} is blocked right now - re-pathing (edge kept)"
+                )));
+                self.repath(ctx.db, from, ctx.lich_fallback, events);
+            } else {
+                self.keep_retries += 1;
+                self.hold_until_ms = ctx.now_ms + 1_200;
+                self.step = Step::Prepare;
+            }
+            return true;
+        }
+        // Gated entrance vs a hidden/invisible character: unhide, retry
+        // (global_defs.rb:615-617). Without this the edge times out and gets
+        // banned - the most common wrongful ban for stealthy characters.
+        if ctx.saw(&F::MustUnhide) {
+            events.push(TravelEvent::Send("unhide".into()));
+            if !command.is_empty() {
+                events.push(TravelEvent::Send(command));
+            }
+            self.reset_arrival_timer(from, expected, ctx.now_ms);
+            return true;
+        }
+        // Postural rejection: back through Prepare, whose stand machinery is
+        // RT-gated (global_defs.rb:714-717).
+        if ctx.saw(&F::MustStand) {
+            self.step = Step::Prepare;
+            return true;
+        }
+        // Throttles and short-lived incapacities: back off, then re-send via
+        // Prepare (RT + muckled gated). None of these consume an edge retry.
+        if ctx.saw(&F::TypeAhead) || ctx.saw(&F::NoControl) {
+            self.hold_until_ms = ctx.now_ms + 1_200;
+            self.step = Step::Prepare;
+            return true;
+        }
+        if ctx.saw(&F::StillRecovering) {
+            self.hold_until_ms = ctx.now_ms + 2_000;
+            self.step = Step::Prepare;
+            return true;
+        }
+        if ctx.saw(&F::StillStunned) {
+            // Prepare's muckled gate waits the stun out.
+            self.step = Step::Prepare;
+            return true;
+        }
+        // Too injured to climb: Lich casts Resolve if known, else keeps the
+        // edge. We can't cast - re-path keeping the edge.
+        if ctx.saw(&F::TooInjured) {
             events.push(TravelEvent::Status(format!(
-                "move {from} -> {expected} is blocked right now - re-pathing (edge kept)"
+                "too injured to climb {from} -> {expected} - re-pathing (edge kept)"
             )));
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
+            return true;
+        }
+        // Pitch dark: needs a light source. Surface it and re-path (Lich
+        // tells the user and carries on).
+        if ctx.saw(&F::PitchDark) {
+            events.push(TravelEvent::Status(
+                "it's pitch dark - you need a light source for this way; re-pathing".into(),
+            ));
             self.repath(ctx.db, from, ctx.lich_fallback, events);
             return true;
         }
@@ -3052,21 +3225,33 @@ impl TravelTask {
             }
             return true;
         }
-        // Closed door → send the `open` variant, then retry the move.
+        // Closed door → open once and retry; a SECOND closed-door line means
+        // locked (Lich's tried_open one-shot, global_defs.rb:697-706). The
+        // old uncapped loop reset its own timer each pass - the only outright
+        // hang in the walker.
         if ctx.saw(&F::DoorClosed) {
+            if self.tried_open {
+                events.push(TravelEvent::Status(format!(
+                    "the way {from} -> {expected} is locked - disabling that edge and re-pathing"
+                )));
+                self.banned.insert((from, expected));
+                self.repath(ctx.db, from, ctx.lich_fallback, events);
+                return true;
+            }
+            self.tried_open = true;
             let open = command.replacen("go", "open", 1).replacen("climb", "open", 1);
             events.push(TravelEvent::Send(open));
             events.push(TravelEvent::Send(command));
             self.reset_arrival_timer(from, expected, ctx.now_ms);
             return true;
         }
-        // Fell / knocked down → stand, then retry.
+        // Fell / knocked down → back through Prepare: its stand machinery is
+        // RT-gated, where a blind stand+move pair here landed inside the
+        // fall's roundtime (Lich waitrt?s around the stand,
+        // global_defs.rb:643-648).
         if ctx.saw(&F::Fell) {
-            if !ctx.standing {
-                events.push(TravelEvent::Send("stand".into()));
-            }
-            events.push(TravelEvent::Send(command));
-            self.reset_arrival_timer(from, expected, ctx.now_ms);
+            self.hold_until_ms = ctx.now_ms + 800;
+            self.step = Step::Prepare;
             return true;
         }
         // Verb swaps: go <-> climb.
