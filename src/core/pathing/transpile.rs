@@ -353,13 +353,68 @@ re!(
 // is a statement (or nothing). Rewritten away by `transpile_sequence` when
 // the variable is never read again.
 re!(ASSIGNED_RESULT, r"^(\w+)\s*=\s*(dothistimeout\b.+|nil)$");
-// `while checkpaths.include?('nw'); <statements>; end` — keep working the
-// room until the exit stops being offered (i.e. we left through it). The
-// inner statements are transpiled with the same statement machinery, so the
-// recognizer is a wrapper, not a fixed shape.
+// `loop { <statements>; if Room.current.id == N; break; end }` — retry until
+// a specific room is reached (the Sea Caves swim-tunnel).
 re!(
-    WHILE_PATH_BLOCK,
-    r#"(?s)^while\s+checkpaths\.include\?\(\s*['"](\w+)['"]\s*\)\s*;(.*);\s*end;?$"#
+    LOOP_BREAK_ROOM,
+    r"(?s)^loop\s*\{(.+?);\s*if Room\.current\.id == (\d+)\s*;\s*break\s*;?\s*end\s*;?\s*\}$"
+);
+// One block with a leading condition, optionally after straight-line
+// statements: `<prefix>; while <cond>; <inner>; end`. The prefix and inner
+// each go back through the fragment machinery (which refuses nested blocks),
+// and the condition through `statement_condition` — unknown anything refuses
+// the body.
+re!(
+    COND_BLOCK,
+    r"(?s)^(?:(.+?);)?\s*(if|unless|while|until)\s+([^;]+?)\s*;(.+?);?\s*end;?$"
+);
+// ---- family recognizers, pinned to verbatim mapdb text ------------------
+// Krag slopes crevice hunt (6135): group preamble, search-or-step-n/s loop
+// keyed on matchtimeout, group escort tail.
+re!(
+    KRAG_CREVICE,
+    r"(?s)^group_members = nil; clear\.reverse\.each \{ .*? break; end \}; result = nil; while !result; if celerity = Spell\[\d+\].*?end; fput 'search'; result = matchtimeout\([\d.]+,/[^/]+/\); waitrt\?; if !result then multimove '(\w+)','(\w+)'; end; end; fput 'point crevice' if group_members; move '([^']+)'; if group_members;.*end$"
+);
+// Sleeping Lady ice descents (21 edges): wait-or-buff-or-haste prep around a
+// single directional step, with slip recovery.
+re!(
+    ICE_DESCENT,
+    r"(?s)^resolve=Spell\['Sigil of Resolve'\]\s+haste=Spell\['Haste'\]\s+if UserVars\.mapdb_ice_mode == 'wait'.*?result = fput '([^']+)'\s+if result =~ /\^Rushing heedlessly/.*$"
+);
+// Upper Trollfang footpath (1216): search N times for the discover-line,
+// then enter what was found.
+re!(
+    TIMES_SEARCH_ENTER,
+    r"(?s)^(\d+)\.times \{ (\w+) = dothistimeout '([^']+)', ([\d.]+), /([^/]+)/; waitrt\?; break if (\w+) =~ /([^/]+)/ \}; move '([^']+)'$"
+);
+// Aenatumgana icy ledge (2679): the same hunt, but the break is the move
+// itself succeeding.
+re!(
+    TIMES_SEARCH_BREAKMOVE,
+    r"(?s)^(\d+)\.times \{ if \w+ = Spell\[\d+\].*?end; dothistimeout '([^']+)', ([\d.]+), /([^/]+)/; break if move '([^']+)' \}$"
+);
+// Bring-your-own-key doors (Solhaven / Spindrift): key on you -> door;
+// otherwise the script digs through UserVars-named sacks we can't resolve.
+re!(
+    KEY_DOOR,
+    r#"(?s)^if GameObj\.inv\.find \{\|obj\| obj\.noun == "key"\};fput "go ([^"]+)";else;empty_hand;multifput .*end$"#
+);
+// Zeltoph hidden stone door (19657): open, and on "locked" run the lockpick
+// dance before going through.
+re!(
+    ZELTOPH_DOOR,
+    r"^fput 'open door';while line = get;if \['You open the nearly invisible stone door\.', 'That is already open\.'\]\.include\?\(line\);fput 'go door';break;elsif line == 'It appears to be locked\.';empty_hands;fput 'get lockpick';fput 'pick door';fput 'stow lockpick';fill_hands;fput 'open door';fput 'go door';break;end;end$"
+);
+// `r = dothistimeout 'CMD', T, /…/; if r =~ /good/; move 'M'; elsif …` — the
+// success arm of a response branch (Rolaren gate).
+re!(
+    DOTHIS_BRANCH_MOVE,
+    r"(?s)^(\w+) = dothistimeout '([^']+)', ([\d.]+), /([^/]+)/; if (\w+) =~ /([^/]+)/; move '([^']+)'; (?:elsif|else).*$"
+);
+// Red Forest fog (7892): retry `go fog` until it stops bouncing us back.
+re!(
+    FOG_RETRY,
+    r#"(?s)^(?:UserVars\.\w+ = '[^']*';)?result = nil;until result =~ /[^/]+/;fput "stand" until standing\?;result = dothistimeout "([^"]+)", ([\d.]+), /([^/]+)/;if result =~ /[^/]+/;sleep [\d.]+;waitrt\?;end;end$"#
 );
 // The group-follow preamble + wait: scrape who followed us in, move, then
 // wait for each follower's arrival line. A native walker does not escort
@@ -383,6 +438,7 @@ re!(COND_SPELL_ACTIVE, r"^Spell\[(\d+)\]\.active\?$");
 re!(COND_HANDS_FULL, r"^GameObj\.(?:right|left)_hand\.id(?:\s+or\s+GameObj\.(?:right|left)_hand\.id)?$");
 re!(COND_CHECKLOOT, r#"^checkloot\.include\?\s*\(?\s*['"]([^'"]+)['"]\s*\)?$"#);
 re!(COND_IN_ROOM, r"^Room\.current\.id\s*(==|!=)\s*(\d+)$");
+re!(COND_ROOM_OBJ, r"^Room\.current\s*(==|!=)\s*Room\[(\d+)\]$");
 re!(COND_CHECKPATHS, r#"^checkpaths\.include\?\s*\(\s*['"]([^'"]+)['"]\s*\)$"#);
 re!(
     COND_LOOT_FIND,
@@ -1116,28 +1172,72 @@ fn split_statements(body: &str) -> Vec<String> {
 /// which is worse than declining the edge and letting the router re-path.
 fn transpile_sequence(src: &str) -> Option<Vec<WalkAction>> {
     let body = src.strip_prefix(";e").unwrap_or(src).trim();
-    // Whole-body block shapes that the gate below would refuse, recognized
-    // before it. Both delegate their innards back to the statement machinery
-    // rather than pinning a fixed arity.
-    if let Some(c) = WHILE_PATH_BLOCK.captures(body) {
-        let mut inner = Vec::new();
-        for statement in split_statements(&c[2]) {
-            inner.extend(transpile_statement(&statement)?);
-        }
+    // Whole-body block shapes that the fragment gate would refuse, recognized
+    // first. Each delegates its innards back to the statement machinery
+    // where it can, rather than pinning a fixed arity.
+    if let Some(actions) = transpile_block_families(body) {
+        return Some(actions);
+    }
+    // `loop { <statements>; if Room.current.id == N; break; end }` — retry a
+    // known body until it lands in a specific room (the Sea Caves swim).
+    if let Some(c) = LOOP_BREAK_ROOM.captures(body) {
+        let inner = transpile_fragment(&c[1])?;
         if inner.is_empty() {
             return None;
         }
         return Some(vec![WalkAction::Repeat {
             body: moves_to_steps(inner),
-            until: RepeatUntil::Cond(Cond::Not(Box::new(Cond::PathAvailable(
-                c[1].to_string(),
-            )))),
+            until: RepeatUntil::Room(c[2].parse().ok()?),
             max: MAX_RETRY_LOOP,
         }]);
     }
-    if let Some(c) = GROUP_FOLLOW_MOVE.captures(body) {
-        return Some(vec![WalkAction::Move(c[1].to_string()), WalkAction::WaitRt]);
+    // A single block with a leading condition, optionally after straight-line
+    // statements: `<prefix>; while <cond>; <inner>; end`. Every part must
+    // independently transpile (the fragment gate refuses nested blocks), and
+    // the condition must be one we can evaluate — fail-closed on both.
+    if let Some(c) = COND_BLOCK.captures(body) {
+        let prefix = match c.get(1) {
+            Some(p) => transpile_fragment(p.as_str())?,
+            None => Vec::new(),
+        };
+        let cond = statement_condition(&c[3])?;
+        let inner = transpile_fragment(&c[4])?;
+        if inner.is_empty() {
+            return None;
+        }
+        let block = match &c[2] {
+            "if" => vec![WalkAction::If {
+                cond,
+                then: inner,
+                els: Vec::new(),
+            }],
+            "unless" => vec![WalkAction::If {
+                cond: Cond::Not(Box::new(cond)),
+                then: inner,
+                els: Vec::new(),
+            }],
+            "while" => vec![WalkAction::Repeat {
+                body: moves_to_steps(inner),
+                until: RepeatUntil::Cond(Cond::Not(Box::new(cond))),
+                max: MAX_RETRY_LOOP,
+            }],
+            _ => vec![WalkAction::Repeat {
+                body: moves_to_steps(inner),
+                until: RepeatUntil::Cond(cond),
+                max: MAX_RETRY_LOOP,
+            }],
+        };
+        let mut actions = prefix;
+        actions.extend(block);
+        return Some(actions);
     }
+    transpile_fragment(body)
+}
+
+/// A run of `;`-separated statements with no block control flow: gate, split,
+/// clean, transpile each. The unit the block recognizers build on — a block's
+/// prefix and innards each go through here, so nesting fails closed.
+fn transpile_fragment(body: &str) -> Option<Vec<WalkAction>> {
     // BLOCK control flow needs an interpreter, not concatenation: `if x; move
     // 'n'; end` split naively would lose its condition and cross an edge the
     // script gated. Trailing `if`/`unless`/`while`/`until` MODIFIERS are fine
@@ -1179,6 +1279,200 @@ fn transpile_sequence(src: &str) -> Option<Vec<WalkAction>> {
         return None;
     }
     Some(actions)
+}
+
+/// Family recognizers for specific block-bearing corpus shapes — each one a
+/// sole entrance somewhere. Matched against the exact mapdb text, so a mapdb
+/// edit shows up as a coverage regression rather than a wrong walk.
+fn transpile_block_families(body: &str) -> Option<Vec<WalkAction>> {
+    if let Some(c) = GROUP_FOLLOW_MOVE.captures(body) {
+        return Some(vec![WalkAction::Move(c[1].to_string()), WalkAction::WaitRt]);
+    }
+    // Krag slopes / crevice hunt: search; if the crevice didn't show, step
+    // n/s to re-roll the room; repeat; then enter. The discovered crevice is
+    // gated on it appearing as a room object (the Caligos precedent — found
+    // features join GameObj.loot). Group escort reduces to solo, as in
+    // GROUP_FOLLOW_MOVE.
+    if let Some(c) = KRAG_CREVICE.captures(body) {
+        let found = Cond::RoomHasObject("crevice".into());
+        return Some(vec![
+            WalkAction::Repeat {
+                body: vec![
+                    WalkAction::Put("search".into()),
+                    WalkAction::WaitRt,
+                    WalkAction::If {
+                        cond: Cond::Not(Box::new(found.clone())),
+                        then: vec![
+                            WalkAction::StepMove(c[1].to_string()),
+                            WalkAction::StepMove(c[2].to_string()),
+                        ],
+                        els: Vec::new(),
+                    },
+                ],
+                until: RepeatUntil::Cond(found),
+                max: MAX_RETRY_LOOP,
+            },
+            WalkAction::Move(c[3].to_string()),
+        ]);
+    }
+    // Sleeping Lady ice descents (21 edges): the script offers three speeds —
+    // wait out the slip window, or buff with Sigil of Resolve, or blast down
+    // hasted. We can't cast, so ALWAYS take the cautious branch: pause, then
+    // step. Worst case we descend slower than a buffed Lich user; the slip
+    // recovery (stand + replan) is the executor's normal move-failure path.
+    if let Some(c) = ICE_DESCENT.captures(body) {
+        return Some(vec![
+            WalkAction::Sleep(6.0),
+            WalkAction::Move(c[1].to_string()),
+            WalkAction::WaitRt,
+        ]);
+    }
+    // `N.times { r = dothistimeout 'search', T, /…/; waitrt?; break if r =~
+    // /found-line/ }; move 'go X'` — search until the feature is discovered,
+    // then enter it (Upper Trollfang footpath).
+    if let Some(c) = TIMES_SEARCH_ENTER.captures(body) {
+        // Group indices follow the regex: 1=count, 2=var, 3=cmd, 4=timeout,
+        // 5=full pattern, 6=var again, 7=success pattern, 8=move. The break
+        // must test the SAME variable the dothistimeout assigned.
+        if c[2] != c[6] {
+            return None;
+        }
+        let max: u32 = c[1].parse().ok()?;
+        let noun = c[8].rsplit(' ').next()?.to_string();
+        return Some(vec![
+            WalkAction::Repeat {
+                body: vec![
+                    WalkAction::Await {
+                        cmd: Some(c[3].to_string()),
+                        pattern: Box::new(AwaitPattern::new(&c[7])?),
+                        timeout: c[4].parse().ok()?,
+                        on_timeout: OnTimeout::Continue,
+                        if_match: None,
+                    },
+                    WalkAction::WaitRt,
+                ],
+                until: RepeatUntil::Cond(Cond::RoomHasObject(noun)),
+                max: max.clamp(1, MAX_RETRY_LOOP),
+            },
+            WalkAction::Move(c[8].to_string()),
+        ]);
+    }
+    // The `break if move 'go X'` variant of the same hunt (Aenatumgana icy
+    // ledge): spell prep is dropped — the buff speeds the search up, it does
+    // not gate it (the BUFF_THEN_MOVE stance).
+    if let Some(c) = TIMES_SEARCH_BREAKMOVE.captures(body) {
+        let max: u32 = c[1].parse().ok()?;
+        let noun = c[5].rsplit(' ').next()?.to_string();
+        return Some(vec![
+            WalkAction::Repeat {
+                body: vec![
+                    WalkAction::Await {
+                        cmd: Some(c[2].to_string()),
+                        pattern: Box::new(AwaitPattern::new(&c[4])?),
+                        timeout: c[3].parse().ok()?,
+                        on_timeout: OnTimeout::Continue,
+                    if_match: None,
+                    },
+                    WalkAction::WaitRt,
+                ],
+                until: RepeatUntil::Cond(Cond::RoomHasObject(noun)),
+                max: max.clamp(1, MAX_RETRY_LOOP),
+            },
+            WalkAction::Move(c[5].to_string()),
+        ]);
+    }
+    // Bring-your-own-key doors (Solhaven cellars, Spindrift Sanctuary): with
+    // the key anywhere on you, it's just the door; without it the script
+    // fetches from UserVars-named sacks we can't resolve, so abandon with
+    // the fix named instead of firing doomed commands.
+    if let Some(c) = KEY_DOOR.captures(body) {
+        return Some(vec![WalkAction::If {
+            cond: Cond::HasItem("key".into()),
+            then: vec![WalkAction::Move(format!("go {}", &c[1]))],
+            els: vec![WalkAction::PauseForUser {
+                msg: format!(
+                    "the {} needs your key in hand or an open container \
+                     (native travel can't fetch it from your keysack) - \
+                     get it out and re-run",
+                    &c[1]
+                ),
+                until: None,
+                timeout: 0.0,
+            }],
+        }]);
+    }
+    // The Zeltoph hidden stone door: open it, and if the response is
+    // "locked", run the lockpick dance before going through. The lockpick
+    // branch is exactly what `if_match` exists for.
+    if ZELTOPH_DOOR.is_match(body) {
+        return Some(vec![
+            WalkAction::Await {
+                cmd: Some("open door".into()),
+                pattern: Box::new(AwaitPattern::new(
+                    "You open|already open|It appears to be locked",
+                )?),
+                timeout: 10.0,
+                on_timeout: OnTimeout::Fail,
+                if_match: Some((
+                    Box::new(AwaitPattern::new("It appears to be locked")?),
+                    vec![
+                        WalkAction::EmptyHands,
+                        WalkAction::Put("get lockpick".into()),
+                        WalkAction::Put("pick door".into()),
+                        WalkAction::Put("stow lockpick".into()),
+                        WalkAction::FillHands,
+                        WalkAction::Put("open door".into()),
+                    ],
+                )),
+            },
+            WalkAction::Move("go door".into()),
+        ]);
+    }
+    // `r = dothistimeout 'CMD', T, /…/; if r =~ /good/; move 'M'; elsif …` —
+    // branch on the response, taking only the success arm natively (the
+    // Rolaren gate: open → go; locked → a sigil-climb we don't attempt).
+    // Timeout or a non-matching response fails the edge: ban, re-path, or
+    // hand off — the locked case degrades instead of walking wrong.
+    if let Some(c) = DOTHIS_BRANCH_MOVE.captures(body) {
+        if c[1] != c[5] {
+            return None;
+        }
+        return Some(vec![
+            WalkAction::Await {
+                cmd: Some(c[2].to_string()),
+                pattern: Box::new(AwaitPattern::new(&c[6])?),
+                timeout: c[3].parse().ok()?,
+                on_timeout: OnTimeout::Fail,
+                if_match: None,
+            },
+            WalkAction::Move(c[7].to_string()),
+        ]);
+    }
+    // Red Forest fog: keep trying `go fog` until it stops bouncing us back
+    // (success = the room actually changes; the paths-line the script keys
+    // on is just its way of noticing that).
+    if let Some(c) = FOG_RETRY.captures(body) {
+        return Some(vec![WalkAction::Repeat {
+            body: vec![
+                WalkAction::If {
+                    cond: Cond::Not(Box::new(Cond::Standing)),
+                    then: vec![WalkAction::Put("stand".into())],
+                    els: Vec::new(),
+                },
+                WalkAction::Await {
+                    cmd: Some(c[1].to_string()),
+                    pattern: Box::new(AwaitPattern::new(&c[3])?),
+                    timeout: c[2].parse().ok()?,
+                    on_timeout: OnTimeout::Continue,
+                    if_match: None,
+                },
+                WalkAction::WaitRt,
+            ],
+            until: RepeatUntil::RoomChanged,
+            max: MAX_RETRY_LOOP,
+        }]);
+    }
+    None
 }
 
 /// One statement of a straight-line body.
@@ -1374,6 +1668,16 @@ fn statement_condition(raw: &str) -> Option<Cond> {
         return Some(Cond::RoomHasObject(m[1].to_string()));
     }
     if let Some(m) = COND_IN_ROOM.captures(c) {
+        let cond = Cond::InRoom(m[2].parse().ok()?);
+        return Some(if &m[1] == "!=" {
+            Cond::Not(Box::new(cond))
+        } else {
+            cond
+        });
+    }
+    if let Some(m) = COND_ROOM_OBJ.captures(c) {
+        // `Room.current == Room[N]` — the object-comparison spelling of the
+        // same test.
         let cond = Cond::InRoom(m[2].parse().ok()?);
         return Some(if &m[1] == "!=" {
             Cond::Not(Box::new(cond))
@@ -3032,6 +3336,191 @@ mod tests {
         assert_eq!(
             transpile(body),
             Some(vec![Move("go pile".into()), WaitRt])
+        );
+    }
+
+    #[test]
+    fn loop_break_room_becomes_repeat_until_room() {
+        use WalkAction::*;
+        // 11068 -> 11069 (Sea Caves): swim the tunnel until it sticks.
+        assert_eq!(
+            transpile(
+                ";e loop{fput 'swim tunnel';pause 0.2;if Room.current.id == 11069;break;end}"
+            ),
+            Some(vec![Repeat {
+                body: vec![Put("swim tunnel".into()), Sleep(0.2)],
+                until: RepeatUntil::Room(11069),
+                max: MAX_RETRY_LOOP,
+            }])
+        );
+    }
+
+    #[test]
+    fn trailing_unless_block_keeps_its_condition() {
+        use WalkAction::*;
+        // 8227 -> 8245 (Wolves' Den): try the far door, correct if it was
+        // the wrong one.
+        assert_eq!(
+            transpile(
+                ";e move 'go second iron door'; unless Room.current.id == 8245; move 'go iron door'; move 'go first iron door'; end"
+            ),
+            Some(vec![
+                Move("go second iron door".into()),
+                If {
+                    cond: Cond::Not(Box::new(Cond::InRoom(8245))),
+                    then: vec![
+                        Move("go iron door".into()),
+                        Move("go first iron door".into())
+                    ],
+                    els: Vec::new(),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn while_room_object_block_repeats_the_swim() {
+        use WalkAction::*;
+        // 6481 -> 6484 (Lysierian Hills): swim until it takes.
+        assert_eq!(
+            transpile(
+                ";e empty_hands; while Room.current == Room[6481]; put 'swim opening'; sleep 1; waitrt?; end"
+            ),
+            Some(vec![
+                EmptyHands,
+                Repeat {
+                    body: vec![Put("swim opening".into()), Sleep(1.0), WaitRt],
+                    until: RepeatUntil::Cond(Cond::Not(Box::new(Cond::InRoom(6481)))),
+                    max: MAX_RETRY_LOOP,
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn ice_descent_takes_the_cautious_branch() {
+        use WalkAction::*;
+        // 2877 -> 2878 (Sleeping Lady, 21-edge family): we can't cast, so
+        // always wait out the slip window before stepping.
+        let body = ";e \n\t\tresolve=Spell['Sigil of Resolve']\n\t\thaste=Spell['Haste']\n\t\tif UserVars.mapdb_ice_mode == 'wait' || Skills.survival < 50 || XMLData.encumbrance_value >= 50\n\t\t\techo 'trying not to slip...'; sleep 6\n\t\telsif resolve.known? && resolve.affordable? && !resolve.active?\n\t\t\tresolve.cast\n\t\tend\n\t\tresult = fput 'down'\n\t\tif result =~ /^Rushing heedlessly/\n\t\t\thaste.cast if haste.known? && haste.affordable? && !haste.active?\n\t\t\tfput 'stand'\n\t\t\t$go2_restart = true\n\t\tend\n\t";
+        assert_eq!(
+            transpile(body),
+            Some(vec![Sleep(6.0), Move("down".into()), WaitRt])
+        );
+    }
+
+    #[test]
+    fn times_search_then_enter_the_found_feature() {
+        use WalkAction::*;
+        // 1216 -> 1217 (Upper Trollfang): search for the footpath, then take
+        // it. The loop exits when the footpath shows up as a room object.
+        let Some(actions) = transpile(
+            ";e 10.times { result = dothistimeout 'search', 5, /don't find anything|discover a small footpath|Round ?time/; waitrt?; break if result =~ /discover a small footpath/ }; move 'go footpath'",
+        ) else {
+            panic!("expected a transpile");
+        };
+        let Repeat { until, max, .. } = &actions[0] else {
+            panic!("expected a repeat, got {:?}", actions[0]);
+        };
+        assert_eq!(
+            *until,
+            RepeatUntil::Cond(Cond::RoomHasObject("footpath".into()))
+        );
+        assert_eq!(*max, 10);
+        assert_eq!(actions[1], Move("go footpath".into()));
+    }
+
+    #[test]
+    fn key_door_gates_on_the_key_and_names_the_fix() {
+        use WalkAction::*;
+        let body = r##";e if GameObj.inv.find {|obj| obj.noun == "key"};fput "go beechwood door";else;empty_hand;multifput "get my #{UserVars.journeys_end} from my #{UserVars.keysack}","go beechwood door","put my key in my #{UserVars.keysack}";fill_hand;end"##;
+        let Some(actions) = transpile(body) else {
+            panic!("expected a transpile");
+        };
+        let If { cond, then, els } = &actions[0] else {
+            panic!("expected an if, got {:?}", actions[0]);
+        };
+        assert_eq!(*cond, Cond::HasItem("key".into()));
+        assert_eq!(*then, vec![Move("go beechwood door".into())]);
+        assert!(
+            matches!(&els[0], PauseForUser { msg, .. } if msg.contains("beechwood door")),
+            "missing-key message names the door"
+        );
+    }
+
+    #[test]
+    fn zeltoph_door_picks_the_lock_on_the_locked_response() {
+        use WalkAction::*;
+        let body = ";e fput 'open door';while line = get;if ['You open the nearly invisible stone door.', 'That is already open.'].include?(line);fput 'go door';break;elsif line == 'It appears to be locked.';empty_hands;fput 'get lockpick';fput 'pick door';fput 'stow lockpick';fill_hands;fput 'open door';fput 'go door';break;end;end";
+        let Some(actions) = transpile(body) else {
+            panic!("expected a transpile");
+        };
+        let Await { cmd, if_match, .. } = &actions[0] else {
+            panic!("expected an await, got {:?}", actions[0]);
+        };
+        assert_eq!(cmd.as_deref(), Some("open door"));
+        let (locked, dance) = if_match.as_ref().expect("lockpick branch");
+        assert!(locked.is_match("It appears to be locked."));
+        assert_eq!(dance.len(), 6, "empty, get, pick, stow, fill, reopen");
+        assert_eq!(actions[1], Move("go door".into()));
+    }
+
+    #[test]
+    fn dothis_branch_takes_only_the_success_arm() {
+        use WalkAction::*;
+        // 3239 -> 3264 (Rolaren gate): open -> go; the locked/sigil-climb
+        // tail is not attempted — timeout fails the edge instead.
+        let body = ";e r = dothistimeout 'open rolaren gate', 10, /^You open|^That is already open|^It appears to be locked/; if r =~ /^You open|^That is already open/; move 'go rolaren gate'; elsif r =~ /^It appears to be locked/; fput 'climb gate'; end";
+        let Some(actions) = transpile(body) else {
+            panic!("expected a transpile");
+        };
+        let Await { cmd, pattern, on_timeout, .. } = &actions[0] else {
+            panic!("expected an await, got {:?}", actions[0]);
+        };
+        assert_eq!(cmd.as_deref(), Some("open rolaren gate"));
+        assert_eq!(*on_timeout, OnTimeout::Fail);
+        assert!(pattern.is_match("You open the gate."));
+        assert!(!pattern.is_match("It appears to be locked."));
+        assert_eq!(actions[1], Move("go rolaren gate".into()));
+        // Mismatched variables are not the idiom.
+        assert_eq!(
+            transpile(";e r = dothistimeout 'open gate', 10, /x/; if q =~ /x/; move 'go gate'; else; end"),
+            None
+        );
+    }
+
+    #[test]
+    fn krag_crevice_hunt_reduces_to_search_step_reset() {
+        use WalkAction::*;
+        let body = r#";e group_members = nil; clear.reverse.each { |line| if line =~ /^Obvious (paths|exits)/; break; elsif line =~ /^([A-Za-z ,]+) followed\.$/; group_members = $1.split(/, | and /); group_members.delete_if { |m| m =~ /^[Yy]our / }; group_members = nil if group_members.empty?; break; end }; result = nil; while !result; if celerity = Spell[506] and celerity.known? and celerity.affordable? and not celerity.active?; celerity.cast; end; fput 'search'; result = matchtimeout(1,/you discover a narrow crevice/); waitrt?; if !result then multimove 'n','s'; end; end; fput 'point crevice' if group_members; move 'go crevice'; if group_members; echo 'Waiting for your group... To ditch them, ;send go '; while (group_members.length > 0) and (line = get); if line =~ /^(You reach out and hold )?([A-z][a-z]+)('s hand| joins your group)\.$/; group_members.delete $2; elsif line == 'go'; break; end; end; end"#;
+        let Some(actions) = transpile(body) else {
+            panic!("expected a transpile");
+        };
+        let Repeat { body: inner, until, .. } = &actions[0] else {
+            panic!("expected a repeat, got {:?}", actions[0]);
+        };
+        assert_eq!(
+            *until,
+            RepeatUntil::Cond(Cond::RoomHasObject("crevice".into()))
+        );
+        assert_eq!(inner[0], Put("search".into()));
+        assert_eq!(actions[1], Move("go crevice".into()));
+    }
+
+    #[test]
+    fn fog_retry_repeats_until_the_room_changes() {
+        use WalkAction::*;
+        let body = r#";e UserVars.mapdb_redforest_location = 'WL';result = nil;until result =~ /Obvious paths: northeast, southeast/;fput "stand" until standing?;result = dothistimeout "go fog", 5, /You attempt to navigate your way through the fog, but get turned around and come right back out where you started!|Obvious paths: northeast, southeast/;if result =~ /You attempt to navigate your way through the fog, but get turned around and come right back out where you started!/;sleep 0.5;waitrt?;end;end"#;
+        let Some(actions) = transpile(body) else {
+            panic!("expected a transpile");
+        };
+        let Repeat { body: inner, until, .. } = &actions[0] else {
+            panic!("expected a repeat, got {:?}", actions[0]);
+        };
+        assert_eq!(*until, RepeatUntil::RoomChanged);
+        assert!(
+            matches!(&inner[1], Await { cmd: Some(c), .. } if c == "go fog"),
+            "the fog attempt is re-sent each lap"
         );
     }
 
