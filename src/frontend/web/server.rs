@@ -618,20 +618,29 @@ async fn doll_json(
     State(state): State<Arc<WebState>>,
 ) -> impl IntoResponse {
     use axum::http::StatusCode;
+    // CORS-open like /health: the /characters wall (served from one port)
+    // fetches every session's doll metadata cross-port. Token-gated either
+    // way, so the header only permits reads the token already allows.
     if !params
         .get("token")
         .is_some_and(|t| token_matches(t, &state.auth_token))
     {
         return (
             StatusCode::FORBIDDEN,
-            [(header::CONTENT_TYPE, "text/plain")],
+            [
+                (header::CONTENT_TYPE, "text/plain"),
+                (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+            ],
             String::new(),
         );
     }
     let payload = super::doll::active_payload();
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/json")],
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+        ],
         serde_json::to_string(&payload).unwrap_or_else(|_| r#"{"base":false}"#.to_string()),
     )
 }

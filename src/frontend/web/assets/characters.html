@@ -23,24 +23,50 @@
     header h1 { font-size: 18px; color: #d9b44f; }
     header a { color: #8a8f98; font-size: 12px; text-decoration: none; }
     header a:hover { color: #d6d6d6; }
+    #gear {
+      margin-left: auto; background: none; border: 1px solid #2a2e37;
+      border-radius: 6px; color: #8a8f98; font: inherit; font-size: 13px;
+      padding: 3px 9px; cursor: pointer;
+    }
+    #gear:hover, #gear.open { color: #d6d6d6; border-color: #3a3f4a; }
+
+    /* Display config panel */
+    #config {
+      display: none;
+      background: #1a1d24; border: 1px solid #2a2e37; border-radius: 10px;
+      padding: 12px 14px; margin: 0 0 12px; font-size: 12.5px;
+      max-width: 560px;
+    }
+    #config.open { display: block; }
+    #config h2 { font-size: 12px; color: #8a8f98; margin: 8px 0 6px; font-weight: normal; }
+    #config h2:first-child { margin-top: 0; }
+    #config .grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 3px 14px;
+    }
+    #config label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    #config input[type="text"], #config input[type="number"] {
+      background: #111318; border: 1px solid #2a2e37; border-radius: 5px;
+      color: #d6d6d6; font: inherit; padding: 3px 7px;
+    }
+    #config input[type="text"] { width: 100%; }
+    #config input[type="number"] { width: 62px; }
+    #config .row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+    #config .hint { color: #6a6f78; font-size: 11px; margin-top: 3px; }
+
     #wall { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
     .empty { color: #8a8f98; font-style: italic; padding: 24px 8px; }
 
     /* A cluster: grouped characters share an enclosing frame. */
-    .cluster {
-      display: flex; flex-direction: column; gap: 6px;
-      border-radius: 12px;
-    }
-    .cluster.grouped {
-      border: 1px solid #3a3f4a; background: #14161c; padding: 8px;
-    }
+    .cluster { display: flex; flex-direction: column; gap: 6px; border-radius: 12px; }
+    .cluster.grouped { border: 1px solid #3a3f4a; background: #14161c; padding: 8px; }
     .cluster-head { display: flex; gap: 10px; font-size: 11px; padding: 0 2px; }
     .cluster-head .leader { color: #00bfff; font-weight: bold; }
     .cluster-head .unconfirmed { color: #ffb000; font-style: italic; }
-    .cluster-cards { display: flex; gap: 8px; align-items: flex-start; }
+    .cluster-cards { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
 
     .card {
-      width: 230px;
+      width: 240px;
       background: #1a1d24; border: 1px solid #2a2e37; border-radius: 10px;
       padding: 8px 10px 10px;
       display: flex; flex-direction: column; gap: 5px;
@@ -49,9 +75,7 @@
     .card.stale { opacity: .45; }
     .card-head { display: flex; align-items: baseline; gap: 6px; }
     .card-head .name { font-weight: bold; font-size: 15px; }
-    .card-head .room {
-      margin-left: auto; font-size: 11px; color: #8a8f98; cursor: default;
-    }
+    .card-head .room { margin-left: auto; font-size: 11px; color: #8a8f98; cursor: default; }
     .card-head .off { color: #ffb000; font-size: 11px; }
 
     .rt { font-size: 12px; min-height: 15px; display: flex; gap: 10px; }
@@ -65,7 +89,7 @@
     }
 
     .body { display: flex; gap: 8px; }
-    .doll { flex: 0 0 84px; }
+    .doll { flex: 0 0 90px; align-self: flex-start; }
     .doll svg { width: 100%; height: auto; display: block; }
     .stack { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 
@@ -77,27 +101,32 @@
     .bar .txt {
       position: absolute; inset: 0; display: flex; align-items: center;
       padding-left: 5px; font-size: 10.5px; color: #fff;
-      text-shadow: 0 0 3px #000, 0 0 3px #000; white-space: nowrap;
+      text-shadow: 0 0 3px #000, 0 0 3px #000;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .gauge-row { font-size: 11px; color: #aab; display: flex; gap: 4px; }
-    .gauge-row b { color: #8a8f98; font-weight: normal; }
 
     .hands { font-size: 11px; color: #b8b8b8; line-height: 1.35; }
     .hands .slot { color: #8a8f98; }
+    .hands div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .prep { color: #cf9fff; }
 
     .effects { display: flex; flex-direction: column; gap: 2px; }
     .fx { font-size: 11px; display: flex; gap: 6px; }
-    .fx .t { margin-left: auto; color: #8a8f98; }
+    .fx .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fx .t { margin-left: auto; color: #8a8f98; flex: none; }
     .fx.debuff { color: #ff9090; }
     .fx.cooldown { color: #9fc5ff; }
+    .fx.buff { color: #9fdfb0; }
+    .fx.spell { color: #cdb8ef; }
   </style>
 </head>
 <body>
   <header>
     <h1>Characters</h1>
     <a id="back" href="/">&larr; sessions</a>
+    <button id="gear" type="button">&#9881; display</button>
   </header>
+  <div id="config"></div>
   <div id="wall"><div class="empty">Looking for sessions&hellip;</div></div>
 
   <script>
@@ -144,10 +173,110 @@
       ["stamina", "ST", "#55b86c"],
       ["spirit", "SP", "#cba942"],
     ];
-    const EFFECT_CATEGORIES = ["Debuffs", "Cooldowns"];
-    const MAX_EFFECTS = 4;
+    // Gauge fills match the GUI card.
+    const GAUGE_BARS = [
+      ["mind", "Mind", "#7ccd7c"],
+      ["stance", "Stance", "#5cacee"],
+      ["encumbrance", "Enc", "#c4a000"],
+    ];
+    const EFFECT_STYLES = {
+      Debuffs: "debuff", Cooldowns: "cooldown", Buffs: "buff", ActiveSpells: "spell",
+    };
     // Matches the hub: a disconnected card lingers dimmed, then drops.
     const DROP_AFTER_MS = 120000;
+
+    // ---- display config (persisted per browser) -------------------------
+    const CONFIG_KEY = "vellum-characters-config";
+    const CONFIG_FIELDS = [
+      // [key, label] — everything on by default; the panel narrows it.
+      ["room", "Room id"],
+      ["rt", "Roundtime"],
+      ["status", "Status icons"],
+      ["doll", "Injury doll"],
+      ["vitals", "Vitals"],
+      ["absolute", "Vitals as numbers"],
+      ["mind", "Mind state"],
+      ["stance", "Stance"],
+      ["encumbrance", "Encumbrance"],
+      ["fieldExp", "Field experience"],
+      ["hands", "Hands / casting"],
+      ["effects", "Effects"],
+    ];
+    const EFFECT_CATEGORY_FIELDS = [
+      ["Debuffs", "Debuffs"],
+      ["Cooldowns", "Cooldowns"],
+      ["Buffs", "Buffs"],
+      ["ActiveSpells", "Active spells"],
+    ];
+    function defaultConfig() {
+      const c = { filter: "", maxEffects: 4, categories: { Debuffs: true, Cooldowns: true, Buffs: false, ActiveSpells: false } };
+      for (const [key] of CONFIG_FIELDS) c[key] = true;
+      return c;
+    }
+    let config = defaultConfig();
+    try {
+      const saved = JSON.parse(localStorage.getItem(CONFIG_KEY) || "{}");
+      config = { ...config, ...saved, categories: { ...config.categories, ...(saved.categories || {}) } };
+    } catch { /* defaults */ }
+    function saveConfig() {
+      try { localStorage.setItem(CONFIG_KEY, JSON.stringify(config)); } catch { /* private mode */ }
+      scheduleRender();
+    }
+
+    function buildConfigPanel() {
+      const panel = document.getElementById("config");
+      panel.replaceChildren();
+      const h = (t) => { const e = el("h2", null, t); panel.appendChild(e); return e; };
+      h("Card contents");
+      const grid = el("div", "grid");
+      for (const [key, label] of CONFIG_FIELDS) {
+        const lab = el("label");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = !!config[key];
+        box.onchange = () => { config[key] = box.checked; saveConfig(); };
+        lab.append(box, document.createTextNode(label));
+        grid.appendChild(lab);
+      }
+      panel.appendChild(grid);
+      h("Effect categories");
+      const cats = el("div", "grid");
+      for (const [key, label] of EFFECT_CATEGORY_FIELDS) {
+        const lab = el("label");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = !!config.categories[key];
+        box.onchange = () => { config.categories[key] = box.checked; saveConfig(); };
+        lab.append(box, document.createTextNode(label));
+        cats.appendChild(lab);
+      }
+      panel.appendChild(cats);
+      const filterRow = el("div", "row");
+      filterRow.appendChild(el("span", null, "Only show effects matching:"));
+      panel.appendChild(filterRow);
+      const filter = document.createElement("input");
+      filter.type = "text";
+      filter.placeholder = "comma-separated, empty = all";
+      filter.value = config.filter;
+      filter.oninput = () => { config.filter = filter.value; saveConfig(); };
+      panel.appendChild(filter);
+      const maxRow = el("div", "row");
+      const max = document.createElement("input");
+      max.type = "number"; max.min = "1"; max.max = "20";
+      max.value = String(config.maxEffects);
+      max.onchange = () => {
+        config.maxEffects = Math.max(1, Math.min(20, Number(max.value) || 4));
+        saveConfig();
+      };
+      maxRow.append(max, el("span", null, "max effects per card"));
+      panel.appendChild(maxRow);
+      panel.appendChild(el("div", "hint", "Saved in this browser."));
+    }
+    document.getElementById("gear").onclick = () => {
+      const panel = document.getElementById("config");
+      panel.classList.toggle("open");
+      document.getElementById("gear").classList.toggle("open", panel.classList.contains("open"));
+    };
 
     // ---- state --------------------------------------------------------
     // port -> peer. Mirrors core/multiaccount PeerStatus.
@@ -170,7 +299,129 @@
         gauges: {}, fieldExp: null,
         left: null, right: null, prepared: null,
         effects: {}, roomName: null, roomId: null,
+        // This character's OWN doll skin, fetched from their session.
+        dollSkin: undefined, dollNatural: {}, dollVariant: null,
+        dollHidden: new Set(),
       };
+    }
+
+    // ---- per-peer doll skin (each session serves its own art) -----------
+    function dollImageUrl(peer, kind, part, level, variant) {
+      let url = `http://${location.hostname}:${peer.port}/doll/image` +
+        `?kind=${kind}&token=${encodeURIComponent(pairingToken())}`;
+      if (part) url += `&part=${encodeURIComponent(part)}&level=${level}`;
+      if (variant) url += `&variant=${encodeURIComponent(variant)}`;
+      return url;
+    }
+    function fetchDollSkin(peer) {
+      if (peer.dollSkin !== undefined) return; // fetched (or in flight)
+      peer.dollSkin = null;
+      fetch(`http://${location.hostname}:${peer.port}/doll.json?token=${encodeURIComponent(pairingToken())}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          peer.dollSkin = d && d.base ? d : null;
+          if (peer.dollSkin) measureDollBase(peer, "");
+        })
+        .catch(() => { peer.dollSkin = null; });
+    }
+    function activeDollSet(peer) {
+      if (peer.dollVariant && peer.dollSkin && peer.dollSkin.variants &&
+          peer.dollSkin.variants[peer.dollVariant]) {
+        return { key: peer.dollVariant, set: peer.dollSkin.variants[peer.dollVariant] };
+      }
+      return { key: "", set: peer.dollSkin };
+    }
+    function measureDollBase(peer, key) {
+      if (!peer.dollSkin || peer.dollNatural[key]) return;
+      const img = new Image();
+      img.onload = () => {
+        peer.dollNatural[key] = { w: img.naturalWidth, h: img.naturalHeight };
+        scheduleRender();
+      };
+      img.onerror = () => { if (key === "") peer.dollSkin = null; };
+      img.src = dollImageUrl(peer, "base", null, 0, key || null);
+    }
+    function safeColor(value, fallback) {
+      return /^#[0-9a-f]{6}$/i.test(value || "") ? value : fallback;
+    }
+    function dotNumeralColor(hex) {
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      return 0.299 * r + 0.587 * g + 0.114 * b > 140 ? "#000000" : "#ffffff";
+    }
+    // Port of /play's skinDollSvg, parameterized by peer: their base art,
+    // their overlays, their wounds. Anchors are fractions of the base, so
+    // the SVG scales to the card column.
+    function skinDollSvg(peer) {
+      const { key: setKey, set } = activeDollSet(peer);
+      const natural = peer.dollNatural[setKey];
+      if (!natural) { measureDollBase(peer, setKey); return null; }
+      const variant = setKey || null;
+      const { w, h } = natural;
+      const injuries = peer.injuries || {};
+      const dots = set.dots || {};
+      const woundColor = safeColor(dots.wound_color, "#e02020");
+      const scarColor = safeColor(dots.scar_color, "#b8b8b8");
+      const opacity = typeof dots.opacity === "number" ? Math.min(Math.max(dots.opacity, 0), 1) : 0.9;
+      const r = Math.max(((dots.diameter || 0.07) * h) / 2, 3);
+      const fontSize = Math.max(r * 1.3, 8);
+      const parts = [`<image href="${dollImageUrl(peer, "base", null, 0, variant)}" width="${w}" height="${h}"/>`];
+      const overlays = set.overlays || {};
+      const healthySet = new Set(set.healthy || []);
+      for (const id of Object.keys(set.anchors || {}).sort()) {
+        const level = Number(injuries[id]) || 0;
+        if (level > 6) continue;
+        if (peer.dollHidden.has(id)) continue;
+        const handDrawn = healthySet.has(id) || (overlays[id] || []).length > 0;
+        if (handDrawn) {
+          if (level === 0 && healthySet.has(id)) {
+            parts.push(`<image href="${dollImageUrl(peer, "overlay", id, 0, variant)}" width="${w}" height="${h}"/>`);
+          } else if (level >= 1 && (overlays[id] || []).includes(level)) {
+            parts.push(`<image href="${dollImageUrl(peer, "overlay", id, level, variant)}" width="${w}" height="${h}"/>`);
+          }
+          continue; // a state with no art: the base shows through
+        }
+        if (!level) continue;
+        const anchor = (set.anchors || {})[id];
+        if (!anchor) continue;
+        const cx = anchor[0] * w;
+        const cy = anchor[1] * h;
+        const numeral = level <= 3 ? level : level - 3;
+        const text = (fill) =>
+          `<text x="${cx}" y="${cy}" fill="${fill}" font-size="${fontSize}" ` +
+          `font-weight="700" text-anchor="middle" dominant-baseline="central">${numeral}</text>`;
+        if (level <= 3) {
+          parts.push(
+            `<g opacity="${opacity}"><circle cx="${cx}" cy="${cy}" r="${r}" fill="${woundColor}"/>` +
+            text(dotNumeralColor(woundColor)) + `</g>`);
+        } else {
+          const strokeWidth = Math.max(r * 0.28, 1.2);
+          parts.push(
+            `<g opacity="${opacity}"><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" ` +
+            `stroke="${scarColor}" stroke-width="${strokeWidth}"/>` + text(scarColor) + `</g>`);
+        }
+      }
+      return `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Injury doll">${parts.join("")}</svg>`;
+    }
+    function vectorDollSvg(injuries) {
+      const parts = DOLL_PARTS.map(([part, shape]) => {
+        const level = injuries[part] || 0;
+        const color = LEVEL_COLORS[level] || "#3a4150";
+        return shape.replace("/>", ` fill='${color}' stroke='#20242c' stroke-width='1'/>`);
+      }).join("");
+      // back/nsys have no geometry; dots under the figure, like /play.
+      let dots = "";
+      let x = 40;
+      for (const extra of ["back", "nsys"]) {
+        const level = injuries[extra] || 0;
+        if (level) {
+          dots += `<circle cx='${x}' cy='138' r='5' fill='${LEVEL_COLORS[level]}'/>` +
+            `<text x='${x + 9}' y='142' font-size='10' fill='#8a8f98'>${extra}</text>`;
+          x += 46;
+        }
+      }
+      return `<svg viewBox='0 0 140 148' xmlns='http://www.w3.org/2000/svg'>${parts}${dots}</svg>`;
     }
 
     // ---- frame application (mirrors hub.rs apply_frame) ----------------
@@ -196,6 +447,8 @@
             peer.gauges = {}; peer.fieldExp = null;
           }
           peer.prepared = d.prepared_spell || null;
+          peer.dollVariant = d.doll_variant || null;
+          peer.dollHidden = new Set(d.doll_hidden || []);
           break;
         }
         case "vitals": peer.vitals = d; break;
@@ -209,6 +462,10 @@
         case "hands": applyHands(peer, d); break;
         case "minivitals": applyMinivitals(peer, d); break;
         case "prepared_spell": peer.prepared = d.spell || null; break;
+        case "doll":
+          peer.dollVariant = (d && d.variant) || null;
+          peer.dollHidden = new Set((d && d.hidden) || []);
+          break;
         default: return;
       }
       peer.lastUpdate = Date.now();
@@ -359,24 +616,18 @@
       if (s < 3600) return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
       return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}`;
     }
-    function dollSvg(injuries) {
-      const parts = DOLL_PARTS.map(([part, shape]) => {
-        const level = injuries[part] || 0;
-        const color = LEVEL_COLORS[level] || "#3a4150";
-        return shape.replace("/>", ` fill='${color}' stroke='#20242c' stroke-width='1'/>`);
-      }).join("");
-      // back/nsys have no geometry; dots under the figure, like /play.
-      let dots = "";
-      let x = 40;
-      for (const extra of ["back", "nsys"]) {
-        const level = injuries[extra] || 0;
-        if (level) {
-          dots += `<circle cx='${x}' cy='138' r='5' fill='${LEVEL_COLORS[level]}'/>` +
-            `<text x='${x + 9}' y='142' font-size='10' fill='#8a8f98'>${extra}</text>`;
-          x += 46;
-        }
-      }
-      return `<svg viewBox='0 0 140 148' xmlns='http://www.w3.org/2000/svg'>${parts}${dots}</svg>`;
+    // A one-line bar with a fill and an overlaid, ellipsized label — vitals
+    // and gauges alike, so nothing wraps to a second line.
+    function barEl(text, pct, color) {
+      const bar = el("div", "bar");
+      const fill = el("div", "fill");
+      fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+      fill.style.background = color;
+      bar.appendChild(fill);
+      const txt = el("div", "txt", text);
+      txt.title = text;
+      bar.appendChild(txt);
+      return bar;
     }
 
     function render() {
@@ -421,107 +672,126 @@
       const head = el("div", "card-head");
       head.appendChild(el("span", "name", peer.character || "(unnamed)"));
       if (!peer.connected) head.appendChild(el("span", "off", "●"));
-      const room = el("span", "room", peer.roomId || "");
-      if (peer.roomName) room.title = peer.roomName;
-      head.appendChild(room);
+      if (config.room) {
+        const room = el("span", "room", peer.roomId || "");
+        if (peer.roomName) room.title = peer.roomName;
+        head.appendChild(room);
+      }
       card.appendChild(head);
 
       // RT/CT, interpolated on our wall clock against the peer's offset.
-      const rtRow = el("div", "rt");
       const nowServer = Math.floor(now / 1000) + peer.serverOffset;
-      const rt = peer.rt ? Math.max(0, (peer.rt.roundtime_end || 0) - nowServer) : 0;
-      const ct = peer.rt ? Math.max(0, (peer.rt.casttime_end || 0) - nowServer) : 0;
-      if (rt > 0) rtRow.appendChild(el("span", "hard", `RT ${rt}`));
-      if (ct > 0) rtRow.appendChild(el("span", "cast", `CT ${ct}`));
-      card.appendChild(rtRow);
+      if (config.rt) {
+        const rtRow = el("div", "rt");
+        const rt = peer.rt ? Math.max(0, (peer.rt.roundtime_end || 0) - nowServer) : 0;
+        const ct = peer.rt ? Math.max(0, (peer.rt.casttime_end || 0) - nowServer) : 0;
+        if (rt > 0) rtRow.appendChild(el("span", "hard", `RT ${rt}`));
+        if (ct > 0) rtRow.appendChild(el("span", "cast", `CT ${ct}`));
+        card.appendChild(rtRow);
+      }
 
-      // Status chips.
-      const chips = el("div", "chips");
-      for (const [id, label, color] of STATUS_CHIPS) {
-        if (peer.indicators[id]) {
-          const chip = el("span", "chip", label);
-          chip.style.color = color;
-          chips.appendChild(chip);
+      if (config.status) {
+        const chips = el("div", "chips");
+        for (const [id, label, color] of STATUS_CHIPS) {
+          if (peer.indicators[id]) {
+            const chip = el("span", "chip", label);
+            chip.style.color = color;
+            chips.appendChild(chip);
+          }
         }
-      }
-      for (const [id, active] of Object.entries(peer.indicators)) {
-        if (active && !IGNORED_INDICATORS.has(id) && !STATUS_CHIPS.some(([k]) => k === id)) {
-          chips.appendChild(el("span", "chip", id.toUpperCase()));
+        for (const [id, active] of Object.entries(peer.indicators)) {
+          if (active && !IGNORED_INDICATORS.has(id) && !STATUS_CHIPS.some(([k]) => k === id)) {
+            chips.appendChild(el("span", "chip", id.toUpperCase()));
+          }
         }
+        card.appendChild(chips);
       }
-      card.appendChild(chips);
 
       // Doll + vitals/gauges side by side, like the GUI two-column layout.
       const body = el("div", "body");
-      const doll = el("div", "doll");
-      doll.innerHTML = dollSvg(peer.injuries || {});
-      body.appendChild(doll);
+      if (config.doll) {
+        const doll = el("div", "doll");
+        // This character's own skin when their session ships doll art;
+        // the shared vector figure otherwise.
+        const svg = peer.dollSkin ? skinDollSvg(peer) : null;
+        doll.innerHTML = svg || vectorDollSvg(peer.injuries || {});
+        body.appendChild(doll);
+      }
       const stack = el("div", "stack");
-      for (const [id, label, color] of VITAL_BARS) {
-        const pct = peer.vitals ? peer.vitals[id] ?? 0 : 0;
-        const abs = peer.minivitals[id];
-        const bar = el("div", "bar");
-        const fill = el("div", "fill");
-        fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-        fill.style.background = color;
-        bar.appendChild(fill);
-        bar.appendChild(el("div", "txt",
-          abs && abs[1] > 0 ? `${label} ${abs[0]}/${abs[1]}` : `${label} ${pct}%`));
-        stack.appendChild(bar);
-      }
-      const gaugeBits = [];
-      if (peer.gauges.mind) gaugeBits.push(["Mind", peer.gauges.mind.text || `${peer.gauges.mind.value}%`]);
-      if (peer.gauges.stance) gaugeBits.push(["Stance", peer.gauges.stance.text || `${peer.gauges.stance.value}%`]);
-      if (peer.gauges.encumbrance) gaugeBits.push(["Enc", peer.gauges.encumbrance.text || `${peer.gauges.encumbrance.value}%`]);
-      if (peer.fieldExp) gaugeBits.push(["FXP", `${peer.fieldExp[0]}/${peer.fieldExp[1]}`]);
-      for (const [label, value] of gaugeBits) {
-        const g = el("div", "gauge-row");
-        g.appendChild(el("b", null, label));
-        g.appendChild(el("span", null, value));
-        stack.appendChild(g);
-      }
-      body.appendChild(stack);
-      card.appendChild(body);
-
-      // Hands + prepared spell.
-      const hands = el("div", "hands");
-      const hand = (slot, item) => {
-        const line = el("div");
-        line.appendChild(el("span", "slot", `${slot} `));
-        line.appendChild(el("span", null, item || "—"));
-        return line;
-      };
-      if (peer.left || peer.right) {
-        hands.appendChild(hand("L", peer.left));
-        hands.appendChild(hand("R", peer.right));
-      }
-      if (peer.prepared) {
-        const p = el("div", "prep", `✦ ${peer.prepared}`);
-        hands.appendChild(p);
-      }
-      if (hands.childNodes.length) card.appendChild(hands);
-
-      // Debuffs & cooldowns, soonest-expiring first, capped.
-      const fx = el("div", "effects");
-      const nowSrv = nowServer;
-      let shown = 0;
-      for (const category of EFFECT_CATEGORIES) {
-        const content = peer.effects[category];
-        if (!content) continue;
-        for (const effect of content.effects || []) {
-          if (shown >= MAX_EFFECTS) break;
-          const line = el("div", `fx ${category === "Debuffs" ? "debuff" : "cooldown"}`);
-          line.appendChild(el("span", null, effect.text || effect.id));
-          if (effect.expires_at) {
-            const left = effect.expires_at - nowSrv;
-            if (left <= 0) continue;
-            line.appendChild(el("span", "t", fmtDuration(left)));
-          }
-          fx.appendChild(line);
-          shown++;
+      if (config.vitals) {
+        for (const [id, label, color] of VITAL_BARS) {
+          const pct = peer.vitals ? peer.vitals[id] ?? 0 : 0;
+          const abs = peer.minivitals[id];
+          const text = config.absolute && abs && abs[1] > 0
+            ? `${label} ${abs[0]}/${abs[1]}` : `${label} ${pct}%`;
+          stack.appendChild(barEl(text, pct, color));
         }
       }
-      if (fx.childNodes.length) card.appendChild(fx);
+      for (const [key, label, color] of GAUGE_BARS) {
+        if (!config[key === "encumbrance" ? "encumbrance" : key]) continue;
+        const g = peer.gauges[key];
+        if (!g) continue;
+        const text = g.text ? `${label} ${g.text}` : `${label} ${g.value}%`;
+        stack.appendChild(barEl(text, g.value ?? 0, color));
+      }
+      if (config.fieldExp && peer.fieldExp) {
+        const [cur, max] = peer.fieldExp;
+        const pct = max > 0 ? Math.round((cur / max) * 100) : 0;
+        // Near the cap is the warning state: the point of watching FXP is
+        // knowing when to go absorb.
+        const color = pct >= 90 ? "#e05050" : "#b08de0";
+        stack.appendChild(barEl(`FXP ${cur}/${max}`, pct, color));
+      }
+      if (stack.childNodes.length) body.appendChild(stack);
+      if (body.childNodes.length) card.appendChild(body);
+
+      // Hands + prepared spell.
+      if (config.hands) {
+        const hands = el("div", "hands");
+        const hand = (slot, item) => {
+          const line = el("div");
+          line.appendChild(el("span", "slot", `${slot} `));
+          line.appendChild(el("span", null, item || "—"));
+          if (item) line.title = item;
+          return line;
+        };
+        if (peer.left || peer.right) {
+          hands.appendChild(hand("L", peer.left));
+          hands.appendChild(hand("R", peer.right));
+        }
+        if (peer.prepared) hands.appendChild(el("div", "prep", `✦ ${peer.prepared}`));
+        if (hands.childNodes.length) card.appendChild(hands);
+      }
+
+      // Effects: chosen categories, filtered, expiring-first cap.
+      if (config.effects) {
+        const filters = config.filter
+          .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+        const fx = el("div", "effects");
+        let shown = 0;
+        for (const [category, style] of Object.entries(EFFECT_STYLES)) {
+          if (!config.categories[category]) continue;
+          const content = peer.effects[category];
+          if (!content) continue;
+          for (const effect of content.effects || []) {
+            if (shown >= config.maxEffects) break;
+            const name = effect.text || effect.id || "";
+            if (filters.length && !filters.some((f) => name.toLowerCase().includes(f))) continue;
+            const line = el("div", `fx ${style}`);
+            const n = el("span", "n", name);
+            n.title = name;
+            line.appendChild(n);
+            if (effect.expires_at) {
+              const left = effect.expires_at - nowServer;
+              if (left <= 0) continue;
+              line.appendChild(el("span", "t", fmtDuration(left)));
+            }
+            fx.appendChild(line);
+            shown++;
+          }
+        }
+        if (fx.childNodes.length) card.appendChild(fx);
+      }
 
       return card;
     }
@@ -542,6 +812,7 @@
         const peer = peers.get(port);
         peer.connected = true;
         peer.lastUpdate = Date.now();
+        fetchDollSkin(peer);
         scheduleRender();
       };
       ws.onmessage = (event) => {
@@ -575,6 +846,7 @@
       scheduleRender();
     }
 
+    buildConfigPanel();
     refreshSessions();
     setInterval(refreshSessions, 10000);
     // RT/effect countdowns tick on the wall clock.
