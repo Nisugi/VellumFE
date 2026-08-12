@@ -993,3 +993,125 @@ async fn doll_image_rejects_bad_requests() {
     let response = http_get(addr, &format!("/doll/image?kind=bogus&token={TEST_TOKEN}")).await;
     assert!(response.starts_with("HTTP/1.1 404"), "got: {response}");
 }
+
+/// Connect as a status-only watcher: send `subscribe {mode:"watch"}` before
+/// `resume`, then drain the snapshot and the macros/wheels that follow.
+async fn connect_watching(addr: std::net::SocketAddr) -> (WsClient, serde_json::Value) {
+    let mut client = WsClient::connect(addr).await;
+    let hello = read_json_timeout(&mut client).await;
+    assert_eq!(hello["t"], "hello");
+    client
+        .send_text(r#"{"t":"subscribe","d":{"mode":"watch"}}"#)
+        .await;
+    client.send_resume(0).await;
+    let snapshot = read_json_timeout(&mut client).await;
+    assert_eq!(snapshot["t"], "snapshot");
+    let macros = read_json_timeout(&mut client).await;
+    assert_eq!(macros["t"], "macros");
+    let wheels = read_json_timeout(&mut client).await;
+    assert_eq!(wheels["t"], "wheels");
+    (client, snapshot)
+}
+
+#[tokio::test]
+async fn watch_client_gets_status_without_scrollback() {
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    // Buffered scrollback that a Play client WOULD receive.
+    sink.push_text("main", styled("pre-connect line", "main"));
+
+    let (_client, snapshot) = connect_watching(addr).await;
+
+    assert!(
+        snapshot["d"].get("text").is_none(),
+        "a watcher must not be sent scrollback: {}",
+        snapshot["d"]
+    );
+    // The status a watcher exists to render is all present.
+    assert!(snapshot["d"].get("vitals").is_some());
+    assert!(snapshot["d"].get("indicators").is_some());
+    assert!(snapshot["d"].get("injuries").is_some());
+    assert!(snapshot["d"].get("rt").is_some());
+}
+
+#[tokio::test]
+async fn watch_client_receives_status_deltas_but_no_text() {
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    let (mut client, _) = connect_watching(addr).await;
+
+    // Text must be filtered out entirely...
+    sink.push_text("main", styled("noise the watcher ignores", "main"));
+
+    // ...so the next frame the watcher sees is the vitals change, not the
+    // text line pushed before it. This is the assertion that proves
+    // filtering rather than mere reordering.
+    let mut gs = GameState::new();
+    gs.vitals.health = 42;
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let frame = read_json_timeout(&mut client).await;
+    assert_eq!(
+        frame["t"], "vitals",
+        "expected vitals, got {} -- text should have been filtered",
+        frame["t"]
+    );
+    assert_eq!(frame["d"]["health"], 42);
+}
+
+#[tokio::test]
+async fn watch_client_receives_group_roster_changes() {
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    let (mut client, _) = connect_watching(addr).await;
+
+    let mut gs = GameState::new();
+    gs.group.replace(
+        vellum_fe::core::group::GroupLeader::SelfLed,
+        vec![vellum_fe::core::group::GroupMember {
+            id: "-1".to_string(),
+            noun: "bob".to_string(),
+            name: "Bob".to_string(),
+        }],
+    );
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let frame = read_json_timeout(&mut client).await;
+    assert_eq!(frame["t"], "group", "got {}", frame["t"]);
+    assert_eq!(frame["d"]["members"][0]["name"], "Bob");
+    assert_eq!(frame["d"]["confirmed"], true);
+}
+
+#[tokio::test]
+async fn a_watcher_and_a_player_share_one_server() {
+    // The multi-account case: a watcher connected alongside the phone must
+    // not change what the phone receives.
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    let (mut player, player_snapshot) = connect_and_sync(addr, 0).await;
+    let (mut watcher, watch_snapshot) = connect_watching(addr).await;
+
+    // The player's snapshot carries scrollback machinery; the watcher's does
+    // not, from the same server at the same moment.
+    assert!(player_snapshot["d"].get("map_state").is_some());
+    assert!(watch_snapshot["d"].get("text").is_none());
+
+    sink.push_text("main", styled("only the player sees this", "main"));
+    let frame = read_json_timeout(&mut player).await;
+    assert_eq!(frame["t"], "text");
+    assert_eq!(
+        frame["d"]["line"]["segments"][0]["text"],
+        "only the player sees this"
+    );
+
+    // Both see a status change.
+    let mut gs = GameState::new();
+    gs.vitals.mana = 7;
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let watcher_frame = read_json_timeout(&mut watcher).await;
+    assert_eq!(watcher_frame["t"], "vitals");
+    assert_eq!(watcher_frame["d"]["mana"], 7);
+
+    let player_frame = read_json_timeout(&mut player).await;
+    assert_eq!(player_frame["t"], "vitals");
+    assert_eq!(player_frame["d"]["mana"], 7);
+}
