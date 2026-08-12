@@ -349,10 +349,41 @@ impl VellumGuiApp {
                     // lead with whatever that user reads first. Anything not
                     // listed keeps its default position, so a partial or
                     // absent list still shows every enabled row.
-                    for (row, _) in data.ordered_rows() {
-                        Self::render_card_row(
-                            ui, settings, data, peer, row, now_server, elsewhere,
-                        );
+                    // Rows are grouped into lines so short ones (RT, status
+                    // icons) can share a line instead of each burning a full
+                    // one. A single-row line draws exactly as before.
+                    for line in data.row_lines() {
+                        if line.len() == 1 {
+                            Self::render_card_row(
+                                ui,
+                                settings,
+                                data,
+                                peer,
+                                line[0].clone(),
+                                now_server,
+                                elsewhere,
+                            );
+                        } else {
+                            // Split the width evenly, minus the spacing
+                            // between items, so a bar sharing a line does not
+                            // claim the whole row.
+                            let count = line.len() as f32;
+                            let gap = ui.spacing().item_spacing.x * (count - 1.0);
+                            let share = ((ui.available_width() - gap) / count).max(28.0);
+                            ui.horizontal(|ui| {
+                                for row in line {
+                                    ui.allocate_ui(
+                                        egui::vec2(share, ui.available_height()),
+                                        |ui| {
+                                            Self::render_card_row(
+                                                ui, settings, data, peer, row,
+                                                now_server, elsewhere,
+                                            );
+                                        },
+                                    );
+                                }
+                            });
+                        }
                     }
                 });
             });

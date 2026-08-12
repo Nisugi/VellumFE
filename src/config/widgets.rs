@@ -1041,6 +1041,12 @@ pub struct MultiAccountWidgetData {
     /// Cap on effects drawn per card, after filtering. Six characters with
     /// unbounded lists is unreadable regardless of the filter.
     pub max_effects: usize,
+    /// Rows drawn on the same line as the row above them, by row id.
+    ///
+    /// Short rows waste a full line each: RT is one label and the status
+    /// icons are a compact strip, so they pair naturally. Defaults to pairing
+    /// those two, which is the combination every card wants.
+    pub merged_rows: Vec<String>,
     /// Row order within a card, top to bottom. Names match the toggles:
     /// "status", "vitals", "rt", "hands", "effects", "mind", "stance",
     /// "field_exp", "encumbrance", "injuries", "room".
@@ -1069,6 +1075,7 @@ impl Default for MultiAccountWidgetData {
             show_mind: false,
             show_stance: false,
             show_field_exp: false,
+            merged_rows: vec!["rt".to_string()],
             row_order: Vec::new(),
             sort_by: "group".to_string(),
             show_encumbrance: false,
@@ -1091,8 +1098,11 @@ impl MultiAccountWidgetData {
     /// Canonical row ids, in their default top-to-bottom order.
     pub const ROWS: &'static [&'static str] = &[
         "status",
-        "vitals",
+        // Directly after status: both are short, and they share a line by
+        // default. Order and merge have to agree or the pairing lands on the
+        // wrong neighbour.
         "rt",
+        "vitals",
         "hands",
         "effects",
         "mind",
@@ -1181,6 +1191,47 @@ impl MultiAccountWidgetData {
         }
     }
 
+
+    /// Whether this row shares a line with the row above it. The first row
+    /// can never merge -- there is nothing above it to join.
+    pub fn row_merged(&self, row: &str) -> bool {
+        if self.ordered_rows().first().is_some_and(|(first, _)| first == row) {
+            return false;
+        }
+        self.merged_rows.iter().any(|r| r == row)
+    }
+
+    /// Set or clear a row's merge-with-above flag.
+    pub fn set_row_merged(&mut self, row: &str, merged: bool) {
+        let present = self.merged_rows.iter().position(|r| r == row);
+        match (merged, present) {
+            (true, None) => self.merged_rows.push(row.to_string()),
+            (false, Some(idx)) => {
+                self.merged_rows.remove(idx);
+            }
+            _ => {}
+        }
+    }
+
+    /// Rows grouped into lines: each inner vec is one horizontal run.
+    ///
+    /// Hidden rows are dropped BEFORE grouping, so hiding the row a merged
+    /// row was attached to promotes it to its own line rather than leaving a
+    /// dangling continuation.
+    pub fn row_lines(&self) -> Vec<Vec<String>> {
+        let mut lines: Vec<Vec<String>> = Vec::new();
+        for (row, shown) in self.ordered_rows() {
+            if !shown {
+                continue;
+            }
+            if self.row_merged(&row) && !lines.is_empty() {
+                lines.last_mut().expect("non-empty").push(row);
+            } else {
+                lines.push(vec![row]);
+            }
+        }
+        lines
+    }
     /// Move a row one place up or down, materializing the full order first so
     /// a previously-empty `row_order` becomes explicit rather than shifting
     /// against an implied list.
@@ -1653,11 +1704,16 @@ mod multiaccount_row_tests {
         // whole list, or later moves would shift against a different list.
         let mut data = MultiAccountWidgetData::default();
         assert!(data.row_order.is_empty());
-        data.move_row("rt", true);
+        // Derive the expected positions rather than hardcoding them, so
+        // changing the default order does not break this test.
+        let before: Vec<&str> = MultiAccountWidgetData::ROWS.to_vec();
+        let idx = before.iter().position(|r| *r == "vitals").expect("vitals");
+        let above = before[idx - 1];
+
+        data.move_row("vitals", true);
         assert_eq!(data.row_order.len(), MultiAccountWidgetData::ROWS.len());
-        // "rt" was third by default; up one puts it second.
-        assert_eq!(data.row_order[1], "rt");
-        assert_eq!(data.row_order[2], "vitals");
+        assert_eq!(data.row_order[idx - 1], "vitals", "moved up one");
+        assert_eq!(data.row_order[idx], above, "displaced its neighbour");
     }
 
     #[test]
@@ -1670,6 +1726,54 @@ mod multiaccount_row_tests {
         data.move_row("room", false);
         let last: Vec<String> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
         assert_eq!(last[last.len() - 1], "room", "already last, stays last");
+    }
+
+    #[test]
+    fn rt_shares_a_line_with_status_by_default() {
+        // Both are short -- one label and a strip of icons -- so a full line
+        // each is wasted space on an already narrow card.
+        let data = MultiAccountWidgetData::default();
+        let lines = data.row_lines();
+        assert_eq!(
+            lines[0],
+            vec!["status".to_string(), "rt".to_string()],
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn hiding_the_row_above_promotes_a_merged_row_to_its_own_line() {
+        // Otherwise "rt" would dangle as a continuation of a line that is no
+        // longer drawn.
+        let mut data = MultiAccountWidgetData::default();
+        data.set_row_shown("status", false);
+        let lines = data.row_lines();
+        assert_eq!(lines[0], vec!["rt".to_string()], "{lines:?}");
+    }
+
+    #[test]
+    fn the_first_row_can_never_merge() {
+        // There is nothing above it to join; a stale config saying otherwise
+        // must not produce an empty leading line.
+        let mut data = MultiAccountWidgetData::default();
+        data.row_order = vec!["rt".to_string()];
+        data.set_row_merged("rt", true);
+        assert!(!data.row_merged("rt"));
+        let lines = data.row_lines();
+        assert_eq!(lines[0], vec!["rt".to_string()]);
+    }
+
+    #[test]
+    fn merging_round_trips_and_hidden_rows_never_appear() {
+        let mut data = MultiAccountWidgetData::default();
+        data.set_row_merged("vitals", true);
+        assert!(data.row_merged("vitals"));
+        data.set_row_merged("vitals", false);
+        assert!(!data.row_merged("vitals"));
+
+        data.set_row_shown("injuries", false);
+        let flat: Vec<String> = data.row_lines().into_iter().flatten().collect();
+        assert!(!flat.iter().any(|r| r == "injuries"));
     }
 
     #[test]

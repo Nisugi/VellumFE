@@ -88,7 +88,8 @@ pub(super) struct MultiAccountConfig {
     pub(super) show_hands: bool,
     pub(super) show_field_exp: bool,
     /// Rows in display order, each with whether it is currently shown.
-    pub(super) rows: Vec<(String, bool)>,
+    /// Rows in display order: (id, shown, merged-with-row-above).
+    pub(super) rows: Vec<(String, bool, bool)>,
     pub(super) sort_by: String,
     pub(super) show_effects: bool,
     pub(super) effect_filter: String,
@@ -99,15 +100,23 @@ pub(super) struct MultiAccountConfig {
 impl MultiAccountConfig {
     /// Flip one row's checkbox in the view's copy of the order.
     pub(super) fn set_row_shown(&mut self, row: &str, on: bool) {
-        if let Some(entry) = self.rows.iter_mut().find(|(name, _)| name == row) {
+        if let Some(entry) = self.rows.iter_mut().find(|(name, _, _)| name == row) {
             entry.1 = on;
+        }
+    }
+
+    /// Flip one row's same-line flag in the view's copy.
+    pub(super) fn set_row_merged(&mut self, row: &str, merged: bool) {
+        if let Some(entry) = self.rows.iter_mut().find(|(name, _, _)| name == row) {
+            entry.2 = merged;
         }
     }
 
     /// Push the view's per-row checkboxes back into the widget data.
     pub(super) fn apply_row_visibility(&self, data: &mut crate::config::MultiAccountWidgetData) {
-        for (row, shown) in &self.rows {
+        for (row, shown, merged) in &self.rows {
             data.set_row_shown(row, *shown);
+            data.set_row_merged(row, *merged);
         }
     }
 }
@@ -397,7 +406,14 @@ impl VellumGuiApp {
                 show_absolute_vitals: data.show_absolute_vitals,
                 show_hands: data.show_hands,
                 show_field_exp: data.show_field_exp,
-                rows: crate::config::MultiAccountWidgetData::ordered_rows(data),
+                rows: data
+                    .ordered_rows()
+                    .into_iter()
+                    .map(|(row, shown)| {
+                        let merged = data.row_merged(&row);
+                        (row, shown, merged)
+                    })
+                    .collect(),
                 sort_by: data.sort_by.clone(),
                 show_effects: data.show_effects,
                 // Edited as one comma-separated line: a list editor for a
@@ -748,7 +764,7 @@ impl VellumGuiApp {
                     data.show_absolute_vitals = ma.show_absolute_vitals;
                     data.show_hands = ma.show_hands;
                     data.show_field_exp = ma.show_field_exp;
-                    data.row_order = ma.rows.iter().map(|(r, _)| r.clone()).collect();
+                    data.row_order = ma.rows.iter().map(|(r, _, _)| r.clone()).collect();
                     ma.apply_row_visibility(data);
                     data.sort_by = ma.sort_by.clone();
                     data.show_effects = ma.show_effects;
@@ -1238,7 +1254,7 @@ impl VellumGuiApp {
                 // this same menu. A text field for a fixed set of ten names
                 // was the wrong shape: nothing to type, easy to typo.
                 let last = ma.rows.len().saturating_sub(1);
-                for (index, (row, shown)) in ma.rows.iter().enumerate() {
+                for (index, (row, shown, merged)) in ma.rows.iter().enumerate() {
                     ui.horizontal(|ui| {
                         if ui
                             .add_enabled(index > 0, egui::Button::new("\u{2B06}").small())
@@ -1268,6 +1284,19 @@ impl VellumGuiApp {
                         {
                             next.set_row_shown(row, on);
                             changed = true;
+                        }
+                        // Short rows pair naturally; the first row has
+                        // nothing above it to join.
+                        if index > 0 && *shown {
+                            let mut share = *merged;
+                            if ui
+                                .checkbox(&mut share, "\u{21B3}")
+                                .on_hover_text("Draw on the same line as the row above")
+                                .changed()
+                            {
+                                next.set_row_merged(row, share);
+                                changed = true;
+                            }
                         }
                     });
                 }
