@@ -377,18 +377,29 @@ impl VellumGuiApp {
                     }
 
                     if data.show_room {
-                        if let Some(room) = &peer.room_name {
-                            let text = RichText::new(room).small();
+                        // The id, not the name: it is what the proximity
+                        // comparison actually uses, it is far shorter on a
+                        // narrow card, and it is what you would type to go
+                        // there. The name rides the hover.
+                        if let Some(id) = &peer.room_id {
+                            let text = RichText::new(format!("#{id}")).small();
                             let text = if elsewhere {
                                 text.color(Color32::from_rgb(0xFF, 0x88, 0x88))
                             } else {
                                 text.weak()
                             };
-                            ui.label(text).on_hover_text(if elsewhere {
-                                "In a different room from you"
-                            } else {
-                                "Here with you"
-                            });
+                            let hover = match (&peer.room_name, elsewhere) {
+                                (Some(name), true) => format!("{name} \u{2014} not with you"),
+                                (Some(name), false) => format!("{name} \u{2014} here with you"),
+                                (None, true) => "In a different room from you".to_string(),
+                                (None, false) => "Here with you".to_string(),
+                            };
+                            ui.label(text).on_hover_text(hover);
+                        } else if let Some(name) = &peer.room_name {
+                            // No id (direct connect without Lich): fall back
+                            // to the name rather than showing nothing.
+                            ui.label(RichText::new(name).small().weak())
+                                .on_hover_text("Room id unknown \u{2014} proximity not checked");
                         }
                     }
                 });
