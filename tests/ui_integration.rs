@@ -3352,3 +3352,53 @@ fn a_group_reply_arriving_in_one_flush_still_commits() {
     assert_eq!(names(&group), vec!["Bob"]);
     assert!(group.confirmed);
 }
+
+#[test]
+fn hand_holding_groups_through_the_real_pipeline() {
+    // The regression this pins: the flush gate was a hand-copied duplicate of
+    // might_be_group_line that lacked " hand", so every hold/release event
+    // died BEFORE classification while the classifier's own unit tests stayed
+    // green. This test crosses the gate.
+    let group = group_state(
+        &[
+            "You reach out and hold <a exist=\"-1\" noun=\"Abem\">Abem</a>'s hand.\r\n",
+            PROMPT,
+        ],
+        |_| {},
+    );
+
+    assert!(group.leads(), "holding implies leading: {group:?}");
+    assert_eq!(names(&group), vec!["Abem"]);
+    assert!(group.confirmed, "both ends of a hold are visible");
+}
+
+#[test]
+fn releasing_a_hand_ungroups_through_the_real_pipeline() {
+    let group = group_state(
+        &[
+            "You reach out and hold <a exist=\"-1\" noun=\"Abem\">Abem</a>'s hand.\r\n",
+            "You let go of <a exist=\"-1\" noun=\"Abem\">Abem</a>'s hand.\r\n",
+            PROMPT,
+        ],
+        |_| {},
+    );
+
+    assert!(!group.is_grouped(), "{group:?}");
+    assert!(group.confirmed, "an ended pairing is a known-empty state");
+}
+
+#[test]
+fn having_your_hand_held_follows_through_the_real_pipeline() {
+    let group = group_state(
+        &[
+            "<a exist=\"-2\" noun=\"Ultz\">Ultz</a> reaches out and holds your hand.\r\n",
+            PROMPT,
+        ],
+        |_| {},
+    );
+
+    match &group.leader {
+        vellum_fe::core::group::GroupLeader::Other(leader) => assert_eq!(leader.name, "Ultz"),
+        other => panic!("expected to follow Ultz, got {other:?}"),
+    }
+}

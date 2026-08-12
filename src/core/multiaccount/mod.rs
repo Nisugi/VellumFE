@@ -20,14 +20,9 @@ use crate::core::state::{StatusInfo, Vitals};
 
 pub use hub::MultiAccountHub;
 
-/// How long without an update before a peer is shown as stale rather than
-/// current. Lich's groupbar uses 90s for the same purpose; a peer that has
-/// gone quiet is usually mid-reconnect rather than gone.
-pub const STALE_AFTER_MS: u64 = 90_000;
-
-/// How long before a peer is dropped entirely. Past this it is not coming
-/// back on its own -- the process is gone and the registry entry will have
-/// been garbage-collected too.
+/// How long a DISCONNECTED peer keeps its dimmed card before being dropped.
+/// Lich's groupbar uses the same two-stage idea; a brief socket blip should
+/// dim the card, not blank it.
 pub const DROP_AFTER_MS: u64 = 120_000;
 
 /// One numeric gauge, mirroring the wire's `{value, text}`.
@@ -133,8 +128,12 @@ impl PeerStatus {
         room_id: Option<String>,
         now_ms: u64,
     ) -> Self {
-        let gauge = |value: u32, text: &str| {
-            (!text.is_empty()).then(|| Gauge {
+        // Gate on generation, not on text -- the same fix the wire path got:
+        // a dialog can report a value with an empty label, and stance
+        // routinely does. Gating on text made YOUR card the only one showing
+        // a dash for a gauge every peer rendered as a bar.
+        let gauge = |seen: bool, value: u32, text: &str| {
+            seen.then(|| Gauge {
                 value,
                 text: text.to_string(),
             })
@@ -161,11 +160,20 @@ impl PeerStatus {
             right_hand: game_state.right_hand.clone(),
             prepared_spell: game_state.spell.clone(),
             mind: gauge(
+                game_state.gs4_experience.generation > 0,
                 game_state.gs4_experience.mind_state_value,
                 &game_state.gs4_experience.mind_state_text,
             ),
-            encumbrance: gauge(game_state.encumbrance.value, &game_state.encumbrance.text),
-            stance: gauge(game_state.stance.value, &game_state.stance.text),
+            encumbrance: gauge(
+                game_state.encumbrance.generation > 0,
+                game_state.encumbrance.value,
+                &game_state.encumbrance.text,
+            ),
+            stance: gauge(
+                game_state.stance.generation > 0,
+                game_state.stance.value,
+                &game_state.stance.text,
+            ),
             field_exp: match (
                 game_state.gs4_experience.field_exp,
                 game_state.gs4_experience.max_field_exp,
@@ -201,13 +209,21 @@ pub enum Freshness {
 
 impl PeerStatus {
     pub fn freshness(&self, now_ms: u64) -> Freshness {
+        // A connected peer is current by definition: deltas arrive on change,
+        // so silence means nothing changed, not that the data aged. Grading
+        // connected peers by last_update_ms reaped an AFK character's card
+        // two minutes into standing still -- permanently, since discovery
+        // never respawned the port.
+        if self.connected {
+            return Freshness::Live;
+        }
+        // Disconnected: last_update_ms is stamped at disconnect, so this
+        // measures time since the drop, not time since the last delta.
         let age = now_ms.saturating_sub(self.last_update_ms);
         if age >= DROP_AFTER_MS {
             Freshness::Lost
-        } else if age >= STALE_AFTER_MS || !self.connected {
-            Freshness::Stale
         } else {
-            Freshness::Live
+            Freshness::Stale
         }
     }
 
@@ -755,11 +771,21 @@ mod tests {
     }
 
     #[test]
-    fn freshness_degrades_with_age_then_drops() {
-        let p = peer(8040, "Alice"); // last_update_ms = 1_000
+    fn a_connected_peer_is_live_no_matter_how_quiet() {
+        // An AFK character emits no deltas for hours; its data is still
+        // current. The old age-based grading reaped exactly this card.
+        let p = peer(8040, "Alice"); // connected, last_update_ms = 1_000
         assert_eq!(p.freshness(1_000), Freshness::Live);
-        assert_eq!(p.freshness(1_000 + STALE_AFTER_MS - 1), Freshness::Live);
-        assert_eq!(p.freshness(1_000 + STALE_AFTER_MS), Freshness::Stale);
+        assert_eq!(p.freshness(1_000 + DROP_AFTER_MS * 10), Freshness::Live);
+    }
+
+    #[test]
+    fn a_disconnected_peer_dims_then_drops() {
+        let mut p = peer(8040, "Alice");
+        p.connected = false;
+        p.last_update_ms = 1_000; // stamped at disconnect
+        assert_eq!(p.freshness(1_000), Freshness::Stale);
+        assert_eq!(p.freshness(1_000 + DROP_AFTER_MS - 1), Freshness::Stale);
         assert_eq!(p.freshness(1_000 + DROP_AFTER_MS), Freshness::Lost);
     }
 

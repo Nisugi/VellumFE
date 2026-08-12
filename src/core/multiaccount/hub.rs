@@ -86,7 +86,12 @@ async fn discovery_loop(
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     let own_pid = std::process::id();
-    let mut connected: std::collections::HashSet<u16> = std::collections::HashSet::new();
+    // Ports with a live peer_task. SHARED with the tasks (not a local set):
+    // a task that gives up after repeated failures removes its port, so a
+    // sibling that restarts under the same or a new port gets a fresh task.
+    // The old insert-only local set orphaned every restarted sibling.
+    let watching: Arc<Mutex<std::collections::HashSet<u16>>> =
+        Arc::new(Mutex::new(std::collections::HashSet::new()));
     let mut ticker = tokio::time::interval(DISCOVERY_INTERVAL);
 
     loop {
@@ -104,7 +109,7 @@ async fn discovery_loop(
             if entry.pid == own_pid {
                 continue;
             }
-            if !connected.insert(entry.port) {
+            if !watching.lock().expect("watch set poisoned").insert(entry.port) {
                 continue;
             }
             tokio::spawn(peer_task(
@@ -112,36 +117,69 @@ async fn discovery_loop(
                 entry.character.clone(),
                 token.clone(),
                 peers.clone(),
+                watching.clone(),
                 shutdown.clone(),
             ));
         }
     }
 }
 
-/// Keep one peer connected, reconnecting until shutdown.
+/// Give up on a peer after this many CONSECUTIVE failed connections (~2
+/// minutes at the reconnect delay). The port is then released back to
+/// discovery, which respawns a task only while the registry still advertises
+/// a live pid there -- so a genuinely dead instance stops being dialed, and
+/// a restarted one is picked up fresh (with its current character name).
+const MAX_CONSECUTIVE_FAILURES: u32 = 24;
+
+/// Keep one peer connected, reconnecting until shutdown or sustained failure.
 async fn peer_task(
     port: u16,
     character: String,
     token: String,
     peers: PeerTable,
+    watching: Arc<Mutex<std::collections::HashSet<u16>>>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
+    // One roster request per peer per hub lifetime, not per reconnect -- a
+    // flapping sidecar must not turn into a stream of `group` commands in
+    // that player's session.
+    let mut sent_group = false;
+    let mut consecutive_failures: u32 = 0;
+
     loop {
         if *shutdown.borrow() {
             return;
         }
 
-        match run_peer(port, &character, &token, &peers).await {
-            Ok(()) => tracing::debug!("multiaccount: peer {character} on {port} closed"),
-            Err(err) => tracing::debug!("multiaccount: peer {character} on {port}: {err}"),
+        match run_peer(port, &character, &token, &peers, &mut sent_group).await {
+            Ok(()) => {
+                consecutive_failures = 0;
+                tracing::debug!("multiaccount: peer {character} on {port} closed");
+            }
+            Err(err) => {
+                consecutive_failures += 1;
+                tracing::debug!("multiaccount: peer {character} on {port}: {err}");
+            }
         }
 
         // Mark disconnected but KEEP the last-known status: a card that
         // blanks on every brief reconnect is worse than one that dims.
+        // Stamping the clock here matters -- freshness for a disconnected
+        // peer measures time since the DROP. Without the stamp, a peer that
+        // was quiet before dropping was reaped almost immediately.
         if let Ok(mut table) = peers.lock() {
             if let Some(peer) = table.get_mut(&port) {
                 peer.connected = false;
+                peer.last_update_ms = now_ms();
             }
+        }
+
+        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+            tracing::info!(
+                "multiaccount: giving up on {character} at {port} after                  {consecutive_failures} failed connections; discovery will                  retry if the registry still lists it"
+            );
+            watching.lock().expect("watch set poisoned").remove(&port);
+            return;
         }
 
         tokio::select! {
@@ -158,6 +196,7 @@ async fn run_peer(
     character: &str,
     token: &str,
     peers: &PeerTable,
+    sent_group: &mut bool,
 ) -> anyhow::Result<()> {
     let url = format!("ws://127.0.0.1:{port}/ws");
     let request = url.into_client_request()?;
@@ -186,19 +225,6 @@ async fn run_peer(
         ))
         .await?;
 
-    // Ask the peer to confirm its roster once, on connect. Group membership
-    // is reconstructed from prose, and a session that was already grouped
-    // before we connected has no message left to replay -- so without this
-    // its roster stays unconfirmed forever. Exactly one `group` per peer per
-    // connection: enough to be correct, few enough not to be command spam.
-    socket
-        .send(Message::Text(
-            serde_json::json!({"t": "cmd", "d": {"text": "group"}})
-                .to_string()
-                .into(),
-        ))
-        .await?;
-
     {
         let mut table = peers.lock().expect("peer table poisoned");
         let peer = table.entry(port).or_insert_with(|| PeerStatus {
@@ -215,9 +241,40 @@ async fn run_peer(
         match frame? {
             Message::Text(text) => {
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let mut table = peers.lock().expect("peer table poisoned");
-                    if let Some(peer) = table.get_mut(&port) {
+                    let is_snapshot =
+                        value.get("t").and_then(|v| v.as_str()) == Some("snapshot");
+                    let needs_roster;
+                    {
+                        let mut table = peers.lock().expect("peer table poisoned");
+                        // entry(), not get_mut(): if the reaper removed this
+                        // port while the socket stayed open, later frames
+                        // must re-materialize the card rather than be
+                        // silently discarded forever.
+                        let peer = table.entry(port).or_insert_with(|| PeerStatus {
+                            character: character.to_string(),
+                            port,
+                            ..Default::default()
+                        });
                         apply_frame(peer, &value);
+                        needs_roster =
+                            is_snapshot && peer.group.is_grouped() && !peer.group.confirmed;
+                    }
+                    // Ask the peer to confirm its roster ONLY when the
+                    // snapshot shows it grouped without one -- a session
+                    // grouped before it started parsing has no message left
+                    // to replay. Ungrouped or already-confirmed peers get no
+                    // command at all, and `sent_group` persists across
+                    // reconnects so a flapping sidecar cannot turn this into
+                    // a command stream in that player's session.
+                    if needs_roster && !*sent_group {
+                        *sent_group = true;
+                        socket
+                            .send(Message::Text(
+                                serde_json::json!({"t": "cmd", "d": {"text": "group"}})
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await?;
                     }
                 }
             }
@@ -244,16 +301,54 @@ fn apply_frame(peer: &mut PeerStatus, frame: &serde_json::Value) {
 
     match kind {
         "snapshot" => {
+            // The peer's current name, authoritative over the registry label
+            // captured at discovery -- that label can be a pre-login
+            // "default" or a recycled port's previous character, and
+            // clustering resolves rosters by name.
+            if let Some(name) = d
+                .get("character")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                peer.character = name.to_string();
+            }
+
             apply_vitals(peer, d.get("vitals"));
             apply_indicators(peer, d.get("indicators"));
             apply_injuries(peer, d.get("injuries"));
-            apply_group(peer, d.get("group"));
             apply_rt(peer, d.get("rt"));
-            apply_char_info(peer, d.get("char_info"));
             apply_room(peer, d.get("room"));
             apply_effects(peer, d.get("effects"));
             apply_hands(peer, d.get("hands"));
-            apply_minivitals(peer, d.get("minivitals"));
+
+            // A SNAPSHOT is authoritative: fields the encoder skips when
+            // empty (group, minivitals, gauges) are ABSENT precisely when the
+            // peer has none -- so absence here means "clear", not
+            // "unchanged". Deltas below keep absent-as-unchanged, which is
+            // correct for them. Without this split, a disband that happened
+            // across a reconnect left the old roster displayed as a
+            // confirmed group.
+            match d.get("group") {
+                Some(g) => apply_group(peer, Some(g)),
+                None => {
+                    peer.group = crate::core::group::GroupState {
+                        confirmed: true,
+                        ..Default::default()
+                    }
+                }
+            }
+            match d.get("minivitals") {
+                Some(v) => apply_minivitals(peer, Some(v)),
+                None => peer.minivitals.clear(),
+            }
+            if d.get("char_info").and_then(|c| c.get("gauges")).is_some() {
+                apply_char_info(peer, d.get("char_info"));
+            } else {
+                peer.mind = None;
+                peer.encumbrance = None;
+                peer.stance = None;
+                peer.field_exp = None;
+            }
             peer.prepared_spell = d
                 .get("prepared_spell")
                 .and_then(|v| v.as_str())
@@ -510,6 +605,60 @@ mod tests {
         );
         assert!(!p.group.leads());
         assert!(!p.group.confirmed, "unconfirmed must survive the round trip");
+    }
+
+    /// A snapshot is authoritative: the encoder skips `group` when the peer
+    /// is ungrouped, so its ABSENCE clears -- otherwise a disband that
+    /// happened across a reconnect left the old roster shown as confirmed.
+    #[test]
+    fn a_snapshot_without_group_clears_a_stale_roster() {
+        let mut p = peer();
+        p.group.replace(
+            crate::core::group::GroupLeader::SelfLed,
+            vec![crate::core::group::GroupMember {
+                id: "-1".to_string(),
+                noun: "bob".to_string(),
+                name: "Bob".to_string(),
+            }],
+        );
+        p.mind = Some(Gauge { value: 42, text: "muddled".to_string() });
+        p.minivitals.insert("health".to_string(), (51, 51));
+
+        apply_frame(&mut p, &serde_json::json!({"t": "snapshot", "d": {}}));
+
+        assert!(!p.group.is_grouped(), "stale roster must not survive");
+        assert!(p.group.confirmed, "ungrouped is a known state, not a doubt");
+        assert!(p.mind.is_none(), "absent gauges in a snapshot mean none");
+        assert!(p.minivitals.is_empty());
+    }
+
+    /// Deltas keep absent-as-unchanged -- only snapshots clear.
+    #[test]
+    fn deltas_still_treat_absence_as_unchanged() {
+        let mut p = peer();
+        p.mind = Some(Gauge { value: 42, text: "muddled".to_string() });
+        apply_frame(
+            &mut p,
+            &serde_json::json!({"t": "char_info", "d": {"gauges": {"stance": {"value": 50, "text": "forward"}}}}),
+        );
+        assert_eq!(p.mind.as_ref().map(|g| g.value), Some(42), "mind persists");
+    }
+
+    /// The wire name wins over the registry label captured at discovery --
+    /// that label can be a pre-login "default" or a recycled port's previous
+    /// character, and clustering resolves rosters by name.
+    #[test]
+    fn a_snapshot_updates_the_character_name() {
+        let mut p = peer(); // registry said "Alice"
+        apply_frame(
+            &mut p,
+            &serde_json::json!({"t": "snapshot", "d": {"character": "Ultz"}}),
+        );
+        assert_eq!(p.character, "Ultz");
+
+        // Absent or empty name keeps the label rather than blanking it.
+        apply_frame(&mut p, &serde_json::json!({"t": "snapshot", "d": {}}));
+        assert_eq!(p.character, "Ultz");
     }
 
     #[test]

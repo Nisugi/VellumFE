@@ -280,7 +280,13 @@ static RE_STATUS: LazyLock<Regex> =
 /// contains one of these substrings -- note "You are leading X." carries
 /// none of the obvious ones, which is exactly the kind of miss a narrow gate
 /// makes silently.
-fn might_be_group_line(line: &str) -> bool {
+///
+/// Public because the flush pipeline gates on this BEFORE collecting link
+/// data. It used to keep its own hand-copied version, which drifted (it
+/// lacked the `" hand"` clause) and silently killed every hand-holding event
+/// in production while the unit tests -- which call `classify_line` directly
+/// -- stayed green. One gate, one place.
+pub fn might_be_group_line(line: &str) -> bool {
     line.contains("group")
         || line.contains("You join ")
         || line.starts_with("You are leading ")
@@ -466,11 +472,31 @@ pub fn apply_event(
             }
         }
         GroupEvent::HeldTheirHand => {
-            // We took their hand: we lead them. This is a complete, known
-            // two-person group -- unlike being added to someone else's, we
-            // can see both ends of it.
+            // We took their hand -- and only the LEADER can hold, so this is
+            // proof we lead. It must ADD to whatever group we already lead,
+            // not replace it: holding Dave while leading Bob and Carol grows
+            // the group to four, and wiping the roster here erased real
+            // members.
             if let Some(other) = members.first() {
-                state.replace(GroupLeader::SelfLed, vec![other.clone()]);
+                match &state.leader {
+                    GroupLeader::SelfLed => {
+                        state.add(other.clone());
+                    }
+                    GroupLeader::None => {
+                        // Solo before the hold: a complete, known two-person
+                        // group -- both ends of a hold are visible.
+                        state.replace(GroupLeader::SelfLed, vec![other.clone()]);
+                    }
+                    _ => {
+                        // We believed we were following someone (or grouped
+                        // with unknowns), yet the game let us hold -- so we
+                        // lead now and our old belief was stale. The held
+                        // person is certain; who else came along is not.
+                        state.leader = GroupLeader::SelfLed;
+                        state.add(other.clone());
+                        state.mark_unconfirmed();
+                    }
+                }
             }
         }
         GroupEvent::TheyHeldOurHand => {
@@ -484,12 +510,23 @@ pub fn apply_event(
             }
         }
         GroupEvent::Released => {
-            // A released hand ends the pairing. Remove the named person if we
-            // have them, then clear outright if nothing is left -- leading an
-            // empty group is not being in a group, and `remove` deliberately
-            // leaves the leader alone for the multi-member case.
+            // A released hand ends the pairing with that person. Two cases
+            // end OUR grouping entirely and must clear to a known-empty state
+            // rather than dangle: the released person was the leader we
+            // follow (their letting go removes us from their group), and a
+            // led group whose last member just left. `remove` on the leader
+            // returns true but leaves `confirmed` false -- without the
+            // explicit clear the card showed "roster unconfirmed" forever for
+            // a character in no group.
+            let released_our_leader = matches!(
+                &state.leader,
+                GroupLeader::Other(l) if members.iter().any(|m| m.id == l.id)
+            );
             let removed = members.iter().any(|m| state.remove(&m.id));
-            if !removed || (state.members.is_empty() && state.leads()) {
+            if !removed
+                || released_our_leader
+                || (state.members.is_empty() && state.leads())
+            {
                 state.clear();
             }
         }
@@ -707,6 +744,57 @@ mod tests {
         assert!(
             !g.confirmed,
             "we cannot see the rest of their group from the hold alone"
+        );
+    }
+
+    /// Only the leader can hold, so a hold while already leading GROWS the
+    /// group. The old code replaced the roster, erasing real members.
+    #[test]
+    fn holding_while_leading_adds_to_the_roster() {
+        let mut state = GroupState::default();
+        let mut pending = None;
+        state.replace(
+            GroupLeader::SelfLed,
+            vec![member("-1", "Bob"), member("-2", "Carol")],
+        );
+        apply_event(
+            &mut state,
+            &GroupEvent::HeldTheirHand,
+            &[member("-3", "Dave")],
+            &mut pending,
+        );
+        assert!(state.leads());
+        assert_eq!(
+            state.members,
+            vec![member("-1", "Bob"), member("-2", "Carol"), member("-3", "Dave")],
+            "Bob and Carol must survive the hold"
+        );
+        assert!(state.confirmed, "adding a visible member loses no certainty");
+    }
+
+    /// The leader letting go of OUR hand removes us from their group -- a
+    /// known-empty state, not a permanently-unconfirmed one.
+    #[test]
+    fn leader_releasing_us_clears_to_known_empty() {
+        let mut state = GroupState::default();
+        let mut pending = None;
+        apply_event(
+            &mut state,
+            &GroupEvent::TheyHeldOurHand,
+            &[member("-1", "Ultz")],
+            &mut pending,
+        );
+        assert!(state.is_grouped());
+        apply_event(
+            &mut state,
+            &GroupEvent::Released,
+            &[member("-1", "Ultz")],
+            &mut pending,
+        );
+        assert!(!state.is_grouped());
+        assert!(
+            state.confirmed,
+            "an ended pairing leaves no doubt -- amber warning forever was the bug"
         );
     }
 

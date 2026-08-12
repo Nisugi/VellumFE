@@ -117,11 +117,11 @@ impl MessageProcessor {
         // embedded newline), so links are attributed per line by walking the
         // segments and tracking newlines. Attributing every link in the chunk
         // to every event would put Carol in Bob's join.
-        if full_text.contains("group")
-            || full_text.contains("You join ")
-            || full_text.contains("You are leading ")
-            || full_text.contains("designates you as the new leader")
-        {
+        // ONE gate, owned by the group module. A hand-copied duplicate here
+        // once drifted from it and silently killed every hand-holding event
+        // in production -- the classifier's own tests kept passing because
+        // they never crossed this line.
+        if crate::core::group::might_be_group_line(&full_text) {
             self.buffer_group_events(&full_text);
         }
 
