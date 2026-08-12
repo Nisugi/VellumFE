@@ -102,7 +102,7 @@ re!(
 // delegated script to read; the delegation is the whole crossing.
 re!(
     WAYTO_DELEGATE,
-    r#"^;e\s+(?:\$\w+\s*=\s*(?:'[^']*'|"[^"]*"|\d+)\s*;\s*)?(?:Map|Room)\[(\d+)\]\.wayto\['(\d+)'\]\.call;?$"#
+    r#"^;e\s+(?:\$\w+\s*=\s*(?:'[^']*'|"[^"]*"|\d+)\s*;\s*)?(?:Map|Room)\[(\d+)\]\.wayto\['(\d+)'\]\.call;?\s*(?:#.*)?$"#
 );
 // 29× ";e move 'go curtain'; $go2_restart = true" — move then force a replan.
 re!(
@@ -370,7 +370,7 @@ re!(
 // nothing. These are dropped, not refused.
 re!(
     IGNORABLE_STATEMENT,
-    r#"^(?:#.*|nil|true|\$\w+\s*=.*|UserVars\.\w+\s*=.*|echo\s+['"].*|_respond.*)$"#
+    r#"^(?:#.*|nil|true|\$\w+\s*=.*|UserVars\.\w+\s*=.*|echo\s+['"].*|_respond.*)$"#
 );
 // `dothistimeout 'cmd', 10, /pattern/` as a lone statement: send and await,
 // advisory on timeout — matching the full-body DOTHIS treatment, where the
@@ -526,7 +526,7 @@ re!(RUNNING_COND, r"^running\?\('[^']+'\)$");
 // from `.go2 setup` via the UserVars store, exactly like the FWI trinket.
 re!(
     ROGUE_GUILD,
-    r##"^if UserVars\.rogue_password\.nil\? or UserVars\.rogue_password\.empty\?; echo [^;]+; echo [^;]+; exit; end; fput 'lean door'; UserVars\.rogue_password\.split\(/, \*/\)\.each \{ \|verb\| fput "#\{verb\} door" \}; fput 'go door'$"##
+    r##"^if UserVars\.rogue_password\.nil\? or UserVars\.rogue_password\.empty\?; echo '[^']*'; echo '[^']*'; exit; end; fput 'lean door'; UserVars\.rogue_password\.split\(/, \*/\)\.each \{ \|verb\| fput "#\{verb\} door" \}; fput 'go door'$"##
 );
 // The Rift sphere (2636 -> a random Rift entry): enter, then press north
 // until the tear teleports you.
@@ -4375,6 +4375,26 @@ mod tests {
         assert!(
             matches!(&inner[1], Await { cmd: Some(c), .. } if c == "go fog"),
             "the fog attempt is re-sent each lap"
+        );
+    }
+
+    #[test]
+    fn melgorehn_cab_exit_transpiles_as_statements() {
+        // 18181 -> 18182 verbatim: chatter dropped, the multi-minute halt
+        // line is a passive await, then out.
+        let body = ";e \n  sleep(0.2);\n  _respond \"#{monsterbold_start}Waiting for 'ledge comes into view'.  This may take around four minutes.#{monsterbold_end}  #{Time.now}\";\n  waitfor \"ledge comes into view and the cab grinds to a clunky halt\";\n  move(\"out\");\n";
+        // A literal backspace once hid inside this pattern's source (a
+        // python `\b` writing 0x08 instead of backslash-b) and made
+        // `_respond` unmatchable while displaying identically — hence the
+        // as_str pin.
+        assert!(
+            !IGNORABLE_STATEMENT.as_str().chars().any(|c| c.is_control()),
+            "control character hiding in IGNORABLE_STATEMENT"
+        );
+        let actions = transpile(body);
+        assert!(
+            actions.is_some(),
+            "cab exit should transpile, got None"
         );
     }
 
