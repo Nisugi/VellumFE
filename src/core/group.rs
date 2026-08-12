@@ -52,6 +52,10 @@ pub enum GroupLeader {
     SelfLed,
     /// This character follows someone else.
     Other(GroupMember),
+    /// Grouped, but we do not know with whom -- the JOINED indicator fired
+    /// without any message naming the members. Distinct from `None`, which
+    /// means genuinely not grouped.
+    Unknown,
 }
 
 /// The group roster as currently understood.
@@ -151,6 +155,21 @@ impl GroupState {
         }
     }
 
+    /// The game says we are grouped but we have no roster: the `IconJOINED`
+    /// indicator arrives when someone ADDS us, with no message naming the
+    /// members. Records "grouped, roster unknown" so a display can say that
+    /// rather than showing nothing at all.
+    ///
+    /// Uses `Unknown` rather than inventing a leader -- we genuinely do not
+    /// know who leads until a `group` reply arrives.
+    pub fn mark_joined_unconfirmed(&mut self) {
+        if !matches!(self.leader, GroupLeader::Unknown) {
+            self.leader = GroupLeader::Unknown;
+            self.confirmed = false;
+            self.generation += 1;
+        }
+    }
+
     /// Mark the roster as possibly incomplete -- we know we are in a group but
     /// not who else is in it.
     pub fn mark_unconfirmed(&mut self) {
@@ -212,8 +231,13 @@ static RE_LEADER_REMOVES: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(.+) removes (.+) from the group\.$").unwrap());
 static RE_ROSTER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^You are (leading|grouped with) ").unwrap());
+// NOT `$`-anchored: the real line continues past the period --
+// "Your group status is currently open.  You may be joined or taken into
+// another group by the actions of another player." Anchoring it meant the
+// sentinel never matched, so a `group` reply staged its roster and never
+// committed, and a manual `group` appeared to do nothing at all.
 static RE_STATUS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^Your group status is currently (open|closed)\.$").unwrap());
+    LazyLock::new(|| Regex::new(r"^Your group status is currently (open|closed)\.").unwrap());
 
 /// Cheap gate so ordinary lines pay almost nothing. Every pattern above
 /// contains one of these substrings -- note "You are leading X." carries
@@ -470,8 +494,14 @@ mod tests {
             classify_line("You are not currently in a group."),
             Some(GroupEvent::NoGroup)
         );
+        // The REAL line, verbatim from the game -- it continues past the
+        // period. An earlier `$`-anchored pattern matched only the truncated
+        // form invented for this test, so a `group` reply staged its roster
+        // and never committed. Keep the full sentence here.
         assert_eq!(
-            classify_line("Your group status is currently open."),
+            classify_line(
+                "Your group status is currently open.  You may be joined or taken                  into another group by the actions of another player."
+            ),
             Some(GroupEvent::StatusLine)
         );
         assert_eq!(

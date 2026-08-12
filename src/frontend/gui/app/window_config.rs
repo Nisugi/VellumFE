@@ -87,6 +87,8 @@ pub(super) struct MultiAccountConfig {
     pub(super) show_absolute_vitals: bool,
     pub(super) show_hands: bool,
     pub(super) show_field_exp: bool,
+    pub(super) row_order: String,
+    pub(super) sort_by: String,
     pub(super) show_effects: bool,
     pub(super) effect_filter: String,
     pub(super) max_effects: usize,
@@ -378,6 +380,10 @@ impl VellumGuiApp {
                 show_absolute_vitals: data.show_absolute_vitals,
                 show_hands: data.show_hands,
                 show_field_exp: data.show_field_exp,
+                // One comma-separated line: a drag-to-reorder list for ten
+                // fixed names would be more UI than the feature deserves.
+                row_order: data.row_order.join(", "),
+                sort_by: data.sort_by.clone(),
                 show_effects: data.show_effects,
                 // Edited as one comma-separated line: a list editor for a
                 // handful of substrings would be heavier than the feature.
@@ -719,6 +725,14 @@ impl VellumGuiApp {
                     data.show_absolute_vitals = ma.show_absolute_vitals;
                     data.show_hands = ma.show_hands;
                     data.show_field_exp = ma.show_field_exp;
+                    data.row_order = ma
+                        .row_order
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    data.sort_by = ma.sort_by.clone();
                     data.show_effects = ma.show_effects;
                     data.effect_filter = ma
                         .effect_filter
@@ -1217,6 +1231,29 @@ impl VellumGuiApp {
                 .checkbox(&mut next.show_encumbrance, "Encumbrance")
                 .changed();
             ui.separator();
+            ui.label(RichText::new("Row order (top to bottom)").small());
+            changed |= ui
+                .text_edit_singleline(&mut next.row_order)
+                .on_hover_text(
+                    "Comma-separated: status, vitals, rt, hands, effects, mind,                      stance, field_exp, encumbrance, injuries, room.                      Anything you leave out keeps its usual place.",
+                )
+                .changed();
+            ui.horizontal(|ui| {
+                ui.label("Card order");
+                for (value, label) in [
+                    ("group", "Group"),
+                    ("name", "Name"),
+                    ("port", "Connected"),
+                ] {
+                    if ui
+                        .selectable_label(next.sort_by == value, label)
+                        .clicked()
+                    {
+                        next.sort_by = value.to_string();
+                        changed = true;
+                    }
+                }
+            });
             changed |= ui
                 .add(
                     egui::Slider::new(&mut next.card_width, 90.0..=320.0)

@@ -1039,8 +1039,20 @@ impl MessageProcessor {
                 // group" signal the feed gives us -- more reliable than
                 // waiting for a leave message that may never arrive (death,
                 // linkdeath). Clear the roster on the falling edge.
-                if id.eq_ignore_ascii_case("joined") && !*active {
-                    game_state.group.clear();
+                if id.eq_ignore_ascii_case("joined") {
+                    if *active {
+                        // We are in a group but the roster is not known --
+                        // being ADDED by someone else produces this
+                        // indicator with no message naming the members. Mark
+                        // it unconfirmed so the display says so, and so a
+                        // watcher can tell "grouped, roster pending" from
+                        // "not grouped".
+                        if !game_state.group.is_grouped() {
+                            game_state.group.mark_joined_unconfirmed();
+                        }
+                    } else {
+                        game_state.group.clear();
+                    }
                 }
 
                 // Update Indicator windows whose indicator_id matches

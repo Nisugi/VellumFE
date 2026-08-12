@@ -1984,5 +1984,7 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
   effect_categories = ["Debuffs", "Cooldowns"]
   effect_filter = []
   max_effects = 4
+  row_order = []
+  sort_by = "group"
   columns = 0
   card_width = 150.0

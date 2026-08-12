@@ -1232,13 +1232,19 @@ impl RemoteStateSnapshot {
                 // Numeric mirrors for bar-drawing clients. Gated on the same
                 // "have we seen it" checks as the text above, so an
                 // unreported gauge is absent rather than a misleading zero.
-                if !exp.mind_state_text.is_empty() {
+                // Gate on generation, not on text. A dialog can report a
+                // value with an empty label (and stance routinely does), and
+                // gating on text meant such a gauge never shipped at all --
+                // the peer card showed a dash while the character's own
+                // window showed a bar. generation bumps on the first update
+                // either way, which is the honest "has this ever arrived".
+                if exp.generation > 0 {
                     info.gauges.mind = Some(RemoteGauge {
                         value: exp.mind_state_value,
                         text: exp.mind_state_text.clone(),
                     });
                 }
-                if !enc.text.is_empty() {
+                if enc.generation > 0 {
                     info.gauges.encumbrance = Some(RemoteGauge {
                         value: enc.value,
                         text: enc.text.clone(),
@@ -1255,7 +1261,7 @@ impl RemoteStateSnapshot {
                     }
                 }
                 let stance = &game_state.stance;
-                if !stance.text.is_empty() {
+                if stance.generation > 0 {
                     info.gauges.stance = Some(RemoteGauge {
                         value: stance.value,
                         text: stance.text.clone(),

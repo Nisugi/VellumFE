@@ -77,7 +77,7 @@ impl VellumGuiApp {
         if data.show_self {
             peers.insert(
                 crate::core::multiaccount::SELF_PORT,
-                PeerStatus::from_local_named(
+                PeerStatus::from_local_full(
                     &app_core.game_state,
                     app_core
                         .config
@@ -85,6 +85,12 @@ impl VellumGuiApp {
                         .character
                         .as_deref()
                         .or(app_core.config.character.as_deref()),
+                    // The real room id lives on AppCore, not GameState --
+                    // same overlay the remote snapshot does.
+                    app_core
+                        .nav_room_id
+                        .clone()
+                        .or_else(|| app_core.lich_room_id.clone()),
                     now_ms,
                 ),
             );
@@ -114,9 +120,28 @@ impl VellumGuiApp {
         // `game_state.game_time`, which only advances when a prompt arrives.
         // Using the prompt clock froze every peer's RT between prompts.
         let now_server = chrono::Utc::now().timestamp() + app_core.server_time_offset;
-        let my_room = app_core.game_state.room_id.clone();
+        let my_room = app_core
+            .nav_room_id
+            .clone()
+            .or_else(|| app_core.lich_room_id.clone())
+            .or_else(|| app_core.game_state.room_id.clone());
 
-        let clusters = cluster_peers(peers);
+        let mut clusters = cluster_peers(peers);
+        // "group" keeps clustered characters adjacent, which is the whole
+        // point of the frames; the other modes flatten that deliberately.
+        match data.sort_by.as_str() {
+            "name" => clusters.sort_by_key(|c| {
+                c.members
+                    .first()
+                    .and_then(|p| peers.get(p))
+                    .map(|p| p.character.to_ascii_lowercase())
+                    .unwrap_or_default()
+            }),
+            "port" => clusters.sort_by_key(|c| c.members.first().copied().unwrap_or(0)),
+            // "group" (default): cluster_peers already returns a stable order
+            // with the self card first.
+            _ => {}
+        }
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -162,6 +187,18 @@ impl VellumGuiApp {
             // whether we trust the roster.
             if !cluster.is_solo() {
                 ui.horizontal(|ui| {
+                    if cluster.leader_name.is_none() && cluster.grouped {
+                        ui.label(
+                            RichText::new("\u{2691} grouped")
+                                .strong()
+                                .small()
+                                .color(Color32::from_rgb(0x00, 0xBF, 0xFF)),
+                        )
+                        .on_hover_text(
+                            "The game reports these characters as grouped, but no \
+                             roster has been parsed yet. Type `group` to confirm.",
+                        );
+                    }
                     if let Some(name) = &cluster.leader_name {
                         let own = cluster.leader.is_some();
                         let label = if own {
@@ -297,126 +334,163 @@ impl VellumGuiApp {
                         }
                     });
 
-                    if data.show_status {
-                        Self::render_status_glyphs(ui, peer);
-                    }
-
-                    if data.show_vitals {
-                        Self::render_peer_vitals(
-                            ui,
-                            settings,
-                            peer,
-                            data.show_absolute_vitals,
+                    // Rows are drawn in the configured order so a card can
+                    // lead with whatever that user reads first. Anything not
+                    // listed keeps its default position, so a partial or
+                    // absent list still shows every enabled row.
+                    for row in Self::multiaccount_row_order(data) {
+                        Self::render_card_row(
+                            ui, settings, data, peer, row, now_server, elsewhere,
                         );
-                    }
-
-                    if data.show_rt {
-                        Self::render_peer_rt(ui, settings, peer, now_server);
-                    }
-
-                    if data.show_hands {
-                        Self::render_peer_hands(ui, peer);
-                    }
-
-                    if data.show_effects {
-                        Self::render_peer_effects(ui, data, peer, now_server);
-                    }
-
-                    if data.show_mind {
-                        Self::render_peer_gauge(
-                            ui,
-                            settings,
-                            "Mind",
-                            peer.mind.as_ref(),
-                            Color32::from_rgb(0x7C, 0xCD, 0x7C),
-                        );
-                    }
-                    if data.show_stance {
-                        Self::render_peer_gauge(
-                            ui,
-                            settings,
-                            "Stance",
-                            peer.stance.as_ref(),
-                            Color32::from_rgb(0x5C, 0xAC, 0xEE),
-                        );
-                    }
-                    if data.show_field_exp {
-                        Self::render_peer_field_exp(ui, settings, peer);
-                    }
-                    if data.show_encumbrance {
-                        Self::render_peer_gauge(
-                            ui,
-                            settings,
-                            "Enc",
-                            peer.encumbrance.as_ref(),
-                            Color32::from_rgb(0xC4, 0xA0, 0x00),
-                        );
-                    }
-
-                    if data.show_injuries {
-                        // Peers ship wounds, not art, so the doll is drawn
-                        // with OUR installed art. Variant stays None: variant
-                        // rules resolve against the local character's
-                        // conditions, which would be wrong for a peer.
-                        //
-                        // Height-capped so the doll sits inside the card
-                        // rather than consuming the window -- it sizes to the
-                        // space it is given.
-                        let doll_h = (data.card_width * 0.9).clamp(60.0, 160.0);
-                        ui.allocate_ui(egui::vec2(ui.available_width(), doll_h), |ui| {
-                            Self::render_injury_doll(
-                                ui,
-                                &peer.injuries,
-                                settings.skin_art.as_deref(),
-                                None,
-                                &Default::default(),
-                                false,
-                                &Self::default_injury_palette(),
-                            );
-                        });
-                    }
-
-                    if data.show_room {
-                        // The id, not the name: it is what the proximity
-                        // comparison actually uses, it is far shorter on a
-                        // narrow card, and it is what you would type to go
-                        // there. The name rides the hover.
-                        if let Some(id) = &peer.room_id {
-                            let text = RichText::new(format!("#{id}")).small();
-                            let text = if elsewhere {
-                                text.color(Color32::from_rgb(0xFF, 0x88, 0x88))
-                            } else {
-                                text.weak()
-                            };
-                            let hover = match (&peer.room_name, elsewhere) {
-                                (Some(name), true) => format!("{name} \u{2014} not with you"),
-                                (Some(name), false) => format!("{name} \u{2014} here with you"),
-                                (None, true) => "In a different room from you".to_string(),
-                                (None, false) => "Here with you".to_string(),
-                            };
-                            ui.label(text).on_hover_text(hover);
-                        } else if let Some(name) = &peer.room_name {
-                            // No id (direct connect without Lich): fall back
-                            // to the name rather than showing nothing.
-                            ui.label(RichText::new(name).small().weak())
-                                .on_hover_text("Room id unknown \u{2014} proximity not checked");
-                        }
                     }
                 });
             });
         });
     }
 
+    /// Default top-to-bottom row order. Identity first, then the things that
+    /// change fastest, then the slow context.
+    const DEFAULT_ROWS: &'static [&'static str] = &[
+        "status",
+        "vitals",
+        "rt",
+        "hands",
+        "effects",
+        "mind",
+        "stance",
+        "field_exp",
+        "encumbrance",
+        "injuries",
+        "room",
+    ];
+
+    /// The configured order, with any unlisted rows appended in their default
+    /// position. A name the user omits is not hidden -- hiding is what the
+    /// per-row toggles are for.
+    fn multiaccount_row_order(
+        data: &crate::config::MultiAccountWidgetData,
+    ) -> Vec<String> {
+        let mut order: Vec<String> = data
+            .row_order
+            .iter()
+            .filter(|name| Self::DEFAULT_ROWS.contains(&name.as_str()))
+            .cloned()
+            .collect();
+        for row in Self::DEFAULT_ROWS {
+            if !order.iter().any(|name| name == row) {
+                order.push((*row).to_string());
+            }
+        }
+        order
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_card_row(
+        ui: &mut egui::Ui,
+        settings: &WidgetRenderSettings,
+        data: &crate::config::MultiAccountWidgetData,
+        peer: &PeerStatus,
+        row: String,
+        now_server: i64,
+        elsewhere: bool,
+    ) {
+        match row.as_str() {
+            "status" if data.show_status => Self::render_status_glyphs(ui, peer),
+            "vitals" if data.show_vitals => {
+                Self::render_peer_vitals(ui, settings, peer, data.show_absolute_vitals)
+            }
+            "rt" if data.show_rt => Self::render_peer_rt(ui, settings, peer, now_server),
+            "hands" if data.show_hands => Self::render_peer_hands(ui, peer),
+            "effects" if data.show_effects => {
+                Self::render_peer_effects(ui, data, peer, now_server)
+            }
+            "mind" if data.show_mind => Self::render_peer_gauge(
+                ui,
+                settings,
+                "Mind",
+                peer.mind.as_ref(),
+                Color32::from_rgb(0x7C, 0xCD, 0x7C),
+            ),
+            "stance" if data.show_stance => Self::render_peer_gauge(
+                ui,
+                settings,
+                "Stance",
+                peer.stance.as_ref(),
+                Color32::from_rgb(0x5C, 0xAC, 0xEE),
+            ),
+            "field_exp" if data.show_field_exp => {
+                Self::render_peer_field_exp(ui, settings, peer)
+            }
+            "encumbrance" if data.show_encumbrance => Self::render_peer_gauge(
+                ui,
+                settings,
+                "Enc",
+                peer.encumbrance.as_ref(),
+                Color32::from_rgb(0xC4, 0xA0, 0x00),
+            ),
+            "injuries" if data.show_injuries => {
+                // Peers ship wounds, not art, so the doll uses OUR installed
+                // art. Variant stays None: variant rules resolve against the
+                // local character's conditions, wrong for a peer.
+                let doll_h = (data.card_width * 0.9).clamp(60.0, 160.0);
+                ui.allocate_ui(egui::vec2(ui.available_width(), doll_h), |ui| {
+                    Self::render_injury_doll(
+                        ui,
+                        &peer.injuries,
+                        settings.skin_art.as_deref(),
+                        None,
+                        &Default::default(),
+                        false,
+                        &Self::default_injury_palette(),
+                    );
+                });
+            }
+            "room" if data.show_room => Self::render_peer_room(ui, peer, elsewhere),
+            _ => {}
+        }
+    }
+
+    /// Room id, colored by whether they are with you. The id is what the
+    /// proximity check compares and what you would type to travel there; the
+    /// name rides the hover.
+    fn render_peer_room(ui: &mut egui::Ui, peer: &PeerStatus, elsewhere: bool) {
+        if let Some(id) = &peer.room_id {
+            let text = RichText::new(format!("#{id}")).small();
+            let text = if elsewhere {
+                text.color(Color32::from_rgb(0xFF, 0x88, 0x88))
+            } else {
+                text.weak()
+            };
+            let hover = match (&peer.room_name, elsewhere) {
+                (Some(name), true) => format!("{name} \u{2014} not with you"),
+                (Some(name), false) => format!("{name} \u{2014} here with you"),
+                (None, true) => "In a different room from you".to_string(),
+                (None, false) => "Here with you".to_string(),
+            };
+            ui.label(text).on_hover_text(hover);
+        } else if let Some(name) = &peer.room_name {
+            // No id (direct connect without Lich): the name beats nothing.
+            ui.label(RichText::new(name).small().weak())
+                .on_hover_text("Room id unknown \u{2014} proximity not checked");
+        }
+    }
+
+    /// Active conditions as pictograms, falling back to a letter for ids the
+    /// icon set does not cover.
+    ///
+    /// Letters alone were near-unreadable at card size; `status_icons` is the
+    /// same art the dedicated indicator widgets use, so a condition looks the
+    /// same wherever it appears.
     fn render_status_glyphs(ui: &mut egui::Ui, peer: &PeerStatus) {
-        let active: Vec<_> = STATUS_GLYPHS
+        let active: Vec<(&str, Color32)> = STATUS_GLYPHS
             .iter()
             .filter(|(id, _, _)| peer.indicators.get(id))
+            .map(|(id, _, color)| (*id, *color))
             .collect();
 
         // Anything the game reports that has no glyph of its own. StatusInfo
         // is a general map, so a new indicator reaches us without a code
-        // change -- this makes it VISIBLE without one too, rather than
-        // silently dropping it.
+        // change -- this makes it visible without one too.
         let unknown: Vec<&str> = peer
             .indicators
             .iter()
@@ -434,18 +508,50 @@ impl VellumGuiApp {
             ui.label(RichText::new("\u{00B7}").weak().small());
             return;
         }
-        ui.horizontal(|ui| {
+
+        let size = 14.0;
+        let bg = ui.visuals().panel_fill;
+        ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
-            for (id, glyph, color) in active {
-                ui.label(RichText::new(*glyph).color(*color).strong().small())
-                    .on_hover_text(*id);
+            for (id, color) in active {
+                let (rect, response) =
+                    ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+                if ui.is_rect_visible(rect) {
+                    // Fall back to a letter when the pictogram set has no art
+                    // for this id, rather than leaving a blank gap.
+                    if !crate::frontend::gui::app::status_icons::paint(
+                        ui.painter(),
+                        rect,
+                        id,
+                        color,
+                        bg,
+                    ) {
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            id.chars().next().unwrap_or('?').to_uppercase().to_string(),
+                            egui::FontId::proportional(size * 0.8),
+                            color,
+                        );
+                    }
+                }
+                response.on_hover_text(
+                    crate::frontend::gui::app::status_icons::display_name(id),
+                );
             }
             for id in unknown.iter() {
-                // First letter, uppercased, in a neutral color: enough to
-                // notice something is on, with the full id on hover.
-                let glyph: String = id.chars().next().unwrap_or('?').to_uppercase().collect();
-                ui.label(RichText::new(glyph).strong().small())
-                    .on_hover_text(*id);
+                let (rect, response) =
+                    ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+                if ui.is_rect_visible(rect) {
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        id.chars().next().unwrap_or('?').to_uppercase().to_string(),
+                        egui::FontId::proportional(size * 0.8),
+                        ui.visuals().text_color(),
+                    );
+                }
+                response.on_hover_text(*id);
             }
         });
     }

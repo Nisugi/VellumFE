@@ -1041,6 +1041,17 @@ pub struct MultiAccountWidgetData {
     /// Cap on effects drawn per card, after filtering. Six characters with
     /// unbounded lists is unreadable regardless of the filter.
     pub max_effects: usize,
+    /// Row order within a card, top to bottom. Names match the toggles:
+    /// "status", "vitals", "rt", "hands", "effects", "mind", "stance",
+    /// "field_exp", "encumbrance", "injuries", "room".
+    ///
+    /// Rows not listed are appended in their default order, so an old config
+    /// (or a partial list) still shows everything -- a missing name hides
+    /// nothing, it just does not reposition it.
+    pub row_order: Vec<String>,
+    /// Card order: "group" keeps clustered characters together (default),
+    /// "name" sorts alphabetically, "port" is connection order.
+    pub sort_by: String,
     /// Cards per row before wrapping. 0 means fit as many as the window is
     /// wide enough for.
     pub columns: usize,
@@ -1058,6 +1069,8 @@ impl Default for MultiAccountWidgetData {
             show_mind: false,
             show_stance: false,
             show_field_exp: false,
+            row_order: Vec::new(),
+            sort_by: "group".to_string(),
             show_encumbrance: false,
             show_room: true,
             show_self: true,

@@ -117,6 +117,22 @@ impl PeerStatus {
         configured: Option<&str>,
         now_ms: u64,
     ) -> Self {
+        Self::from_local_full(game_state, configured, None, now_ms)
+    }
+
+    /// As `from_local_named`, with the room id supplied by the caller.
+    ///
+    /// `GameState.room_id` is never written -- the real id comes from the nav
+    /// or Lich feed and lives on `AppCore`, which is why the remote snapshot
+    /// overlays it. Peers therefore had a room id while the self card did
+    /// not, so the room row silently vanished on your own card and proximity
+    /// could never be computed.
+    pub fn from_local_full(
+        game_state: &crate::core::state::GameState,
+        configured: Option<&str>,
+        room_id: Option<String>,
+        now_ms: u64,
+    ) -> Self {
         let gauge = |value: u32, text: &str| {
             (!text.is_empty()).then(|| Gauge {
                 value,
@@ -158,7 +174,7 @@ impl PeerStatus {
                 _ => None,
             },
             room_name: game_state.room_name.clone(),
-            room_id: game_state.room_id.clone(),
+            room_id: room_id.or_else(|| game_state.room_id.clone()),
             roundtime_end: game_state.roundtime_end,
             casttime_end: game_state.casttime_end,
             server_time: game_state.game_time,
@@ -225,6 +241,11 @@ pub struct Cluster {
     /// False when any member's roster is unconfirmed, so the display can say
     /// so instead of drawing a guess as fact.
     pub confirmed: bool,
+    /// The game says these characters are grouped even though we have no
+    /// roster naming anyone. Distinguishes "grouped, members unknown" from
+    /// "genuinely alone" -- both of which otherwise look like a nameless
+    /// single-member cluster.
+    pub grouped: bool,
 }
 
 impl Cluster {
@@ -234,12 +255,15 @@ impl Cluster {
             leader: None,
             leader_name: None,
             confirmed: true,
+            grouped: false,
         }
     }
 
-    /// A single ungrouped character.
+    /// A single character who is not in a group at all. A lone character who
+    /// IS grouped (with someone not ours, or with a roster we have not
+    /// parsed) is not solo -- drawing them as such would contradict the game.
     pub fn is_solo(&self) -> bool {
-        self.members.len() == 1 && self.leader_name.is_none()
+        self.members.len() == 1 && self.leader_name.is_none() && !self.grouped
     }
 }
 
@@ -329,6 +353,26 @@ pub fn cluster_peers(peers: &BTreeMap<u16, PeerStatus>) -> Vec<Cluster> {
         }
     }
 
+    // Last resort: characters the game says are grouped (the JOINED
+    // indicator) but whose roster we have not parsed. Being ADDED to a group
+    // produces the indicator with no message naming anyone, so the roster
+    // stays empty until a `group` reply -- and without this they would each
+    // render as solo while the game plainly says otherwise.
+    //
+    // Only used for peers with NO roster at all; a parsed roster always wins.
+    // The resulting cluster is marked unconfirmed, so the display says it is
+    // inferred rather than known.
+    let joined_unknown: Vec<u16> = peers
+        .iter()
+        .filter(|(_, p)| {
+            matches!(p.group.leader, GroupLeader::Unknown) && p.group.members.is_empty()
+        })
+        .map(|(port, _)| *port)
+        .collect();
+    for pair in joined_unknown.windows(2) {
+        union(&mut parent, pair[0], pair[1]);
+    }
+
     // Collect the groups.
     let mut groups: BTreeMap<u16, Vec<u16>> = BTreeMap::new();
     for port in peers.keys() {
@@ -345,13 +389,28 @@ pub fn cluster_peers(peers: &BTreeMap<u16, PeerStatus>) -> Vec<Cluster> {
                 let peer = &peers[&port];
                 // A lone character who follows someone not ours is still in a
                 // group -- it just has one visible member.
-                if let GroupLeader::Other(leader) = &peer.group.leader {
-                    return Cluster {
-                        members,
-                        leader: None,
-                        leader_name: Some(leader.name.clone()),
-                        confirmed: peer.group.confirmed,
-                    };
+                match &peer.group.leader {
+                    GroupLeader::Other(leader) => {
+                        return Cluster {
+                            members,
+                            leader: None,
+                            leader_name: Some(leader.name.clone()),
+                            confirmed: peer.group.confirmed,
+                            grouped: true,
+                        };
+                    }
+                    // Grouped per the game, roster not yet known. Not solo --
+                    // saying "alone" would contradict the indicator.
+                    GroupLeader::Unknown => {
+                        return Cluster {
+                            members,
+                            leader: None,
+                            leader_name: None,
+                            confirmed: false,
+                            grouped: true,
+                        };
+                    }
+                    _ => {}
                 }
                 return Cluster::solo(port);
             }
@@ -384,6 +443,7 @@ pub fn cluster_peers(peers: &BTreeMap<u16, PeerStatus>) -> Vec<Cluster> {
                 leader: leader_port,
                 leader_name,
                 confirmed,
+                grouped: true,
             }
         })
         .collect()
@@ -484,6 +544,55 @@ mod tests {
         // label rather than rendering blank.
         let gs = crate::core::state::GameState::new();
         assert_eq!(PeerStatus::from_local(&gs, 0).character, "You");
+    }
+
+    /// Being ADDED to a group sets the JOINED indicator with no message
+    /// naming anyone, so the roster stays empty. Two of our characters in
+    /// that state are grouped as far as the game is concerned, and must not
+    /// each render as solo.
+    #[test]
+    fn joined_without_a_roster_still_clusters() {
+        let mut a = peer(8040, "Abem");
+        a.group.mark_joined_unconfirmed();
+        let mut b = peer(8041, "Ultz");
+        b.group.mark_joined_unconfirmed();
+
+        let clusters = cluster_peers(&peers(vec![a, b]));
+        assert_eq!(clusters.len(), 1, "the game says they are grouped");
+        assert_eq!(clusters[0].members, vec![8040, 8041]);
+        assert!(
+            !clusters[0].confirmed,
+            "inferred from the indicator, not a parsed roster"
+        );
+    }
+
+    #[test]
+    fn a_lone_joined_character_is_not_solo() {
+        let mut a = peer(8040, "Abem");
+        a.group.mark_joined_unconfirmed();
+        let clusters = cluster_peers(&peers(vec![a]));
+        assert!(
+            !clusters[0].is_solo(),
+            "grouped with someone, just not one of ours"
+        );
+    }
+
+    /// A parsed roster always beats the indicator guess.
+    #[test]
+    fn a_real_roster_wins_over_the_joined_fallback() {
+        let mut a = peer(8040, "Abem");
+        a.group.replace(GroupLeader::SelfLed, vec![member("Ultz")]);
+        let mut b = peer(8041, "Ultz");
+        b.group.replace(GroupLeader::Other(member("Abem")), vec![]);
+        // A third character grouped with strangers must not be pulled in.
+        let mut c = peer(8042, "Stranger");
+        c.group.mark_joined_unconfirmed();
+
+        let clusters = cluster_peers(&peers(vec![a, b, c]));
+        assert_eq!(clusters.len(), 2, "{clusters:?}");
+        assert_eq!(clusters[0].members, vec![8040, 8041]);
+        assert!(clusters[0].confirmed);
+        assert_eq!(clusters[1].members, vec![8042]);
     }
 
     #[test]
