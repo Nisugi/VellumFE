@@ -315,13 +315,17 @@ re!(QUOTED_ITEM, r#"['"]([^'"]+)['"]"#);
 // Splitting first and matching per statement makes arity irrelevant, which is
 // what the corpus actually needs: a third of the residue is this shape.
 
-// Any control-flow keyword disqualifies statement-splitting: concatenating
-// the statements of `if x; move 'n'; end` would drop the condition and cross
-// an edge the script gated. Word-boundary anchored so `endless` and
-// `Spell[...].active?` don't trip it.
+// BLOCK control flow, which statement-splitting cannot represent.
+//
+// Note what is NOT here: a bare `if`/`unless`. Those are ambiguous — they open
+// a block (`if x; move 'n'; end`) or trail a statement as a modifier (`fput
+// 'stand' unless standing?`). The block form always carries `end`, `else`, or
+// `elsif`, so keying on THOSE rejects blocks while letting modifiers through
+// to `transpile_statement`, which keeps their condition. `.times` is likewise
+// absent: the `{ ... }` form is unrolled as a bounded repeat.
 re!(
-    CONTROL_FLOW,
-    r"(?:^|[^\w.])(?:if|elsif|else|end|unless|loop|while|until|begin|rescue|case|when|break|next|return|exit|pause_script)(?:[^\w?!]|$)|\.times|\.each|\|\||&&"
+    BLOCK_CONTROL_FLOW,
+    r"(?:^|[^\w.])(?:elsif|else|end|loop|while|until|begin|rescue|case|when|break|next|return|exit|pause_script)(?:[^\w?!]|$)|\.each|\|\||&&"
 );
 // Script bookkeeping with no travel meaning. `$go2_restart = true` and
 // `$SILVERWOOD_TOWN=:imt` are Lich-side flags; a comment or bare `nil` is
@@ -330,10 +334,33 @@ re!(
     IGNORABLE_STATEMENT,
     r"^(?:#.*|nil|true|\$\w+\s*=.*|UserVars\.\w+\s*=.*)$"
 );
+// A trailing `if`/`unless` on an otherwise ordinary statement — `fput 'stand'
+// unless standing?`. The dominant control-flow shape in the corpus, and the
+// one that gates the doors into several cities.
+re!(STMT_MODIFIER, r"^(.+?)\s+(if|unless)\s+(.+)$");
+// Conditions used by those modifiers. Each maps to a `Cond` we already have.
+re!(COND_STANDING, r"^standing\?$");
+re!(COND_KNEELING, r"^kneeling\?$");
+re!(COND_SITTING, r"^sitting\?$");
+re!(COND_HIDDEN, r"^(?:hidden|invisible)\?$");
+re!(COND_CHECKSPELL_NUM, r"^checkspell\s*\(?\s*(\d+)\s*\)?$");
+re!(COND_CHECKSPELL_NAME, r#"^checkspell\s*\(?\s*['"]([^'"]+)['"]\s*\)?$"#);
+re!(COND_SPELL_ACTIVE, r"^Spell\[(\d+)\]\.active\?$");
+re!(COND_HANDS_FULL, r"^GameObj\.(?:right|left)_hand\.id(?:\s+or\s+GameObj\.(?:right|left)_hand\.id)?$");
+re!(COND_CHECKLOOT, r#"^checkloot\.include\?\s*\(?\s*['"]([^'"]+)['"]\s*\)?$"#);
+// `2.times{ fput 'ask sailor about boat' }` — a bounded repeat of a known
+// statement, with no loop condition to interpret.
+re!(
+    STMT_TIMES,
+    r"^(\d+)\s*\.\s*times\s*\{\s*(.+?)\s*;?\s*\}$"
+);
 re!(STMT_MOVE, r#"^move\s*\(?\s*(['"][^'"]+['"])\s*\)?$"#);
 re!(STMT_FPUT, r#"^(?:fput|put)\s*\(?\s*(['"][^'"]+['"])\s*\)?$"#);
 re!(STMT_MULTIFPUT, r#"^multifput\s+(['"].*['"])$"#);
-re!(STMT_WAITFOR, r#"^waitfor\s*\(?\s*(['"][^'"]+['"])\s*\)?$"#);
+// `waitfor 'a'` and `waitfor 'a','b','c'` alike: Lich's waitfor takes any
+// number of alternatives and returns on the first to appear. The single-arg
+// form alone missed the Hinterwilds caravans, which gate a whole region.
+re!(STMT_WAITFOR, r#"^waitfor\s*\(?\s*(['"].*['"])\s*\)?$"#);
 re!(STMT_WAITRT, r"^waitrt\??$");
 re!(STMT_SLEEP, r"^(?:sleep|pause)\s*\(?\s*([0-9.]+)\s*\)?$");
 re!(STMT_EMPTY_HANDS, r"^empty_hands?(?:\s*\(\s*\))?$");
@@ -1045,11 +1072,12 @@ fn split_statements(body: &str) -> Vec<String> {
 /// which is worse than declining the edge and letting the router re-path.
 fn transpile_sequence(src: &str) -> Option<Vec<WalkAction>> {
     let body = src.strip_prefix(";e").unwrap_or(src).trim();
-    // Control flow needs an interpreter, not concatenation. Reject early so a
-    // body like `if x; move 'n'; end` can't be mistaken for three statements
-    // and lose its condition — silently ignoring an `if` would cross an edge
-    // the script deliberately gated.
-    if CONTROL_FLOW.is_match(body) {
+    // BLOCK control flow needs an interpreter, not concatenation: `if x; move
+    // 'n'; end` split naively would lose its condition and cross an edge the
+    // script gated. Trailing `if`/`unless` MODIFIERS are fine — they stay
+    // attached to their statement through the split and are handled there —
+    // so they are deliberately absent from this pattern.
+    if BLOCK_CONTROL_FLOW.is_match(body) {
         return None;
     }
     let statements = split_statements(body);
@@ -1079,6 +1107,41 @@ fn transpile_statement(statement: &str) -> Option<Vec<WalkAction>> {
         // ordinary body stop being residue.
         return Some(Vec::new());
     }
+    // Peel a trailing `if`/`unless` before the bare forms match, so the
+    // condition survives instead of the statement running unconditionally.
+    if let Some(c) = STMT_MODIFIER.captures(s) {
+        // Only when the guarded part is itself a statement we understand;
+        // otherwise fall through and let the whole body be refused.
+        if let Some(inner) = transpile_statement(&c[1]) {
+            let cond = statement_condition(&c[3])?;
+            let negated = &c[2] == "unless";
+            let cond = if negated {
+                Cond::Not(Box::new(cond))
+            } else {
+                cond
+            };
+            return Some(vec![WalkAction::If {
+                cond,
+                then: inner,
+                els: Vec::new(),
+            }]);
+        }
+    }
+    if let Some(c) = STMT_TIMES.captures(s) {
+        // A bounded repeat with no loop condition: just unroll it. `max` in a
+        // `Repeat` would need an until-condition we do not have, and the counts
+        // in the corpus are small (2-3).
+        let count: usize = c[1].parse().ok()?;
+        if count == 0 || count > 10 {
+            return None;
+        }
+        let once = transpile_statement(&c[2])?;
+        let mut unrolled = Vec::with_capacity(once.len() * count);
+        for _ in 0..count {
+            unrolled.extend(once.iter().cloned());
+        }
+        return Some(unrolled);
+    }
     if let Some(c) = STMT_MOVE.captures(s) {
         return Some(vec![WalkAction::Move(unquote(&c[1]))]);
     }
@@ -1099,9 +1162,19 @@ fn transpile_statement(statement: &str) -> Option<Vec<WalkAction>> {
         // statement that already ran. `Fail` on timeout matches the other
         // waitfor recognizers — a missed arrival line means we are not where
         // the script thinks we are.
+        //
+        // Multiple alternatives become one alternation, matching Lich's
+        // "return on whichever appears first".
+        let alternatives: Vec<String> = QUOTED_ITEM
+            .captures_iter(&c[1])
+            .map(|m| regex::escape(&m[1]))
+            .collect();
+        if alternatives.is_empty() {
+            return None;
+        }
         return Some(vec![WalkAction::Await {
             cmd: None,
-            pattern: Box::new(AwaitPattern::new(&regex::escape(&unquote(&c[1])))?),
+            pattern: Box::new(AwaitPattern::new(&alternatives.join("|"))?),
             timeout: WAITFOR_TIMEOUT_SECS,
             on_timeout: OnTimeout::Fail,
             if_match: None,
@@ -1118,6 +1191,54 @@ fn transpile_statement(statement: &str) -> Option<Vec<WalkAction>> {
     }
     if STMT_FILL_HANDS.is_match(s) {
         return Some(vec![WalkAction::FillHands]);
+    }
+    None
+}
+
+/// Map a statement-modifier condition to a `Cond`.
+///
+/// Returns `None` for anything unrecognized, which refuses the whole body —
+/// guessing a condition wrong would cross an edge the script gated, or skip a
+/// step it required.
+fn statement_condition(raw: &str) -> Option<Cond> {
+    let c = raw.trim().trim_end_matches(';').trim();
+    if COND_STANDING.is_match(c) {
+        return Some(Cond::Standing);
+    }
+    if COND_KNEELING.is_match(c) {
+        return Some(Cond::Kneeling);
+    }
+    if COND_SITTING.is_match(c) {
+        return Some(Cond::Sitting);
+    }
+    if COND_HIDDEN.is_match(c) {
+        return Some(Cond::Hidden);
+    }
+    if let Some(m) = COND_CHECKSPELL_NUM.captures(c) {
+        return Some(Cond::SpellActive(m[1].parse().ok()?));
+    }
+    if let Some(m) = COND_SPELL_ACTIVE.captures(c) {
+        return Some(Cond::SpellActive(m[1].parse().ok()?));
+    }
+    if let Some(m) = COND_CHECKSPELL_NAME.captures(c) {
+        // Named spells: only the ones that gate a crossing in the corpus.
+        // Invisibility is the whole set today ("unhide if invisible").
+        return match m[1].to_ascii_lowercase().as_str() {
+            "invisibility" => Some(Cond::Hidden),
+            _ => None,
+        };
+    }
+    // `empty_hands if GameObj.right_hand.id` guards against stowing when the
+    // hands are already empty — which `EmptyHands` already handles as a no-op.
+    // Rather than add a Cond variant the executor would have to evaluate, the
+    // guard is dropped and the statement runs unconditionally. Sound ONLY
+    // because the guarded action is idempotent; do not extend this to others.
+    if COND_HANDS_FULL.is_match(c) {
+        // `Any([])` is false, so the always-true form is its negation.
+        return Some(Cond::Not(Box::new(Cond::Any(Vec::new()))));
+    }
+    if let Some(m) = COND_CHECKLOOT.captures(c) {
+        return Some(Cond::RoomHasObject(m[1].to_string()));
     }
     None
 }
@@ -2454,7 +2575,8 @@ mod tests {
     }
 
     #[test]
-    fn control_flow_is_still_refused() {
+    fn block_control_flow_is_still_refused() {
+        use WalkAction::*;
         // Concatenating these statements would drop the condition and cross an
         // edge the script deliberately gated.
         assert_eq!(
@@ -2462,9 +2584,77 @@ mod tests {
             None
         );
         assert_eq!(
-            transpile(";e 5.times { move 'north' }; move 'east'; move 'west'"),
+            transpile(";e move 'n' if x; else; move 's'; end"),
             None
         );
+        // A loop whose exit condition we cannot evaluate stays refused.
+        assert_eq!(
+            transpile(";e loop { move 'north' }; move 'east'"),
+            None
+        );
+        // ...but a bounded `.times` is just an unrolled repeat, with no
+        // condition to lose.
+        assert_eq!(
+            transpile(";e 3.times { fput 'ask sailor about boat' }"),
+            Some(vec![
+                Put("ask sailor about boat".into()),
+                Put("ask sailor about boat".into()),
+                Put("ask sailor about boat".into()),
+            ])
+        );
+    }
+
+    #[test]
+    fn statement_modifiers_keep_their_condition() {
+        use WalkAction::*;
+        assert_eq!(
+            transpile(";e move 'crawl south'; waitrt?; fput 'stand' unless standing?"),
+            Some(vec![
+                Move("crawl south".into()),
+                WaitRt,
+                If {
+                    cond: Cond::Not(Box::new(Cond::Standing)),
+                    then: vec![Put("stand".into())],
+                    els: Vec::new(),
+                },
+            ])
+        );
+        assert_eq!(
+            transpile(";e fput 'unhide' if checkspell(916); move 'go gate'"),
+            Some(vec![
+                If {
+                    cond: Cond::SpellActive(916),
+                    then: vec![Put("unhide".into())],
+                    els: Vec::new(),
+                },
+                Move("go gate".into()),
+            ])
+        );
+    }
+
+    #[test]
+    fn an_unknown_modifier_condition_refuses_the_body() {
+        // Guessing a condition wrong crosses an edge the script gated.
+        assert_eq!(
+            transpile(";e fput 'stand' if Char.name == 'Bob'; move 'north'"),
+            None
+        );
+    }
+
+    #[test]
+    fn waitfor_accepts_alternatives() {
+        // The Hinterwilds caravans list several arrival lines; matching only
+        // the first would hang the crossing until timeout.
+        let Some(actions) =
+            transpile(";e multifput 'inquire','order 2';waitfor 'It halts','It stops'")
+        else {
+            panic!("expected a transpile");
+        };
+        let WalkAction::Await { pattern, .. } = &actions[2] else {
+            panic!("expected an await, got {:?}", actions[2]);
+        };
+        assert!(pattern.is_match("It stops"));
+        assert!(pattern.is_match("It halts"));
     }
 
     #[test]
