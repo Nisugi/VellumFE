@@ -3195,7 +3195,22 @@ impl TravelTask {
             Some(path) => {
                 self.path = path;
                 self.idx = 0;
-                self.step = Step::Prepare;
+                // go2 re-runs its wealth check on EVERY restart, not just at
+                // launch: a re-plan can route through paid crossings the
+                // original path avoided (a mid-maze ban re-routed one live
+                // trip through the Zul mining cart with silver_need still 0
+                // from the original free route, and the walker hit the till
+                // broke).
+                let full: Vec<u32> =
+                    std::iter::once(current).chain(self.path.iter().copied()).collect();
+                self.silver_need = pathing::silver_cost(db, &full);
+                self.step = if self.silver_need > 0 {
+                    Step::Funding(FundingPhase::AwaitWealth {
+                        sent_ms: self.started_ms,
+                    })
+                } else {
+                    Step::Prepare
+                };
             }
             None => {
                 if self.hand_off_to_lich(
