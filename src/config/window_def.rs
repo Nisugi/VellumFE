@@ -227,6 +227,14 @@ pub enum WindowDef {
         data: MissingSpellsWidgetData,
     },
 
+    #[serde(rename = "multiaccount")]
+    MultiAccount {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: MultiAccountWidgetData,
+    },
+
     #[serde(rename = "perception")]
     Perception {
         #[serde(flatten)]
@@ -521,6 +529,10 @@ impl WindowDef {
                 base,
                 data: MissingSpellsWidgetData {},
             },
+            "multiaccount" => WindowDef::MultiAccount {
+                base,
+                data: MultiAccountWidgetData::default(),
+            },
             "perception" => WindowDef::Perception {
                 base,
                 data: PerceptionWidgetData {
@@ -593,6 +605,7 @@ impl WindowDef {
             WindowDef::Hotkeybar { base, .. } => &base.name,
             WindowDef::Spells { base, .. } => &base.name,
             WindowDef::MissingSpells { base, .. } => &base.name,
+            WindowDef::MultiAccount { base, .. } => &base.name,
             WindowDef::Perception { base, .. } => &base.name,
             WindowDef::Experience { base, .. } => &base.name,
             WindowDef::GS4Experience { base, .. } => &base.name,
@@ -632,6 +645,7 @@ impl WindowDef {
             WindowDef::Hotkeybar { .. } => "hotkeybar",
             WindowDef::Spells { .. } => "spells",
             WindowDef::MissingSpells { .. } => "missingspells",
+            WindowDef::MultiAccount { .. } => "multiaccount",
             WindowDef::Perception { .. } => "perception",
             WindowDef::Experience { .. } => "experience",
             WindowDef::GS4Experience { .. } => "gs4_experience",
@@ -671,6 +685,7 @@ impl WindowDef {
             WindowDef::Hotkeybar { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
             WindowDef::MissingSpells { base, .. } => base,
+            WindowDef::MultiAccount { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
             WindowDef::Experience { base, .. } => base,
             WindowDef::GS4Experience { base, .. } => base,
@@ -710,6 +725,7 @@ impl WindowDef {
             WindowDef::Hotkeybar { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
             WindowDef::MissingSpells { base, .. } => base,
+            WindowDef::MultiAccount { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
             WindowDef::Experience { base, .. } => base,
             WindowDef::GS4Experience { base, .. } => base,

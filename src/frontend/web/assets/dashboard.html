@@ -60,12 +60,22 @@
       text-align: center;
       padding: 24px 0;
     }
+    a.wall {
+      display: block;
+      margin-top: 18px;
+      text-align: center;
+      color: #8a8f98;
+      font-size: 13px;
+      text-decoration: none;
+    }
+    a.wall:hover { color: #d6d6d6; }
   </style>
 </head>
 <body>
   <h1>VellumFE</h1>
   <p class="sub">Pick a session — this page never connects to a game.</p>
   <div id="sessions"><div class="empty">Looking for sessions&hellip;</div></div>
+  <a id="wall-link" class="wall" href="/characters">All characters at a glance &rarr;</a>
   <script>
     // The registry can hold stale entries (crashes, other machines'
     // leftovers); only sessions that answer /health get a card.
@@ -89,6 +99,8 @@
       const m = location.hash.match(/token=([^&]+)/);
       return m ? decodeURIComponent(m[1]) : "";
     }
+    // Forward the token fragment so the wall can auth its watch sockets.
+    document.getElementById("wall-link").href = "/characters" + location.hash;
 
     async function load() {
       const box = document.getElementById("sessions");

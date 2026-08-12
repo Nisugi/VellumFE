@@ -273,6 +273,7 @@ impl AppCore {
                 WidgetType::Targets => WindowContent::Targets,
                 WidgetType::Players => WindowContent::Players,
                 WidgetType::MissingSpells => WindowContent::MissingSpells,
+                WidgetType::MultiAccount => WindowContent::MultiAccount,
                 WidgetType::Items => WindowContent::Items,
                 WidgetType::Container => {
                     // Get container_title from window def if available
@@ -639,6 +640,7 @@ impl AppCore {
             WidgetType::Targets => WindowContent::Targets,
             WidgetType::Players => WindowContent::Players,
             WidgetType::MissingSpells => WindowContent::MissingSpells,
+            WidgetType::MultiAccount => WindowContent::MultiAccount,
             WidgetType::Items => WindowContent::Items,
             WidgetType::Container => {
                 // Get container_title from window def if available

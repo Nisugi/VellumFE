@@ -42,8 +42,8 @@ impl AppCore {
                 .casttime_end
                 .map(|end| end > now)
                 .unwrap_or(false);
-        let stunned = self.game_state.status.stunned;
-        let dead = self.game_state.status.dead;
+        let stunned = self.game_state.status.stunned();
+        let dead = self.game_state.status.dead();
 
         if self.haptic_prev.rt_active && !rt_active {
             self.pending_haptics.push(HapticEvent::RoundtimeEnd);
@@ -99,13 +99,13 @@ mod tests {
         core.poll_haptics();
         assert!(core.drain_haptics().is_empty());
 
-        core.game_state.status.stunned = true;
+        core.game_state.status.set("stunned", true);
         core.poll_haptics();
         assert_eq!(core.drain_haptics(), vec![HapticEvent::Stunned]);
         core.poll_haptics();
         assert!(core.drain_haptics().is_empty(), "no repeat while held");
 
-        core.game_state.status.stunned = false;
+        core.game_state.status.set("stunned", false);
         core.poll_haptics();
         assert!(core.drain_haptics().is_empty(), "recovery is silent");
     }

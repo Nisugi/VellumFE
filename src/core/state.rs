@@ -4,7 +4,7 @@
 //! character info, room state, inventory, etc.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use super::highlight_engine::SoundTrigger;
 
@@ -192,6 +192,14 @@ pub struct GameState {
     /// Encumbrance dialog state (from encum dialog)
     pub encumbrance: EncumbranceState,
 
+    /// Combat stance (from the stance dialog's pbarStance)
+    pub stance: StanceState,
+
+    /// Group roster, reconstructed from the game's group messaging. The
+    /// feed's only structured group signal is the JOINED indicator, a bare
+    /// flag with no members, so the roster comes from parsed text.
+    pub group: crate::core::group::GroupState,
+
     /// Betrayer panel state (blood points + items) - GS4 only
     pub betrayer: BetrayerState,
 
@@ -218,20 +226,96 @@ pub struct GameState {
     pub sound_queue: SoundQueue,
 }
 
-/// Player status information
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// Player status information.
+///
+/// Backed by a general id -> bool map rather than fixed fields, because the
+/// game sends indicators we do not know about ahead of time (POISONED,
+/// DISEASED, and whatever Simu adds next). Ids are normalized to lowercase on
+/// the way in, so `"IconSTUNNED"`, `"STUNNED"` and `"stunned"` are one key.
+///
+/// Wire compatibility: this serializes as a flat lowercase-keyed object,
+/// byte-identical to the struct it replaced for every id the phone client
+/// reads (`app.js` looks up `d["stunned"]` and friends). Unknown extra keys
+/// are ignored by that client, and absent keys read falsy, so adding ids is
+/// backward compatible in both directions.
+///
+/// The typed accessors below are the supported read path -- prefer
+/// `status.stunned()` over `status.get("stunned")` so a typo is a compile
+/// error rather than a silent `false`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct StatusInfo {
-    pub standing: bool,
-    pub kneeling: bool,
-    pub sitting: bool,
-    pub prone: bool,
-    pub stunned: bool,
-    pub bleeding: bool,
-    pub hidden: bool,
-    pub invisible: bool,
-    pub webbed: bool,
-    pub joined: bool,
-    pub dead: bool,
+    /// Lowercase indicator id -> active. Absent means "never reported",
+    /// which reads as inactive.
+    flags: BTreeMap<String, bool>,
+}
+
+impl StatusInfo {
+    /// Normalize an id to its map key. Strips the `Icon` prefix the game uses
+    /// on the wire so callers may pass either form.
+    fn key(id: &str) -> String {
+        let bare = id.strip_prefix("Icon").unwrap_or(id);
+        bare.to_ascii_lowercase()
+    }
+
+    /// Set an indicator. Returns true if the value changed -- callers use this
+    /// to avoid emitting no-op deltas.
+    pub fn set(&mut self, id: &str, active: bool) -> bool {
+        self.flags.insert(Self::key(id), active) != Some(active)
+    }
+
+    /// Read an indicator. Unknown ids read `false`, matching "the game never
+    /// told us, so it is not happening".
+    pub fn get(&self, id: &str) -> bool {
+        self.flags.get(&Self::key(id)).copied().unwrap_or(false)
+    }
+
+    /// Distinguishes "reported inactive" from "never reported". Conditions do
+    /// not need this, but a multi-account display does: an unreported
+    /// indicator should render as unknown rather than as a confident "no".
+    pub fn is_known(&self, id: &str) -> bool {
+        self.flags.contains_key(&Self::key(id))
+    }
+
+    /// Every id the game has reported, with its current value.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, bool)> {
+        self.flags.iter().map(|(k, v)| (k.as_str(), *v))
+    }
+}
+
+/// Typed accessors for the indicators the client reasons about by name.
+/// Generated so the list stays in one place; `StatusInfo::set` still accepts
+/// any id the game invents.
+macro_rules! status_accessors {
+    ($($(#[$m:meta])* $name:ident),* $(,)?) => {
+        impl StatusInfo {
+            $(
+                $(#[$m])*
+                pub fn $name(&self) -> bool {
+                    self.get(stringify!($name))
+                }
+            )*
+        }
+    };
+}
+
+status_accessors! {
+    standing,
+    kneeling,
+    sitting,
+    prone,
+    stunned,
+    bleeding,
+    hidden,
+    invisible,
+    webbed,
+    /// True while grouped. Before the map refactor this was never written --
+    /// the parser had no arm for it -- so any code reading it saw a permanent
+    /// `false`. It now reflects `IconJOINED`.
+    joined,
+    dead,
+    poisoned,
+    diseased,
 }
 
 /// Player vitals (percentages only)
@@ -897,6 +981,58 @@ impl EncumbranceState {
     }
 }
 
+/// Combat stance, from `<progressBar id='pbarStance' value='100'
+/// text='defensive (100%)'/>` inside the stance dialog.
+///
+/// Before this existed the stance bar rendered straight into a window widget
+/// and never reached game state, so headless and remote clients -- anything
+/// without a stance window -- had no stance at all. It is stored here for the
+/// same reason injuries and vitals are: the data belongs to the session, not
+/// to whichever window happens to be on screen.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StanceState {
+    /// Percent of stance contributing to defense (0-100). 100 is fully
+    /// defensive, 0 fully offensive.
+    pub value: u32,
+    /// Stance name parsed out of the bar text ("defensive", "offensive", ...).
+    /// Empty until the first stance bar arrives.
+    pub text: String,
+    /// Generation counter for change detection
+    pub generation: u64,
+}
+
+impl StanceState {
+    /// Update from progress bar data; returns true if changed.
+    ///
+    /// The feed's text is `"defensive (100%)"` -- the percent is already in
+    /// `value`, so the parenthetical is stripped and only the name kept.
+    /// Callers pass the raw text; parsing lives here so every entry point
+    /// (dialog path and bare progressBar path) normalizes identically.
+    pub fn update(&mut self, value: u32, text: &str) -> bool {
+        let name = text
+            .split('(')
+            .next()
+            .unwrap_or(text)
+            .trim()
+            .to_ascii_lowercase();
+        if self.value != value || self.text != name {
+            self.value = value;
+            self.text = name;
+            self.generation += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Clear on disconnect/login.
+    pub fn clear(&mut self) {
+        self.value = 0;
+        self.text.clear();
+        self.generation += 1;
+    }
+}
+
 /// Betrayer panel state (from `<dialogData id='BetrayerPanel'>`)
 /// Displays blood points as progress bar + list of contributing items
 #[derive(Clone, Debug, Default)]
@@ -992,6 +1128,8 @@ impl GameState {
             dr_experience: DRExperienceState::default(),
             gs4_experience: GS4ExperienceState::default(),
             encumbrance: EncumbranceState::default(),
+            stance: StanceState::default(),
+            group: crate::core::group::GroupState::default(),
             minivitals: MiniVitalsState::default(),
             betrayer: BetrayerState::default(),
             bounty: BountyState::default(),
@@ -1225,17 +1363,17 @@ mod tests {
     #[test]
     fn test_game_state_status_default() {
         let state = GameState::new();
-        assert!(!state.status.standing);
-        assert!(!state.status.kneeling);
-        assert!(!state.status.sitting);
-        assert!(!state.status.prone);
-        assert!(!state.status.stunned);
-        assert!(!state.status.bleeding);
-        assert!(!state.status.hidden);
-        assert!(!state.status.invisible);
-        assert!(!state.status.webbed);
-        assert!(!state.status.joined);
-        assert!(!state.status.dead);
+        assert!(!state.status.standing());
+        assert!(!state.status.kneeling());
+        assert!(!state.status.sitting());
+        assert!(!state.status.prone());
+        assert!(!state.status.stunned());
+        assert!(!state.status.bleeding());
+        assert!(!state.status.hidden());
+        assert!(!state.status.invisible());
+        assert!(!state.status.webbed());
+        assert!(!state.status.joined());
+        assert!(!state.status.dead());
     }
 
     // ========== Game Time tests ==========
@@ -1450,29 +1588,141 @@ mod tests {
     #[test]
     fn test_status_info_default() {
         let status = StatusInfo::default();
-        assert!(!status.standing);
-        assert!(!status.kneeling);
-        assert!(!status.sitting);
-        assert!(!status.prone);
-        assert!(!status.stunned);
-        assert!(!status.bleeding);
-        assert!(!status.hidden);
-        assert!(!status.invisible);
-        assert!(!status.webbed);
-        assert!(!status.joined);
-        assert!(!status.dead);
+        assert!(!status.standing());
+        assert!(!status.kneeling());
+        assert!(!status.sitting());
+        assert!(!status.prone());
+        assert!(!status.stunned());
+        assert!(!status.bleeding());
+        assert!(!status.hidden());
+        assert!(!status.invisible());
+        assert!(!status.webbed());
+        assert!(!status.joined());
+        assert!(!status.dead());
     }
 
     #[test]
     fn test_status_info_clone() {
         let mut status = StatusInfo::default();
-        status.standing = true;
-        status.hidden = true;
+        status.set("standing", true);
+        status.set("hidden", true);
 
         let cloned = status.clone();
-        assert!(cloned.standing);
-        assert!(cloned.hidden);
-        assert!(!cloned.dead);
+        assert!(cloned.standing());
+        assert!(cloned.hidden());
+        assert!(!cloned.dead());
+    }
+
+    #[test]
+    fn stance_parses_name_out_of_bar_text() {
+        let mut stance = StanceState::default();
+        // The feed's text is "defensive (100%)" -- the percent is already in
+        // `value`, so only the name is kept.
+        assert!(stance.update(100, "defensive (100%)"));
+        assert_eq!(stance.value, 100);
+        assert_eq!(stance.text, "defensive");
+
+        assert!(stance.update(0, "offensive (0%)"));
+        assert_eq!(stance.value, 0);
+        assert_eq!(stance.text, "offensive");
+    }
+
+    #[test]
+    fn stance_handles_text_without_percent() {
+        let mut stance = StanceState::default();
+        // Defensive against a feed that omits the parenthetical.
+        stance.update(50, "guarded");
+        assert_eq!(stance.text, "guarded");
+
+        // ...and against casing drift.
+        stance.update(50, "Advance (50%)");
+        assert_eq!(stance.text, "advance");
+    }
+
+    #[test]
+    fn stance_reports_changes_for_delta_suppression() {
+        let mut stance = StanceState::default();
+        assert!(stance.update(100, "defensive (100%)"));
+        // Same value and name: no change, so no delta is emitted.
+        assert!(!stance.update(100, "defensive (100%)"));
+        // A percent change alone counts.
+        assert!(stance.update(75, "defensive (75%)"));
+        let gen = stance.generation;
+        assert!(!stance.update(75, "defensive (75%)"));
+        assert_eq!(stance.generation, gen, "no-op must not bump generation");
+    }
+
+    #[test]
+    fn stance_clear_resets() {
+        let mut stance = StanceState::default();
+        stance.update(100, "defensive (100%)");
+        stance.clear();
+        assert_eq!(stance.value, 0);
+        assert!(stance.text.is_empty());
+    }
+
+    #[test]
+    fn status_info_normalizes_case_and_icon_prefix() {
+        let mut status = StatusInfo::default();
+        // The game sends "IconSTUNNED"; config stores "STUNNED"; the old code
+        // matched "stunned". All three must be one key.
+        status.set("IconSTUNNED", true);
+        assert!(status.stunned());
+        assert!(status.get("STUNNED"));
+        assert!(status.get("stunned"));
+
+        // ...and clearing through a different casing clears the same key.
+        status.set("Stunned", false);
+        assert!(!status.stunned());
+    }
+
+    #[test]
+    fn status_info_stores_arbitrary_ids() {
+        let mut status = StatusInfo::default();
+        // Ids with no typed accessor still round-trip -- the whole point of
+        // the map. POISONED/DISEASED previously had nowhere to live.
+        status.set("POISONED", true);
+        status.set("SOME_FUTURE_ICON", true);
+        assert!(status.poisoned());
+        assert!(status.get("some_future_icon"));
+    }
+
+    #[test]
+    fn status_info_distinguishes_unreported_from_inactive() {
+        let mut status = StatusInfo::default();
+        assert!(!status.is_known("stunned"), "never reported");
+        assert!(!status.get("stunned"), "and reads false");
+
+        status.set("stunned", false);
+        assert!(status.is_known("stunned"), "explicitly reported inactive");
+        assert!(!status.get("stunned"));
+    }
+
+    #[test]
+    fn status_info_set_reports_changes() {
+        let mut status = StatusInfo::default();
+        // First report is a change even when the value is the default...
+        assert!(status.set("stunned", false));
+        // ...but a repeat of the same value is not, so no delta is emitted.
+        assert!(!status.set("stunned", false));
+        assert!(status.set("stunned", true));
+        assert!(!status.set("stunned", true));
+    }
+
+    /// The phone client reads flat lowercase keys (`d["stunned"]` in app.js),
+    /// so the map MUST serialize transparently -- no wrapper object, no
+    /// uppercase. This pins the wire shape against accidental restructuring.
+    #[test]
+    fn status_info_serializes_as_flat_lowercase_object() {
+        let mut status = StatusInfo::default();
+        status.set("IconSTUNNED", true);
+        status.set("BLEEDING", false);
+
+        let json = serde_json::to_string(&status).expect("serialize");
+        assert_eq!(json, r#"{"bleeding":false,"stunned":true}"#);
+
+        let back: StatusInfo = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, status);
     }
 
     // ========== Vitals tests ==========
@@ -1522,10 +1772,16 @@ mod tests {
 
     #[test]
     fn test_status_info_debug() {
-        let status = StatusInfo::default();
+        // A default StatusInfo is now an EMPTY map -- nothing reported yet --
+        // so Debug names the type but lists no ids. Reported ids appear.
+        let mut status = StatusInfo::default();
         let debug_str = format!("{:?}", status);
         assert!(debug_str.contains("StatusInfo"));
-        assert!(debug_str.contains("standing"));
+        assert!(!debug_str.contains("standing"), "nothing reported yet");
+
+        status.set("STANDING", true);
+        let debug_str = format!("{:?}", status);
+        assert!(debug_str.contains("standing"), "reported ids are listed");
     }
 
     #[test]

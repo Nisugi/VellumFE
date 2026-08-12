@@ -663,6 +663,9 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
         // ---- Web (phone) --------------------------------------------
         bool_entry!("web.enabled", "Web Server", "Web",
             "Enable the embedded web server for phones", web.enabled),
+        bool_entry!("web.multiaccount", "Multi-Account Status", "Web",
+            "Share status with, and show, your other characters running on this machine (the Characters window). Binds to localhost only.",
+            web.multiaccount),
         SettingDef {
             key: "web.port",
             label: "Web Port",
