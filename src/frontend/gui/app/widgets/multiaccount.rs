@@ -512,7 +512,7 @@ impl VellumGuiApp {
         // Exhaustive on purpose: a new row cannot compile without a renderer.
         // Visibility was already filtered by row_lines().
         match row {
-            R::Status => Self::render_status_glyphs(ui, peer),
+            R::Status => Self::render_status_glyphs(ui, settings, peer),
             R::Vitals => {
                 Self::render_peer_vitals(ui, settings, peer, data.show_absolute_vitals)
             }
@@ -565,13 +565,18 @@ impl VellumGuiApp {
     }
 
 
-    /// Active conditions as pictograms, falling back to a letter for ids the
-    /// icon set does not cover.
+    /// Active conditions as icons, falling back to a letter for ids nothing
+    /// covers.
     ///
-    /// Letters alone were near-unreadable at card size; `status_icons` is the
-    /// same art the dedicated indicator widgets use, so a condition looks the
-    /// same wherever it appears.
-    fn render_status_glyphs(ui: &mut egui::Ui, peer: &PeerStatus) {
+    /// Icon precedence matches the dedicated indicator windows: the
+    /// installed skin's id-keyed sprite first, then the built-in pictogram,
+    /// then the authored letter -- so a condition looks the same wherever
+    /// it appears, skinned or not.
+    fn render_status_glyphs(
+        ui: &mut egui::Ui,
+        settings: &WidgetRenderSettings,
+        peer: &PeerStatus,
+    ) {
         let active: Vec<(&str, &str, Color32)> = STATUS_GLYPHS
             .iter()
             .filter(|(id, _, _)| peer.indicators.get(id))
@@ -601,7 +606,7 @@ impl VellumGuiApp {
             return;
         }
 
-        let size = 14.0;
+        let size = 18.0;
         let bg = ui.visuals().panel_fill;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
@@ -609,17 +614,33 @@ impl VellumGuiApp {
                 let (rect, response) =
                     ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
                 if ui.is_rect_visible(rect) {
-                    // Fall back to the AUTHORED letter when the pictogram set
-                    // has no art. Deriving it from the id's first character
-                    // rendered bleeding as "B" instead of "!" and collided
-                    // sitting with stunned as the same "S".
-                    if !crate::frontend::gui::app::status_icons::paint(
+                    // The installed skin's sprite first -- the art the user
+                    // actually chose -- exactly as the indicator windows
+                    // resolve it. Sprites carry their own colors.
+                    if let Some(sprite) = settings
+                        .skin_art
+                        .as_deref()
+                        .and_then(|art| art.icon(id))
+                    {
+                        let dest =
+                            crate::frontend::gui::skin::icon_dest(&sprite, rect);
+                        crate::frontend::gui::skin::paint_icon(
+                            ui.painter(),
+                            dest,
+                            &sprite,
+                            Color32::WHITE,
+                        );
+                    } else if !crate::frontend::gui::app::status_icons::paint(
                         ui.painter(),
                         rect,
                         id,
                         color,
                         bg,
                     ) {
+                        // Fall back to the AUTHORED letter when nothing has
+                        // art. Deriving it from the id's first character
+                        // rendered bleeding as "B" instead of "!" and
+                        // collided sitting with stunned as the same "S".
                         ui.painter().text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
