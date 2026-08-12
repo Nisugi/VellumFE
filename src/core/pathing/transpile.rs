@@ -324,7 +324,7 @@ re!(QUOTED_ITEM, r#"['"]([^'"]+)['"]"#);
 // boolean chains.
 re!(
     HARD_CONTROL_FLOW,
-    r"(?:^|[^\w.])(?:elsif|begin|rescue|case|when|next|return|exit|pause_script)(?:[^\w?!]|$)|\.each|\|\||&&"
+    r"(?:^|[^\w.])(?:elsif|begin|rescue|case|when|next|return|exit|pause_script)(?:[^\w?!]|$)|\.each"
 );
 // A statement that OPENS a block: the keyword leads. A modifier never does —
 // its statement comes first (`fput 'stand' unless standing?`).
@@ -413,7 +413,7 @@ re!(
 // then enter what was found.
 re!(
     TIMES_SEARCH_ENTER,
-    r"(?s)^(\d+)\.times \{ (\w+) = dothistimeout '([^']+)', ([\d.]+), /([^/]+)/; waitrt\?; break if (\w+) =~ /([^/]+)/ \}; move '([^']+)'$"
+    r"(?s)^(\d+)\.times \{ (\w+) = dothistimeout '([^']+)', ([\d.]+), /([^/]+)/; waitrt\?; break if (\w+) =~ /([^/]+)/ \};\s*move\s*\(?'([^']+)'\)?$"
 );
 // Aenatumgana icy ledge (2679): the same hunt, but the break is the move
 // itself succeeding.
@@ -425,7 +425,7 @@ re!(
 // otherwise the script digs through UserVars-named sacks we can't resolve.
 re!(
     KEY_DOOR,
-    r#"(?s)^if GameObj\.inv\.find \{\|obj\| obj\.noun == "key"\};fput "go ([^"]+)";else;empty_hand;multifput .*end$"#
+    r#"(?s)^if GameObj\.inv\.find \{\|obj\| obj\.noun (?:== "key"|=~ /[^/]+/)\};fput "go ([^"]+)";else;empty_hand;multifput .*end$"#
 );
 // Zeltoph hidden stone door (19657): open, and on "locked" run the lockpick
 // dance before going through.
@@ -469,7 +469,7 @@ re!(LOOP_TRY_EXITS_STEP, r"move '([^']+)'; break if Room\.current\.id != (\d+)")
 // chute: exits changing means we fell through.
 re!(
     LOOP_BREAK_PATHS,
-    r"(?s)^loop \{ (.+); break unless checkpaths == \[ [^\]]*\] \}$"
+    r"(?s)^loop \{ (.+); break (?:unless checkpaths == \[ [^\]]*\]|if \(?checkpaths\('[^']+'\)(?: \|\| checkpaths\('[^']+'\))*\)?);? \}$"
 );
 re!(STMT_WAIT_WHILE_STANDING, r"^wait_while \{ standing\? \}$");
 // `N.times do; <prefix>; r = dothistimeout "CMD", T, /…/; break if r =~ /…/;end`
@@ -521,12 +521,38 @@ re!(STMT_SPELL_CAST, r"^Spell\[\d+\]\.cast$");
 re!(SKILL_COND, r"^Skills\.\w+\s*[<>=]");
 // `running?('agoto')` — is a Lich script running? Natively: never.
 re!(RUNNING_COND, r"^running\?\('[^']+'\)$");
+// The Rogue Guild door (12421 -> 14089, delegated to from five towns): a
+// per-character verb sequence performed on the door. The password comes
+// from `.go2 setup` via the UserVars store, exactly like the FWI trinket.
+re!(
+    ROGUE_GUILD,
+    r##"^if UserVars\.rogue_password\.nil\? or UserVars\.rogue_password\.empty\?; echo [^;]+; echo [^;]+; exit; end; fput 'lean door'; UserVars\.rogue_password\.split\(/, \*/\)\.each \{ \|verb\| fput "#\{verb\} door" \}; fput 'go door'$"##
+);
+// Dark niche (5922): enter, wait for your eyes to adjust, enter again.
+re!(
+    NICHE_EYES,
+    r"(?s)^move 'go niche';while Room\.current\.id == \d+;line = get\?;if line\.nil\?;sleep [\d.]+;elsif line == '([^']+)';move 'go niche';break;end;end;?$"
+);
+// Zul Logoth spiked gate (23338): fetch the heavy key, unlock, through.
+// The original re-stows the key by scraped container id; we leave it out
+// (a follow-up `stow` is the player's habit anyway), and a keyless attempt
+// fails the edge closed.
+re!(
+    SPIKED_GATE,
+    r#"(?s)^status_tags\s+put "get my heavy key"\s+while line = get\s+if line =~ .+unlock spiked gate with my heavy key.+go spiked gate.+$"#
+);
+// A spell AS the crossing (6016: 704 phase through the shadow): wait for
+// mana, then cast. Prepare-and-cast; an uncastable spell fails closed.
+re!(
+    CAST_CROSSING,
+    r"(?s)^(\w+) = Spell\[(\d+)\]; unless \w+\.affordable\?; echo [^;]+; wait_until \{ \w+\.affordable\? \}; end; \w+\.cast\('(\w+)'\)$"
+);
 // `loop { r = dothistimeout 'CMD', T, /…/; waitrt?; break if r =~ /good/ };
 // move 'M'` — retry a lever/mechanism until it answers, then through
 // (Darkstone's second drawbridge lever).
 re!(
     LOOP_DOTHIS_BREAK,
-    r"(?s)^loop \{ (\w+) = dothistimeout '([^']+)', ([\d.]+), /([^/]+)/; waitrt\?; break if (\w+) =~ /([^/]+)/ \}; move '([^']+)'$"
+    r"(?s)^loop \{ (\w+) = dothistimeout '([^']+)', ([\d.]+), /([^/]+)/; waitrt\?; break if (\w+) =~ /([^/]+)/ \};\s*move\s*\(?'([^']+)'\)?$"
 );
 // Melgorehn's Reach bridge (14726): `go bridge` normally just works; when
 // the bridge is pulled open, detour up the platform and turn the wheel.
@@ -552,9 +578,9 @@ re!(
 // the modifier itself is found by `split_modifier`, a quote-aware scan, not a
 // regex: ` if ` can occur inside a quoted argument). Each maps to a `Cond` we
 // already have.
-re!(COND_STANDING, r"^standing\?$");
-re!(COND_KNEELING, r"^kneeling\?$");
-re!(COND_SITTING, r"^sitting\?$");
+re!(COND_STANDING, r"^(?:standing\?|checkstanding)$");
+re!(COND_KNEELING, r"^(?:kneeling\?|checkkneeling)$");
+re!(COND_SITTING, r"^(?:sitting\?|checksitting)$");
 re!(COND_HIDDEN, r"^(?:hidden|invisible)\?$");
 re!(COND_CHECKSPELL_NUM, r"^checkspell\s*\(?\s*(\d+)\s*\)?$");
 re!(COND_CHECKSPELL_NAME, r#"^checkspell\s*\(?\s*['"]([^'"]+)['"]\s*\)?$"#);
@@ -1425,6 +1451,19 @@ fn transpile_units(units: &[Unit]) -> Option<Vec<WalkAction>> {
                     });
                     continue;
                 }
+                // `$platinum` — which server this is. Known at transpile
+                // time (set from the connection config), so the branch is
+                // baked rather than carried.
+                if cond == "$platinum" {
+                    let plat = mapdb_var("platinum").is_some();
+                    let arm = match (kw.as_str(), plat) {
+                        ("if", true) | ("unless", false) => then,
+                        ("if", false) | ("unless", true) => els,
+                        _ => return None,
+                    };
+                    actions.extend(arm);
+                    continue;
+                }
                 // `unless move 'go door'; <recovery>; end` — a move as the
                 // condition is Ruby for "if it didn't work": TryMove, with
                 // the block as the fallback.
@@ -1908,6 +1947,69 @@ fn transpile_block_families(body: &str) -> Option<Vec<WalkAction>> {
                 WalkAction::FillHands,
             ],
         }]);
+    }
+    // Rogue Guild door: perform the configured verb sequence. Without a
+    // password the walker abandons with the fix named — the same posture as
+    // an absent key.
+    if ROGUE_GUILD.is_match(body) {
+        let Some(password) = mapdb_var("rogue_password") else {
+            return Some(vec![WalkAction::PauseForUser {
+                msg: "the Rogue Guild door needs your password - set it in \
+                      .go2 setup (Rogue Guild Password, e.g. 'kick, slap, \
+                      turn, scratch, kick, slap')"
+                    .into(),
+                until: None,
+                timeout: 0.0,
+            }]);
+        };
+        let mut actions = vec![WalkAction::Put("lean door".into())];
+        for verb in password.split(',') {
+            let verb = verb.trim();
+            if !verb.is_empty() {
+                actions.push(WalkAction::Put(format!("{verb} door")));
+                actions.push(WalkAction::WaitRt);
+            }
+        }
+        actions.push(WalkAction::Move("go door".into()));
+        return Some(actions);
+    }
+    // Dark niche: enter, wait for eyes to adjust, enter again.
+    if let Some(c) = NICHE_EYES.captures(body) {
+        return Some(vec![
+            WalkAction::Put("go niche".into()),
+            WalkAction::Await {
+                cmd: None,
+                pattern: Box::new(AwaitPattern::new(&regex::escape(&c[1]))?),
+                timeout: 60.0,
+                on_timeout: OnTimeout::Fail,
+                if_match: None,
+            },
+            WalkAction::Move("go niche".into()),
+        ]);
+    }
+    // Zul Logoth spiked gate: key out, unlock, through.
+    if SPIKED_GATE.is_match(body) {
+        return Some(vec![
+            WalkAction::Put("get my heavy key".into()),
+            WalkAction::Put("unlock spiked gate with my heavy key".into()),
+            WalkAction::Move("go spiked gate".into()),
+        ]);
+    }
+    // A spell as the crossing: prepare, then cast at the target. The move
+    // is the cast — success is the room changing.
+    if let Some(c) = CAST_CROSSING.captures(body) {
+        return Some(vec![
+            WalkAction::Await {
+                cmd: Some(format!("prepare {}", &c[2])),
+                pattern: Box::new(AwaitPattern::new(
+                    "You feel fully prepared|Your spell is ready",
+                )?),
+                timeout: 15.0,
+                on_timeout: OnTimeout::Fail,
+                if_match: None,
+            },
+            WalkAction::Move(format!("cast {}", &c[3])),
+        ]);
     }
     // Locksmehr mist trail: climb the boulder, read which way the trail
     // heads, climb down, walk that way. The direction is a named capture
@@ -3723,10 +3825,23 @@ mod tests {
     fn block_control_flow_is_still_refused() {
         use WalkAction::*;
         // Concatenating these statements would drop the condition and cross an
-        // edge the script deliberately gated.
+        // edge the script deliberately gated. (An UNKNOWN condition refuses;
+        // known ones like checksitting lower to a real If.)
+        assert_eq!(
+            transpile(";e if Char.name == 'Bob'; fput 'stand'; end; move 'north'"),
+            None
+        );
+        use WalkAction::{If, Put as P};
         assert_eq!(
             transpile(";e if checksitting; fput 'stand'; end; move 'north'"),
-            None
+            Some(vec![
+                If {
+                    cond: Cond::Sitting,
+                    then: vec![P("stand".into())],
+                    els: Vec::new()
+                },
+                Move("north".into()),
+            ])
         );
         assert_eq!(
             transpile(";e move 'n' if x; else; move 's'; end"),

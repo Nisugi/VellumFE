@@ -190,6 +190,21 @@ impl AppCore {
         // executor) so the executor stays a state machine over plain values.
         // The registry already tracks containment, so the crossing never has
         // to scrape `<a exist=...>` links the way the mapdb proc does.
+        // Rogue Guild password + platinum flag feed the transpiler's
+        // UserVars store, so the guild-door recognizer sees them the same
+        // way Lich's proc saw `UserVars.rogue_password` / `$platinum`.
+        {
+            use crate::core::pathing::transpile::set_mapdb_var;
+            let pw = self.config.go2.rogue_password.trim();
+            set_mapdb_var("rogue_password", (!pw.is_empty()).then(|| pw.to_string()));
+            let plat = self
+                .config
+                .connection
+                .game
+                .as_deref()
+                .is_some_and(|g| g.contains("plat"));
+            set_mapdb_var("platinum", plat.then(|| "true".into()));
+        }
         let fwi = (!self.config.go2.fwi_trinket.trim().is_empty())
             .then(|| objects.find_item(self.config.go2.fwi_trinket.trim()))
             .flatten()
