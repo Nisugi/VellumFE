@@ -195,6 +195,16 @@ async fn health_and_static_assets_are_served() {
     assert!(index.contains("VellumFE"));
     assert!(index.contains("cmd-suggestion"));
 
+    // The multi-account status wall: dials every session's /ws in watch
+    // mode client-side, so serving the page is all the server does.
+    let wall = http_get(addr, "/characters").await;
+    assert!(wall.contains("200"));
+    assert!(wall.contains("mode: \"watch\""), "the wall subscribes as a watcher");
+    assert!(
+        wall.contains("subscribe") && wall.contains("resume"),
+        "handshake mirrors the hub: auth, subscribe watch, resume"
+    );
+
     let sessions = http_get(addr, "/sessions").await;
     assert!(sessions.contains("application/json"));
 

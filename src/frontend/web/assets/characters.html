@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111318">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <title>VellumFE — Characters</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      min-height: 100%;
+      background: #111318;
+      color: #d6d6d6;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      -webkit-text-size-adjust: 100%;
+    }
+    body { padding: env(safe-area-inset-top) 12px env(safe-area-inset-bottom); }
+    header {
+      display: flex; align-items: baseline; gap: 10px;
+      padding: 14px 4px 12px;
+    }
+    header h1 { font-size: 18px; color: #d9b44f; }
+    header a { color: #8a8f98; font-size: 12px; text-decoration: none; }
+    header a:hover { color: #d6d6d6; }
+    #wall { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+    .empty { color: #8a8f98; font-style: italic; padding: 24px 8px; }
+
+    /* A cluster: grouped characters share an enclosing frame. */
+    .cluster {
+      display: flex; flex-direction: column; gap: 6px;
+      border-radius: 12px;
+    }
+    .cluster.grouped {
+      border: 1px solid #3a3f4a; background: #14161c; padding: 8px;
+    }
+    .cluster-head { display: flex; gap: 10px; font-size: 11px; padding: 0 2px; }
+    .cluster-head .leader { color: #00bfff; font-weight: bold; }
+    .cluster-head .unconfirmed { color: #ffb000; font-style: italic; }
+    .cluster-cards { display: flex; gap: 8px; align-items: flex-start; }
+
+    .card {
+      width: 230px;
+      background: #1a1d24; border: 1px solid #2a2e37; border-radius: 10px;
+      padding: 8px 10px 10px;
+      display: flex; flex-direction: column; gap: 5px;
+      transition: opacity .3s;
+    }
+    .card.stale { opacity: .45; }
+    .card-head { display: flex; align-items: baseline; gap: 6px; }
+    .card-head .name { font-weight: bold; font-size: 15px; }
+    .card-head .room {
+      margin-left: auto; font-size: 11px; color: #8a8f98; cursor: default;
+    }
+    .card-head .off { color: #ffb000; font-size: 11px; }
+
+    .rt { font-size: 12px; min-height: 15px; display: flex; gap: 10px; }
+    .rt .hard { color: #ff6600; font-weight: bold; }
+    .rt .cast { color: #6699ff; font-weight: bold; }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 3px; min-height: 16px; }
+    .chip {
+      font-size: 10px; padding: 1px 5px; border-radius: 4px;
+      background: #262a33; font-weight: bold;
+    }
+
+    .body { display: flex; gap: 8px; }
+    .doll { flex: 0 0 84px; }
+    .doll svg { width: 100%; height: auto; display: block; }
+    .stack { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+
+    .bar {
+      position: relative; height: 15px; border-radius: 4px;
+      background: #262a33; overflow: hidden;
+    }
+    .bar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; }
+    .bar .txt {
+      position: absolute; inset: 0; display: flex; align-items: center;
+      padding-left: 5px; font-size: 10.5px; color: #fff;
+      text-shadow: 0 0 3px #000, 0 0 3px #000; white-space: nowrap;
+    }
+    .gauge-row { font-size: 11px; color: #aab; display: flex; gap: 4px; }
+    .gauge-row b { color: #8a8f98; font-weight: normal; }
+
+    .hands { font-size: 11px; color: #b8b8b8; line-height: 1.35; }
+    .hands .slot { color: #8a8f98; }
+    .prep { color: #cf9fff; }
+
+    .effects { display: flex; flex-direction: column; gap: 2px; }
+    .fx { font-size: 11px; display: flex; gap: 6px; }
+    .fx .t { margin-left: auto; color: #8a8f98; }
+    .fx.debuff { color: #ff9090; }
+    .fx.cooldown { color: #9fc5ff; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Characters</h1>
+    <a id="back" href="/">&larr; sessions</a>
+  </header>
+  <div id="wall"><div class="empty">Looking for sessions&hellip;</div></div>
+
+  <script>
+    "use strict";
+    // ---- constants mirrored from the native client -------------------
+    const LEVEL_COLORS = {
+      1: "#aa5500", 2: "#ff8800", 3: "#ff0000",
+      4: "#999999", 5: "#777777", 6: "#555555",
+    };
+    // Viewer-mirrored like the game's doll (same geometry as /play).
+    const DOLL_PARTS = [
+      ["head", "<circle cx='70' cy='16' r='13'/>"],
+      ["rightEye", "<circle cx='64' cy='13' r='3'/>"],
+      ["leftEye", "<circle cx='76' cy='13' r='3'/>"],
+      ["neck", "<rect x='63' y='29' width='14' height='7' rx='2'/>"],
+      ["chest", "<rect x='50' y='36' width='40' height='26' rx='3'/>"],
+      ["abdomen", "<rect x='52' y='62' width='36' height='20' rx='3'/>"],
+      ["rightArm", "<rect x='33' y='38' width='14' height='42' rx='6'/>"],
+      ["leftArm", "<rect x='93' y='38' width='14' height='42' rx='6'/>"],
+      ["rightHand", "<rect x='33' y='82' width='14' height='12' rx='4'/>"],
+      ["leftHand", "<rect x='93' y='82' width='14' height='12' rx='4'/>"],
+      ["rightLeg", "<rect x='52' y='84' width='16' height='46' rx='6'/>"],
+      ["leftLeg", "<rect x='72' y='84' width='16' height='46' rx='6'/>"],
+    ];
+    // Same set + colors as the GUI card's status row.
+    const STATUS_CHIPS = [
+      ["dead", "DEAD", "#ff4444"],
+      ["stunned", "STUN", "#ffd700"],
+      ["bleeding", "BLEED", "#dc143c"],
+      ["webbed", "WEB", "#c0c0c0"],
+      ["prone", "PRONE", "#ffa500"],
+      ["kneeling", "KNEEL", "#ffa500"],
+      ["sitting", "SIT", "#ffa500"],
+      ["hidden", "HIDE", "#9a9a9a"],
+      ["invisible", "INVIS", "#add8e6"],
+      ["poisoned", "POIS", "#32cd32"],
+      ["diseased", "DIS", "#8b4513"],
+      ["joined", "J", "#00bfff"],
+    ];
+    const IGNORED_INDICATORS = new Set(["standing"]);
+    const VITAL_BARS = [
+      ["health", "HP", "#cd4d4d"],
+      ["mana", "MP", "#4784d9"],
+      ["stamina", "ST", "#55b86c"],
+      ["spirit", "SP", "#cba942"],
+    ];
+    const EFFECT_CATEGORIES = ["Debuffs", "Cooldowns"];
+    const MAX_EFFECTS = 4;
+    // Matches the hub: a disconnected card lingers dimmed, then drops.
+    const DROP_AFTER_MS = 120000;
+
+    // ---- state --------------------------------------------------------
+    // port -> peer. Mirrors core/multiaccount PeerStatus.
+    const peers = new Map();
+    // port -> WebSocket, so a session list refresh does not double-connect.
+    const sockets = new Map();
+
+    function pairingToken() {
+      const m = location.hash.match(/token=([^&]+)/);
+      return m ? decodeURIComponent(m[1]) : "";
+    }
+    document.getElementById("back").href = "/" + location.hash;
+
+    function newPeer(port, name) {
+      return {
+        port, character: name || "", connected: false, lastUpdate: 0,
+        vitals: null, minivitals: {}, indicators: {}, injuries: {},
+        group: { leader: { kind: "none" }, members: [], confirmed: true },
+        rt: null, serverOffset: 0,
+        gauges: {}, fieldExp: null,
+        left: null, right: null, prepared: null,
+        effects: {}, roomName: null, roomId: null,
+      };
+    }
+
+    // ---- frame application (mirrors hub.rs apply_frame) ----------------
+    function applyFrame(peer, msg) {
+      const d = msg.d || {};
+      switch (msg.t) {
+        case "snapshot": {
+          if (d.character) peer.character = d.character;
+          if (d.vitals) peer.vitals = d.vitals;
+          if (d.indicators) peer.indicators = d.indicators;
+          if (d.injuries) peer.injuries = d.injuries;
+          if (d.rt) applyRt(peer, d.rt);
+          if (d.room) applyRoom(peer, d.room);
+          if (d.effects) applyEffects(peer, d.effects);
+          if (d.hands) applyHands(peer, d.hands);
+          // A snapshot is authoritative: fields the encoder skips when
+          // empty are ABSENT precisely when the peer has none.
+          peer.group = d.group || { leader: { kind: "none" }, members: [], confirmed: true };
+          applyMinivitals(peer, d.minivitals || []);
+          if (d.char_info && d.char_info.gauges) {
+            applyGauges(peer, d.char_info.gauges);
+          } else {
+            peer.gauges = {}; peer.fieldExp = null;
+          }
+          peer.prepared = d.prepared_spell || null;
+          break;
+        }
+        case "vitals": peer.vitals = d; break;
+        case "indicators": peer.indicators = d; break;
+        case "injuries": peer.injuries = d; break;
+        case "group": peer.group = d; break;
+        case "rt": applyRt(peer, d); break;
+        case "charinfo": if (d.gauges) applyGauges(peer, d.gauges); break;
+        case "room": applyRoom(peer, d); break;
+        case "effects": applyEffects(peer, d); break;
+        case "hands": applyHands(peer, d); break;
+        case "minivitals": applyMinivitals(peer, d); break;
+        case "prepared_spell": peer.prepared = d.spell || null; break;
+        default: return;
+      }
+      peer.lastUpdate = Date.now();
+      peer.connected = true;
+      scheduleRender();
+    }
+    function applyRt(peer, d) {
+      peer.rt = { roundtime_end: d.roundtime_end ?? null, casttime_end: d.casttime_end ?? null };
+      if (typeof d.server_time === "number") {
+        // Peer clocks differ from ours; interpolate on the wall clock.
+        peer.serverOffset = d.server_time - Math.floor(Date.now() / 1000);
+      }
+    }
+    function applyRoom(peer, d) {
+      peer.roomName = d.name || null;
+      peer.roomId = d.id || null;
+    }
+    function applyHands(peer, d) {
+      // Absent means empty-handed, not unchanged (both slots ship each time).
+      peer.left = d.left || null;
+      peer.right = d.right || null;
+    }
+    function applyMinivitals(peer, list) {
+      peer.minivitals = {};
+      for (const v of Array.isArray(list) ? list : []) {
+        peer.minivitals[v.id] = [v.value, v.max];
+      }
+    }
+    function applyGauges(peer, g) {
+      // Absent sections mean "unchanged", matching the hub.
+      for (const k of ["mind", "encumbrance", "stance"]) {
+        if (g[k]) peer.gauges[k] = g[k];
+      }
+      if (g.field_exp) peer.fieldExp = [g.field_exp.value, g.field_exp.max];
+    }
+    function applyEffects(peer, list) {
+      peer.effects = {};
+      for (const c of Array.isArray(list) ? list : []) {
+        peer.effects[c.category] = c;
+      }
+    }
+
+    // ---- clustering (mirrors core/multiaccount cluster_peers) ----------
+    function isGrouped(g) {
+      return (g.leader && g.leader.kind !== "none") || (g.members || []).length > 0;
+    }
+    function clusterPeers() {
+      const ports = [...peers.keys()].sort((a, b) => a - b);
+      const byName = new Map();
+      for (const p of ports) {
+        byName.set((peers.get(p).character || "").toLowerCase(), p);
+      }
+      const parent = new Map(ports.map((p) => [p, p]));
+      const find = (x) => {
+        while (parent.get(x) !== x) x = parent.get(x);
+        return x;
+      };
+      const union = (a, b) => {
+        const [ra, rb] = [find(a), find(b)];
+        if (ra !== rb) parent.set(Math.max(ra, rb), Math.min(ra, rb));
+      };
+      // Link peers that name each other (members + a followed leader).
+      for (const p of ports) {
+        const g = peers.get(p).group;
+        if (!isGrouped(g)) continue;
+        const everyone = [...(g.members || [])];
+        if (g.leader && g.leader.kind === "other" && g.leader.who) everyone.push(g.leader.who);
+        for (const m of everyone) {
+          const other = byName.get((m.name || "").toLowerCase());
+          if (other !== undefined && other !== p) union(p, other);
+        }
+      }
+      // Shared foreign leader.
+      const byForeign = new Map();
+      for (const p of ports) {
+        const g = peers.get(p).group;
+        if (g.leader && g.leader.kind === "other" && g.leader.who) {
+          const key = (g.leader.who.name || "").toLowerCase();
+          if (!byName.has(key)) {
+            if (!byForeign.has(key)) byForeign.set(key, []);
+            byForeign.get(key).push(p);
+          }
+        }
+      }
+      for (const list of byForeign.values()) {
+        for (let i = 1; i < list.length; i++) union(list[0], list[i]);
+      }
+      // Grouped-per-the-game with no roster: cluster together, unconfirmed.
+      const joinedUnknown = ports.filter((p) => {
+        const g = peers.get(p).group;
+        return g.leader && g.leader.kind === "unknown" && !(g.members || []).length;
+      });
+      for (let i = 1; i < joinedUnknown.length; i++) union(joinedUnknown[0], joinedUnknown[i]);
+
+      const groups = new Map();
+      for (const p of ports) {
+        const r = find(p);
+        if (!groups.has(r)) groups.set(r, []);
+        groups.get(r).push(p);
+      }
+      return [...groups.values()].map((members) => {
+        members.sort((a, b) => a - b);
+        if (members.length === 1) {
+          const g = peers.get(members[0]).group;
+          if (g.leader && g.leader.kind === "other" && g.leader.who) {
+            return { members, leaderName: g.leader.who.name, confirmed: !!g.confirmed, grouped: true };
+          }
+          if (g.leader && g.leader.kind === "unknown") {
+            return { members, leaderName: null, confirmed: false, grouped: true };
+          }
+          return { members, leaderName: null, confirmed: true, grouped: false };
+        }
+        const leaderPort = members.find(
+          (p) => peers.get(p).group.leader && peers.get(p).group.leader.kind === "self_led"
+        );
+        let leaderName = leaderPort !== undefined ? peers.get(leaderPort).character : null;
+        if (!leaderName) {
+          for (const p of members) {
+            const l = peers.get(p).group.leader;
+            if (l && l.kind === "other" && l.who) { leaderName = l.who.name; break; }
+          }
+        }
+        if (leaderPort !== undefined) {
+          members.splice(members.indexOf(leaderPort), 1);
+          members.unshift(leaderPort);
+        }
+        const confirmed = members.every((p) => peers.get(p).group.confirmed);
+        return { members, leaderName, confirmed, grouped: true };
+      });
+    }
+
+    // ---- rendering ------------------------------------------------------
+    let renderQueued = false;
+    function scheduleRender() {
+      if (renderQueued) return;
+      renderQueued = true;
+      requestAnimationFrame(() => { renderQueued = false; render(); });
+    }
+
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      return e;
+    }
+    function fmtDuration(s) {
+      if (s < 60) return `${s}s`;
+      if (s < 3600) return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+      return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}`;
+    }
+    function dollSvg(injuries) {
+      const parts = DOLL_PARTS.map(([part, shape]) => {
+        const level = injuries[part] || 0;
+        const color = LEVEL_COLORS[level] || "#3a4150";
+        return shape.replace("/>", ` fill='${color}' stroke='#20242c' stroke-width='1'/>`);
+      }).join("");
+      // back/nsys have no geometry; dots under the figure, like /play.
+      let dots = "";
+      let x = 40;
+      for (const extra of ["back", "nsys"]) {
+        const level = injuries[extra] || 0;
+        if (level) {
+          dots += `<circle cx='${x}' cy='138' r='5' fill='${LEVEL_COLORS[level]}'/>` +
+            `<text x='${x + 9}' y='142' font-size='10' fill='#8a8f98'>${extra}</text>`;
+          x += 46;
+        }
+      }
+      return `<svg viewBox='0 0 140 148' xmlns='http://www.w3.org/2000/svg'>${parts}${dots}</svg>`;
+    }
+
+    function render() {
+      const wall = document.getElementById("wall");
+      const now = Date.now();
+      // Reap: disconnected long enough to be gone (mirrors the hub).
+      for (const [port, peer] of [...peers]) {
+        if (!peer.connected && now - peer.lastUpdate > DROP_AFTER_MS) {
+          peers.delete(port);
+        }
+      }
+      wall.replaceChildren();
+      if (!peers.size) {
+        wall.appendChild(el("div", "empty", "No sessions running"));
+        return;
+      }
+      for (const cluster of clusterPeers()) {
+        const box = el("div", cluster.grouped ? "cluster grouped" : "cluster");
+        if (cluster.grouped && (cluster.leaderName || !cluster.confirmed)) {
+          const head = el("div", "cluster-head");
+          if (cluster.leaderName) {
+            head.appendChild(el("span", "leader", `⚑ ${cluster.leaderName}`));
+          }
+          if (!cluster.confirmed) {
+            head.appendChild(el("span", "unconfirmed", "roster unconfirmed"));
+          }
+          box.appendChild(head);
+        }
+        const row = el("div", "cluster-cards");
+        for (const port of cluster.members) {
+          row.appendChild(renderCard(peers.get(port), now));
+        }
+        box.appendChild(row);
+        wall.appendChild(box);
+      }
+    }
+
+    function renderCard(peer, now) {
+      const card = el("div", "card");
+      if (!peer.connected) card.classList.add("stale");
+
+      const head = el("div", "card-head");
+      head.appendChild(el("span", "name", peer.character || "(unnamed)"));
+      if (!peer.connected) head.appendChild(el("span", "off", "●"));
+      const room = el("span", "room", peer.roomId || "");
+      if (peer.roomName) room.title = peer.roomName;
+      head.appendChild(room);
+      card.appendChild(head);
+
+      // RT/CT, interpolated on our wall clock against the peer's offset.
+      const rtRow = el("div", "rt");
+      const nowServer = Math.floor(now / 1000) + peer.serverOffset;
+      const rt = peer.rt ? Math.max(0, (peer.rt.roundtime_end || 0) - nowServer) : 0;
+      const ct = peer.rt ? Math.max(0, (peer.rt.casttime_end || 0) - nowServer) : 0;
+      if (rt > 0) rtRow.appendChild(el("span", "hard", `RT ${rt}`));
+      if (ct > 0) rtRow.appendChild(el("span", "cast", `CT ${ct}`));
+      card.appendChild(rtRow);
+
+      // Status chips.
+      const chips = el("div", "chips");
+      for (const [id, label, color] of STATUS_CHIPS) {
+        if (peer.indicators[id]) {
+          const chip = el("span", "chip", label);
+          chip.style.color = color;
+          chips.appendChild(chip);
+        }
+      }
+      for (const [id, active] of Object.entries(peer.indicators)) {
+        if (active && !IGNORED_INDICATORS.has(id) && !STATUS_CHIPS.some(([k]) => k === id)) {
+          chips.appendChild(el("span", "chip", id.toUpperCase()));
+        }
+      }
+      card.appendChild(chips);
+
+      // Doll + vitals/gauges side by side, like the GUI two-column layout.
+      const body = el("div", "body");
+      const doll = el("div", "doll");
+      doll.innerHTML = dollSvg(peer.injuries || {});
+      body.appendChild(doll);
+      const stack = el("div", "stack");
+      for (const [id, label, color] of VITAL_BARS) {
+        const pct = peer.vitals ? peer.vitals[id] ?? 0 : 0;
+        const abs = peer.minivitals[id];
+        const bar = el("div", "bar");
+        const fill = el("div", "fill");
+        fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+        fill.style.background = color;
+        bar.appendChild(fill);
+        bar.appendChild(el("div", "txt",
+          abs && abs[1] > 0 ? `${label} ${abs[0]}/${abs[1]}` : `${label} ${pct}%`));
+        stack.appendChild(bar);
+      }
+      const gaugeBits = [];
+      if (peer.gauges.mind) gaugeBits.push(["Mind", peer.gauges.mind.text || `${peer.gauges.mind.value}%`]);
+      if (peer.gauges.stance) gaugeBits.push(["Stance", peer.gauges.stance.text || `${peer.gauges.stance.value}%`]);
+      if (peer.gauges.encumbrance) gaugeBits.push(["Enc", peer.gauges.encumbrance.text || `${peer.gauges.encumbrance.value}%`]);
+      if (peer.fieldExp) gaugeBits.push(["FXP", `${peer.fieldExp[0]}/${peer.fieldExp[1]}`]);
+      for (const [label, value] of gaugeBits) {
+        const g = el("div", "gauge-row");
+        g.appendChild(el("b", null, label));
+        g.appendChild(el("span", null, value));
+        stack.appendChild(g);
+      }
+      body.appendChild(stack);
+      card.appendChild(body);
+
+      // Hands + prepared spell.
+      const hands = el("div", "hands");
+      const hand = (slot, item) => {
+        const line = el("div");
+        line.appendChild(el("span", "slot", `${slot} `));
+        line.appendChild(el("span", null, item || "—"));
+        return line;
+      };
+      if (peer.left || peer.right) {
+        hands.appendChild(hand("L", peer.left));
+        hands.appendChild(hand("R", peer.right));
+      }
+      if (peer.prepared) {
+        const p = el("div", "prep", `✦ ${peer.prepared}`);
+        hands.appendChild(p);
+      }
+      if (hands.childNodes.length) card.appendChild(hands);
+
+      // Debuffs & cooldowns, soonest-expiring first, capped.
+      const fx = el("div", "effects");
+      const nowSrv = nowServer;
+      let shown = 0;
+      for (const category of EFFECT_CATEGORIES) {
+        const content = peer.effects[category];
+        if (!content) continue;
+        for (const effect of content.effects || []) {
+          if (shown >= MAX_EFFECTS) break;
+          const line = el("div", `fx ${category === "Debuffs" ? "debuff" : "cooldown"}`);
+          line.appendChild(el("span", null, effect.text || effect.id));
+          if (effect.expires_at) {
+            const left = effect.expires_at - nowSrv;
+            if (left <= 0) continue;
+            line.appendChild(el("span", "t", fmtDuration(left)));
+          }
+          fx.appendChild(line);
+          shown++;
+        }
+      }
+      if (fx.childNodes.length) card.appendChild(fx);
+
+      return card;
+    }
+
+    // ---- connections (mirrors hub.rs run_peer) --------------------------
+    function connect(session) {
+      const port = session.port;
+      if (sockets.has(port)) return;
+      const ws = new WebSocket(`ws://${location.hostname}:${port}/ws`);
+      sockets.set(port, ws);
+      ws.onopen = () => {
+        // Auth first, declare watch BEFORE resume so the snapshot comes
+        // back already trimmed, then resume 0 to request it.
+        ws.send(JSON.stringify({ t: "auth", d: { token: pairingToken() } }));
+        ws.send(JSON.stringify({ t: "subscribe", d: { mode: "watch" } }));
+        ws.send(JSON.stringify({ t: "resume", d: { seq: 0 } }));
+        if (!peers.has(port)) peers.set(port, newPeer(port, session.character));
+        const peer = peers.get(port);
+        peer.connected = true;
+        peer.lastUpdate = Date.now();
+        scheduleRender();
+      };
+      ws.onmessage = (event) => {
+        let msg;
+        try { msg = JSON.parse(event.data); } catch { return; }
+        // Re-materialize if the reaper dropped the card mid-connection.
+        if (!peers.has(port)) peers.set(port, newPeer(port, session.character));
+        applyFrame(peers.get(port), msg);
+      };
+      ws.onclose = () => {
+        sockets.delete(port);
+        const peer = peers.get(port);
+        if (peer) {
+          peer.connected = false;
+          peer.lastUpdate = Date.now();
+          scheduleRender();
+        }
+        // The session poll re-dials live ports; no per-socket retry loop.
+      };
+      ws.onerror = () => ws.close();
+    }
+
+    async function refreshSessions() {
+      let sessions = [];
+      try {
+        const token = encodeURIComponent(pairingToken());
+        sessions = await (await fetch(`/sessions?token=${token}`)).json();
+        if (!Array.isArray(sessions)) sessions = [];
+      } catch { /* keep whatever is connected */ }
+      for (const s of sessions) connect(s);
+      scheduleRender();
+    }
+
+    refreshSessions();
+    setInterval(refreshSessions, 10000);
+    // RT/effect countdowns tick on the wall clock.
+    setInterval(scheduleRender, 1000);
+  </script>
+</body>
+</html>

@@ -227,6 +227,7 @@ fn full_router(state: Arc<WebState>) -> Router {
     Router::new()
         .route("/", get(dashboard_html))
         .route("/play", get(index_html))
+        .route("/characters", get(characters_html))
         .route("/sessions", get(sessions_json))
         .route("/app.js", get(app_js))
         .route("/wheel-core.js", get(wheel_core_js))
@@ -393,6 +394,17 @@ async fn dashboard_html() -> impl IntoResponse {
     (
         [(header::CACHE_CONTROL, "no-cache")],
         Html(include_str!("assets/dashboard.html")),
+    )
+}
+
+/// The multi-account status wall: one card per running session, grouped like
+/// the GUI Characters window. Entirely client-side -- the page dials every
+/// registered session's `/ws` in watch mode itself, so it works no matter
+/// which instance serves it and needs no hub handle in the server.
+async fn characters_html() -> impl IntoResponse {
+    (
+        [(header::CACHE_CONTROL, "no-cache")],
+        Html(include_str!("assets/characters.html")),
     )
 }
 
