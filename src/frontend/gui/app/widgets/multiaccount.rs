@@ -602,6 +602,14 @@ impl VellumGuiApp {
         });
     }
 
+    /// Four bars, always stacked.
+    ///
+    /// The dedicated MiniVitals widget offers stacked vs side-by-side; this
+    /// row deliberately does not (owner decision, 2026-08-12). A card is
+    /// ~140px wide -- four side-by-side bars would be ~30px each, too narrow
+    /// to read a number in, and the vitals block already refuses to share a
+    /// line for the same reason. If someone asks for parity with MiniVitals
+    /// orientation, that is the answer.
     fn render_peer_vitals(
         ui: &mut egui::Ui,
         settings: &WidgetRenderSettings,
