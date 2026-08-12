@@ -317,28 +317,62 @@ re!(QUOTED_ITEM, r#"['"]([^'"]+)['"]"#);
 
 // BLOCK control flow, which statement-splitting cannot represent.
 //
-// Note what is NOT here: a bare `if`/`unless`. Those are ambiguous — they open
-// a block (`if x; move 'n'; end`) or trail a statement as a modifier (`fput
-// 'stand' unless standing?`). The block form always carries `end`, `else`, or
+// Note what is NOT here: a bare `if`/`unless`/`while`/`until`. Those are
+// ambiguous — they open a block (`if x; move 'n'; end`) or trail a statement
+// as a modifier (`fput 'stand' unless standing?`, `move 'north' while
+// Room.current.id == N`). The block form always carries `end`, `else`, or
 // `elsif`, so keying on THOSE rejects blocks while letting modifiers through
 // to `transpile_statement`, which keeps their condition. `.times` is likewise
 // absent: the `{ ... }` form is unrolled as a bounded repeat.
 re!(
     BLOCK_CONTROL_FLOW,
-    r"(?:^|[^\w.])(?:elsif|else|end|loop|while|until|begin|rescue|case|when|break|next|return|exit|pause_script)(?:[^\w?!]|$)|\.each|\|\||&&"
+    r"(?:^|[^\w.])(?:elsif|else|end|loop|begin|rescue|case|when|break|next|return|exit|pause_script)(?:[^\w?!]|$)|\.each|\|\||&&"
 );
 // Script bookkeeping with no travel meaning. `$go2_restart = true` and
 // `$SILVERWOOD_TOWN=:imt` are Lich-side flags; a comment or bare `nil` is
 // nothing. These are dropped, not refused.
 re!(
     IGNORABLE_STATEMENT,
-    r"^(?:#.*|nil|true|\$\w+\s*=.*|UserVars\.\w+\s*=.*)$"
+    r#"^(?:#.*|nil|true|\$\w+\s*=.*|UserVars\.\w+\s*=.*|echo\s+['"].*)$"#
 );
-// A trailing `if`/`unless` on an otherwise ordinary statement — `fput 'stand'
-// unless standing?`. The dominant control-flow shape in the corpus, and the
-// one that gates the doors into several cities.
-re!(STMT_MODIFIER, r"^(.+?)\s+(if|unless)\s+(.+)$");
-// Conditions used by those modifiers. Each maps to a `Cond` we already have.
+// `dothistimeout 'cmd', 10, /pattern/` as a lone statement: send and await,
+// advisory on timeout — matching the full-body DOTHIS treatment, where the
+// executor's retry replays the edge rather than failing it.
+re!(
+    STMT_DOTHIS,
+    r#"^dothistimeout\s+['"]([^'"]+)['"]\s*,\s*(\d+(?:\.\d+)?)\s*,\s*/(.*)/$"#
+);
+// `line = get until line =~ /pattern/` — read game lines until one matches.
+// Both variable names are captured and compared in code: Rust regex has no
+// backreferences.
+re!(
+    STMT_GET_UNTIL,
+    r"^(\w+)\s*=\s*get\s+until\s+(\w+)\s*=~\s*/(.*)/$"
+);
+// `r = dothistimeout ...` / `result = nil` — an assignment whose right side
+// is a statement (or nothing). Rewritten away by `transpile_sequence` when
+// the variable is never read again.
+re!(ASSIGNED_RESULT, r"^(\w+)\s*=\s*(dothistimeout\b.+|nil)$");
+// `while checkpaths.include?('nw'); <statements>; end` — keep working the
+// room until the exit stops being offered (i.e. we left through it). The
+// inner statements are transpiled with the same statement machinery, so the
+// recognizer is a wrapper, not a fixed shape.
+re!(
+    WHILE_PATH_BLOCK,
+    r#"(?s)^while\s+checkpaths\.include\?\(\s*['"](\w+)['"]\s*\)\s*;(.*);\s*end;?$"#
+);
+// The group-follow preamble + wait: scrape who followed us in, move, then
+// wait for each follower's arrival line. A native walker does not escort
+// groups, so the solo semantics — move and wait out roundtime — are the
+// whole crossing; grouped followers keep up by their own client's follow.
+re!(
+    GROUP_FOLLOW_MOVE,
+    r#"(?s)^group_members = nil; clear\.reverse\.each \{ .*? break; end \}; move '([^']+)'; if group_members; .*? end while group_members\.length > 0; end; waitrt\?$"#
+);
+// Conditions used by statement modifiers (`fput 'stand' unless standing?` —
+// the modifier itself is found by `split_modifier`, a quote-aware scan, not a
+// regex: ` if ` can occur inside a quoted argument). Each maps to a `Cond` we
+// already have.
 re!(COND_STANDING, r"^standing\?$");
 re!(COND_KNEELING, r"^kneeling\?$");
 re!(COND_SITTING, r"^sitting\?$");
@@ -348,6 +382,16 @@ re!(COND_CHECKSPELL_NAME, r#"^checkspell\s*\(?\s*['"]([^'"]+)['"]\s*\)?$"#);
 re!(COND_SPELL_ACTIVE, r"^Spell\[(\d+)\]\.active\?$");
 re!(COND_HANDS_FULL, r"^GameObj\.(?:right|left)_hand\.id(?:\s+or\s+GameObj\.(?:right|left)_hand\.id)?$");
 re!(COND_CHECKLOOT, r#"^checkloot\.include\?\s*\(?\s*['"]([^'"]+)['"]\s*\)?$"#);
+re!(COND_IN_ROOM, r"^Room\.current\.id\s*(==|!=)\s*(\d+)$");
+re!(COND_CHECKPATHS, r#"^checkpaths\.include\?\s*\(\s*['"]([^'"]+)['"]\s*\)$"#);
+re!(
+    COND_LOOT_FIND,
+    r#"^GameObj\.loot\.find\s*\{\s*\|\w+\|\s*\w+\.name\s*==\s*['"]([^'"]+)['"]\s*\}$"#
+);
+re!(
+    COND_INV_NOUN,
+    r#"^GameObj\.inv\.find\s*\{\s*\|\w+\|\s*\w+\.noun\s*==\s*['"]([^'"]+)['"]\s*\}$"#
+);
 // `2.times{ fput 'ask sailor about boat' }` — a bounded repeat of a known
 // statement, with no loop condition to interpret.
 re!(
@@ -1072,17 +1116,56 @@ fn split_statements(body: &str) -> Vec<String> {
 /// which is worse than declining the edge and letting the router re-path.
 fn transpile_sequence(src: &str) -> Option<Vec<WalkAction>> {
     let body = src.strip_prefix(";e").unwrap_or(src).trim();
+    // Whole-body block shapes that the gate below would refuse, recognized
+    // before it. Both delegate their innards back to the statement machinery
+    // rather than pinning a fixed arity.
+    if let Some(c) = WHILE_PATH_BLOCK.captures(body) {
+        let mut inner = Vec::new();
+        for statement in split_statements(&c[2]) {
+            inner.extend(transpile_statement(&statement)?);
+        }
+        if inner.is_empty() {
+            return None;
+        }
+        return Some(vec![WalkAction::Repeat {
+            body: moves_to_steps(inner),
+            until: RepeatUntil::Cond(Cond::Not(Box::new(Cond::PathAvailable(
+                c[1].to_string(),
+            )))),
+            max: MAX_RETRY_LOOP,
+        }]);
+    }
+    if let Some(c) = GROUP_FOLLOW_MOVE.captures(body) {
+        return Some(vec![WalkAction::Move(c[1].to_string()), WalkAction::WaitRt]);
+    }
     // BLOCK control flow needs an interpreter, not concatenation: `if x; move
     // 'n'; end` split naively would lose its condition and cross an edge the
-    // script gated. Trailing `if`/`unless` MODIFIERS are fine — they stay
-    // attached to their statement through the split and are handled there —
-    // so they are deliberately absent from this pattern.
+    // script gated. Trailing `if`/`unless`/`while`/`until` MODIFIERS are fine
+    // — they stay attached to their statement through the split and are
+    // handled there — so they are deliberately absent from this pattern.
     if BLOCK_CONTROL_FLOW.is_match(body) {
         return None;
     }
-    let statements = split_statements(body);
+    let mut statements = split_statements(body);
     if statements.is_empty() {
         return None;
+    }
+    // `r = dothistimeout ...` where `r` is never read again: the assignment
+    // is noise, the send-and-await is the statement. Only rewritten when the
+    // variable is genuinely unused — a later `if r =~ ...` means the body
+    // branches on the response, which needs real interpretation.
+    for i in 0..statements.len() {
+        if let Some(c) = ASSIGNED_RESULT.captures(&statements[i]) {
+            let (var, rest) = (c[1].to_string(), c[2].to_string());
+            let used_later = statements[i + 1..].iter().any(|s| {
+                regex::Regex::new(&format!(r"\b{}\b", regex::escape(&var)))
+                    .map(|re| re.is_match(s))
+                    .unwrap_or(true)
+            });
+            if !used_later {
+                statements[i] = rest;
+            }
+        }
     }
     // A single statement still goes through `transpile_statement` — that is
     // where variadic `multifput` lives, and the fixed-arity recognizers above
@@ -1107,24 +1190,47 @@ fn transpile_statement(statement: &str) -> Option<Vec<WalkAction>> {
         // ordinary body stop being residue.
         return Some(Vec::new());
     }
-    // Peel a trailing `if`/`unless` before the bare forms match, so the
-    // condition survives instead of the statement running unconditionally.
-    if let Some(c) = STMT_MODIFIER.captures(s) {
+    // Peel a trailing modifier before the bare forms match, so the condition
+    // survives instead of the statement running unconditionally.
+    if let Some((left, keyword, cond_src)) = split_modifier(s) {
         // Only when the guarded part is itself a statement we understand;
         // otherwise fall through and let the whole body be refused.
-        if let Some(inner) = transpile_statement(&c[1]) {
-            let cond = statement_condition(&c[3])?;
-            let negated = &c[2] == "unless";
-            let cond = if negated {
-                Cond::Not(Box::new(cond))
-            } else {
-                cond
-            };
-            return Some(vec![WalkAction::If {
-                cond,
-                then: inner,
-                els: Vec::new(),
-            }]);
+        if let Some(inner) = transpile_statement(left) {
+            // `... if group_members` runs only when grouped. A native walker
+            // does not escort groups, so the solo behavior — skip it — is the
+            // crossing; `unless group_members` inverts to "always".
+            if cond_src.trim() == "group_members" {
+                return Some(match keyword {
+                    "if" => Vec::new(),
+                    _ => inner,
+                });
+            }
+            let cond = statement_condition(cond_src)?;
+            return Some(match keyword {
+                "if" => vec![WalkAction::If {
+                    cond,
+                    then: inner,
+                    els: Vec::new(),
+                }],
+                "unless" => vec![WalkAction::If {
+                    cond: Cond::Not(Box::new(cond)),
+                    then: inner,
+                    els: Vec::new(),
+                }],
+                // `move 'north' while Room.current.id == 2925`: repeat while
+                // the condition holds — i.e. until it stops holding.
+                "while" => vec![WalkAction::Repeat {
+                    body: moves_to_steps(inner),
+                    until: RepeatUntil::Cond(Cond::Not(Box::new(cond))),
+                    max: MAX_RETRY_LOOP,
+                }],
+                // `fput 'stand' until standing?`: repeat until it holds.
+                _ => vec![WalkAction::Repeat {
+                    body: moves_to_steps(inner),
+                    until: RepeatUntil::Cond(cond),
+                    max: MAX_RETRY_LOOP,
+                }],
+            });
         }
     }
     if let Some(c) = STMT_TIMES.captures(s) {
@@ -1183,6 +1289,33 @@ fn transpile_statement(statement: &str) -> Option<Vec<WalkAction>> {
     if STMT_WAITRT.is_match(s) {
         return Some(vec![WalkAction::WaitRt]);
     }
+    if let Some(c) = STMT_DOTHIS.captures(s) {
+        // Advisory await, matching the full-body DOTHIS treatment: the
+        // executor's retry-on-timeout replays the edge, which is the
+        // dothistimeout loop with a longer period.
+        return Some(vec![WalkAction::Await {
+            cmd: Some(c[1].to_string()),
+            pattern: Box::new(AwaitPattern::new(&c[3])?),
+            timeout: c[2].parse().ok()?,
+            on_timeout: OnTimeout::Continue,
+            if_match: None,
+        }]);
+    }
+    if let Some(c) = STMT_GET_UNTIL.captures(s) {
+        // Self-referential read loop: `line = get until line =~ /pat/`. Only
+        // when both names agree is this the idiom (the regex cannot
+        // backreference).
+        if c[1] != c[2] {
+            return None;
+        }
+        return Some(vec![WalkAction::Await {
+            cmd: None,
+            pattern: Box::new(AwaitPattern::new(&c[3])?),
+            timeout: WAITFOR_TIMEOUT_SECS,
+            on_timeout: OnTimeout::Fail,
+            if_match: None,
+        }]);
+    }
     if let Some(c) = STMT_SLEEP.captures(s) {
         return Some(vec![WalkAction::Sleep(c[1].parse().ok()?)]);
     }
@@ -1240,7 +1373,88 @@ fn statement_condition(raw: &str) -> Option<Cond> {
     if let Some(m) = COND_CHECKLOOT.captures(c) {
         return Some(Cond::RoomHasObject(m[1].to_string()));
     }
+    if let Some(m) = COND_IN_ROOM.captures(c) {
+        let cond = Cond::InRoom(m[2].parse().ok()?);
+        return Some(if &m[1] == "!=" {
+            Cond::Not(Box::new(cond))
+        } else {
+            cond
+        });
+    }
+    if let Some(m) = COND_CHECKPATHS.captures(c) {
+        return Some(Cond::PathAvailable(m[1].to_string()));
+    }
+    if let Some(m) = COND_LOOT_FIND.captures(c) {
+        return Some(Cond::RoomHasObject(m[1].to_string()));
+    }
+    if let Some(m) = COND_INV_NOUN.captures(c) {
+        return Some(Cond::HasItem(m[1].to_string()));
+    }
     None
+}
+
+/// Find the last top-level modifier keyword in a statement, splitting it into
+/// (statement, keyword, condition). Quote- and depth-aware for the same
+/// reason `split_statements` is: ` if ` can occur inside a quoted argument
+/// (`fput 'say meet me if you can'`), and a regex would split there. The LAST
+/// occurrence wins because Ruby modifiers bind loosest — everything to their
+/// left is the guarded statement.
+fn split_modifier(s: &str) -> Option<(&str, &str, &str)> {
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut found: Option<(usize, usize, &'static str)> = None;
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < s.len() {
+        let c = bytes[i] as char;
+        match quote {
+            Some(q) => {
+                if c == '\\' {
+                    i += 1;
+                } else if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '\'' | '"' => quote = Some(c),
+                '{' | '[' | '(' => depth += 1,
+                '}' | ']' | ')' => depth -= 1,
+                ' ' if depth == 0 => {
+                    for kw in ["if", "unless", "while", "until"] {
+                        let end = i + 1 + kw.len();
+                        if s[i + 1..].starts_with(kw)
+                            && s.as_bytes().get(end).copied() == Some(b' ')
+                            && i > 0
+                        {
+                            found = Some((i, end + 1, kw));
+                        }
+                    }
+                }
+                _ => {}
+            },
+        }
+        i += 1;
+    }
+    let (split_at, cond_from, kw) = found?;
+    let left = s[..split_at].trim();
+    let cond = s[cond_from..].trim();
+    if left.is_empty() || cond.is_empty() {
+        return None;
+    }
+    Some((left, kw, cond))
+}
+
+/// Convert terminal `Move`s to paced `StepMove`s for use inside a `Repeat`
+/// body: a `Move` is the script's final room-changer, but a repeated move is
+/// a step whose landing must settle before the loop re-evaluates.
+fn moves_to_steps(actions: Vec<WalkAction>) -> Vec<WalkAction> {
+    actions
+        .into_iter()
+        .map(|a| match a {
+            WalkAction::Move(cmd) => WalkAction::StepMove(cmd),
+            other => other,
+        })
+        .collect()
 }
 
 /// Strip one layer of matching quotes from a captured argument.
@@ -2683,6 +2897,141 @@ mod tests {
         assert_eq!(
             split_statements(r#"fput "say \"x;y\""; move 'north'"#),
             vec![r#"fput "say \"x;y\"""#.to_string(), "move 'north'".to_string()]
+        );
+    }
+
+    #[test]
+    fn while_modifier_becomes_a_bounded_repeat() {
+        use WalkAction::*;
+        // 2925 -> 2924, sole route through the Sleeping Lady Mountains pass.
+        assert_eq!(
+            transpile(";e fput 'north'; move 'north' while Room.current.id == 2925"),
+            Some(vec![
+                Put("north".into()),
+                Repeat {
+                    body: vec![StepMove("north".into())],
+                    until: RepeatUntil::Cond(Cond::Not(Box::new(Cond::InRoom(2925)))),
+                    max: MAX_RETRY_LOOP,
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn until_modifier_repeats_to_a_condition() {
+        use WalkAction::*;
+        assert_eq!(
+            transpile(r#";e move "crawl hollow";fput "stand" until standing?"#),
+            Some(vec![
+                Move("crawl hollow".into()),
+                Repeat {
+                    body: vec![Put("stand".into())],
+                    until: RepeatUntil::Cond(Cond::Standing),
+                    max: MAX_RETRY_LOOP,
+                },
+            ])
+        );
+        // 26765 -> 27623 (Caligos Isle): search until the opening appears.
+        assert_eq!(
+            transpile(
+                ";e fput 'search' until GameObj.loot.find{|x| x.name == 'craggy rough-hewn opening'}; fput 'go opening'"
+            ),
+            Some(vec![
+                Repeat {
+                    body: vec![Put("search".into())],
+                    until: RepeatUntil::Cond(Cond::RoomHasObject(
+                        "craggy rough-hewn opening".into()
+                    )),
+                    max: MAX_RETRY_LOOP,
+                },
+                Put("go opening".into()),
+            ])
+        );
+    }
+
+    #[test]
+    fn modifier_keyword_inside_a_quote_does_not_split() {
+        use WalkAction::*;
+        assert_eq!(
+            transpile(";e fput 'say meet me if you can'; move 'north'"),
+            Some(vec![Put("say meet me if you can".into()), Move("north".into())])
+        );
+    }
+
+    #[test]
+    fn get_until_is_a_passive_await() {
+        // 24239 -> 24240 (Feywrot Mire): the current carries you; the ladder
+        // line is the arrival evidence. The echo is user chatter, dropped.
+        let Some(actions) = transpile(
+            r#";e echo "Waiting for current to carry you to the new room...";line = get until line =~ /sturdy ladder/"#,
+        ) else {
+            panic!("expected a transpile");
+        };
+        assert_eq!(actions.len(), 1);
+        let WalkAction::Await { cmd, pattern, on_timeout, .. } = &actions[0] else {
+            panic!("expected an await, got {:?}", actions[0]);
+        };
+        assert_eq!(*cmd, None);
+        assert_eq!(*on_timeout, OnTimeout::Fail);
+        assert!(pattern.is_match("You grab hold of a sturdy ladder."));
+        // Mismatched variable names are NOT the idiom.
+        assert_eq!(transpile(";e line = get until other =~ /ladder/"), None);
+    }
+
+    #[test]
+    fn assigned_dothistimeout_rewrites_only_when_unused() {
+        // Assigned but never read again: the assignment is noise.
+        let Some(actions) = transpile(
+            r#";e r = dothistimeout 'open gate', 10, /^You open|already open/; move 'go gate'"#,
+        ) else {
+            panic!("expected a transpile");
+        };
+        assert!(matches!(actions[0], WalkAction::Await { .. }));
+        assert!(matches!(actions[1], WalkAction::Move(_)));
+        // Read again afterwards: the body branches on the response, which
+        // statement concatenation cannot represent. (The `if` block also
+        // trips the gate; this pins the rewrite's own guard.)
+        assert_eq!(
+            transpile(
+                ";e r = dothistimeout 'open gate', 10, /You open/; if r; move 'go gate'; end"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn while_path_block_repeats_until_the_exit_is_gone() {
+        use WalkAction::*;
+        // 8544 -> 8546 (foothills of Zeltoph): work the room until the nw
+        // exit stops being offered, i.e. we left through the crevice.
+        assert_eq!(
+            transpile(
+                ";e while checkpaths.include?('nw'); fput 'search'; sleep 1; waitrt?; move 'go crevice'; end"
+            ),
+            Some(vec![Repeat {
+                body: vec![
+                    Put("search".into()),
+                    Sleep(1.0),
+                    WaitRt,
+                    StepMove("go crevice".into()),
+                ],
+                until: RepeatUntil::Cond(Cond::Not(Box::new(Cond::PathAvailable("nw".into())))),
+                max: MAX_RETRY_LOOP,
+            }])
+        );
+    }
+
+    #[test]
+    fn group_follow_reduces_to_the_solo_crossing() {
+        use WalkAction::*;
+        // 3565 -> 3566 (Stone Valley), 11x in the corpus: scrape who
+        // followed, move, wait for their arrival lines. Solo semantics —
+        // move and wait out roundtime — are the crossing; a native walker
+        // does not escort groups.
+        let body = r#";e group_members = nil; clear.reverse.each { |line| if line =~ /^Obvious (paths|exits)/; break; elsif line =~ /^([A-Za-z ,]+) followed\.$/; group_members = $1.split(/, | and /); group_members.delete_if { |m| m =~ /^[Yy]our / }; group_members = nil if group_members.empty?; break; end }; move 'go pile'; if group_members; echo "Waiting for your group... "; begin; if get =~ /^(You reach out and hold )?([A-z][a-z]+)('s hand| joins your group)\.$/; group_members.delete $2; end; end while group_members.length > 0; end; waitrt?"#;
+        assert_eq!(
+            transpile(body),
+            Some(vec![Move("go pile".into()), WaitRt])
         );
     }
 
