@@ -1212,11 +1212,15 @@ impl VellumGuiApp {
             ui.separator();
             ui.label(RichText::new("Rows (top to bottom)").small());
             {
-                // Arrows + a tick per row, matching the group-order list in
-                // this same menu.
+                // Same vocabulary as the Group section above: arrows to
+                // reorder, a "\u{2514}" cue on rows living in the line
+                // above, and a fully-worded share checkbox in an indent --
+                // the previous glyph-labelled box rendered as tofu and read
+                // as a mystery square.
                 let last = ma.rows.len().saturating_sub(1);
                 for (index, (row, shown, merged)) in ma.rows.iter().enumerate() {
                     let row = *row;
+                    let shares = index > 0 && *merged && row.can_share();
                     ui.horizontal(|ui| {
                         if ui
                             .add_enabled(index > 0, egui::Button::new("\u{2B06}").small())
@@ -1236,6 +1240,11 @@ impl VellumGuiApp {
                                 up: false,
                             });
                         }
+                        if shares {
+                            // Visual cue: this row draws on the line opened
+                            // by the row above it (Group list convention).
+                            ui.label("\u{2514}");
+                        }
                         let mut on = *shown;
                         if ui.checkbox(&mut on, row.label()).changed() {
                             if let Some(entry) =
@@ -1245,14 +1254,12 @@ impl VellumGuiApp {
                             }
                             changed = true;
                         }
-                        // The merge flag is the STORED membership; the first
-                        // row simply does not render merged, but its flag
-                        // survives a stint at the top.
-                        if index > 0 && *shown {
+                    });
+                    if index > 0 && *shown && row.can_share() {
+                        ui.indent((row.id(), "ma_row_share"), |ui| {
                             let mut share = *merged;
                             if ui
-                                .checkbox(&mut share, "\u{21B3}")
-                                .on_hover_text("Draw on the same line as the row above")
+                                .checkbox(&mut share, "Share line with the row above")
                                 .changed()
                             {
                                 if let Some(entry) =
@@ -1262,8 +1269,8 @@ impl VellumGuiApp {
                                 }
                                 changed = true;
                             }
-                        }
-                    });
+                        });
+                    }
                 }
             }
             ui.horizontal(|ui| {

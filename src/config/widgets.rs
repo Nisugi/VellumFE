@@ -1172,6 +1172,15 @@ impl CardRow {
         }
     }
 
+    /// Whether this row may share a line at all. The vitals block (four
+    /// stacked bars) and the injury doll need the full card width -- merging
+    /// them onto another row crushes them into an unreadable half-column,
+    /// which is exactly the "clicked it and it looked wrong" complaint.
+    /// Gauges stay shareable: two half-width bars pair fine.
+    pub fn can_share(self) -> bool {
+        !matches!(self, CardRow::Vitals | CardRow::Injuries)
+    }
+
     /// Whether the row fills the width it is given (bars and the doll) or
     /// sizes to its own content (labels, icon strips). Decides width shares
     /// when rows share a line.
@@ -1255,6 +1264,11 @@ impl MultiAccountWidgetData {
     /// Whether this row RENDERS on the line above it: stored flag, unless the
     /// row is first (nothing above it to join).
     pub fn row_merged(&self, row: CardRow) -> bool {
+        // Data-level guard, not just UI: a stale config with vitals or the
+        // doll in merged_rows self-heals here instead of rendering crushed.
+        if !row.can_share() {
+            return false;
+        }
         if self
             .ordered_rows()
             .first()
@@ -1837,14 +1851,37 @@ mod multiaccount_row_tests {
     #[test]
     fn merging_round_trips_and_hidden_rows_never_appear() {
         let mut data = MultiAccountWidgetData::default();
-        data.set_row_merged(R::Vitals, true);
-        assert!(data.row_merged(R::Vitals));
-        data.set_row_merged(R::Vitals, false);
-        assert!(!data.row_merged(R::Vitals));
+        data.set_row_merged(R::Mind, true);
+        assert!(data.row_merged(R::Mind));
+        data.set_row_merged(R::Mind, false);
+        assert!(!data.row_merged(R::Mind));
 
         data.set_row_shown(R::Injuries, false);
         let flat: Vec<R> = data.row_lines().into_iter().flatten().collect();
         assert!(!flat.contains(&R::Injuries));
+    }
+
+    /// Vitals and the doll need the full card width; a stale config marking
+    /// them merged must self-heal at the data level rather than render
+    /// crushed into a half-column.
+    #[test]
+    fn full_width_rows_never_share_a_line() {
+        let mut data = MultiAccountWidgetData::default();
+        data.set_row_merged(R::Vitals, true);
+        data.set_row_merged(R::Injuries, true);
+        assert!(!data.row_merged(R::Vitals));
+        assert!(!data.row_merged(R::Injuries));
+        let flat = data.row_lines();
+        assert!(
+            flat.iter().any(|line| line == &vec![R::Vitals]),
+            "vitals stays on its own line: {flat:?}"
+        );
+
+        // Gauges pair fine -- two half-width bars.
+        data.set_row_shown(R::Mind, true);
+        data.set_row_shown(R::Stance, true);
+        data.set_row_merged(R::Stance, true);
+        assert!(data.row_merged(R::Stance));
     }
 
     #[test]
