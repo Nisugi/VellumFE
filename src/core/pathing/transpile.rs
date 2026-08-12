@@ -315,19 +315,22 @@ re!(QUOTED_ITEM, r#"['"]([^'"]+)['"]"#);
 // Splitting first and matching per statement makes arity irrelevant, which is
 // what the corpus actually needs: a third of the residue is this shape.
 
-// BLOCK control flow, which statement-splitting cannot represent.
-//
-// Note what is NOT here: a bare `if`/`unless`/`while`/`until`. Those are
-// ambiguous — they open a block (`if x; move 'n'; end`) or trail a statement
-// as a modifier (`fput 'stand' unless standing?`, `move 'north' while
-// Room.current.id == N`). The block form always carries `end`, `else`, or
-// `elsif`, so keying on THOSE rejects blocks while letting modifiers through
-// to `transpile_statement`, which keeps their condition. `.times` is likewise
-// absent: the `{ ... }` form is unrolled as a bounded repeat.
+// Control flow the unit parser does NOT model. `if/unless/while/until/else/
+// end` are absent — `parse_units` handles those structurally, and modifiers
+// stay attached to their statement through the split. `loop`/`break` are
+// absent too: they only occur inside braced statements, which the loop
+// statement recognizers either accept whole or refuse whole. What remains is
+// genuinely beyond the parser: multi-arm elsif, begin/rescue, iterators,
+// boolean chains.
 re!(
-    BLOCK_CONTROL_FLOW,
-    r"(?:^|[^\w.])(?:elsif|else|end|loop|begin|rescue|case|when|break|next|return|exit|pause_script)(?:[^\w?!]|$)|\.each|\|\||&&"
+    HARD_CONTROL_FLOW,
+    r"(?:^|[^\w.])(?:elsif|begin|rescue|case|when|next|return|exit|pause_script)(?:[^\w?!]|$)|\.each|\|\||&&"
 );
+// A statement that OPENS a block: the keyword leads. A modifier never does —
+// its statement comes first (`fput 'stand' unless standing?`).
+re!(BLOCK_OPEN, r"^(if|unless|while|until)\s+(.+)$");
+// `XMLData.room_title == '…'` — "still in the starting room".
+re!(ROOM_TITLE_COND, r"^XMLData\.room_title\s*==\s*'[^']*'$");
 // Script bookkeeping with no travel meaning. `$go2_restart = true` and
 // `$SILVERWOOD_TOWN=:imt` are Lich-side flags; a comment or bare `nil` is
 // nothing. These are dropped, not refused.
@@ -358,15 +361,6 @@ re!(ASSIGNED_RESULT, r"^(\w+)\s*=\s*(dothistimeout\b.+|nil)$");
 re!(
     LOOP_BREAK_ROOM,
     r"(?s)^loop\s*\{(.+?);\s*if Room\.current\.id == (\d+)\s*;\s*break\s*;?\s*end\s*;?\s*\}$"
-);
-// One block with a leading condition, optionally after straight-line
-// statements: `<prefix>; while <cond>; <inner>; end`. The prefix and inner
-// each go back through the fragment machinery (which refuses nested blocks),
-// and the condition through `statement_condition` — unknown anything refuses
-// the body.
-re!(
-    COND_BLOCK,
-    r"(?s)^(?:(.+?);)?\s*(if|unless|while|until)\s+([^;]+?)\s*;(.+?);?\s*end(?:;(.+))?;?$"
 );
 // ---- family recognizers, pinned to verbatim mapdb text ------------------
 // Krag slopes crevice hunt (6135): group preamble, search-or-step-n/s loop
@@ -430,11 +424,6 @@ re!(
     SPELL_PREP_PREFIX,
     r"(?s)^if \w+ = Spell\[\d+\][^;]*;\s*\w+\.cast;\s*end;\s*(.+)$"
 );
-// `if <cond>; <A>; else; <B>; end` — both arms straight-line.
-re!(
-    IF_ELSE_BLOCK,
-    r"(?s)^if\s+([^;]+?)\s*;(.+?);\s*else\s*;(.+?);?\s*end;?$"
-);
 // `loop { move 'a'; break if Room.current.id != N; move 'b'; break if …; }` —
 // try the shifting exits in turn until one takes (Lower Dragonsclaw).
 re!(
@@ -442,6 +431,13 @@ re!(
     r"(?s)^loop \{ (?:move '[^']+'; break if Room\.current\.id != \d+; ?)+\}$"
 );
 re!(LOOP_TRY_EXITS_STEP, r"move '([^']+)'; break if Room\.current\.id != (\d+)");
+// `loop { ...; break unless checkpaths == [ 'out' ] }` — the spike-trap
+// chute: exits changing means we fell through.
+re!(
+    LOOP_BREAK_PATHS,
+    r"(?s)^loop \{ (.+); break unless checkpaths == \[ [^\]]*\] \}$"
+);
+re!(STMT_WAIT_WHILE_STANDING, r"^wait_while \{ standing\? \}$");
 // `N.times do; <prefix>; r = dothistimeout "CMD", T, /…/; break if r =~ /…/;end`
 // — the do…end spelling, success = the room changes (Coastal Cliffs climb).
 re!(
@@ -495,12 +491,6 @@ re!(SKILL_COND, r"^Skills\.\w+\s*[<>=]");
 re!(
     LOOP_DOTHIS_BREAK,
     r"(?s)^loop \{ (\w+) = dothistimeout '([^']+)', ([\d.]+), /([^/]+)/; waitrt\?; break if (\w+) =~ /([^/]+)/ \}; move '([^']+)'$"
-);
-// `while XMLData.room_title == '…'; <stmts>; end` — work the room until we
-// leave it: the title comparison is just "still here" (Citadel ravine).
-re!(
-    WHILE_TITLE_BLOCK,
-    r"(?s)^(?:(.+?);)?\s*while XMLData\.room_title == '[^']+'\s*;(.+?);\s*end(?:;(.+))?;?$"
 );
 // Melgorehn's Reach bridge (14726): `go bridge` normally just works; when
 // the bridge is pulled open, detour up the platform and turn the wheel.
@@ -1277,90 +1267,156 @@ fn transpile_sequence(src: &str) -> Option<Vec<WalkAction>> {
         return Some(actions);
     }
     // Buff-if-you-can prefix: strip it and transpile what remains. The cast
-    // is an optimization, not a gate (the BUFF_THEN_MOVE stance).
+    // is an optimization, not a gate (the BUFF_THEN_MOVE stance). Handled
+    // here rather than in the parser because the condition carries an
+    // assignment (`if b = Spell[N] and …`).
     if let Some(c) = SPELL_PREP_PREFIX.captures(body) {
         return transpile_sequence(&c[1]);
-    }
-    // `if <cond>; <A>; else; <B>; end` with both arms straight-line.
-    if let Some(c) = IF_ELSE_BLOCK.captures(body) {
-        if let Some(cond) = statement_condition(&c[1]) {
-            let then = transpile_fragment(&c[2])?;
-            let els = transpile_fragment(&c[3])?;
-            return Some(vec![WalkAction::If { cond, then, els }]);
-        }
-    }
-    // `loop { <statements>; if Room.current.id == N; break; end }` — retry a
-    // known body until it lands in a specific room (the Sea Caves swim).
-    if let Some(c) = LOOP_BREAK_ROOM.captures(body) {
-        let inner = transpile_fragment(&c[1])?;
-        if inner.is_empty() {
-            return None;
-        }
-        return Some(vec![WalkAction::Repeat {
-            body: moves_to_steps(inner),
-            until: RepeatUntil::Room(c[2].parse().ok()?),
-            max: MAX_RETRY_LOOP,
-        }]);
-    }
-    // A single block with a leading condition, optionally after straight-line
-    // statements: `<prefix>; while <cond>; <inner>; end`. Every part must
-    // independently transpile (the fragment gate refuses nested blocks), and
-    // the condition must be one we can evaluate — fail-closed on both.
-    if let Some(c) = COND_BLOCK.captures(body) {
-        let prefix = match c.get(1) {
-            Some(p) => transpile_fragment(p.as_str())?,
-            None => Vec::new(),
-        };
-        let cond = statement_condition(&c[3])?;
-        let inner = transpile_fragment(&c[4])?;
-        if inner.is_empty() {
-            return None;
-        }
-        let block = match &c[2] {
-            "if" => vec![WalkAction::If {
-                cond,
-                then: inner,
-                els: Vec::new(),
-            }],
-            "unless" => vec![WalkAction::If {
-                cond: Cond::Not(Box::new(cond)),
-                then: inner,
-                els: Vec::new(),
-            }],
-            "while" => vec![WalkAction::Repeat {
-                body: moves_to_steps(inner),
-                until: RepeatUntil::Cond(Cond::Not(Box::new(cond))),
-                max: MAX_RETRY_LOOP,
-            }],
-            _ => vec![WalkAction::Repeat {
-                body: moves_to_steps(inner),
-                until: RepeatUntil::Cond(cond),
-                max: MAX_RETRY_LOOP,
-            }],
-        };
-        let mut actions = prefix;
-        actions.extend(block);
-        // Straight-line statements after the block (`...end; fill_hands`) —
-        // the Lysierian swim ends with one, and truncating it would strand
-        // the stowed gear.
-        if let Some(suffix) = c.get(5) {
-            actions.extend(transpile_fragment(suffix.as_str())?);
-        }
-        return Some(actions);
     }
     transpile_fragment(body)
 }
 
-/// A run of `;`-separated statements with no block control flow: gate, split,
-/// clean, transpile each. The unit the block recognizers build on — a block's
-/// prefix and innards each go through here, so nesting fails closed.
+/// One parsed unit of a fragment: a statement, or an if/unless/while/until
+/// block with its arms. Blocks nest (bounded); `elsif` and everything the
+/// hard gate names stay refused.
+#[derive(Debug)]
+enum Unit {
+    Stmt(String),
+    Block {
+        kw: String,
+        cond: String,
+        then_arm: Vec<Unit>,
+        else_arm: Vec<Unit>,
+    },
+}
+
+/// What ended a `parse_units` sequence.
+#[derive(Debug, PartialEq)]
+enum Term {
+    End,
+    Else,
+    Eof,
+}
+
+/// Recursive descent over the statement list: `if <cond>` opens a block,
+/// `else` switches arms, `end` closes. Depth-bounded; anything structurally
+/// off (stray end, elsif, unclosed block) returns None and the body is
+/// refused — malformed control flow must never half-cross an edge.
+fn parse_units(stmts: &[String], i: &mut usize, depth: u8) -> Option<(Vec<Unit>, Term)> {
+    let mut units = Vec::new();
+    while *i < stmts.len() {
+        let s = stmts[*i].trim();
+        if s == "end" {
+            *i += 1;
+            return Some((units, Term::End));
+        }
+        if s == "else" {
+            *i += 1;
+            return Some((units, Term::Else));
+        }
+        if s.starts_with("elsif ") || s.starts_with("elsif\t") {
+            return None;
+        }
+        if let Some(c) = BLOCK_OPEN.captures(s) {
+            if depth >= 3 {
+                return None;
+            }
+            let (kw, cond) = (c[1].to_string(), c[2].to_string());
+            *i += 1;
+            let (then_arm, term) = parse_units(stmts, i, depth + 1)?;
+            let else_arm = match term {
+                Term::Else => {
+                    let (arm, term2) = parse_units(stmts, i, depth + 1)?;
+                    if term2 != Term::End {
+                        return None;
+                    }
+                    arm
+                }
+                Term::End => Vec::new(),
+                Term::Eof => return None,
+            };
+            units.push(Unit::Block {
+                kw,
+                cond,
+                then_arm,
+                else_arm,
+            });
+            continue;
+        }
+        units.push(Unit::Stmt(s.to_string()));
+        *i += 1;
+    }
+    Some((units, Term::Eof))
+}
+
+/// Transpile a parsed unit tree. Statements go through
+/// `transpile_statement`; blocks become `If`/`Repeat` with conditions from
+/// `statement_condition` — unknown conditions refuse the whole body.
+fn transpile_units(units: &[Unit]) -> Option<Vec<WalkAction>> {
+    let mut actions = Vec::new();
+    for unit in units {
+        match unit {
+            Unit::Stmt(s) => actions.extend(transpile_statement(s)?),
+            Unit::Block {
+                kw,
+                cond,
+                then_arm,
+                else_arm,
+            } => {
+                let then = transpile_units(then_arm)?;
+                let els = transpile_units(else_arm)?;
+                // `while XMLData.room_title == '…'` is "while still here":
+                // the room-change IS the loop condition (Citadel ravine).
+                if ROOM_TITLE_COND.is_match(cond) {
+                    if kw != "while" || !els.is_empty() {
+                        return None;
+                    }
+                    actions.push(WalkAction::Repeat {
+                        body: moves_to_steps(then),
+                        until: RepeatUntil::RoomChanged,
+                        max: MAX_RETRY_LOOP,
+                    });
+                    continue;
+                }
+                let parsed = statement_condition(cond)?;
+                match kw.as_str() {
+                    "if" => actions.push(WalkAction::If {
+                        cond: parsed,
+                        then,
+                        els,
+                    }),
+                    "unless" => actions.push(WalkAction::If {
+                        cond: Cond::Not(Box::new(parsed)),
+                        then,
+                        els,
+                    }),
+                    // Loops take no else arm.
+                    "while" if els.is_empty() => actions.push(WalkAction::Repeat {
+                        body: moves_to_steps(then),
+                        until: RepeatUntil::Cond(Cond::Not(Box::new(parsed))),
+                        max: MAX_RETRY_LOOP,
+                    }),
+                    "until" if els.is_empty() => actions.push(WalkAction::Repeat {
+                        body: moves_to_steps(then),
+                        until: RepeatUntil::Cond(parsed),
+                        max: MAX_RETRY_LOOP,
+                    }),
+                    _ => return None,
+                }
+            }
+        }
+    }
+    Some(actions)
+}
+
+/// A run of `;`-separated statements and simple blocks: gate the hard
+/// keywords, split, clean, parse into units, transpile. The unit every
+/// recognizer builds on — nested weirdness fails closed through it.
 fn transpile_fragment(body: &str) -> Option<Vec<WalkAction>> {
-    // BLOCK control flow needs an interpreter, not concatenation: `if x; move
-    // 'n'; end` split naively would lose its condition and cross an edge the
-    // script gated. Trailing `if`/`unless`/`while`/`until` MODIFIERS are fine
-    // — they stay attached to their statement through the split and are
-    // handled there — so they are deliberately absent from this pattern.
-    if BLOCK_CONTROL_FLOW.is_match(body) {
+    // Constructs the unit parser doesn't model. `if/unless/while/until/else/
+    // end` are handled structurally now; what remains here is genuinely
+    // beyond it (multi-arm elsif, begin/rescue, iterators, boolean chains).
+    if HARD_CONTROL_FLOW.is_match(body) {
         return None;
     }
     let mut statements = split_statements(body);
@@ -1384,14 +1440,13 @@ fn transpile_fragment(body: &str) -> Option<Vec<WalkAction>> {
             }
         }
     }
-    // A single statement still goes through `transpile_statement` — that is
-    // where variadic `multifput` lives, and the fixed-arity recognizers above
-    // decline it. Safe from recursion because `transpile_statement` never
-    // calls back into the full-body chain.
-    let mut actions = Vec::new();
-    for statement in &statements {
-        actions.extend(transpile_statement(statement)?);
+    let mut i = 0;
+    let (units, term) = parse_units(&statements, &mut i, 0)?;
+    if term != Term::Eof {
+        // A stray `end`/`else` means the split misread the structure.
+        return None;
     }
+    let actions = transpile_units(&units)?;
     if actions.is_empty() {
         return None;
     }
@@ -1590,28 +1645,6 @@ fn transpile_block_families(body: &str) -> Option<Vec<WalkAction>> {
             WalkAction::Move(c[5].to_string()),
         ]);
     }
-    // Shifting exits tried in turn until one takes (Lower Dragonsclaw).
-    if LOOP_TRY_EXITS.is_match(body) {
-        let mut steps = Vec::new();
-        let mut room = None;
-        for c in LOOP_TRY_EXITS_STEP.captures_iter(body) {
-            let id: u32 = c[2].parse().ok()?;
-            room = Some(id);
-            // Guard each alternative on still being in the start room, so a
-            // successful early step doesn't walk us further off the edge.
-            steps.push(WalkAction::If {
-                cond: Cond::InRoom(id),
-                then: vec![WalkAction::StepMove(c[1].to_string())],
-                els: Vec::new(),
-            });
-        }
-        let room = room?;
-        return Some(vec![WalkAction::Repeat {
-            body: steps,
-            until: RepeatUntil::Cond(Cond::Not(Box::new(Cond::InRoom(room)))),
-            max: MAX_RETRY_LOOP,
-        }]);
-    }
     // The do…end spelling of the retry-climb (Coastal Cliffs): prefix
     // statements each lap, then the attempt; success = the room changes.
     if let Some(c) = TIMES_DO_CLIMB.captures(body) {
@@ -1751,26 +1784,6 @@ fn transpile_block_families(body: &str) -> Option<Vec<WalkAction>> {
             WalkAction::Move(c[7].to_string()),
         ]);
     }
-    // Citadel ravine: search-and-climb until we're out of the room.
-    if let Some(c) = WHILE_TITLE_BLOCK.captures(body) {
-        let mut actions = match c.get(1) {
-            Some(p) => transpile_fragment(p.as_str())?,
-            None => Vec::new(),
-        };
-        let inner = transpile_fragment(&c[2])?;
-        if inner.is_empty() {
-            return None;
-        }
-        actions.push(WalkAction::Repeat {
-            body: moves_to_steps(inner),
-            until: RepeatUntil::RoomChanged,
-            max: MAX_RETRY_LOOP,
-        });
-        if let Some(suffix) = c.get(3) {
-            actions.extend(transpile_fragment(suffix.as_str())?);
-        }
-        return Some(actions);
-    }
     // Melgorehn's Reach bridge: normally one command; the pulled-open detour
     // climbs the platform and turns the wheel, then crosses from above.
     if MELGOREHN_BRIDGE.is_match(body) {
@@ -1863,6 +1876,69 @@ fn transpile_statement(statement: &str) -> Option<Vec<WalkAction>> {
         // A cast is optional preparation, never the crossing itself — the
         // BUFF_THEN_MOVE stance, statement-sized.
         return Some(Vec::new());
+    }
+    // Braced `loop { … }` forms — a single statement to the splitter, so
+    // they compose anywhere in a body (the Darkstone spike-trap buries one
+    // mid-sequence).
+    if s.starts_with("loop") {
+        // `loop { <stmts>; if Room.current.id == N; break; end }` — retry
+        // until we land in the room (Sea Caves swim).
+        if let Some(c) = LOOP_BREAK_ROOM.captures(s) {
+            let inner = transpile_fragment(&c[1])?;
+            if inner.is_empty() {
+                return None;
+            }
+            return Some(vec![WalkAction::Repeat {
+                body: moves_to_steps(inner),
+                until: RepeatUntil::Room(c[2].parse().ok()?),
+                max: MAX_RETRY_LOOP,
+            }]);
+        }
+        // `loop { <stmts>; break unless checkpaths == [ 'out' ] }` — work
+        // the trap room until its exits change, i.e. we fell through
+        // (Darkstone spike chute).
+        if let Some(c) = LOOP_BREAK_PATHS.captures(s) {
+            let inner = transpile_fragment(&c[1])?;
+            if inner.is_empty() {
+                return None;
+            }
+            return Some(vec![WalkAction::Repeat {
+                body: moves_to_steps(inner),
+                until: RepeatUntil::RoomChanged,
+                max: MAX_RETRY_LOOP,
+            }]);
+        }
+        // Shifting exits tried in turn until one takes (Lower Dragonsclaw).
+        if LOOP_TRY_EXITS.is_match(s) {
+            let mut steps = Vec::new();
+            let mut room = None;
+            for c in LOOP_TRY_EXITS_STEP.captures_iter(s) {
+                let id: u32 = c[2].parse().ok()?;
+                room = Some(id);
+                // Guard each alternative on still being in the start room,
+                // so a successful early step doesn't walk us further off.
+                steps.push(WalkAction::If {
+                    cond: Cond::InRoom(id),
+                    then: vec![WalkAction::StepMove(c[1].to_string())],
+                    els: Vec::new(),
+                });
+            }
+            let room = room?;
+            return Some(vec![WalkAction::Repeat {
+                body: steps,
+                until: RepeatUntil::Cond(Cond::Not(Box::new(Cond::InRoom(room)))),
+                max: MAX_RETRY_LOOP,
+            }]);
+        }
+        return None;
+    }
+    if STMT_WAIT_WHILE_STANDING.is_match(s) {
+        // `wait_while { standing? }` — riding a fall/knockdown out.
+        return Some(vec![WalkAction::Repeat {
+            body: vec![WalkAction::Sleep(0.5)],
+            until: RepeatUntil::Cond(Cond::Not(Box::new(Cond::Standing))),
+            max: MAX_RETRY_LOOP,
+        }]);
     }
     // Peel a trailing modifier before the bare forms match, so the condition
     // survives instead of the statement running unconditionally.
