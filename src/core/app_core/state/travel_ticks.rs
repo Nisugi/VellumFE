@@ -478,6 +478,31 @@ impl AppCore {
         // `_inventory manager ...` requests go out with everything else.
         let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
         commands.extend(self.message_processor.inv_service.tick(now_ms));
+        // Verified item moves: confirm against the current hand state,
+        // surface outcomes, send whatever the mover queued.
+        let hands = crate::core::item_mover::HandsView {
+            left: self
+                .game_state
+                .objects
+                .hand(crate::core::game_objects::Hand::Left)
+                .map(|i| i.id.clone()),
+            right: self
+                .game_state
+                .objects
+                .hand(crate::core::game_objects::Hand::Right)
+                .map(|i| i.id.clone()),
+        };
+        let (mover_cmds, outcome) = self.item_mover.tick(&hands, now_ms);
+        commands.extend(mover_cmds);
+        match outcome {
+            Some(crate::core::item_mover::MoveOutcome::Succeeded { desc }) => {
+                self.add_system_message(&format!("[drag] {desc} - confirmed."));
+            }
+            Some(crate::core::item_mover::MoveOutcome::Failed { desc, reason }) => {
+                self.add_system_message(&format!("[drag] {desc} FAILED: {reason}"));
+            }
+            None => {}
+        }
         let now = std::time::Instant::now();
         let mut i = 0;
         while i < self.timed_commands.len() {

@@ -157,6 +157,9 @@ pub struct AppCore {
     /// their pause, drained by take_outbound once due (insertion order
     /// preserved among same-tick due commands).
     timed_commands: Vec<(std::time::Instant, String)>,
+    /// Verified item moves (`_drag`, extended feed): one at a time,
+    /// confirmed against hand events, drained by take_outbound.
+    pub item_mover: crate::core::item_mover::ItemMover,
     /// Cache for the wire-format map scene sent to web clients, keyed by
     /// (scene Arc pointer, sheet, building cluster) so a rebuild only
     /// happens when the drawn view actually changes.
@@ -419,6 +422,7 @@ impl AppCore {
             day_pass_scan_open: None,
             day_pass_sack_probed: false,
             timed_commands: Vec::new(),
+            item_mover: crate::core::item_mover::ItemMover::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
             pending_map_views: Vec::new(),
@@ -613,6 +617,7 @@ impl AppCore {
             day_pass_scan_open: None,
             day_pass_sack_probed: false,
             timed_commands: Vec::new(),
+            item_mover: crate::core::item_mover::ItemMover::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
             pending_map_views: Vec::new(),

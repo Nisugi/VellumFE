@@ -1849,6 +1849,67 @@ impl AppCore {
     ///   .spellwatch add 606          one spell
     ///   .spellwatch add [101,103]    several
     ///   .spellwatch add all          everything currently active
+    /// `.drag` - verified item moves (extended feed's `_drag` verb, each
+    /// confirmed against `<left>/<right>` hand events within 8s).
+    fn handle_drag(&mut self, parts: &[&str]) {
+        const USAGE: &str = "Usage: .drag <exist> left|right|drop|wear|feet - or - \
+                             .drag <exist> in|on|behind|underneath <dest-exist>";
+        use crate::core::item_mover::MoveKind;
+        let (Some(item), Some(what)) = (parts.get(1), parts.get(2)) else {
+            self.add_system_message(USAGE);
+            return;
+        };
+        let item = item.trim_start_matches('#').to_string();
+        let kind = match what.to_ascii_lowercase().as_str() {
+            "left" => MoveKind::ToLeftHand,
+            "right" => MoveKind::ToRightHand,
+            "drop" => MoveKind::Drop,
+            "wear" => MoveKind::Wear,
+            "feet" => MoveKind::PlaceFeet,
+            rel @ ("in" | "on" | "behind" | "underneath") => {
+                let Some(dest) = parts.get(3) else {
+                    self.add_system_message(USAGE);
+                    return;
+                };
+                let dest = dest.trim_start_matches('#').to_string();
+                // Lockers and similar are addressed by their in_selector
+                // noun phrase, when the managed snapshot knows one.
+                let selector = self
+                    .game_state
+                    .managed_inventory
+                    .as_ref()
+                    .and_then(|s| s.items.iter().find(|i| i.id == dest))
+                    .and_then(|i| i.in_selector.clone());
+                MoveKind::PutIn {
+                    dest,
+                    relation: rel.to_string(),
+                    selector,
+                }
+            }
+            _ => {
+                self.add_system_message(USAGE);
+                return;
+            }
+        };
+        let hands = crate::core::item_mover::HandsView {
+            left: self
+                .game_state
+                .objects
+                .hand(crate::core::game_objects::Hand::Left)
+                .map(|i| i.id.clone()),
+            right: self
+                .game_state
+                .objects
+                .hand(crate::core::game_objects::Hand::Right)
+                .map(|i| i.id.clone()),
+        };
+        let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        match self.item_mover.start(&item, kind, &hands, now_ms) {
+            Ok(()) => {}
+            Err(reason) => self.add_system_message(&format!("[drag] refused: {reason}")),
+        }
+    }
+
     ///   .spellwatch rem 606 | [..] | all
     ///   .spellwatch (or list)        show the list and what's missing
     fn handle_spellwatch(&mut self, parts: &[&str]) {
@@ -2344,6 +2405,12 @@ impl AppCore {
             }
             "spellwatch" => {
                 self.handle_spellwatch(&parts);
+            }
+            "drag" => {
+                // Verified item moves over the extended feed's _drag verb:
+                //   .drag <exist> left|right|drop|wear|feet
+                //   .drag <exist> in|on|behind|underneath <dest-exist>
+                self.handle_drag(&parts);
             }
             "invsync" => {
                 // Refresh the extended feed's structured inventory snapshot

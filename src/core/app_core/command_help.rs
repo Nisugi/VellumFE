@@ -172,6 +172,13 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                   ".spellwatch add all snapshots everything currently active."]
             ),
             entry!(
+                &["drag"],
+                "<exist> left|right|drop|wear|feet | in|on|behind|underneath <dest>",
+                "Verified item move (extended feed _drag verb)",
+                &["Each move is confirmed against hand updates within 8s, never by prose.",
+                  "Requires direct mode (WRAYTH banner)."]
+            ),
+            entry!(
                 &["invsync"],
                 "",
                 "Refresh the structured inventory snapshot (extended feed)",
