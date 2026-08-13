@@ -177,6 +177,46 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                   ".spellwatch add all snapshots everything currently active."]
             ),
             entry!(
+                &["emptyhands", "eh"],
+                "",
+                "Stow both hands (Lich empty_hands cascade), remembered for .fillhands",
+                &["Worn gear wears, tattoos/bandoliers rub, weapons follow ready/stow rules",
+                  "then weaponsack/lootsack/any container. Each stow confirmed by hand state."]
+            ),
+            entry!(
+                &["fillhands", "fh"],
+                "",
+                "Retrieve exactly what .emptyhands stowed, in reverse order"
+            ),
+            entry!(
+                &["viewitem", "inspect"],
+                "<exist-id>",
+                "Item detail over the extended feed (look/inspect/analyze/read)",
+                &["Shows on the Containers window's Item tab and routes to the 'inspect'",
+                  "stream (subscribe a text window to log it). Needs the extended feed."]
+            ),
+            entry!(
+                &["find"],
+                "<name fragment>",
+                "Find items in the .invsync snapshot and show where they live",
+                &["Searches names and long descriptions; each match prints its container",
+                  "path with closed containers flagged. Run .invsync first."]
+            ),
+            entry!(
+                &["drag"],
+                "<exist> left|right|drop|wear|feet | in|on|behind|underneath <dest>",
+                "Verified item move (extended feed _drag verb)",
+                &["Each move is confirmed against hand updates within 8s, never by prose.",
+                  "Needs the extended feed: the WRAYTH banner, sent in direct mode or by Lich."]
+            ),
+            entry!(
+                &["invsync"],
+                "",
+                "Refresh the structured inventory snapshot (extended feed)",
+                &["Sends _inventory manager and follows continuation cursors until the",
+                  "snapshot is complete. Needs the extended feed: the WRAYTH banner, sent in direct mode or by Lich."]
+            ),
+            entry!(
                 &["addwindow"],
                 "",
                 "Open widget type picker",

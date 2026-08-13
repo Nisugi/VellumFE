@@ -1221,6 +1221,7 @@ impl AppCore {
                 countdown_id: name.to_string(),
                 color: None,
                 show_when_zero: false,
+                count_past_zero: false,
             }),
             WidgetType::Map => WindowContent::Map(crate::data::MapData::default()),
             WidgetType::Compass => WindowContent::Compass(CompassData {
@@ -1281,6 +1282,7 @@ impl AppCore {
             WidgetType::Targets => WindowContent::Targets,
             WidgetType::Players => WindowContent::Players,
             WidgetType::MissingSpells => WindowContent::MissingSpells,
+            WidgetType::Containers => WindowContent::Containers,
             WidgetType::MultiAccount => WindowContent::MultiAccount,
             WidgetType::Items => WindowContent::Items,
             WidgetType::Container => WindowContent::Container {

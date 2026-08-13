@@ -27,6 +27,7 @@ pub struct Countdown {
     transparent_background: bool,
     icon: char,          // Character to use for countdown blocks
     show_when_zero: bool, // Keep "label 0" visible at rest instead of hiding
+    count_past_zero: bool, // Run negative after expiry (window timers like pulse)
 }
 
 impl Countdown {
@@ -44,6 +45,7 @@ impl Countdown {
             transparent_background: false,
             icon: '█', // Default to filled block
             show_when_zero: false,
+            count_past_zero: false,
         }
     }
 
@@ -55,6 +57,14 @@ impl Countdown {
     /// blocks) instead of hiding when it reaches zero.
     pub fn set_show_when_zero(&mut self, show: bool) {
         self.show_when_zero = show;
+    }
+
+    /// When true, an expired timer keeps counting (-1, -2, ...) instead of
+    /// clamping at 0 - for timers whose expiry is a window, not a moment
+    /// (the pulse clock reads 0 at the earliest arrival and runs negative
+    /// through the min..max window).
+    pub fn set_count_past_zero(&mut self, count: bool) {
+        self.count_past_zero = count;
     }
 
     pub fn set_border_config(
@@ -124,6 +134,19 @@ impl Countdown {
             0
         } else {
             (remaining_ms + 999) / 1000 // integer ceiling
+        }
+    }
+
+    /// Signed variant for count-past-zero timers: positive future values
+    /// ceiling like [`Self::remaining_seconds_from`]; overdue values floor
+    /// (0 for the first second past expiry, then -1, -2, ...).
+    fn remaining_seconds_signed_from(end_time: i64, server_time_offset: i64, now_ms: i64) -> i64 {
+        let remaining_ms = end_time * 1000 - (now_ms + server_time_offset * 1000);
+        if remaining_ms >= 0 {
+            (remaining_ms + 999) / 1000
+        } else {
+            // Whole seconds overdue: 1..999ms -> 0, 1000..1999ms -> -1, ...
+            -((-remaining_ms) / 1000)
         }
     }
 
@@ -207,7 +230,16 @@ impl Countdown {
             return;
         }
 
-        let remaining = self.remaining_seconds(server_time_offset).max(0) as u32;
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let signed = if self.count_past_zero && self.end_time > 0 {
+            Self::remaining_seconds_signed_from(self.end_time, server_time_offset, now_ms)
+        } else {
+            self.remaining_seconds(server_time_offset).max(0)
+        };
+        let remaining = signed.max(0) as u32;
 
         let text_color = self
             .text_color
@@ -232,14 +264,20 @@ impl Countdown {
         // If countdown is 0, leave it blank (invisible) unless configured to
         // stay visible — then fall through to render " 0" with no blocks
         // (blocks_to_show computes to 0 for remaining == 0).
-        if remaining == 0 && !self.show_when_zero {
+        // Count-past-zero timers with a real end time never blank: the
+        // negative depth IS the information.
+        if remaining == 0 && !self.show_when_zero && !(self.count_past_zero && signed < 0) {
             return;
         }
 
         // Right-align the number so it doesn't shift when going from 10->9
         // Reserve 2 chars for the number + 1 for space = 3 total
-        // Format: " 9 ████████" or "10 ████████"
-        let remaining_text = format!("{:>2} ", remaining);
+        // Format: " 9 ████████" or "10 ████████" (or "-4 " when overdue)
+        let remaining_text = if signed < 0 {
+            format!("{:>2} ", signed.max(-99))
+        } else {
+            format!("{:>2} ", remaining)
+        };
         let text_width = remaining_text.len() as u16; // Always 3 chars
 
         // Dynamic block-based countdown - adapts to widget width
@@ -387,6 +425,37 @@ mod tests {
         countdown.render(area, &mut buf, 0, &theme);
 
         assert!(buffer_line(&buf, 0, area.width).trim().is_empty());
+    }
+
+    #[test]
+    fn test_signed_math_counts_whole_seconds_overdue() {
+        // end = 100s. 999ms overdue -> 0; 1000ms -> -1; 29s -> -29.
+        assert_eq!(Countdown::remaining_seconds_signed_from(100, 0, 100_999), 0);
+        assert_eq!(Countdown::remaining_seconds_signed_from(100, 0, 101_000), -1);
+        assert_eq!(Countdown::remaining_seconds_signed_from(100, 0, 129_000), -29);
+        // Future values still ceiling like the clamped helper.
+        assert_eq!(Countdown::remaining_seconds_signed_from(100, 0, 98_999), 2);
+    }
+
+    #[test]
+    fn test_render_negative_when_count_past_zero() {
+        let mut countdown = Countdown::new("Pulse");
+        countdown.set_border_config(false, None, None);
+        countdown.set_count_past_zero(true);
+        countdown.set_end_time(now_seconds() - 4); // ~4s overdue
+
+        let area = Rect::new(0, 0, 8, 1);
+        let mut buf = Buffer::empty(area);
+        let theme = crate::theme::AppTheme::default();
+        countdown.render(area, &mut buf, 0, &theme);
+
+        let line = buffer_line(&buf, 0, area.width);
+        let shown = line.trim();
+        assert!(
+            shown == "-4" || shown == "-3" || shown == "-5",
+            "negative overdue rendered, got {:?}",
+            line
+        );
     }
 
     #[test]

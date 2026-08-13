@@ -106,6 +106,7 @@ entity_custom
 roundtime
 casttime
 stuntime
+pulse
 countdown_custom
 left
 right
@@ -242,6 +243,7 @@ entity_custom = None
 roundtime = None
 casttime = None
 stuntime = None
+pulse = Some(GS4)
 countdown_custom = None
 left = None
 right = None
@@ -313,7 +315,7 @@ multiaccount = None
 [templates_by_category]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
 Character: inventory, reserve, spells, missingspells, injuries, perception, experience, gs4_experience, encum, multiaccount
-Countdown: roundtime, casttime, stuntime, countdown_custom
+Countdown: roundtime, casttime, stuntime, pulse, countdown_custom
 Dialog: betrayer
 Entity: targets, players, items, entity_custom
 Hand: left, right, spell
@@ -340,7 +342,7 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
 [addable_on_empty_layout.gs4]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
 Character: inventory, reserve, spells, missingspells, injuries, gs4_experience, encum, multiaccount
-Countdown: roundtime, casttime, stuntime, countdown_custom
+Countdown: roundtime, casttime, stuntime, pulse, countdown_custom
 Dialog: betrayer
 Entity: targets, players, items, entity_custom
 Hand: left, right, spell
@@ -1392,6 +1394,28 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
   tts_speak = false
   id = "stuntime"
   icon = ""
+
+[template.pulse]
+  widget_type = "countdown"
+  name = "pulse"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Pulse"
+  title_position = "top-left"
+  text_color = "#9370DB"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  id = "pulse"
+  icon = ""
+  show_when_zero = true
 
 [template.countdown_custom]
   widget_type = "countdown"

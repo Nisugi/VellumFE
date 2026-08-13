@@ -2270,16 +2270,31 @@ fn test_extract_all_attributes_mixed_quotes() {
 #[test]
 fn test_pulse_tag() {
     let mut parser = XmlParser::new();
+    // Bare mana flag: min/max fall back to Saga's 46/75 defaults.
     let elements = parser.parse_line(r#"<pulse mana="1"/>"#);
     assert!(matches!(
         elements.as_slice(),
-        [ParsedElement::Pulse { mana: true }]
+        [ParsedElement::Pulse { mana: true, min: 46, max: 75 }]
     ));
 
     let elements = parser.parse_line(r#"<pulse mana="0"/>"#);
     assert!(matches!(
         elements.as_slice(),
-        [ParsedElement::Pulse { mana: false }]
+        [ParsedElement::Pulse { mana: false, min: 46, max: 75 }]
+    ));
+
+    // Full wire form: explicit next-pulse window.
+    let elements = parser.parse_line(r#"<pulse min="46" max="75" mana="1"/>"#);
+    assert!(matches!(
+        elements.as_slice(),
+        [ParsedElement::Pulse { mana: true, min: 46, max: 75 }]
+    ));
+
+    // Unparseable bounds degrade to the defaults, never drop the pulse.
+    let elements = parser.parse_line(r#"<pulse min="soon" max="" mana="0"/>"#);
+    assert!(matches!(
+        elements.as_slice(),
+        [ParsedElement::Pulse { mana: false, min: 46, max: 75 }]
     ));
 }
 
@@ -2300,6 +2315,9 @@ fn test_inventory_manager_block() {
     let ParsedElement::InventoryManager {
         token,
         room,
+        root,
+        after,
+        state,
         items,
         continuations,
     } = managers[0]
@@ -2308,6 +2326,9 @@ fn test_inventory_manager_block() {
     };
     assert_eq!(token, "imtest1");
     assert_eq!(room, "2005");
+    assert_eq!(root, &None, "initial response carries no envelope echo");
+    assert_eq!(after, &None);
+    assert_eq!(state, &None);
     assert_eq!(items.len(), 3);
     assert!(continuations.is_empty());
     let attr = |i: usize, k: &str| {
@@ -2354,6 +2375,39 @@ fn test_inventory_manager_continuation() {
             ("last".to_string(), "148848460".to_string()),
         ]
     );
+}
+
+#[test]
+fn test_inventory_manager_continuation_envelope_and_stale() {
+    let mut parser = XmlParser::new();
+    // Continuation response: envelope echoes the requested cursor.
+    let elements = parser.parse_line(
+        r#"<inventoryManager id='im3' room='2005' root='148848453' after='148848460'><i id='9' loc='in,148848453' name="a,silk,pouch" weight='1'/></inventoryManager>"#,
+    );
+    let ParsedElement::InventoryManager { root, after, state, .. } = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::InventoryManager { .. }))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(root.as_deref(), Some("148848453"));
+    assert_eq!(after.as_deref(), Some("148848460"));
+    assert_eq!(state, &None);
+
+    // Stale marker: dead cursor, empty self-closing response.
+    let elements =
+        parser.parse_line(r#"<inventoryManager id='im4' room='2005' state='stale'/>"#);
+    let ParsedElement::InventoryManager { state, items, continuations, .. } = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::InventoryManager { .. }))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(state.as_deref(), Some("stale"));
+    assert!(items.is_empty());
+    assert!(continuations.is_empty());
 }
 
 #[test]
@@ -2415,6 +2469,292 @@ fn test_managed_inventory_item_from_attrs() {
 
     // Missing loc = unanchorable = dropped
     assert!(ManagedInventoryItem::from_attrs(&to_attrs(&[("id", "1"), ("name", "a,b,c")])).is_none());
+
+    // Capacity decode + locker metadata: packed v/10 pounds, v%10 count.
+    let item = ManagedInventoryItem::from_attrs(&to_attrs(&[
+        ("id", "9001"),
+        ("loc", "room"),
+        ("name", ",storage,locker"),
+        ("weight", "-1"),
+        ("in_max", "1005"),
+        ("in_encum", "37"),
+        ("in_selector", "locker"),
+        ("locker", "1"),
+        ("flags", "closed,locked"),
+    ]))
+    .unwrap();
+    let cap = item.in_capacity().expect("container");
+    assert_eq!(cap.pounds, 100);
+    assert_eq!(cap.max_items, Some(5));
+    assert_eq!(item.in_encum, Some(37));
+    assert_eq!(item.in_selector.as_deref(), Some("locker"));
+    assert!(item.locker && !item.familyvault);
+    assert!(item.is_closed() && item.is_locked());
+    assert!(!item.can_pick_up(), "weight -1, no encum override = fixed");
+
+    // Unlimited count (v % 10 == 0); encum -1 = cannot pick up even with
+    // real weight; encum 0 overrides a -1 weight to portable.
+    let item = ManagedInventoryItem::from_attrs(&to_attrs(&[
+        ("id", "9002"),
+        ("loc", "worn,player"),
+        ("name", "a,canvas,sack"),
+        ("weight", "4"),
+        ("encum", "-1"),
+        ("in_max", "200"),
+    ]))
+    .unwrap();
+    let cap = item.in_capacity().unwrap();
+    assert_eq!(cap.pounds, 20);
+    assert_eq!(cap.max_items, None, "0 = unlimited count");
+    assert!(!item.can_pick_up(), "encum -1 wins over real weight");
+    assert!(item.is_container());
+}
+
+#[test]
+fn test_inventory_view_item_block() {
+    let mut parser = XmlParser::new();
+    let elements = parser.parse_line(
+        r#"<inventoryViewItem id='im5' exist='148848453' closed><result command="look">You see a <a exist="148848453" noun="backpack">patchwork backpack</a>.<br/>It is fairly full.</result><result command="read"/></inventoryViewItem>"#,
+    );
+    let ParsedElement::InventoryViewItem(resp) = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::InventoryViewItem(_)))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(resp.token, "im5");
+    assert_eq!(resp.exist, "148848453");
+    assert!(resp.closed_attr, "bare closed attribute detected");
+    assert_eq!(resp.state, None);
+    assert_eq!(resp.results.len(), 2);
+    assert_eq!(resp.results[0].0, "look");
+    assert_eq!(
+        resp.results[0].1,
+        "You see a patchwork backpack.\nIt is fairly full.",
+        "inline markup flattened, br = newline"
+    );
+    assert_eq!(resp.results[1], ("read".to_string(), String::new()));
+
+    // Nothing from the block leaks into the text stream.
+    assert!(!elements
+        .iter()
+        .any(|e| matches!(e, ParsedElement::Text { content, .. } if !content.trim().is_empty())));
+}
+
+#[test]
+fn test_inventory_view_item_open_container_and_prompt_tear() {
+    let mut parser = XmlParser::new();
+    // No closed attribute = open container.
+    let elements = parser
+        .parse_line(r#"<inventoryViewItem id='im6' exist='42'><result command="look">Open.</result></inventoryViewItem>"#);
+    let ParsedElement::InventoryViewItem(resp) = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::InventoryViewItem(_)))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert!(!resp.closed_attr);
+
+    // A prompt tearing the capture synthesizes state="malformed" and the
+    // prompt still parses.
+    let elements = parser.parse_line(
+        r#"<inventoryViewItem id='im7' exist='43'><result command="look">Half a<prompt time="1755000000">&gt;</prompt>"#,
+    );
+    let ParsedElement::InventoryViewItem(resp) = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::InventoryViewItem(_)))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(resp.state.as_deref(), Some("malformed"));
+    assert!(
+        elements.iter().any(|e| matches!(e, ParsedElement::Prompt { .. })),
+        "prompt parsed normally after the tear"
+    );
+
+    // Trailing content after the close re-enters the normal parser.
+    let elements = parser.parse_line(
+        r#"<inventoryViewItem id='im8' exist='44'/><pulse mana="1"/>"#,
+    );
+    assert!(elements.iter().any(|e| matches!(e, ParsedElement::InventoryViewItem(_))));
+    assert!(elements.iter().any(|e| matches!(e, ParsedElement::Pulse { .. })));
+}
+
+#[test]
+fn test_managed_inventory_location_of() {
+    use crate::core::state::{ManagedInventoryItem, ManagedInventoryState};
+    let item = |id: &str, relation: &str, parent: &str, name: &str, closed: bool| {
+        // name = "article,adjective,noun" like the wire
+        let mut parts = name.splitn(3, ',');
+        let (article, adjective, noun) = (
+            parts.next().unwrap_or("").to_string(),
+            parts.next().unwrap_or("").to_string(),
+            parts.next().unwrap_or("").to_string(),
+        );
+        let display = [article.as_str(), adjective.as_str(), noun.as_str()]
+            .iter()
+            .filter(|s| !s.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" ");
+        ManagedInventoryItem {
+            id: id.to_string(),
+            relation: relation.to_string(),
+            parent: parent.to_string(),
+            name: display,
+            article,
+            adjective,
+            noun,
+            flags: if closed {
+                vec!["closed".to_string()]
+            } else {
+                vec![]
+            },
+            ..Default::default()
+        }
+    };
+    let snap = ManagedInventoryState {
+        items: vec![
+            item("1", "worn", "player", "a,leather,bandolier", false),
+            item("2", "in", "1", "a,coal black,purse", true),
+            item("3", "in", "2", "a,silver,coin", false),
+            item("4", "righthand", "player", "a,short,sword", false),
+            item("5", "room", "room", "a,wooden,table", false),
+            item("6", "on", "5", "a,dusty,tome", false),
+        ],
+        complete: true,
+        ..Default::default()
+    };
+    let by_id = |id: &str| snap.items.iter().find(|i| i.id == id).unwrap();
+    assert_eq!(snap.location_of(by_id("1")), "worn");
+    assert_eq!(
+        snap.location_of(by_id("3")),
+        "in your leather bandolier > coal black purse (closed)"
+    );
+    assert_eq!(snap.location_of(by_id("4")), "in your right hand");
+    assert_eq!(snap.location_of(by_id("5")), "on the floor");
+    assert_eq!(snap.location_of(by_id("6")), "in the floor's wooden table");
+}
+
+#[test]
+fn test_weight_breakdowns_and_descendant_counts() {
+    use crate::core::state::{ManagedInventoryItem, ManagedInventoryState};
+    let item = |id: &str, parent: &str, relation: &str, weight: i32| ManagedInventoryItem {
+        id: id.to_string(),
+        parent: parent.to_string(),
+        relation: relation.to_string(),
+        noun: format!("thing{id}"),
+        name: format!("thing{id}"),
+        weight,
+        ..Default::default()
+    };
+    let mut deep = item("deep", "player", "worn", 4);
+    deep.in_max = Some(1000);
+    deep.in_encum = Some(0); // weightless container: contents don't count
+    let mut sack = item("sack", "player", "worn", 2);
+    sack.in_max = Some(500);
+    sack.in_encum = Some(7);
+    let snap = ManagedInventoryState {
+        items: vec![
+            sack,
+            item("gem", "sack", "in", 0),   // 0 lb -> counts as 0.1
+            item("rock", "sack", "in", 5),
+            item("box", "sack", "in", 1),
+            item("coin", "box", "in", 0),   // nested: box total = 1.1
+            deep,
+            item("anvil", "deep", "in", 50), // skipped: in_encum == 0
+            item("fixture", "room", "room", -1), // unknown own weight
+        ],
+        complete: true,
+        ..Default::default()
+    };
+    let w = snap.weight_breakdowns();
+    // sack: own 2 + gem 0.1 + rock 5 + box (1 + 0.1) = 8.2
+    let sack = w.get("sack").unwrap();
+    assert_eq!(sack.own, Some(2.0));
+    assert_eq!(sack.contents, Some(6.2));
+    assert_eq!(sack.total, Some(8.2));
+    // deep container: anvil skipped, total = own only
+    assert_eq!(w.get("deep").unwrap().total, Some(4.0));
+    // Unknown own weight contributes 0 to the total (Saga: `o ?? 0`);
+    // the hover breakdown still shows "unknown" for the container itself.
+    let fixture = w.get("fixture").unwrap();
+    assert_eq!(fixture.own, None);
+    assert_eq!(fixture.total, Some(0.0));
+
+    let counts = snap.descendant_counts();
+    assert_eq!(counts.get("sack"), Some(&4), "nested coin counts too");
+    assert_eq!(counts.get("box"), Some(&1));
+    assert_eq!(counts.get("deep"), Some(&1), "count includes skipped-weight items");
+    assert_eq!(counts.get("gem"), None, "non-containers absent");
+}
+
+#[test]
+fn test_world_event_tag() {
+    let mut parser = XmlParser::new();
+    let elements = parser.parse_line(
+        r#"<worldEvent realm="Elanthia" expires="90" time="1755000000">A <b>storm of wild magic</b> sweeps the land!</worldEvent>"#,
+    );
+    let ParsedElement::WorldEvent { realm, expires_min, text } = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::WorldEvent { .. }))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(realm.as_deref(), Some("Elanthia"));
+    assert_eq!(*expires_min, Some(90), "expires is MINUTES");
+    assert_eq!(text, "A storm of wild magic sweeps the land!");
+    // A labeled display line reaches the stream (the raw body must not).
+    assert!(elements.iter().any(|e| matches!(
+        e,
+        ParsedElement::Text { content, .. }
+            if content.contains("[World Event - Elanthia, 90m]")
+    )));
+}
+
+#[test]
+fn test_pantheon_status_tag() {
+    let mut parser = XmlParser::new();
+    let elements = parser.parse_line(r#"<PantheonStatus value="37"/>"#);
+    assert!(elements
+        .iter()
+        .any(|e| matches!(e, ParsedElement::PantheonStatus { value: 37 })));
+}
+
+#[test]
+fn test_crtr_status_health_condition_and_open_vocab() {
+    use crate::core::state::CreatureFlags;
+    let flags = CreatureFlags::from_xml_attrs([
+        ("hostile", "1"),
+        ("stunned", "1"),
+        ("health", "450"),
+        ("maxhealth", "500"),
+        ("condition", "bleeding heavily"),
+        // Unknown effect name with value 1 = open vocabulary.
+        ("frozen", "1"),
+        // Unknown attr with a non-1 value stays ignored.
+        ("mystery", "banana"),
+    ]);
+    assert!(flags.hostile);
+    assert_eq!(flags.health, Some(450));
+    assert_eq!(flags.max_health, Some(500));
+    assert_eq!(flags.health_percent(), Some(90));
+    assert_eq!(flags.condition.as_deref(), Some("bleeding heavily"));
+    assert_eq!(flags.statuses, vec!["stunned".to_string(), "frozen".to_string()]);
+
+    // maxhealth 0 or missing pieces yield no percentage.
+    assert_eq!(
+        CreatureFlags::from_xml_attrs([("health", "10"), ("maxhealth", "0")]).health_percent(),
+        None
+    );
+    assert_eq!(
+        CreatureFlags::from_xml_attrs([("health", "10")]).health_percent(),
+        None
+    );
 }
 
 // ==================== roommeta / mindState exp Parsing ====================

@@ -366,14 +366,19 @@ pub enum ParsedElement {
         container_id: String,
         content: String, // Full line with links preserved
     },
-    /// `<pulse mana="0|1"/>` — the game's pulse announcement (extended feed,
-    /// served to clients identifying as WRAYTH 1.0.1.28+). A pulse fires
-    /// every minute ±15s; every pulse absorbs field experience (when any is
-    /// pooled), and every OTHER pulse is also a mana pulse — `mana` says
-    /// which kind this one was. Replaces the old trick of inferring pulses
-    /// from observed mana gain or exp absorption.
+    /// `<pulse min="46" max="75" mana="0|1"/>` — the game's pulse
+    /// announcement (extended feed, served to clients identifying as
+    /// WRAYTH 1.0.1.28+). Every pulse absorbs field experience (when any is
+    /// pooled), and every OTHER pulse is also a mana pulse. `min`/`max`
+    /// bound the seconds until the NEXT pulse (missing/invalid values fall
+    /// back to the 46/75 defaults Saga uses), and `mana` announces whether
+    /// that next pulse restores mana — the server declares the alternation,
+    /// nothing is inferred. Replaces the old trick of inferring pulses from
+    /// observed mana gain or exp absorption.
     Pulse {
         mana: bool,
+        min: u32,
+        max: u32,
     },
     /// `<inventoryManager id='<token>' room='...'>` ... `</inventoryManager>`
     /// — structured inventory snapshot (extended feed), sent only in response
@@ -385,9 +390,66 @@ pub enum ParsedElement {
     InventoryManager {
         token: String,
         room: String,
+        /// Continuation-envelope echo: the requested subtree root exist id.
+        /// Present only on responses to a `... continue ...` request.
+        root: Option<String>,
+        /// Continuation-envelope echo: the last item already delivered.
+        after: Option<String>,
+        /// Error/status marker. `"stale"` = the continuation cursor is no
+        /// longer valid (response must be empty; reload from scratch). Any
+        /// other non-empty value is a failure.
+        state: Option<String>,
         items: Vec<Vec<(String, String)>>,
         continuations: Vec<Vec<(String, String)>>,
     },
+    /// `<inventoryViewItem>` response (extended feed); see
+    /// [`InventoryViewItemResponse`].
+    InventoryViewItem(InventoryViewItemResponse),
+    /// `<worldEvent realm="..." expires="MIN" time="...">text</worldEvent>`
+    /// (extended feed) — a realm-wide event announcement. `expires` is in
+    /// MINUTES (Saga computes expiresAt = now + 60000 * expires).
+    WorldEvent {
+        realm: Option<String>,
+        expires_min: Option<u32>,
+        text: String,
+    },
+    /// `<PantheonStatus value="N"/>` (extended feed) — pantheon meter.
+    PantheonStatus {
+        value: u32,
+    },
+}
+
+/// `<inventoryViewItem id exist [state]>` ... `</inventoryViewItem>` —
+/// per-item detail response to `_inventory viewitem <token> <exist>`
+/// (extended feed). Each `<result command="look|read|...">` section's text
+/// is captured with inline markup flattened (`<br/>` = newline); the body
+/// never reaches the text stream. The envelope's bare `closed` attribute
+/// (when the item is a container) is the authoritative open/closed signal —
+/// Saga probes containers with viewitem precisely to read it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InventoryViewItemResponse {
+    pub token: String,
+    pub exist: String,
+    /// Non-empty = failure ("malformed" is synthesized for prompt-torn
+    /// captures, mirroring Saga)
+    pub state: Option<String>,
+    /// The envelope carried a `closed` attribute (container closed);
+    /// absence on a container response means open.
+    pub closed_attr: bool,
+    /// (command, flattened text) per `<result>` section, in feed order
+    pub results: Vec<(String, String)>,
+}
+
+/// In-flight `<inventoryViewItem>` capture.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct InvViewItemBuilder {
+    pub(crate) token: String,
+    pub(crate) exist: String,
+    pub(crate) state: Option<String>,
+    pub(crate) closed_attr: bool,
+    pub(crate) results: Vec<(String, String)>,
+    /// Some while inside a `<result>` section: (command, text so far)
+    pub(crate) current: Option<(String, String)>,
 }
 
 /// In-flight `<inventoryManager>` block: children accumulate here between
@@ -397,6 +459,9 @@ pub enum ParsedElement {
 pub(crate) struct InvManagerBuilder {
     pub(crate) token: String,
     pub(crate) room: String,
+    pub(crate) root: Option<String>,
+    pub(crate) after: Option<String>,
+    pub(crate) state: Option<String>,
     pub(crate) items: Vec<Vec<(String, String)>>,
     pub(crate) continuations: Vec<Vec<(String, String)>>,
 }
@@ -478,6 +543,7 @@ pub struct XmlParser {
     current_menu_coords: Vec<(String, Option<String>)>, // (coord, optional noun) pairs for current menu
     /// In-flight `<inventoryManager>` block (None outside one)
     pub(crate) inv_manager: Option<InvManagerBuilder>,
+    pub(crate) inv_viewitem: Option<InvViewItemBuilder>,
 
     // Event pattern matching
     event_matchers: Vec<(Regex, crate::config::EventPattern)>, // Compiled regexes + patterns
@@ -542,6 +608,7 @@ impl XmlParser {
             current_menu_id: None,
             current_menu_coords: Vec::new(),
             inv_manager: None,
+            inv_viewitem: None,
             event_matchers,
         }
     }
@@ -577,6 +644,16 @@ impl XmlParser {
 
         let line = Self::strip_gsl_tags(line);
 
+        // An inventoryViewItem capture (active or opening on this line) owns
+        // the whole line: its styled body must never leak into the text
+        // stream. Checked BEFORE the blank-line early-return so blank lines
+        // inside a capture become newlines in the section, not stream text.
+        // The dedicated walker hands back any post-close remainder (e.g. a
+        // trailing prompt) for normal parsing.
+        if self.inv_viewitem.is_some() || line.contains("<inventoryViewItem") {
+            return self.parse_viewitem_line(&line);
+        }
+
         // Preserve intentional blank lines from the server output.
         // Without this, empty lines would be dropped and formatting that relies on vertical spacing
         // would collapse.
@@ -594,8 +671,9 @@ impl XmlParser {
 
             // Static start/end patterns - building these with format! allocated
             // 2 Strings x 10 tags per loop iteration in the hottest parse loop
-            const PAIRED_TAGS: [(&str, &str); 10] = [
+            const PAIRED_TAGS: [(&str, &str); 11] = [
                 ("<prompt", "</prompt>"),
+                ("<worldEvent", "</worldEvent>"),
                 ("<spell", "</spell>"),
                 ("<left", "</left>"),
                 ("<right", "</right>"),
@@ -934,6 +1012,14 @@ impl XmlParser {
         // structured inventory response to `_inventory manager <token>`
         else if tag.starts_with("<pulse") {
             self.handle_pulse(tag, elements);
+        } else if tag.starts_with("<worldEvent") {
+            self.handle_world_event(tag, elements);
+        } else if tag.starts_with("<PantheonStatus") {
+            if let Some(value) = Self::extract_attribute(tag, "value")
+                .and_then(|v| v.trim().parse().ok())
+            {
+                elements.push(ParsedElement::PantheonStatus { value });
+            }
         } else if tag.starts_with("<inventoryManager") {
             self.handle_inventory_manager_open(tag, elements);
         } else if Self::is_close_tag(tag, "inventoryManager") {

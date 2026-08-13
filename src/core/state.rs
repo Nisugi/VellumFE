@@ -171,8 +171,27 @@ pub struct GameState {
     /// is pooled), and every other pulse is also a mana pulse. Serves as
     /// the pulse clock's generation counter.
     pub pulse_count: u64,
-    /// Whether the most recent pulse was a mana pulse (alternates)
-    pub last_pulse_mana: bool,
+    /// Whether the NEXT pulse restores mana — the wire's `mana` attribute
+    /// declares the alternation up front (Saga semantics), nothing inferred.
+    pub next_pulse_mana: bool,
+    /// Last user-requested item detail (`.viewitem` / inspector click):
+    /// the parsed `<inventoryViewItem>` result sections. Generation bumps
+    /// on every answer for display change detection.
+    pub viewed_item: Option<ViewedItem>,
+
+    /// Active world events (`<worldEvent>`, extended feed), pruned of
+    /// expired entries whenever a new one arrives.
+    pub world_events: Vec<WorldEventState>,
+    /// Pantheon meter (`<PantheonStatus value>`, extended feed)
+    pub pantheon_value: Option<u32>,
+
+    /// Earliest arrival of the next pulse (server-clock epoch seconds,
+    /// `now + min` from the last `<pulse>`); None before the first pulse.
+    /// Drives the "pulse" countdown.
+    pub pulse_next_earliest: Option<i64>,
+    /// Latest arrival of the next pulse (server-clock epoch seconds,
+    /// `now + max` from the last `<pulse>`).
+    pub pulse_next_latest: Option<i64>,
 
     /// Unified game-object registry: items (containers/worn/hands/at-feet/
     /// ground), creatures, players. The single source for game objects;
@@ -528,6 +547,14 @@ impl Creature {
             if flags.dead {
                 out.push("dead".to_string());
             }
+            // Extended feed extras lead: per-creature health percentage,
+            // then the condition string, then the status flags.
+            if let Some(pct) = flags.health_percent() {
+                out.push(format!("{pct}%"));
+            }
+            if let Some(cond) = &flags.condition {
+                out.push(cond.clone());
+            }
             out.extend(flags.statuses.iter().cloned());
             out
         } else {
@@ -625,7 +652,9 @@ impl Creature {
 /// text parse produces) and classification flags (dedicated bools).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CreatureFlags {
-    /// Active transient statuses in feed order ("stunned", "prone", ...)
+    /// Active transient statuses in feed order ("stunned", "prone", ...).
+    /// Open vocabulary: any unrecognized `="1"` attribute lands here too
+    /// (Saga's rule), so new server effects surface without a code change.
     pub statuses: Vec<String>,
     pub hostile: bool,
     pub disengaged: bool,
@@ -638,6 +667,12 @@ pub struct CreatureFlags {
     pub challenging: bool,
     pub rider: bool,
     pub mount: bool,
+    /// Current hit points, when the extended feed reports them
+    pub health: Option<u32>,
+    /// Maximum hit points
+    pub max_health: Option<u32>,
+    /// Free-text condition string, appended to the effect list by Saga
+    pub condition: Option<String>,
 }
 
 /// Maps `<crtrStatus>` transient-status attribute names to the canonical
@@ -665,6 +700,26 @@ impl CreatureFlags {
     pub fn from_xml_attrs<'a>(attrs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
         let mut flags = Self::default();
         for (name, value) in attrs {
+            // Numeric/text extras ride alongside the "1" flags (extended
+            // feed): per-creature hit points and a condition string.
+            match name {
+                "health" => {
+                    flags.health = value.trim().parse().ok();
+                    continue;
+                }
+                "maxhealth" => {
+                    flags.max_health = value.trim().parse().ok();
+                    continue;
+                }
+                "condition" => {
+                    let v = value.trim();
+                    if !v.is_empty() {
+                        flags.condition = Some(v.to_string());
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             let active = value == "1";
             if !active {
                 continue;
@@ -685,10 +740,22 @@ impl CreatureFlags {
                 "challenging" => flags.challenging = true,
                 "rider" => flags.rider = true,
                 "mount" => flags.mount = true,
-                _ => tracing::debug!("Unknown crtrStatus flag: {}", name),
+                // Open vocabulary (Saga's rule): any other ="1" attribute
+                // is an effect name - new server effects surface without a
+                // client release.
+                other => flags.statuses.push(other.to_string()),
             }
         }
         flags
+    }
+
+    /// Health percentage 0..=100 when both numbers are known and sane.
+    pub fn health_percent(&self) -> Option<u32> {
+        let (h, m) = (self.health?, self.max_health?);
+        if m == 0 {
+            return None;
+        }
+        Some(((h * 100) / m).min(100))
     }
 
     /// Boss-tier creature (AscensionBoss or MiniBoss).
@@ -870,12 +937,59 @@ pub struct ManagedInventoryItem {
     /// Item weight in pounds; -1 = unknown (the wire's sentinel, e.g. on
     /// room furniture)
     pub weight: i32,
-    /// Container capacity (contents), when the item is a container
+    /// Encumbrance override; -1 (or weight -1 when absent) = the item
+    /// cannot be picked up (fixed furniture, room fixtures).
+    pub encum: Option<i32>,
+    /// Packed container capacity (contents): `v/10` = weight capacity in
+    /// pounds, `v % 10` = max item count (0 = unlimited count). Nonzero =
+    /// the item is a container. Decode with [`Self::in_capacity`].
     pub in_max: Option<u32>,
-    /// Surface capacity (on top), when the item is a surface
+    /// Packed surface capacity (on top), same encoding as `in_max`.
     pub on_max: Option<u32>,
-    /// Raw flags from the comma-separated `flags` attribute (e.g. "closed")
+    /// Current contained encumbrance (pounds), when the server reports it
+    pub in_encum: Option<u32>,
+    /// Noun phrase to use in commands instead of `#id` paths (lockers and
+    /// similar containers the game addresses by selector)
+    pub in_selector: Option<String>,
+    /// `locker="1"`: this container is a locker
+    pub locker: bool,
+    /// `familyvault="1"`: this container is a family vault
+    pub familyvault: bool,
+    /// Raw flags from the comma-separated `flags` attribute (e.g. "closed",
+    /// "locked")
     pub flags: Vec<String>,
+}
+
+/// A user-requested item detail from `<inventoryViewItem>`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ViewedItem {
+    /// Exist id of the viewed item
+    pub exist: String,
+    /// Display name resolved from the managed snapshot at answer time
+    pub name: String,
+    /// (command, flattened text) sections in feed order ("look", "read", ...)
+    pub results: Vec<(String, String)>,
+    /// Bumps per answer, for display change detection
+    pub generation: u64,
+}
+
+/// One active `<worldEvent>` announcement.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorldEventState {
+    pub realm: Option<String>,
+    pub text: String,
+    /// Epoch seconds when the event lapses (wire `expires` is in minutes);
+    /// None = no stated expiry.
+    pub expires_at: Option<i64>,
+}
+
+/// Decoded packed capacity from `in_max`/`on_max`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContainerCapacity {
+    /// Weight capacity in pounds
+    pub pounds: u32,
+    /// Maximum item count; None = unlimited
+    pub max_items: Option<u32>,
 }
 
 impl ManagedInventoryItem {
@@ -923,8 +1037,15 @@ impl ManagedInventoryItem {
             noun,
             long,
             weight: get("weight").and_then(|w| w.trim().parse().ok()).unwrap_or(0),
+            encum: get("encum").and_then(|v| v.trim().parse().ok()),
             in_max: get("in_max").and_then(|v| v.trim().parse().ok()),
             on_max: get("on_max").and_then(|v| v.trim().parse().ok()),
+            in_encum: get("in_encum").and_then(|v| v.trim().parse().ok()),
+            in_selector: get("in_selector")
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            locker: get("locker") == Some("1"),
+            familyvault: get("familyvault") == Some("1"),
             flags: get("flags")
                 .map(|f| {
                     f.split(',')
@@ -935,11 +1056,58 @@ impl ManagedInventoryItem {
                 .unwrap_or_default(),
         })
     }
+
+    /// Decode a packed capacity value (`floor(v/10)` pounds, `v % 10` max
+    /// item count with 0 = unlimited).
+    fn decode_capacity(packed: u32) -> ContainerCapacity {
+        ContainerCapacity {
+            pounds: packed / 10,
+            max_items: match packed % 10 {
+                0 => None,
+                n => Some(n),
+            },
+        }
+    }
+
+    /// Contents capacity when the item is a container (nonzero `in_max`).
+    pub fn in_capacity(&self) -> Option<ContainerCapacity> {
+        self.in_max.filter(|v| *v > 0).map(Self::decode_capacity)
+    }
+
+    /// Surface capacity when things can rest on the item (nonzero `on_max`).
+    pub fn on_capacity(&self) -> Option<ContainerCapacity> {
+        self.on_max.filter(|v| *v > 0).map(Self::decode_capacity)
+    }
+
+    /// True when the item is a container in either orientation.
+    pub fn is_container(&self) -> bool {
+        self.in_capacity().is_some() || self.on_capacity().is_some()
+    }
+
+    /// False for fixed items: `encum == -1`, or `weight == -1` with no
+    /// encum override (Saga's Tc rule).
+    pub fn can_pick_up(&self) -> bool {
+        match self.encum {
+            Some(e) => e != -1,
+            None => self.weight != -1,
+        }
+    }
+
+    /// The wire flags the item as closed (containers only carry this when
+    /// the server knows).
+    pub fn is_closed(&self) -> bool {
+        self.flags.iter().any(|f| f == "closed")
+    }
+
+    /// The wire flags the item as locked.
+    pub fn is_locked(&self) -> bool {
+        self.flags.iter().any(|f| f == "locked")
+    }
 }
 
 /// Latest `<inventoryManager>` snapshot (the structured inventory tree the
 /// extended feed serves in response to `_inventory manager <token>`).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ManagedInventoryState {
     /// Correlation token from the request
     pub token: String,
@@ -952,6 +1120,212 @@ pub struct ManagedInventoryState {
     pub complete: bool,
     /// Bumped on every snapshot for change detection
     pub generation: u64,
+}
+
+/// Recursive weight of one item: its own weight plus everything inside,
+/// per Saga's accounting. None = unknown (a -1 weight somewhere below).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WeightBreakdown {
+    /// The item's own weight; None when the wire said -1 (unknown/fixed)
+    pub own: Option<f32>,
+    /// Sum of contents' totals; None when any is unknown
+    pub contents: Option<f32>,
+    /// own + contents; None when contents are unknown
+    pub total: Option<f32>,
+}
+
+impl ManagedInventoryState {
+    /// Recursive weight breakdowns for every item, keyed by exist id.
+    /// GS rules ported from Saga's manager: a 0-weight item counts as
+    /// 0.1 lb, and `in` contents are skipped when the container reports
+    /// `in_encum == 0` (deep/weightless containers don't pass their
+    /// contents' weight to the carrier). Cycle-safe.
+    pub fn weight_breakdowns(
+        &self,
+    ) -> std::collections::HashMap<String, WeightBreakdown> {
+        let mut children: std::collections::HashMap<&str, Vec<&ManagedInventoryItem>> =
+            std::collections::HashMap::new();
+        for item in &self.items {
+            if item.parent != "player" && item.parent != "room" {
+                children.entry(item.parent.as_str()).or_default().push(item);
+            }
+        }
+        let by_id: std::collections::HashMap<&str, &ManagedInventoryItem> =
+            self.items.iter().map(|i| (i.id.as_str(), i)).collect();
+
+        fn resolve<'a>(
+            item: &'a ManagedInventoryItem,
+            children: &std::collections::HashMap<&'a str, Vec<&'a ManagedInventoryItem>>,
+            memo: &mut std::collections::HashMap<String, WeightBreakdown>,
+            visiting: &mut std::collections::HashSet<String>,
+        ) -> WeightBreakdown {
+            if let Some(done) = memo.get(&item.id) {
+                return *done;
+            }
+            if !visiting.insert(item.id.clone()) {
+                // Parent cycle: report unknown rather than recurse forever.
+                return WeightBreakdown::default();
+            }
+            let own = match item.weight {
+                w if w < 0 => None,
+                0 => Some(0.1),
+                w => Some(w as f32),
+            };
+            let mut contents = Some(0.0f32);
+            for kid in children.get(item.id.as_str()).into_iter().flatten() {
+                // Weightless/deep containers: `in` contents don't weigh on
+                // the carrier when the container reports in_encum == 0.
+                if kid.relation == "in" && item.in_encum == Some(0) {
+                    continue;
+                }
+                match (
+                    contents,
+                    resolve(kid, children, memo, visiting).total,
+                ) {
+                    (Some(sum), Some(t)) => {
+                        contents = Some(((sum + t) * 10.0).round() / 10.0)
+                    }
+                    _ => {
+                        contents = None;
+                        break;
+                    }
+                }
+            }
+            visiting.remove(&item.id);
+            let total = match (own, contents) {
+                (o, Some(c)) => Some(((o.unwrap_or(0.0) + c) * 10.0).round() / 10.0),
+                _ => None,
+            };
+            let out = WeightBreakdown {
+                own,
+                contents,
+                total,
+            };
+            memo.insert(item.id.clone(), out);
+            out
+        }
+
+        let mut memo = std::collections::HashMap::new();
+        let mut visiting = std::collections::HashSet::new();
+        for item in &self.items {
+            resolve(item, &children, &mut memo, &mut visiting);
+        }
+        let _ = by_id;
+        memo
+    }
+
+    /// The `via` selector for addressing an item: the nearest strict
+    /// ancestor with an `in_selector` (lockers speak noun phrases, not
+    /// `#id` paths). None for normally-addressed items.
+    pub fn via_selector_for(&self, exist: &str) -> Option<String> {
+        let by_id: std::collections::HashMap<&str, &ManagedInventoryItem> =
+            self.items.iter().map(|i| (i.id.as_str(), i)).collect();
+        let mut parent = by_id.get(exist)?.parent.as_str();
+        let mut seen = std::collections::HashSet::new();
+        while let Some(p) = by_id.get(parent) {
+            if !seen.insert(p.id.as_str()) {
+                return None; // cycle
+            }
+            if let Some(sel) = p.in_selector.as_deref() {
+                return Some(sel.to_string());
+            }
+            parent = p.parent.as_str();
+        }
+        None
+    }
+
+    /// Descendant item counts per container (everything nested below, not
+    /// just direct children), keyed by exist id. Non-containers are absent.
+    pub fn descendant_counts(&self) -> std::collections::HashMap<String, usize> {
+        let by_id: std::collections::HashMap<&str, &ManagedInventoryItem> =
+            self.items.iter().map(|i| (i.id.as_str(), i)).collect();
+        let mut counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for item in &self.items {
+            let mut seen = std::collections::HashSet::new();
+            let mut parent = item.parent.as_str();
+            while parent != "player" && parent != "room" && seen.insert(parent) {
+                *counts.entry(parent.to_string()).or_insert(0) += 1;
+                match by_id.get(parent) {
+                    Some(p) => parent = p.parent.as_str(),
+                    None => break,
+                }
+            }
+        }
+        counts
+    }
+
+    /// Human-readable location of an item: the container chain walked up
+    /// to its root ("worn", a hand, at feet, or the room floor), innermost
+    /// last, closed containers flagged. E.g.
+    /// "in your quilled iron boar hide bandolier > coal black purse (closed)".
+    pub fn location_of(&self, item: &ManagedInventoryItem) -> String {
+        // Article-free form ("leather bandolier", not "a leather bandolier")
+        // so the possessive path reads naturally after "your".
+        let display = |i: &ManagedInventoryItem| -> String {
+            let mut name = [i.adjective.as_str(), i.noun.as_str()]
+                .iter()
+                .filter(|s| !s.is_empty())
+                .copied()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if name.is_empty() {
+                name = i.name.clone();
+            }
+            if i.is_closed() {
+                name.push_str(" (closed)");
+            }
+            name
+        };
+        // Root relations need no walking.
+        let root_label = |relation: &str| -> Option<&'static str> {
+            match relation {
+                "worn" => Some("worn"),
+                "righthand" => Some("in your right hand"),
+                "lefthand" => Some("in your left hand"),
+                "atfeet" => Some("at your feet"),
+                "reserved" => Some("reserved"),
+                "room" => Some("on the floor"),
+                _ => None,
+            }
+        };
+        if item.parent == "player" || item.parent == "room" {
+            return root_label(&item.relation).unwrap_or("carried").to_string();
+        }
+        // Walk the container chain outward, then print outermost-first.
+        let by_id: std::collections::HashMap<&str, &ManagedInventoryItem> =
+            self.items.iter().map(|i| (i.id.as_str(), i)).collect();
+        let mut chain: Vec<&ManagedInventoryItem> = Vec::new();
+        let mut cursor = item;
+        let mut root = "carried";
+        // Bounded by item count to survive a (malformed) parent cycle.
+        for _ in 0..=self.items.len() {
+            let Some(parent) = by_id.get(cursor.parent.as_str()) else {
+                break;
+            };
+            chain.push(parent);
+            if parent.parent == "player" || parent.parent == "room" {
+                root = match root_label(&parent.relation) {
+                    Some("worn") | None => "your",
+                    Some("on the floor") => "the floor's",
+                    Some(other) => {
+                        // Hand/feet-held containers read naturally enough
+                        // with the plain chain; keep "your".
+                        let _ = other;
+                        "your"
+                    }
+                };
+                break;
+            }
+            cursor = parent;
+        }
+        if chain.is_empty() {
+            return "carried".to_string();
+        }
+        chain.reverse();
+        let path: Vec<String> = chain.iter().map(|c| display(c)).collect();
+        format!("in {} {}", root, path.join(" > "))
+    }
 }
 
 /// GS4 Experience dialog state (from `<openDialog id='expr'>`)
@@ -985,6 +1359,16 @@ pub struct GS4ExperienceState {
     pub lumnis: Option<u8>,
     /// RPA bonus multiplier (can be fractional); only present while active
     pub rpa: Option<f32>,
+    /// Physical training points (raw label text, e.g. "23")
+    pub ptps: Option<String>,
+    /// Mental training points
+    pub mtps: Option<String>,
+    /// Ascension training points
+    pub atps: Option<String>,
+    /// Physical-to-mental conversion rate label
+    pub p2m: Option<String>,
+    /// Mental-to-physical conversion rate label
+    pub m2p: Option<String>,
     /// Generation counter for change detection
     pub generation: u64,
 }
@@ -1072,6 +1456,26 @@ impl GS4ExperienceState {
         changed
     }
 
+    /// Update a training-point/conversion label from the expr dialog
+    /// (PTPs/MTPs/ATPs/p2m/m2p). Returns true if changed.
+    pub fn update_tp_label(&mut self, id: &str, value: &str) -> bool {
+        let field = match id {
+            "PTPs" => &mut self.ptps,
+            "MTPs" => &mut self.mtps,
+            "ATPs" => &mut self.atps,
+            "p2m" => &mut self.p2m,
+            "m2p" => &mut self.m2p,
+            _ => return false,
+        };
+        if field.as_deref() != Some(value) {
+            *field = Some(value.to_string());
+            self.generation += 1;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Clear all values (on disconnect/login)
     pub fn clear(&mut self) {
         self.level_text.clear();
@@ -1087,6 +1491,11 @@ impl GS4ExperienceState {
         self.fashlonae = None;
         self.lumnis = None;
         self.rpa = None;
+        self.ptps = None;
+        self.mtps = None;
+        self.atps = None;
+        self.p2m = None;
+        self.m2p = None;
         self.generation += 1;
     }
 }
@@ -1316,7 +1725,12 @@ impl GameState {
             room_meta: RoomMetaState::default(),
             managed_inventory: None,
             pulse_count: 0,
-            last_pulse_mana: false,
+            viewed_item: None,
+            world_events: Vec::new(),
+            pantheon_value: None,
+            next_pulse_mana: false,
+            pulse_next_earliest: None,
+            pulse_next_latest: None,
             objects: crate::core::game_objects::GameObjects::default(),
             move_feedback: std::collections::VecDeque::new(),
             game_line_no: 0,

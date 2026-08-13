@@ -334,6 +334,11 @@ impl MessageProcessor {
                 // Finish current stream before prompt
                 self.flush_current_stream_with_tts(ui_state, tts_manager.as_deref_mut());
 
+                // At most one background viewitem probe dispatches per
+                // prompt (Saga's pacing); commands ride take_outbound.
+                self.inv_service
+                    .on_prompt(chrono::Utc::now().timestamp_millis().max(0) as u64);
+
                 // An INVENTORY FULL scan ends at the prompt: write the
                 // collected mark/register statuses into the registry.
                 if self.inv_scan.is_capturing() {
@@ -1029,6 +1034,8 @@ impl MessageProcessor {
                 if id == "yourLvl" {
                     game_state.gs4_experience.update_level(value.clone());
                 }
+                // Training points + conversion rates ride the same dialog.
+                game_state.gs4_experience.update_tp_label(id, value);
                 // Update encumbrance blurb label
                 if id == "encumblurb" {
                     game_state.encumbrance.update_blurb(value.clone());
@@ -1944,14 +1951,24 @@ impl MessageProcessor {
                     ));
                 }
             }
-            ParsedElement::Pulse { mana } => {
+            ParsedElement::Pulse { mana, min, max } => {
                 self.chunk_has_silent_updates = true;
                 game_state.pulse_count += 1;
-                game_state.last_pulse_mana = *mana;
+                game_state.next_pulse_mana = *mana;
+                // min/max bound the seconds until the NEXT pulse. Anchor
+                // both ends in the server clock domain, like RT/CT, so the
+                // countdown widget's offset math applies uniformly.
+                let now_server = chrono::Utc::now().timestamp() + self.server_time_offset;
+                game_state.pulse_next_earliest = Some(now_server + *min as i64);
+                game_state.pulse_next_latest = Some(now_server + *max as i64);
+                self.update_countdown_by_id(ui_state, "pulse", now_server + *min as i64);
             }
             ParsedElement::InventoryManager {
                 token,
                 room,
+                root: _,
+                after: _,
+                state,
                 items,
                 continuations,
             } => {
@@ -1966,32 +1983,141 @@ impl MessageProcessor {
                         item
                     })
                     .collect();
-                if !continuations.is_empty() {
-                    tracing::warn!(
-                        "inventoryManager response is paginated ({} continuation cursors); \
-                         continuation-following not implemented, snapshot marked incomplete",
-                        continuations.len()
-                    );
-                }
-                let generation = game_state
-                    .managed_inventory
-                    .as_ref()
-                    .map(|s| s.generation + 1)
-                    .unwrap_or(1);
-                tracing::debug!(
-                    "inventoryManager snapshot: token={} room={} items={} complete={}",
+                let cursors: Vec<(String, String)> = continuations
+                    .iter()
+                    .filter_map(|attrs| {
+                        let get = |name: &str| {
+                            attrs
+                                .iter()
+                                .find(|(k, _)| k == name)
+                                .map(|(_, v)| v.clone())
+                        };
+                        Some((get("root")?, get("last")?))
+                    })
+                    .collect();
+                let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+                use crate::core::inventory_service::ResponseOutcome;
+                match self.inv_service.on_response(
                     token,
                     room,
-                    parsed.len(),
-                    continuations.is_empty()
-                );
-                game_state.managed_inventory = Some(crate::core::state::ManagedInventoryState {
-                    token: token.clone(),
-                    room: room.clone(),
-                    items: parsed,
-                    complete: continuations.is_empty(),
-                    generation,
+                    state.as_deref(),
+                    parsed.clone(),
+                    &cursors,
+                    now_ms,
+                ) {
+                    ResponseOutcome::Publish(snapshot) => {
+                        tracing::debug!(
+                            "inventoryManager snapshot complete: room={} items={}",
+                            snapshot.room,
+                            snapshot.items.len()
+                        );
+                        // Background-enrich container open/closed state with
+                        // paced viewitem probes (one per prompt).
+                        self.inv_service.queue_container_probes(&snapshot);
+                        game_state.managed_inventory = Some(snapshot);
+                    }
+                    ResponseOutcome::Absorbed | ResponseOutcome::Failed => {
+                        // Chunk merged into the in-progress load (or the load
+                        // restarted); nothing published yet.
+                    }
+                    ResponseOutcome::Foreign => {
+                        // Not a token we issued (e.g. a manual test request).
+                        // Preserve the pre-service behavior: publish what
+                        // arrived, incomplete when paginated.
+                        let generation = game_state
+                            .managed_inventory
+                            .as_ref()
+                            .map(|s| s.generation + 1)
+                            .unwrap_or(1);
+                        game_state.managed_inventory =
+                            Some(crate::core::state::ManagedInventoryState {
+                                token: token.clone(),
+                                room: room.clone(),
+                                items: parsed,
+                                complete: cursors.is_empty(),
+                                generation,
+                            });
+                    }
+                }
+            }
+            ParsedElement::WorldEvent {
+                realm,
+                expires_min,
+                text,
+            } => {
+                self.chunk_has_silent_updates = true;
+                let now = chrono::Utc::now().timestamp();
+                game_state
+                    .world_events
+                    .retain(|e| e.expires_at.is_none_or(|t| t > now));
+                game_state.world_events.push(crate::core::state::WorldEventState {
+                    realm: realm.clone(),
+                    text: text.clone(),
+                    expires_at: expires_min.map(|m| now + 60 * m as i64),
                 });
+            }
+            ParsedElement::PantheonStatus { value } => {
+                self.chunk_has_silent_updates = true;
+                game_state.pantheon_value = Some(*value);
+            }
+            ParsedElement::InventoryViewItem(resp) => {
+                self.chunk_has_silent_updates = true;
+                use crate::core::inventory_service::ViewItemOutcome;
+                // The envelope's closed attribute is authoritative container
+                // state whichever path answered - apply it either way.
+                let apply_closed = |game_state: &mut GameState, exist: &str, closed: bool| {
+                    if let Some(snapshot) = game_state.managed_inventory.as_mut() {
+                        if let Some(item) =
+                            snapshot.items.iter_mut().find(|i| i.id == exist)
+                        {
+                            let was_closed = item.is_closed();
+                            if closed && !was_closed {
+                                item.flags.push("closed".to_string());
+                            } else if !closed && was_closed {
+                                item.flags.retain(|f| f != "closed");
+                            }
+                            if was_closed != closed {
+                                snapshot.generation += 1;
+                            }
+                        }
+                    }
+                };
+                match self.inv_service.on_viewitem(
+                    &resp.token,
+                    &resp.exist,
+                    resp.state.as_deref(),
+                    resp.closed_attr,
+                    &resp.results,
+                ) {
+                    ViewItemOutcome::Probe(verdict) => {
+                        apply_closed(game_state, &verdict.exist, verdict.closed);
+                    }
+                    ViewItemOutcome::Detail {
+                        exist,
+                        closed,
+                        results,
+                    } => {
+                        apply_closed(game_state, &exist, closed);
+                        let name = game_state
+                            .managed_inventory
+                            .as_ref()
+                            .and_then(|s| s.items.iter().find(|i| i.id == exist))
+                            .map(|i| i.name.clone())
+                            .unwrap_or_else(|| format!("#{exist}"));
+                        let generation = game_state
+                            .viewed_item
+                            .as_ref()
+                            .map(|v| v.generation + 1)
+                            .unwrap_or(1);
+                        game_state.viewed_item = Some(crate::core::state::ViewedItem {
+                            exist,
+                            name,
+                            results,
+                            generation,
+                        });
+                    }
+                    ViewItemOutcome::Ignored => {}
+                }
             }
             _ => {
                 // Other elements handled elsewhere or not yet implemented

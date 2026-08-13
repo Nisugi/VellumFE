@@ -468,12 +468,207 @@ impl AppCore {
         }
     }
 
+    /// Drive a user-invoked `.emptyhands`/`.fillhands` StashTask - the same
+    /// state machine travel uses for its stow/retrieve phases, assembled
+    /// from the live registry each tick and confirmed by hand changes.
+    pub fn tick_hand_stash(&mut self) {
+        if self.hand_stash.is_none() {
+            return;
+        }
+        use crate::core::game_objects::Hand;
+        use crate::core::travel::stash::{StashContext, StashEvent, StashOp};
+        let gameobj_data = self.gameobj_data();
+        let objects = &self.game_state.objects;
+        let resolve_bag = |name: &str| -> Option<String> {
+            if name.trim().is_empty() {
+                return None;
+            }
+            objects.find_container(name).map(|c| c.command_target())
+        };
+        let weaponsack = resolve_bag(&self.config.go2.weaponsack);
+        let lootsack = resolve_bag(&self.config.go2.lootsack);
+        let reserved: std::collections::HashSet<&str> = weaponsack
+            .as_deref()
+            .into_iter()
+            .chain(lootsack.as_deref())
+            .collect();
+        let other_containers: Vec<String> = objects
+            .containers()
+            .map(|c| c.command_target())
+            .filter(|id| !reserved.contains(id.as_str()))
+            .collect();
+        let left_hand = objects.hand(Hand::Left).cloned();
+        let right_hand = objects.hand(Hand::Right).cloned();
+        let is_weapon = |item: Option<&crate::core::game_objects::GameItem>| -> bool {
+            item.is_some_and(|i| gameobj_data.is_type(&i.name, &i.noun, "weapon"))
+        };
+        let left_is_weapon = is_weapon(left_hand.as_ref());
+        let right_is_weapon = is_weapon(right_hand.as_ref());
+        let ready_stow = self.game_state.objects.ready_stow().clone();
+        let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        let ctx = StashContext {
+            left_hand: left_hand.as_ref(),
+            right_hand: right_hand.as_ref(),
+            ready_stow: &ready_stow,
+            weaponsack: weaponsack.as_deref(),
+            lootsack: lootsack.as_deref(),
+            other_containers: &other_containers,
+            // Bandolier-bag live lookup is a travel follow-up too; ethereal
+            // items need no resolution.
+            left_bandolier: None,
+            right_bandolier: None,
+            left_is_weapon,
+            right_is_weapon,
+            now_ms,
+        };
+        let Some(task) = self.hand_stash.as_mut() else {
+            return;
+        };
+        let events = task.tick(ctx);
+        for event in events {
+            match event {
+                StashEvent::Send(cmd) => {
+                    self.queue_timed_command(std::time::Duration::ZERO, cmd);
+                }
+                StashEvent::Done => {
+                    let mut task = self.hand_stash.take().expect("task present");
+                    match task.op() {
+                        StashOp::Empty => {
+                            let stack = task.take_stack();
+                            let n = stack.len();
+                            self.hand_stash_stack = stack;
+                            self.add_system_message(&format!(
+                                "[hands] emptied - {n} item{} stowed (.fillhands to restore).",
+                                if n == 1 { "" } else { "s" }
+                            ));
+                        }
+                        StashOp::Fill => {
+                            self.hand_stash_stack.clear();
+                            self.add_system_message("[hands] refilled.");
+                        }
+                    }
+                    return;
+                }
+                StashEvent::Failed(reason) => {
+                    self.hand_stash = None;
+                    self.add_system_message(&format!("[hands] FAILED: {reason}"));
+                    return;
+                }
+            }
+        }
+    }
+
     /// Commands automation wants sent to the game; frontends drain this
     /// through the same path as typed commands. Includes macro sleep
     /// segments whose pause has elapsed.
     pub fn take_outbound(&mut self) -> Vec<String> {
+        fn hex_luminance(hex: &str) -> f32 {
+            let h = hex.trim_start_matches('#');
+            if h.len() < 6 {
+                return 0.0;
+            }
+            let c = |i: usize| {
+                u8::from_str_radix(&h[i..i + 2], 16).unwrap_or(0) as f32 / 255.0
+            };
+            0.2126 * c(0) + 0.7152 * c(2) + 0.0722 * c(4)
+        }
         let mut commands = self.travel.take_outbound();
         commands.extend(self.foreach.take_outbound());
+        // Inventory continuation-following: timeouts advance and due
+        // `_inventory manager ...` requests go out with everything else.
+        let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        commands.extend(self.message_processor.inv_service.tick(now_ms));
+        // Verified item moves: confirm against the current hand state,
+        // surface outcomes, send whatever the mover queued.
+        let hands = crate::core::item_mover::HandsView {
+            left: self
+                .game_state
+                .objects
+                .hand(crate::core::game_objects::Hand::Left)
+                .map(|i| i.id.clone()),
+            right: self
+                .game_state
+                .objects
+                .hand(crate::core::game_objects::Hand::Right)
+                .map(|i| i.id.clone()),
+        };
+        // Announce a freshly completed managed-inventory snapshot once
+        // (token-keyed: probe flag updates bump generation, not token).
+        if let Some(snap) = self.game_state.managed_inventory.as_ref() {
+            if snap.complete && snap.token != self.last_announced_inv_token {
+                let (token, count, room) =
+                    (snap.token.clone(), snap.items.len(), snap.room.clone());
+                self.last_announced_inv_token = token;
+                self.add_system_message(&format!(
+                    "[invsync] snapshot complete: {count} items (room {room})."
+                ));
+            }
+        }
+        // Route a fresh .viewitem answer to the dedicated `inspect` stream
+        // (the GUI Containers window shows it on its Item tab regardless).
+        // Never the story window - ANALYZE text alone can run pages. With
+        // no subscriber, a one-line pointer tells the user where it went.
+        if let Some(view) = self.game_state.viewed_item.as_ref() {
+            if view.generation != self.last_announced_view_generation {
+                self.last_announced_view_generation = view.generation;
+                let (name, banner, lines): (String, String, Vec<String>) = {
+                    let view = self.game_state.viewed_item.as_ref().expect("checked");
+                    // ASCII banner: U+2500 box glyphs are tofu in some of
+                    // the GUI font set (same gap as the arrow glyphs).
+                    let banner = format!(" === {} === ", view.name);
+                    let mut out = Vec::new();
+                    for (command, text) in &view.results {
+                        if text.trim().is_empty() {
+                            continue;
+                        }
+                        out.push(format!("{}:", command.to_uppercase()));
+                        out.extend(text.lines().map(str::to_string));
+                        out.push(String::new());
+                    }
+                    (view.name.clone(), banner, out)
+                };
+                // Banner rides the system color as a BACKGROUND band with
+                // luminance-picked text so it stands out from the body.
+                let band = self.config.colors.ui.system_message_color.clone();
+                let band_fg = if hex_luminance(&band) > 0.5 {
+                    "#000000"
+                } else {
+                    "#FFFFFF"
+                };
+                let mut delivered = self.add_stream_line(
+                    "inspect",
+                    &banner,
+                    Some(band_fg.to_string()),
+                    Some(band),
+                    true,
+                );
+                for line in lines {
+                    delivered |= self.add_stream_message("inspect", &line);
+                }
+                if !delivered {
+                    self.add_system_message(&format!(
+                        "[view] {name} - shown in the Containers window (Item tab); \
+                         add a text window on the 'inspect' stream for a log."
+                    ));
+                }
+            }
+        }
+        let (mover_cmds, outcome) = self.item_mover.tick(&hands, now_ms);
+        commands.extend(mover_cmds);
+        match outcome {
+            Some(crate::core::item_mover::MoveOutcome::Succeeded { desc }) => {
+                self.add_system_message(&format!("[drag] {desc} - confirmed."));
+            }
+            Some(crate::core::item_mover::MoveOutcome::Sent { desc }) => {
+                self.add_system_message(&format!(
+                    "[drag] {desc} - sent (container-direct; no hand event to confirm)."
+                ));
+            }
+            Some(crate::core::item_mover::MoveOutcome::Failed { desc, reason }) => {
+                self.add_system_message(&format!("[drag] {desc} FAILED: {reason}"));
+            }
+            None => {}
+        }
         let now = std::time::Instant::now();
         let mut i = 0;
         while i < self.timed_commands.len() {

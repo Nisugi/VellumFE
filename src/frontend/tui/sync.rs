@@ -762,6 +762,8 @@ impl TuiFrontend {
                             }
                             countdown_widget
                                 .set_show_when_zero(data.show_when_zero.unwrap_or(false));
+                            countdown_widget
+                                .set_count_past_zero(data.count_past_zero.unwrap_or(false));
                             let text_color = data.color.clone().or_else(|| colors.text.clone());
                             countdown_widget.set_text_color(text_color);
                             let bg_color = data
@@ -1395,6 +1397,29 @@ impl TuiFrontend {
                     missing_spells::MissingSpells::new(&title)
                 });
             widget.update_from_state(missing, *watched_count);
+        }
+    }
+
+    pub(crate) fn sync_containers_widgets(&mut self, app_core: &crate::core::AppCore) {
+        for (name, window) in &app_core.ui_state.windows {
+            if !matches!(window.content, crate::data::WindowContent::Containers) {
+                continue;
+            }
+            let widget = self
+                .widget_manager
+                .containers_widgets
+                .entry(name.clone())
+                .or_insert_with(|| {
+                    let title = window_def_map(&app_core.layout)
+                        .get(name.as_str())
+                        .and_then(|def| def.base().title.clone())
+                        .unwrap_or_else(|| "Containers".to_string());
+                    containers_window::ContainersWindow::new(&title)
+                });
+            widget.update_from_state(
+                app_core.game_state.managed_inventory.as_ref(),
+                app_core.message_processor.current_room_uid(),
+            );
         }
     }
 

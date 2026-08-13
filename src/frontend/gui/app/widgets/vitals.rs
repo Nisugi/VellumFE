@@ -432,10 +432,23 @@ impl VellumGuiApp {
             app_core.server_time_offset,
             (now_f * 1000.0) as i64,
         );
+        // Window timers (count_past_zero) run negative after expiry: whole
+        // seconds overdue, matching the TUI widget's signed math.
+        let overdue: i64 = if countdown.count_past_zero && countdown.end_time > 0 {
+            let remaining_ms = countdown.end_time * 1000
+                - ((now_f * 1000.0) as i64 + app_core.server_time_offset * 1000);
+            if remaining_ms < 0 {
+                ((-remaining_ms) / 1000).min(99)
+            } else {
+                0
+            }
+        } else {
+            0
+        };
 
         let bar_height = ui.spacing().interact_size.y.max(16.0);
         let bar_width = ui.available_width().max(40.0);
-        if remaining == 0 && !countdown.show_when_zero {
+        if remaining == 0 && !countdown.show_when_zero && overdue == 0 {
             // Idle timers render blank unless configured to stay visible.
             ui.allocate_space(Vec2::new(bar_width, bar_height));
             return;
@@ -462,10 +475,15 @@ impl VellumGuiApp {
                     _ => Color32::from_rgb(0xd9, 0x9a, 0x2b),
                 },
             );
-        let text = if countdown.label.is_empty() {
-            format!("{remaining}")
+        let shown = if overdue > 0 {
+            format!("-{overdue}")
         } else {
-            format!("{}: {}", countdown.label, remaining)
+            format!("{remaining}")
+        };
+        let text = if countdown.label.is_empty() {
+            shown
+        } else {
+            format!("{}: {}", countdown.label, shown)
         };
         let bar = Self::styled_progress_bar(ui, settings, fraction, fill, text);
         ui.add_sized([bar_width, bar_height], bar);

@@ -157,6 +157,19 @@ pub struct AppCore {
     /// their pause, drained by take_outbound once due (insertion order
     /// preserved among same-tick due commands).
     timed_commands: Vec<(std::time::Instant, String)>,
+    /// Verified item moves (`_drag`, extended feed): one at a time,
+    /// confirmed against hand events, drained by take_outbound.
+    pub item_mover: crate::core::item_mover::ItemMover,
+    /// Token of the last managed-inventory snapshot announced to the user
+    /// (keyed by token, not generation, so probe flag updates stay quiet).
+    last_announced_inv_token: String,
+    /// Generation of the last `.viewitem` detail echoed to main.
+    last_announced_view_generation: u64,
+    /// User-invoked hands stow/retrieve (`.emptyhands`/`.fillhands`) - the
+    /// same StashTask the travel executor uses, run standalone.
+    pub(crate) hand_stash: Option<crate::core::travel::stash::StashTask>,
+    /// What the last `.emptyhands` stowed (LIFO), replayed by `.fillhands`.
+    pub(crate) hand_stash_stack: Vec<crate::core::travel::stash::Stowed>,
     /// Cache for the wire-format map scene sent to web clients, keyed by
     /// (scene Arc pointer, sheet, building cluster) so a rebuild only
     /// happens when the drawn view actually changes.
@@ -419,6 +432,11 @@ impl AppCore {
             day_pass_scan_open: None,
             day_pass_sack_probed: false,
             timed_commands: Vec::new(),
+            item_mover: crate::core::item_mover::ItemMover::new(),
+            last_announced_inv_token: String::new(),
+            last_announced_view_generation: 0,
+            hand_stash: None,
+            hand_stash_stack: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
             pending_map_views: Vec::new(),
@@ -613,6 +631,11 @@ impl AppCore {
             day_pass_scan_open: None,
             day_pass_sack_probed: false,
             timed_commands: Vec::new(),
+            item_mover: crate::core::item_mover::ItemMover::new(),
+            last_announced_inv_token: String::new(),
+            last_announced_view_generation: 0,
+            hand_stash: None,
+            hand_stash_stack: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
             pending_map_views: Vec::new(),
@@ -925,6 +948,7 @@ impl AppCore {
         self.tick_day_pass_scan();
         self.tick_travel();
         self.tick_foreach();
+        self.tick_hand_stash();
         self.poll_jinx();
         // Auto-clear expired highlight-set custom statuses.
         self.tick_custom_statuses();
@@ -1841,6 +1865,75 @@ impl AppCore {
 
         // No window found - log warning
         tracing::warn!("No window found subscribed to 'main' stream for system message: {}", message);
+    }
+
+    /// Deliver a client-generated line to every window subscribed to a
+    /// dedicated stream (like `inspect`). Unlike add_system_message there
+    /// is no fallback to main - a dedicated stream with no subscriber
+    /// drops the line, matching game streams. Returns whether anyone got it.
+    pub fn add_stream_message(&mut self, stream: &str, message: &str) -> bool {
+        let fg = Some(self.config.colors.ui.system_message_color.clone());
+        self.add_stream_line(stream, message, fg, None, false)
+    }
+
+    /// Like [`Self::add_stream_message`] with explicit styling (banner
+    /// lines with background bands, bold headers).
+    pub fn add_stream_line(
+        &mut self,
+        stream: &str,
+        message: &str,
+        fg: Option<String>,
+        bg: Option<String>,
+        bold: bool,
+    ) -> bool {
+        use crate::data::{SpanType, StyledLine, TextSegment, WindowContent};
+        let line = StyledLine {
+            segments: vec![TextSegment {
+                text: message.to_string(),
+                fg,
+                bg,
+                bold,
+                mono: false,
+                span_type: SpanType::System,
+                link_data: None,
+                custom_emoji: None,
+                inline_image: None,
+            }],
+            stream: stream.to_string(),
+            timestamp: None,
+        };
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_text(stream, std::sync::Arc::new(line.clone()));
+        }
+        let mut delivered = false;
+        for window in self.ui_state.windows.values_mut() {
+            match &mut window.content {
+                WindowContent::Text(ref mut content) => {
+                    if content.streams.iter().any(|s| s.eq_ignore_ascii_case(stream)) {
+                        content.add_line(line.clone());
+                        delivered = true;
+                    }
+                }
+                WindowContent::TabbedText(ref mut content) => {
+                    for tab in content.tabs.iter_mut() {
+                        if tab
+                            .definition
+                            .streams
+                            .iter()
+                            .any(|s| s.eq_ignore_ascii_case(stream))
+                        {
+                            tab.content.add_line(line.clone());
+                            delivered = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if delivered {
+            self.needs_render = true;
+        }
+        delivered
     }
 
     /// Inject a test line through the complete pipeline (parser → message processor → UI)

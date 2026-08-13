@@ -243,8 +243,13 @@ impl AppCore {
             // Fall through to send command to server
         }
 
-        // Echo command to windows subscribed to "main" stream
-        self.echo_command_to_main(&command);
+        // Echo command to windows subscribed to "main" stream. Hidden
+        // extended-feed requests (`_inventory manager/viewitem ...`) go out
+        // silently, like Saga - a sync fires up to ten of them and probe
+        // traffic would otherwise spam H> lines through combat.
+        if !command.starts_with("_inventory ") {
+            self.echo_command_to_main(&command);
+        }
 
         // Command history is now managed by the CommandInput widget
 
@@ -1854,6 +1859,121 @@ impl AppCore {
     ///   .spellwatch add 606          one spell
     ///   .spellwatch add [101,103]    several
     ///   .spellwatch add all          everything currently active
+    /// `.find <query>` - search the managed inventory snapshot (extended
+    /// feed) by name and print where each match lives, closed containers
+    /// flagged. Snapshot comes from `.invsync`; results are as fresh as the
+    /// last sync.
+    fn handle_find(&mut self, parts: &[&str]) {
+        let query = parts[1..].join(" ").trim().to_ascii_lowercase();
+        if query.is_empty() {
+            self.add_system_message("Usage: .find <name fragment> - searches the .invsync snapshot.");
+            return;
+        }
+        let Some(snapshot) = self.game_state.managed_inventory.as_ref() else {
+            self.add_system_message("[find] no inventory snapshot yet - run .invsync first.");
+            return;
+        };
+        let mut lines: Vec<String> = Vec::new();
+        for item in &snapshot.items {
+            let hay = item.name.to_ascii_lowercase();
+            let hay_long = item
+                .long
+                .as_deref()
+                .map(str::to_ascii_lowercase)
+                .unwrap_or_default();
+            if hay.contains(&query) || hay_long.contains(&query) {
+                lines.push(format!(
+                    "  {} - {}  (#{})",
+                    item.name,
+                    snapshot.location_of(item),
+                    item.id
+                ));
+            }
+        }
+        let total = snapshot.items.len();
+        let incomplete = !snapshot.complete;
+        if lines.is_empty() {
+            self.add_system_message(&format!(
+                "[find] no '{query}' in the snapshot ({total} items{}).",
+                if incomplete { ", INCOMPLETE" } else { "" }
+            ));
+            return;
+        }
+        let header = format!(
+            "[find] {} match{}:",
+            lines.len(),
+            if lines.len() == 1 { "" } else { "es" }
+        );
+        self.add_system_message(&header);
+        for line in lines {
+            self.add_system_message(&line);
+        }
+        if incomplete {
+            self.add_system_message("  (snapshot INCOMPLETE - rerun .invsync)");
+        }
+    }
+
+    /// `.drag` - verified item moves (extended feed's `_drag` verb, each
+    /// confirmed against `<left>/<right>` hand events within 8s).
+    fn handle_drag(&mut self, parts: &[&str]) {
+        const USAGE: &str = "Usage: .drag <exist> left|right|drop|wear|feet - or - \
+                             .drag <exist> in|on|behind|underneath <dest-exist>";
+        use crate::core::item_mover::MoveKind;
+        let (Some(item), Some(what)) = (parts.get(1), parts.get(2)) else {
+            self.add_system_message(USAGE);
+            return;
+        };
+        let item = item.trim_start_matches('#').to_string();
+        let kind = match what.to_ascii_lowercase().as_str() {
+            "left" => MoveKind::ToLeftHand,
+            "right" => MoveKind::ToRightHand,
+            "drop" => MoveKind::Drop,
+            "wear" => MoveKind::Wear,
+            "feet" => MoveKind::PlaceFeet,
+            rel @ ("in" | "on" | "behind" | "underneath") => {
+                let Some(dest) = parts.get(3) else {
+                    self.add_system_message(USAGE);
+                    return;
+                };
+                let dest = dest.trim_start_matches('#').to_string();
+                // Lockers and similar are addressed by their in_selector
+                // noun phrase, when the managed snapshot knows one.
+                let selector = self
+                    .game_state
+                    .managed_inventory
+                    .as_ref()
+                    .and_then(|s| s.items.iter().find(|i| i.id == dest))
+                    .and_then(|i| i.in_selector.clone());
+                MoveKind::PutIn {
+                    dest,
+                    relation: rel.to_string(),
+                    selector,
+                }
+            }
+            _ => {
+                self.add_system_message(USAGE);
+                return;
+            }
+        };
+        let hands = crate::core::item_mover::HandsView {
+            left: self
+                .game_state
+                .objects
+                .hand(crate::core::game_objects::Hand::Left)
+                .map(|i| i.id.clone()),
+            right: self
+                .game_state
+                .objects
+                .hand(crate::core::game_objects::Hand::Right)
+                .map(|i| i.id.clone()),
+        };
+        let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        match self.item_mover.start(&item, kind, &hands, now_ms) {
+            Ok(()) => {}
+            Err(reason) => self.add_system_message(&format!("[drag] refused: {reason}")),
+        }
+    }
+
     ///   .spellwatch rem 606 | [..] | all
     ///   .spellwatch (or list)        show the list and what's missing
     fn handle_spellwatch(&mut self, parts: &[&str]) {
@@ -2384,6 +2504,79 @@ impl AppCore {
             }
             "spellwatch" => {
                 self.handle_spellwatch(&parts);
+            }
+            "find" => {
+                self.handle_find(&parts);
+            }
+            "emptyhands" | "eh" => {
+                // Lich's empty_hands as a native command: stow both hands
+                // (Lich's per-hand cascade), remember the stack for
+                // .fillhands. Same StashTask travel uses.
+                if self.hand_stash.is_some() {
+                    self.add_system_message("[hands] a stow/retrieve is already running.");
+                } else if let Some(owner) = self.automation_blocked_by("hands") {
+                    self.add_system_message(&format!(
+                        "[hands] {} is driving - .stop it first.",
+                        owner.desc
+                    ));
+                } else {
+                    self.hand_stash =
+                        Some(crate::core::travel::stash::StashTask::empty());
+                }
+            }
+            "fillhands" | "fh" => {
+                if self.hand_stash.is_some() {
+                    self.add_system_message("[hands] a stow/retrieve is already running.");
+                } else if let Some(owner) = self.automation_blocked_by("hands") {
+                    self.add_system_message(&format!(
+                        "[hands] {} is driving - .stop it first.",
+                        owner.desc
+                    ));
+                } else if self.hand_stash_stack.is_empty() {
+                    self.add_system_message(
+                        "[hands] nothing remembered - .emptyhands stows and remembers first.",
+                    );
+                } else {
+                    let stack = std::mem::take(&mut self.hand_stash_stack);
+                    self.hand_stash =
+                        Some(crate::core::travel::stash::StashTask::fill(stack));
+                }
+            }
+            "viewitem" | "inspect" => {
+                // Item detail over the extended feed: parsed look/read
+                // sections echo to main and feed the GUI inspector panel.
+                let Some(exist) = parts.get(1) else {
+                    self.add_system_message("Usage: .viewitem <exist-id>");
+                    return Ok(CommandOutcome::Handled);
+                };
+                let exist = exist.trim_start_matches('#').to_string();
+                let via = self
+                    .game_state
+                    .managed_inventory
+                    .as_ref()
+                    .and_then(|s| s.via_selector_for(&exist));
+                let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+                self.message_processor
+                    .inv_service
+                    .request_view(&exist, via.as_deref(), now_ms);
+            }
+            "drag" => {
+                // Verified item moves over the extended feed's _drag verb:
+                //   .drag <exist> left|right|drop|wear|feet
+                //   .drag <exist> in|on|behind|underneath <dest-exist>
+                self.handle_drag(&parts);
+            }
+            "invsync" => {
+                // Refresh the extended feed's structured inventory snapshot
+                // (`_inventory manager` + continuation-following). Direct-mode
+                // WRAYTH banner required for the server to answer.
+                if self.message_processor.inv_service.loading() {
+                    self.add_system_message("[invsync] refresh already in progress.");
+                } else {
+                    let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+                    self.message_processor.inv_service.request_refresh(now_ms);
+                    self.add_system_message("[invsync] requesting inventory snapshot...");
+                }
             }
             "rename" => {
                 if parts.len() >= 3 {
@@ -4258,6 +4451,47 @@ mod foreach_tests {
         let _ = core.handle_dot_command(".foreach marked gem in bandolier; get item");
         assert!(core.foreach.is_running());
         assert_eq!(core.take_outbound(), vec!["get #101".to_string()]);
+    }
+
+    #[test]
+    fn emptyhands_stows_then_fillhands_replays() {
+        use crate::core::game_objects::{GameItem, Hand};
+        let mut core = core_with_bandolier();
+        core.game_state
+            .objects
+            .set_hand(Hand::Right, Some(GameItem::new("777", "sword", "a short sword")));
+
+        let _ = core.handle_dot_command(".emptyhands");
+        assert!(core.hand_stash.is_some());
+        core.tick_hand_stash();
+        let sent = core.take_outbound();
+        assert_eq!(sent.len(), 1, "one stow command for the held item");
+        assert!(sent[0].contains("#777"), "targets the held item: {}", sent[0]);
+
+        // The hand clearing confirms the stow; the task finishes and the
+        // stack remembers the item for .fillhands.
+        core.game_state.objects.set_hand(Hand::Right, None);
+        core.tick_hand_stash();
+        assert!(core.hand_stash.is_none(), "empty finished");
+        assert_eq!(core.hand_stash_stack.len(), 1);
+
+        let _ = core.handle_dot_command(".fillhands");
+        assert!(core.hand_stash.is_some());
+        core.tick_hand_stash();
+        let sent = core.take_outbound();
+        assert_eq!(sent, vec!["get #777".to_string()]);
+
+        // Item back in hand completes the fill and clears the memory.
+        core.game_state
+            .objects
+            .set_hand(Hand::Right, Some(GameItem::new("777", "sword", "a short sword")));
+        core.tick_hand_stash();
+        assert!(core.hand_stash.is_none(), "fill finished");
+        assert!(core.hand_stash_stack.is_empty());
+
+        // Nothing remembered now: .fillhands refuses without starting.
+        let _ = core.handle_dot_command(".fillhands");
+        assert!(core.hand_stash.is_none());
     }
 
     #[test]

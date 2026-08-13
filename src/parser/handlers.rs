@@ -549,11 +549,191 @@ impl XmlParser {
         }
     }
 
+    /// `<worldEvent realm=.. expires=MIN time=..>text</worldEvent>` arrives
+    /// as one paired tag. Captures the announcement (inner markup stripped)
+    /// and emits a display line - without this the body leaked into the
+    /// stream as unlabeled bare text.
+    pub(super) fn handle_world_event(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        let realm = Self::extract_attribute(tag, "realm");
+        let expires_min: Option<u32> =
+            Self::extract_attribute(tag, "expires").and_then(|v| v.trim().parse().ok());
+        // Inner text: between the open tag's '>' and '</worldEvent>',
+        // any nested tags flattened away.
+        let text = tag
+            .find('>')
+            .map(|open_end| {
+                let inner = &tag[open_end + 1..];
+                let inner = inner.strip_suffix("</worldEvent>").unwrap_or(inner);
+                let mut out = String::new();
+                let mut rest = inner;
+                while let Some(lt) = rest.find('<') {
+                    out.push_str(&rest[..lt]);
+                    match rest[lt..].find('>') {
+                        Some(gt) => rest = &rest[lt + gt + 1..],
+                        None => {
+                            rest = "";
+                            break;
+                        }
+                    }
+                }
+                out.push_str(rest);
+                Self::decode_entities(out.trim().to_string())
+            })
+            .unwrap_or_default();
+        if text.is_empty() {
+            return;
+        }
+        // Display line so the announcement reaches the text stream labeled.
+        let label = match (&realm, expires_min) {
+            (Some(r), Some(m)) => format!("[World Event - {r}, {m}m] {text}"),
+            (Some(r), None) => format!("[World Event - {r}] {text}"),
+            (None, Some(m)) => format!("[World Event, {m}m] {text}"),
+            (None, None) => format!("[World Event] {text}"),
+        };
+        elements.push(ParsedElement::WorldEvent {
+            realm,
+            expires_min,
+            text,
+        });
+        elements.push(self.create_text_element(label));
+    }
+
     pub(super) fn handle_pulse(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
-        // <pulse mana="0|1"/> - self-closing pulse announcement (1/min ±15s;
-        // mana='1' on the alternating mana pulses)
+        // <pulse min="46" max="75" mana="0|1"/> - self-closing pulse
+        // announcement. min/max = seconds window until the NEXT pulse
+        // (Saga's defaults when absent/invalid: 46/75); mana='1' = the next
+        // pulse restores mana.
         let mana = Self::extract_attribute(tag, "mana").is_some_and(|v| v == "1");
-        elements.push(ParsedElement::Pulse { mana });
+        let min = Self::extract_attribute(tag, "min")
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(46);
+        let max = Self::extract_attribute(tag, "max")
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(75);
+        elements.push(ParsedElement::Pulse { mana, min, max });
+    }
+
+    /// Walk a line owned by an `<inventoryViewItem>` capture. Text lands in
+    /// the current `<result>` section (inline markup flattened, `<br/>` =
+    /// newline) instead of the stream. A `<prompt>` mid-capture aborts the
+    /// block as `state="malformed"` (Saga's convention); anything after
+    /// `</inventoryViewItem>` re-enters the normal parser.
+    pub(super) fn parse_viewitem_line(&mut self, line: &str) -> Vec<ParsedElement> {
+        let mut elements = Vec::new();
+        // A physical line boundary inside an open capture is a newline in
+        // the section text: the wire formats analyze/inspect output with
+        // real lines (indented tables, blank separators), and flattening
+        // them produced run-on paragraphs.
+        if self.inv_viewitem.as_ref().is_some_and(|b| b.current.is_some()) {
+            self.viewitem_text("\n");
+        }
+        let mut remaining = line;
+        while !remaining.is_empty() {
+            let Some(tag_start) = remaining.find('<') else {
+                self.viewitem_text(remaining);
+                break;
+            };
+            if tag_start > 0 {
+                self.viewitem_text(&remaining[..tag_start]);
+            }
+            let Some(tag_end) = remaining[tag_start..].find('>') else {
+                self.viewitem_text(&remaining[tag_start..]);
+                break;
+            };
+            let tag = &remaining[tag_start..tag_start + tag_end + 1];
+            remaining = &remaining[tag_start + tag_end + 1..];
+
+            if tag.starts_with("<inventoryViewItem") {
+                if self.inv_viewitem.is_some() {
+                    tracing::warn!("inventoryViewItem opened while one was in flight; dropping stale block");
+                }
+                self.inv_viewitem = Some(crate::parser::InvViewItemBuilder {
+                    token: Self::extract_attribute(tag, "id").unwrap_or_default(),
+                    exist: Self::extract_attribute(tag, "exist").unwrap_or_default(),
+                    state: Self::extract_attribute(tag, "state"),
+                    // Presence is the signal, value irrelevant (Saga checks
+                    // Object.hasOwn) - and a bare valueless `closed` is
+                    // legal, so match the attribute name with its ending.
+                    closed_attr: Self::extract_attribute(tag, "closed").is_some()
+                        || tag.contains(" closed ")
+                        || tag.contains(" closed>")
+                        || tag.contains(" closed/>"),
+                    results: Vec::new(),
+                    current: None,
+                });
+                if tag.ends_with("/>") {
+                    self.finish_viewitem(&mut elements, None);
+                    if !remaining.trim().is_empty() {
+                        elements.extend(self.parse_line(remaining));
+                    }
+                    return elements;
+                }
+            } else if Self::is_close_tag(tag, "inventoryViewItem") {
+                self.finish_viewitem(&mut elements, None);
+                // Anything after the close is ordinary feed again.
+                if !remaining.trim().is_empty() {
+                    elements.extend(self.parse_line(remaining));
+                }
+                return elements;
+            } else if tag.starts_with("<prompt") {
+                // A prompt interrupting the capture means the block was torn
+                // mid-send; surface the partial response as malformed and let
+                // the prompt (and the rest of the line) parse normally.
+                self.finish_viewitem(&mut elements, Some("malformed"));
+                let rest = format!("{tag}{remaining}");
+                elements.extend(self.parse_line(&rest));
+                return elements;
+            } else if tag.starts_with("<result") {
+                let command = Self::extract_attribute(tag, "command").unwrap_or_default();
+                if let Some(b) = self.inv_viewitem.as_mut() {
+                    if let Some((cmd, text)) = b.current.take() {
+                        b.results.push((cmd, text.trim_matches('\n').to_string()));
+                    }
+                    if tag.ends_with("/>") {
+                        // Self-closing result = empty section.
+                        b.results.push((command, String::new()));
+                    } else {
+                        b.current = Some((command, String::new()));
+                    }
+                }
+            } else if Self::is_close_tag(tag, "result") {
+                if let Some(b) = self.inv_viewitem.as_mut() {
+                    if let Some((cmd, text)) = b.current.take() {
+                        b.results.push((cmd, text.trim_matches('\n').to_string()));
+                    }
+                }
+            } else if tag.starts_with("<br") {
+                self.viewitem_text("\n");
+            }
+            // Every other inline tag (a, b, pushBold, popBold, output, ...)
+            // is styling only for our purposes here - flattened away.
+        }
+        elements
+    }
+
+    fn viewitem_text(&mut self, text: &str) {
+        if let Some(b) = self.inv_viewitem.as_mut() {
+            if let Some((_, buf)) = b.current.as_mut() {
+                buf.push_str(&Self::decode_entities(text.to_string()));
+            }
+        }
+    }
+
+    fn finish_viewitem(&mut self, elements: &mut Vec<ParsedElement>, force_state: Option<&str>) {
+        if let Some(mut b) = self.inv_viewitem.take() {
+            if let Some((cmd, text)) = b.current.take() {
+                b.results.push((cmd, text.trim_matches('\n').to_string()));
+            }
+            elements.push(ParsedElement::InventoryViewItem(
+                crate::parser::InventoryViewItemResponse {
+                    token: b.token,
+                    exist: b.exist,
+                    state: force_state.map(str::to_string).or(b.state),
+                    closed_attr: b.closed_attr,
+                    results: b.results,
+                },
+            ));
+        }
     }
 
     pub(super) fn handle_inventory_manager_open(
@@ -569,6 +749,11 @@ impl XmlParser {
         self.inv_manager = Some(crate::parser::InvManagerBuilder {
             token: Self::extract_attribute(tag, "id").unwrap_or_default(),
             room: Self::extract_attribute(tag, "room").unwrap_or_default(),
+            // Continuation-envelope echoes (root+after) and the error/stale
+            // marker; absent on a normal initial response.
+            root: Self::extract_attribute(tag, "root"),
+            after: Self::extract_attribute(tag, "after"),
+            state: Self::extract_attribute(tag, "state"),
             items: Vec::new(),
             continuations: Vec::new(),
         });
@@ -595,6 +780,9 @@ impl XmlParser {
             elements.push(ParsedElement::InventoryManager {
                 token: builder.token,
                 room: builder.room,
+                root: builder.root,
+                after: builder.after,
+                state: builder.state,
                 items: builder.items,
                 continuations: builder.continuations,
             });

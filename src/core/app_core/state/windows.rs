@@ -181,7 +181,7 @@ impl AppCore {
                     })
                 }
                 WidgetType::Countdown => {
-                    let (label, countdown_id, color, show_when_zero) =
+                    let (label, countdown_id, color, show_when_zero, count_past_zero) =
                         if let crate::config::WindowDef::Countdown { data, .. } = window_def {
                             (
                                 data.label
@@ -192,9 +192,16 @@ impl AppCore {
                                     .unwrap_or_else(|| window_def.name().to_string()),
                                 data.color.clone(),
                                 data.show_when_zero.unwrap_or(false),
+                                data.count_past_zero.unwrap_or(false),
                             )
                         } else {
-                            (title.to_string(), window_def.name().to_string(), None, false)
+                            (
+                                title.to_string(),
+                                window_def.name().to_string(),
+                                None,
+                                false,
+                                false,
+                            )
                         };
 
                     WindowContent::Countdown(CountdownData {
@@ -203,6 +210,7 @@ impl AppCore {
                         countdown_id,
                         color,
                         show_when_zero,
+                        count_past_zero,
                     })
                 }
                 WidgetType::Map => WindowContent::Map(crate::data::MapData::default()),
@@ -273,6 +281,7 @@ impl AppCore {
                 WidgetType::Targets => WindowContent::Targets,
                 WidgetType::Players => WindowContent::Players,
                 WidgetType::MissingSpells => WindowContent::MissingSpells,
+                WidgetType::Containers => WindowContent::Containers,
                 WidgetType::MultiAccount => WindowContent::MultiAccount,
                 WidgetType::Items => WindowContent::Items,
                 WidgetType::Container => {
@@ -547,7 +556,7 @@ impl AppCore {
                 })
             }
             WidgetType::Countdown => {
-                let (label, countdown_id, color, show_when_zero) =
+                let (label, countdown_id, color, show_when_zero, count_past_zero) =
                     if let crate::config::WindowDef::Countdown { data, .. } = window_def {
                         (
                             data.label.clone().unwrap_or_else(|| title.to_string()),
@@ -556,9 +565,16 @@ impl AppCore {
                                 .unwrap_or_else(|| window_def.name().to_string()),
                             data.color.clone(),
                             data.show_when_zero.unwrap_or(false),
+                            data.count_past_zero.unwrap_or(false),
                         )
                     } else {
-                        (title.to_string(), window_def.name().to_string(), None, false)
+                        (
+                            title.to_string(),
+                            window_def.name().to_string(),
+                            None,
+                            false,
+                            false,
+                        )
                     };
                 WindowContent::Countdown(CountdownData {
                     end_time: 0,
@@ -566,6 +582,7 @@ impl AppCore {
                     countdown_id,
                     color,
                     show_when_zero,
+                    count_past_zero,
                 })
             }
             WidgetType::Map => WindowContent::Map(crate::data::MapData::default()),
@@ -640,6 +657,7 @@ impl AppCore {
             WidgetType::Targets => WindowContent::Targets,
             WidgetType::Players => WindowContent::Players,
             WidgetType::MissingSpells => WindowContent::MissingSpells,
+            WidgetType::Containers => WindowContent::Containers,
             WidgetType::MultiAccount => WindowContent::MultiAccount,
             WidgetType::Items => WindowContent::Items,
             WidgetType::Container => {
