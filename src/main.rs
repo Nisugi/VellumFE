@@ -210,6 +210,29 @@ enum Commands {
         dry_run: bool,
     },
 
+    /// Maintainer tool: bake defaults/bestiary.json from the lich-5
+    /// creature templates plus Saga's spawn tables (joined by creature
+    /// name, spawn uids resolved through the curated maps). End users
+    /// never need this — the shipped bestiary is built in.
+    ExtractBestiary {
+        /// lich-5 creatures directory (the schema-v3 .rb templates)
+        #[arg(long, value_name = "DIR")]
+        creatures_dir: PathBuf,
+
+        /// Saga resources directory holding map-data/prime/creatures.json
+        /// (omit to skip the spawn join)
+        #[arg(long, value_name = "DIR")]
+        saga_dir: Option<PathBuf>,
+
+        /// Output file (default: defaults/bestiary.json)
+        #[arg(long, value_name = "FILE")]
+        out: Option<PathBuf>,
+
+        /// Show what would be extracted without writing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Import highlights from a Wrayth/StormFront settings XML file
     ImportHighlights {
         /// Wrayth settings XML file (e.g. 70682.xml)
@@ -415,6 +438,55 @@ fn main() -> Result<()> {
                     config::write_atomic(&out_path, snapshot.to_toml()?)
                         .with_context(|| format!("Failed to write {}", out_path.display()))?;
                     println!("Wrote {} maps to {}", snapshot.maps.len(), out_path.display());
+                }
+                return Ok(());
+            }
+
+            Commands::ExtractBestiary { creatures_dir, saga_dir, out, dry_run } => {
+                use crate::core::bestiary;
+
+                println!("Bestiary Extraction");
+                println!("===================");
+                let (mut entries, failed) = bestiary::extract_from_lich(&creatures_dir)?;
+                println!("Parsed {} templates from {}", entries.len(), creatures_dir.display());
+                if !failed.is_empty() {
+                    println!("FAILED to parse {} templates:", failed.len());
+                    for f in &failed {
+                        println!("  {f}");
+                    }
+                }
+
+                if let Some(saga) = saga_dir {
+                    let creatures_json = saga.join("map-data").join("prime").join("creatures.json");
+                    let text = std::fs::read_to_string(&creatures_json)
+                        .with_context(|| format!("reading {}", creatures_json.display()))?;
+                    let curated = core::curated_maps::CuratedMaps::embedded()
+                        .unwrap_or_default();
+                    let unmatched = bestiary::join_spawns(&mut entries, &text, &curated)?;
+                    let with_spawns = entries.iter().filter(|e| !e.spawns.is_empty()).count();
+                    println!(
+                        "Spawn join: {} entries located, {} spawn names had no template",
+                        with_spawns,
+                        unmatched.len()
+                    );
+                    if dry_run {
+                        for name in &unmatched {
+                            println!("  no template: {name}");
+                        }
+                    }
+                }
+
+                let out_path = out.unwrap_or_else(|| PathBuf::from("defaults/bestiary.json"));
+                if dry_run {
+                    println!("DRY RUN — would write {} entries to {}", entries.len(), out_path.display());
+                } else {
+                    let file = bestiary::BestiaryFile {
+                        version: bestiary::FILE_VERSION,
+                        entries,
+                    };
+                    config::write_atomic(&out_path, serde_json::to_string_pretty(&file)?)
+                        .with_context(|| format!("Failed to write {}", out_path.display()))?;
+                    println!("Wrote {} entries to {}", file.entries.len(), out_path.display());
                 }
                 return Ok(());
             }
