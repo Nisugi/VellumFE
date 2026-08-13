@@ -103,51 +103,112 @@ impl VellumGuiApp {
             .is_some_and(|uid| uid.to_string() != snap.room);
         let heading_color = widget_accent(ui.ctx(), ui.visuals());
 
-        // Focus mode: one container as a flat sortable list. Focus id lives
-        // in egui temp data (cleared by the back button or a vanished id).
-        let focus_key = egui::Id::new("containers_focus");
-        let focus_id: Option<String> = ui.ctx().data(|d| d.get_temp(focus_key));
-        if let Some(fid) = focus_id.as_deref() {
-            if let Some(focused) = snap.items.iter().find(|i| i.id == fid) {
-                return Self::render_focused_container(
-                    app_core, ui, snap, focused, &children, &weights, &counts, focus_key,
-                    heading_color, clicked, &mut click,
-                );
+        // Tab bar: Containers (the trees you dig through), Worn (flat
+        // trinket list), Room, Item (full-height inspector). Clicking an
+        // item anywhere jumps to the Item tab.
+        let tab_key = Self::containers_tab_key();
+        let mut tab: u8 = ui.ctx().data(|d| d.get_temp(tab_key)).unwrap_or(0);
+        let inspector = app_core.game_state.viewed_item.as_ref();
+        ui.horizontal(|ui| {
+            for (i, label) in ["Containers", "Worn", "Room", "Item"].iter().enumerate() {
+                if ui.selectable_label(tab == i as u8, *label).clicked() {
+                    tab = i as u8;
+                    ui.ctx().data_mut(|d| d.insert_temp(tab_key, tab));
+                }
             }
-            // Focused container no longer in the snapshot: drop focus.
-            ui.ctx().data_mut(|d| d.remove_temp::<String>(focus_key));
+        });
+        ui.separator();
+
+        // Group indices per tab (from the GROUPS split above).
+        let tab_groups: &[usize] = match tab {
+            0 => &[0, 1, 3, 4], // hands, worn containers, at feet, reserved
+            1 => &[2],          // worn non-containers
+            _ => &[5, 6],       // room containers, on the ground
+        };
+
+        if tab == 3 {
+            // Full-height inspector.
+            match inspector {
+                Some(view) => {
+                    ui.label(
+                        egui::RichText::new(&view.name)
+                            .strong()
+                            .color(heading_color),
+                    );
+                    ui.add_space(2.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("containers_inspector")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for (command, text) in &view.results {
+                                if text.trim().is_empty() {
+                                    continue;
+                                }
+                                ui.label(
+                                    egui::RichText::new(command.to_uppercase())
+                                        .small()
+                                        .color(heading_color),
+                                );
+                                ui.label(text);
+                                ui.add_space(6.0);
+                            }
+                            if view.results.iter().all(|(_, t)| t.trim().is_empty()) {
+                                ui.weak("nothing further to see");
+                            }
+                        });
+                }
+                None => {
+                    ui.weak("Click an item (or right-click > Inspect) to view it here.");
+                }
+            }
+            return clicked;
         }
 
-        // Reserve room for the inspector panel when a detail is loaded.
-        let inspector = app_core.game_state.viewed_item.as_ref();
-        let tree_height = if inspector.is_some() {
-            (ui.available_height() - 140.0).max(60.0)
-        } else {
-            ui.available_height()
-        };
+        // Focus mode (Containers tab only): one container as a flat list.
+        // Focus id lives in egui temp data (cleared by the back button or a
+        // vanished id).
+        if tab == 0 {
+            let focus_key = egui::Id::new("containers_focus");
+            let focus_id: Option<String> = ui.ctx().data(|d| d.get_temp(focus_key));
+            if let Some(fid) = focus_id.as_deref() {
+                if let Some(focused) = snap.items.iter().find(|i| i.id == fid) {
+                    return Self::render_focused_container(
+                        app_core, ui, snap, focused, &children, &weights, &counts, focus_key,
+                        heading_color, clicked, &mut click,
+                    );
+                }
+                // Focused container no longer in the snapshot: drop focus.
+                ui.ctx().data_mut(|d| d.remove_temp::<String>(focus_key));
+            }
+        }
 
         egui::ScrollArea::vertical()
             .id_salt("containers_scroll")
-            .max_height(tree_height)
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let mut room_items_hidden = false;
-                for (gi, group) in roots.iter().enumerate() {
+                let mut anything = false;
+                for &gi in tab_groups {
+                    let group = &roots[gi];
                     if group.is_empty() {
                         continue;
                     }
-                    // Groups 5/6 are room-relation: suppress when stale.
+                    // Room-relation groups: suppress when stale.
                     if gi >= 5 && room_stale {
                         room_items_hidden = true;
                         continue;
                     }
-                    ui.add_space(6.0);
-                    ui.label(
-                        egui::RichText::new(GROUPS[gi])
-                            .strong()
-                            .color(heading_color),
-                    );
-                    ui.separator();
+                    anything = true;
+                    // Single-section tabs skip the redundant heading.
+                    if tab_groups.len() > 1 {
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new(GROUPS[gi])
+                                .strong()
+                                .color(heading_color),
+                        );
+                        ui.separator();
+                    }
                     for item in group {
                         Self::containers_node(
                             ui, item, &children, &weights, &counts, 0, &mut clicked, &mut click,
@@ -156,36 +217,22 @@ impl VellumGuiApp {
                 }
                 if room_items_hidden {
                     ui.add_space(6.0);
-                    ui.weak("Room items omitted - snapshot is from another room (Refresh).");
+                    ui.weak("Room items are from another room - Refresh here to load them.");
+                } else if !anything {
+                    ui.weak("nothing here");
                 }
             });
-
-        // Inspector: the last .viewitem answer (click an item to load one).
-        if let Some(view) = inspector {
-            ui.separator();
-            ui.label(
-                egui::RichText::new(&view.name)
-                    .strong()
-                    .color(heading_color),
-            );
-            egui::ScrollArea::vertical()
-                .id_salt("containers_inspector")
-                .max_height(110.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    for (command, text) in &view.results {
-                        if text.trim().is_empty() {
-                            continue;
-                        }
-                        ui.small(command.to_uppercase());
-                        ui.label(text);
-                    }
-                    if view.results.iter().all(|(_, t)| t.trim().is_empty()) {
-                        ui.weak("nothing further to see");
-                    }
-                });
-        }
         clicked
+    }
+
+    /// egui temp-data key for the active Containers-window tab.
+    fn containers_tab_key() -> egui::Id {
+        egui::Id::new("containers_tab")
+    }
+
+    /// Jump the Containers window to the Item (inspector) tab.
+    fn containers_show_item_tab(ctx: &egui::Context) {
+        ctx.data_mut(|d| d.insert_temp(Self::containers_tab_key(), 3u8));
     }
 
     /// Focus mode: one container's entire subtree as a flat, name-sorted
@@ -273,6 +320,7 @@ impl VellumGuiApp {
                         )
                         .on_hover_text(item.long.as_deref().unwrap_or(&item.name));
                     if response.clicked() && clicked.is_none() {
+                        Self::containers_show_item_tab(ui.ctx());
                         clicked = click(ui, &response, format!(".viewitem {}", item.id));
                     }
                     Self::containers_context_menu(ui, &response, item, &mut clicked, click);
@@ -365,8 +413,9 @@ impl VellumGuiApp {
             let response = ui
                 .add(egui::Label::new(format!("{}{weight}", item.name)).sense(egui::Sense::click()))
                 .on_hover_text(item.long.as_deref().unwrap_or(&item.name));
-            // Left-click loads the item into the inspector panel.
+            // Left-click loads the item into the Item tab.
             if response.clicked() && clicked.is_none() {
+                Self::containers_show_item_tab(ui.ctx());
                 *clicked = click(ui, &response, format!(".viewitem {}", item.id));
             }
             Self::containers_context_menu(ui, &response, item, clicked, click);
@@ -386,6 +435,7 @@ impl VellumGuiApp {
             menu_ui.label(&item.name);
             menu_ui.separator();
             if menu_ui.button("Inspect").clicked() {
+                Self::containers_show_item_tab(menu_ui.ctx());
                 chosen = Some(format!(".viewitem {}", item.id));
                 menu_ui.close();
             }
