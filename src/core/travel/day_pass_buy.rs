@@ -464,7 +464,11 @@ impl BuyState {
                 out
             }
             Phase::AwaitWithdraw { sent_ms } => {
-                if saw(&F::WithdrawOk) {
+                if saw(&F::WithdrawFailed) {
+                    out.push(BuyEvent::FailedTooPoor(
+                        "this area's bank account can't cover the pass".into(),
+                    ));
+                } else if saw(&F::WithdrawOk) {
                     self.phase = Phase::FromBank { i: 0, sent_from: None, sent_ms: ctx.now_ms };
                     self.tick_from_bank(&ctx, &mut out);
                 } else if timed_out(*sent_ms) {

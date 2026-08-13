@@ -2977,6 +2977,19 @@ impl TravelTask {
                 need,
                 sent_ms,
             } => {
+                // The teller refused - THIS town's account can't cover it
+                // (GS4 accounts are per-town; silver deposited in the Landing
+                // is invisible to a Zul branch). go2 bails right here ("Not
+                // enough silver in current area's bank.", go2.lic:2280-2284)
+                // - without this the wealth poll spun forever on a reading
+                // that was never going to change (the live Khazar's Hold
+                // `wealth quiet` spam).
+                if ctx.saw(&crate::core::move_feedback::MoveFeedback::WithdrawFailed) {
+                    events.push(TravelEvent::Failed(format!(
+                        "this area's bank account can't cover the {need} silver needed - travel aborted (GS4 accounts are per-town; your silver may be banked elsewhere)"
+                    )));
+                    return;
+                }
                 let reading = funding.and_then(|f| f.silver);
                 // The post-withdraw `wealth quiet` hasn't reflected yet if the
                 // reading still equals what we had when we sent the withdraw
@@ -2998,8 +3011,17 @@ impl TravelTask {
                         "withdrew what the bank had ({have} silver) but the trip needs {need} - aborted"
                     )));
                 } else if ctx.now_ms.saturating_sub(sent_ms) > STEP_TIMEOUT_MS {
-                    // No fresh wealth reading at all — re-probe once more rather
-                    // than abort on a dropped line.
+                    // No fresh wealth reading — re-probe for a dropped line,
+                    // but bounded: an unchanged reading forever means the
+                    // withdraw silently failed (don't spam `wealth quiet`).
+                    if self.keep_retries >= MAX_EDGE_RETRIES {
+                        events.push(TravelEvent::Failed(
+                            "the withdrawal never reflected in your wealth - travel aborted"
+                                .into(),
+                        ));
+                        return;
+                    }
+                    self.keep_retries += 1;
                     events.push(TravelEvent::Send("wealth quiet".into()));
                     self.step = Step::Funding(FundingPhase::AwaitWithdraw {
                         real_dest,

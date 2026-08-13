@@ -99,6 +99,12 @@ pub enum MoveFeedback {
     /// A bank withdrawal completed ("the teller carefully records" / "flips
     /// through the books"). Ends the day-pass funding wait.
     WithdrawOk,
+    /// The withdrawal was refused - the account here can't cover it ("you
+    /// don't seem to have that much in the account"). GS4 accounts are
+    /// per-town: silver deposited in the Landing is invisible to a Zul
+    /// branch. go2 bails cleanly here ("Not enough silver in current area's
+    /// bank.", go2.lic:2280-2284).
+    WithdrawFailed,
     /// `raise`ing the pass teleported us: "whirlwind of color subsides".
     RaiseTraveled,
     /// `open <container>` reported it was ALREADY open ("That is already
@@ -265,9 +271,19 @@ patterns! {
         "ASK me again",
         "day pass to",
     ],
+    // "flips through the books" is NOT a success fragment: the REFUSAL line
+    // also opens with it ("The teller flips through the books and then looks
+    // up with an apologetic expression...") and the classifier returns the
+    // leftmost match, so keeping it classified refusals as WithdrawOk.
+    // Success lines: "carefully records the transaction, hands you N
+    // silvers" / "scribbles the transaction" (live log 2026-08-12).
     WithdrawOk => [
         "carefully records the transaction",
-        "flips through the books",
+        "scribbles the transaction",
+    ],
+    WithdrawFailed => [
+        "don't seem to have that much in the account",
+        "You don't have that much in your account",
     ],
     RaiseTraveled => [
         "whirlwind of color subsides",
@@ -405,6 +421,26 @@ mod tests {
         );
         // Ordinary prose doesn't match.
         assert_eq!(classify_line("A cat wanders by."), None);
+    }
+
+    #[test]
+    fn withdraw_refusals_classify_as_failed_not_ok() {
+        // Both teller-refusal shapes from the live 2026-08-12 log. The first
+        // OPENS with "flips through the books" - which must therefore never
+        // be a WithdrawOk fragment (leftmost match would win).
+        assert_eq!(
+            classify_line("The teller flips through the books and then looks up with an apologetic expression and says, \"I'm sorry, Nisugi, you don't seem to have that much in the account.\""),
+            Some(MoveFeedback::WithdrawFailed)
+        );
+        assert_eq!(
+            classify_line("Drumming her fingers on the counter, she says, \"You seem to have already spent what you're trying to withdraw.  You don't have that much in your account.\""),
+            Some(MoveFeedback::WithdrawFailed)
+        );
+        // Success still classifies.
+        assert_eq!(
+            classify_line("The teller carefully records the transaction, hands you 2,000 silvers, and says, \"This brings your total to 1,016,210,847 silvers.\""),
+            Some(MoveFeedback::WithdrawOk)
+        );
     }
 
     #[test]
