@@ -44,6 +44,7 @@ pub mod placement;
 pub mod messages;
 pub mod pathing;
 pub mod remote;
+pub mod satellites;
 pub mod sorter;
 pub mod spell_table;
 pub mod travel;
