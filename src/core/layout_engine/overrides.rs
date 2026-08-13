@@ -26,6 +26,10 @@ pub enum EdgeAction {
     /// solid line would overstate the connection. Unlike `Connector`, the
     /// edge keeps anchoring positioning, so the layout does not change.
     Dash,
+    /// Draw as a matching-color dot pair on the two linked rooms instead of
+    /// a line (presentation only, geometry untouched) — for long links
+    /// where any line, dashed or not, just crosses the sheet as noise.
+    Dots,
     /// Treat as a directionless passage: no geometry constraint, drawn
     /// dashed. Un-welds rooms the solver placed adjacent on bad data.
     Connector,
@@ -162,16 +166,16 @@ impl LocationOverrides {
     /// The subset that changes GENERATION (not just presentation): edge and
     /// classification overrides feed positioning and packing, so the cache
     /// entry records a hash of them and regenerates when it moves. Position
-    /// pins and names stay out — they apply after loading. `Dash` edges are
-    /// pure styling and stay out too, so dashing a line is a cache hit, not
-    /// a re-layout. (`Hide` is also presentation-only but stays in: dropping
+    /// pins and names stay out — they apply after loading. `Dash` and
+    /// `Dots` edges are pure styling and stay out too, so restyling a line
+    /// is a cache hit, not a re-layout. (`Hide` is also presentation-only but stays in: dropping
     /// it would shift every existing user's curated hashes for no gain.)
     pub fn generation_subset(&self) -> LocationOverrides {
         LocationOverrides {
             edges: self
                 .edges
                 .iter()
-                .filter(|e| e.action != EdgeAction::Dash)
+                .filter(|e| !matches!(e.action, EdgeAction::Dash | EdgeAction::Dots))
                 .cloned()
                 .collect(),
             sheets: self.sheets.clone(),

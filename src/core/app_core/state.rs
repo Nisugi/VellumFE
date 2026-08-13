@@ -1948,7 +1948,10 @@ fn wire_map_scene(
             .iter()
             .filter(|e| pass(e.group))
             .map(|e| {
-                let stub = e.kind == SceneEdgeKind::Stub;
+                // Stubs and dot pairs both need their room ids on the wire
+                // (stub labels; dot-pair color hashing).
+                let wants_rooms =
+                    matches!(e.kind, SceneEdgeKind::Stub | SceneEdgeKind::DotPair);
                 RemoteMapEdge {
                     x1: e.a.x,
                     y1: e.a.y,
@@ -1958,10 +1961,11 @@ fn wire_map_scene(
                         SceneEdgeKind::Directional => 0,
                         SceneEdgeKind::Connector => 1,
                         SceneEdgeKind::Stub => 2,
+                        SceneEdgeKind::DotPair => 3,
                     },
                     l: e.label.clone(),
-                    ar: stub.then_some(e.a_room),
-                    br: stub.then_some(e.b_room),
+                    ar: wants_rooms.then_some(e.a_room),
+                    br: wants_rooms.then_some(e.b_room),
                 }
             })
             .collect(),

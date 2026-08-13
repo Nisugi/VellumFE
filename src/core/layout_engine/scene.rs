@@ -55,6 +55,9 @@ pub enum SceneEdgeKind {
     Stub,
     /// Dashed inter-group connector ("go door" adjacency, no direction).
     Connector,
+    /// Owner-curated dot pair (EdgeAction::Dots): no line — a matching-
+    /// color dot on each linked room instead.
+    DotPair,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +174,7 @@ pub fn build_scene(
     let keys = super::overrides::room_key_index(lookup);
     let mut hidden: HashSet<(u32, u32)> = HashSet::new();
     let mut demoted: HashSet<(u32, u32)> = HashSet::new();
+    let mut dotted: HashSet<(u32, u32)> = HashSet::new();
     for e in edge_overrides {
         let (Some(&a), Some(&b)) = (keys.get(&e.a), keys.get(&e.b)) else {
             continue;
@@ -185,6 +189,12 @@ pub fn build_scene(
             // rooms stay where the solver put them.
             EdgeAction::Connector | EdgeAction::Dash => {
                 demoted.insert(pair);
+            }
+            // Dots: same geometry story as Dash, but rendered as a dot pair
+            // (demoted set so a solid intra-group edge loses its line too).
+            EdgeAction::Dots => {
+                demoted.insert(pair);
+                dotted.insert(pair);
             }
             EdgeAction::Direction(_) => {}
         }
@@ -276,7 +286,11 @@ pub fn build_scene(
                             a_room: room.id,
                             b_room: target_id,
                             group: room_group,
-                            kind: SceneEdgeKind::Connector,
+                            kind: if dotted.contains(&key) {
+                                SceneEdgeKind::DotPair
+                            } else {
+                                SceneEdgeKind::Connector
+                            },
                             label: connector_label(cmd),
                         },
                     );
@@ -337,7 +351,11 @@ pub fn build_scene(
                 } else {
                     CONNECTOR_MAX_CELLS
                 };
-                if len > cap {
+                // Dotted pairs always draw: with no line there is nothing to
+                // cross the sheet, so the length cap doesn't apply — this is
+                // exactly how a too-long-to-draw link becomes visible again.
+                let is_dotted = dotted.contains(&key);
+                if len > cap && !is_dotted {
                     continue;
                 }
                 push_edge(
@@ -349,7 +367,11 @@ pub fn build_scene(
                         a_room: room.id,
                         b_room: target_id,
                         group: room_group,
-                        kind: SceneEdgeKind::Connector,
+                        kind: if is_dotted {
+                            SceneEdgeKind::DotPair
+                        } else {
+                            SceneEdgeKind::Connector
+                        },
                         label: connector_label(cmd),
                     },
                 );
@@ -513,6 +535,52 @@ mod tests {
         assert_eq!(plain.outdoor.edges[0].a, dashed.outdoor.edges[0].a);
         assert_eq!(plain.outdoor.edges[0].b, dashed.outdoor.edges[0].b);
         for (p, d) in plain.outdoor.rooms.iter().zip(&dashed.outdoor.rooms) {
+            assert_eq!((p.id, p.cell), (d.id, d.cell));
+        }
+    }
+
+    /// A Dots override renders as a dot pair with untouched geometry, and —
+    /// unlike plain connectors — survives the connector length cap: a link
+    /// too long to draw as a line becomes visible again as dots.
+    #[test]
+    fn dots_override_restyles_and_ignores_length_cap() {
+        let mk = |id: u32, uid: i64, wayto: &[(u32, &str)]| crate::core::mapdb::Room {
+            id,
+            uid: vec![uid],
+            location: Some("Test".into()),
+            title: vec![format!("[Room {id}]")],
+            description: Vec::new(),
+            wayto: wayto.iter().map(|&(t, c)| (t, c.to_string())).collect(),
+            timeto: Default::default(),
+            dirto: Default::default(),
+            tags: Vec::new(),
+            paths: "Obvious paths: north, south".into(),
+            climate: None,
+            terrain: None,
+            image: None,
+            image_coords: None,
+        };
+        let mut rooms = vec![
+            mk(1, 9_000_001, &[(2, "north")]),
+            mk(2, 9_000_002, &[(1, "south")]),
+        ];
+        let layout = super::super::generate_layout(&mut rooms);
+        let lookup = RoomTable::new(&rooms);
+        let dotted = build_scene(
+            "Test",
+            &layout,
+            &lookup,
+            &[EdgeOverride {
+                a: 9_000_001,
+                b: 9_000_002,
+                action: EdgeAction::Dots,
+            }],
+        );
+        assert_eq!(dotted.outdoor.edges.len(), 1);
+        assert_eq!(dotted.outdoor.edges[0].kind, SceneEdgeKind::DotPair);
+        // Geometry untouched (same guarantee Dash makes).
+        let plain = build_scene("Test", &layout, &lookup, &[]);
+        for (p, d) in plain.outdoor.rooms.iter().zip(&dotted.outdoor.rooms) {
             assert_eq!((p.id, p.cell), (d.id, d.cell));
         }
     }

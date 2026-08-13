@@ -594,6 +594,7 @@ impl VellumGuiApp {
                                                 None => "auto".to_string(),
                                                 Some(EdgeAction::Hide) => "hidden".to_string(),
                                                 Some(EdgeAction::Dash) => "dashed".to_string(),
+                                                Some(EdgeAction::Dots) => "dots".to_string(),
                                                 Some(EdgeAction::Connector) => {
                                                     "passage".to_string()
                                                 }
@@ -650,6 +651,12 @@ impl VellumGuiApp {
                                                         "dashed",
                                                         "Draw dashed, keep the layout (looks only)",
                                                         Some(EdgeAction::Dash),
+                                                    );
+                                                    pick(
+                                                        ui,
+                                                        "dots",
+                                                        "No line: matching-color dot on both rooms (looks only)",
+                                                        Some(EdgeAction::Dots),
                                                     );
                                                     pick(
                                             ui,
