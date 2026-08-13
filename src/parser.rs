@@ -366,14 +366,19 @@ pub enum ParsedElement {
         container_id: String,
         content: String, // Full line with links preserved
     },
-    /// `<pulse mana="0|1"/>` — the game's pulse announcement (extended feed,
-    /// served to clients identifying as WRAYTH 1.0.1.28+). A pulse fires
-    /// every minute ±15s; every pulse absorbs field experience (when any is
-    /// pooled), and every OTHER pulse is also a mana pulse — `mana` says
-    /// which kind this one was. Replaces the old trick of inferring pulses
-    /// from observed mana gain or exp absorption.
+    /// `<pulse min="46" max="75" mana="0|1"/>` — the game's pulse
+    /// announcement (extended feed, served to clients identifying as
+    /// WRAYTH 1.0.1.28+). Every pulse absorbs field experience (when any is
+    /// pooled), and every OTHER pulse is also a mana pulse. `min`/`max`
+    /// bound the seconds until the NEXT pulse (missing/invalid values fall
+    /// back to the 46/75 defaults Saga uses), and `mana` announces whether
+    /// that next pulse restores mana — the server declares the alternation,
+    /// nothing is inferred. Replaces the old trick of inferring pulses from
+    /// observed mana gain or exp absorption.
     Pulse {
         mana: bool,
+        min: u32,
+        max: u32,
     },
     /// `<inventoryManager id='<token>' room='...'>` ... `</inventoryManager>`
     /// — structured inventory snapshot (extended feed), sent only in response

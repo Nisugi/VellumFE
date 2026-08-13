@@ -2270,16 +2270,31 @@ fn test_extract_all_attributes_mixed_quotes() {
 #[test]
 fn test_pulse_tag() {
     let mut parser = XmlParser::new();
+    // Bare mana flag: min/max fall back to Saga's 46/75 defaults.
     let elements = parser.parse_line(r#"<pulse mana="1"/>"#);
     assert!(matches!(
         elements.as_slice(),
-        [ParsedElement::Pulse { mana: true }]
+        [ParsedElement::Pulse { mana: true, min: 46, max: 75 }]
     ));
 
     let elements = parser.parse_line(r#"<pulse mana="0"/>"#);
     assert!(matches!(
         elements.as_slice(),
-        [ParsedElement::Pulse { mana: false }]
+        [ParsedElement::Pulse { mana: false, min: 46, max: 75 }]
+    ));
+
+    // Full wire form: explicit next-pulse window.
+    let elements = parser.parse_line(r#"<pulse min="46" max="75" mana="1"/>"#);
+    assert!(matches!(
+        elements.as_slice(),
+        [ParsedElement::Pulse { mana: true, min: 46, max: 75 }]
+    ));
+
+    // Unparseable bounds degrade to the defaults, never drop the pulse.
+    let elements = parser.parse_line(r#"<pulse min="soon" max="" mana="0"/>"#);
+    assert!(matches!(
+        elements.as_slice(),
+        [ParsedElement::Pulse { mana: false, min: 46, max: 75 }]
     ));
 }
 

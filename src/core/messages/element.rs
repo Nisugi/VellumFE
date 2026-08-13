@@ -1944,10 +1944,17 @@ impl MessageProcessor {
                     ));
                 }
             }
-            ParsedElement::Pulse { mana } => {
+            ParsedElement::Pulse { mana, min, max } => {
                 self.chunk_has_silent_updates = true;
                 game_state.pulse_count += 1;
-                game_state.last_pulse_mana = *mana;
+                game_state.next_pulse_mana = *mana;
+                // min/max bound the seconds until the NEXT pulse. Anchor
+                // both ends in the server clock domain, like RT/CT, so the
+                // countdown widget's offset math applies uniformly.
+                let now_server = chrono::Utc::now().timestamp() + self.server_time_offset;
+                game_state.pulse_next_earliest = Some(now_server + *min as i64);
+                game_state.pulse_next_latest = Some(now_server + *max as i64);
+                self.update_countdown_by_id(ui_state, "pulse", now_server + *min as i64);
             }
             ParsedElement::InventoryManager {
                 token,

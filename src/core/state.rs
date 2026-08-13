@@ -171,8 +171,16 @@ pub struct GameState {
     /// is pooled), and every other pulse is also a mana pulse. Serves as
     /// the pulse clock's generation counter.
     pub pulse_count: u64,
-    /// Whether the most recent pulse was a mana pulse (alternates)
-    pub last_pulse_mana: bool,
+    /// Whether the NEXT pulse restores mana — the wire's `mana` attribute
+    /// declares the alternation up front (Saga semantics), nothing inferred.
+    pub next_pulse_mana: bool,
+    /// Earliest arrival of the next pulse (server-clock epoch seconds,
+    /// `now + min` from the last `<pulse>`); None before the first pulse.
+    /// Drives the "pulse" countdown.
+    pub pulse_next_earliest: Option<i64>,
+    /// Latest arrival of the next pulse (server-clock epoch seconds,
+    /// `now + max` from the last `<pulse>`).
+    pub pulse_next_latest: Option<i64>,
 
     /// Unified game-object registry: items (containers/worn/hands/at-feet/
     /// ground), creatures, players. The single source for game objects;
@@ -1316,7 +1324,9 @@ impl GameState {
             room_meta: RoomMetaState::default(),
             managed_inventory: None,
             pulse_count: 0,
-            last_pulse_mana: false,
+            next_pulse_mana: false,
+            pulse_next_earliest: None,
+            pulse_next_latest: None,
             objects: crate::core::game_objects::GameObjects::default(),
             move_feedback: std::collections::VecDeque::new(),
             game_line_no: 0,

@@ -2137,6 +2137,61 @@ fn test_event_pattern_feeds_stun_countdown() {
 }
 
 #[test]
+fn test_pulse_feeds_state_and_countdown() {
+    // <pulse min max mana>: bumps the generation counter, records the
+    // next-pulse window in the server clock domain, flags whether the NEXT
+    // pulse restores mana, and arms the "pulse" countdown at now+min.
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = UiState::new();
+    let mut ws = crate::data::window::WindowState::new_text("pulse", 10);
+    ws.content = WindowContent::Countdown(crate::data::CountdownData {
+        end_time: 0,
+        label: "Pulse".to_string(),
+        countdown_id: "pulse".to_string(),
+        color: None,
+        show_when_zero: true,
+    });
+    ui_state.windows.insert("pulse".to_string(), ws);
+
+    let pulse = ParsedElement::Pulse {
+        mana: true,
+        min: 46,
+        max: 75,
+    };
+    processor.process_element(
+        &pulse,
+        &mut game_state,
+        &mut ui_state,
+        &mut std::collections::HashMap::new(),
+        &mut None,
+        &mut false,
+        &mut None,
+        &mut None,
+        &mut None,
+        None,
+    );
+
+    assert_eq!(game_state.pulse_count, 1);
+    assert!(game_state.next_pulse_mana);
+    let now = chrono::Utc::now().timestamp();
+    let earliest = game_state.pulse_next_earliest.expect("earliest set");
+    let latest = game_state.pulse_next_latest.expect("latest set");
+    assert!(
+        (now + 44..=now + 48).contains(&earliest),
+        "earliest {} not ~now+46",
+        earliest
+    );
+    assert_eq!(latest - earliest, 75 - 46, "window spans max-min seconds");
+
+    let end = match &ui_state.windows.get("pulse").unwrap().content {
+        WindowContent::Countdown(cd) => cd.end_time,
+        _ => panic!("not a countdown"),
+    };
+    assert_eq!(end, earliest, "countdown armed at the earliest next pulse");
+}
+
+#[test]
 fn test_vellum_timer_feeds_countdown_by_id() {
     let mut processor = create_test_processor();
     let mut game_state = GameState::new();

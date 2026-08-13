@@ -172,6 +172,7 @@ pub const CATALOG: &[(&str, Option<GameType>)] = &[
     ("roundtime", None),
     ("casttime", None),
     ("stuntime", None),
+    ("pulse", Some(GameType::GS4)),
     ("countdown_custom", None),
     ("left", None),
     ("right", None),
@@ -1006,6 +1007,32 @@ impl Config {
                     color: None,
                     countdown_background_color: None,
                     show_when_zero: None,
+                },
+            }),
+
+            // Extended-feed pulse clock (<pulse min max mana>): counts down
+            // to the earliest arrival of the next game pulse. show_when_zero
+            // defaults on so "Pulse 0" reads as "armed - pulse imminent"
+            // during the min..max window instead of the widget blanking.
+            "pulse" => Some(WindowDef::Countdown {
+                base: WindowBase {
+                    name: "pulse".to_string(),
+                    title: Some("Pulse".to_string()),
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
+                    show_border: true,
+                    text_color: Some("#9370DB".to_string()), // Medium purple
+                    ..base_defaults.clone()
+                },
+                data: CountdownWidgetData {
+                    id: Some("pulse".to_string()),
+                    label: None,
+                    icon: Some(default_countdown_icon().chars().next().unwrap_or('█')),
+                    color: None,
+                    countdown_background_color: None,
+                    show_when_zero: Some(true),
                 },
             }),
 

@@ -550,10 +550,18 @@ impl XmlParser {
     }
 
     pub(super) fn handle_pulse(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
-        // <pulse mana="0|1"/> - self-closing pulse announcement (1/min ±15s;
-        // mana='1' on the alternating mana pulses)
+        // <pulse min="46" max="75" mana="0|1"/> - self-closing pulse
+        // announcement. min/max = seconds window until the NEXT pulse
+        // (Saga's defaults when absent/invalid: 46/75); mana='1' = the next
+        // pulse restores mana.
         let mana = Self::extract_attribute(tag, "mana").is_some_and(|v| v == "1");
-        elements.push(ParsedElement::Pulse { mana });
+        let min = Self::extract_attribute(tag, "min")
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(46);
+        let max = Self::extract_attribute(tag, "max")
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(75);
+        elements.push(ParsedElement::Pulse { mana, min, max });
     }
 
     pub(super) fn handle_inventory_manager_open(
