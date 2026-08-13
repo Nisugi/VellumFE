@@ -77,11 +77,15 @@ struct HighlightFormState {
     /// Re-arm seconds for the condition gate; edited alongside `when` when
     /// that UI lands, preserved until then.
     alert_rearm: Option<f32>,
-    /// Countdown bar this alert starts, and the timer ids it cancels. Carried
-    /// through untouched for now — same rule as `when`: a rule must never
-    /// lose its timer to an unrelated edit.
-    alert_timer: Option<crate::config::AlertTimer>,
-    alert_cancels: Vec<String>,
+    // Countdown bar started on fire, flattened like every other field.
+    // A timer exists when the label is non-empty; duration falls back to
+    // the schema default when unparsable.
+    alert_timer_label: String,
+    alert_timer_duration: String,
+    alert_timer_id: String,
+    alert_timer_color: String,
+    /// Timer ids this rule cancels, comma-separated in the form.
+    alert_cancels: String,
 
     is_global: bool,
     error: Option<String>,
@@ -151,12 +155,35 @@ impl HighlightFormState {
         // its presentation cleared: dropping the spec here would silently
         // discard a condition gate this form cannot yet re-author, turning a
         // working condition alert into one that never fires again.
+        // The timer exists when a label was given; a duration alone is not a
+        // timer (there is nothing to write on the bar). Unparsable/absent
+        // duration falls back to a sane 10s rather than silently dropping
+        // the timer the user typed a label for.
+        let timer = opt(&self.alert_timer_label).map(|label| crate::config::AlertTimer {
+            id: opt(&self.alert_timer_id),
+            label,
+            duration: self
+                .alert_timer_duration
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .filter(|v| *v > 0.0)
+                .unwrap_or(10.0),
+            color: opt(&self.alert_timer_color),
+        });
+        let cancels: Vec<String> = self
+            .alert_cancels
+            .split(',')
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+            .collect();
+
         if banner.is_none()
             && art.is_none()
             && flash.is_none()
             && self.alert_when.is_none()
-            && self.alert_timer.is_none()
-            && self.alert_cancels.is_empty()
+            && timer.is_none()
+            && cancels.is_empty()
         {
             return None;
         }
@@ -192,8 +219,8 @@ impl HighlightFormState {
             priority: self.alert_priority,
             when: self.alert_when.clone(),
             rearm: self.alert_rearm,
-            timer: self.alert_timer.clone(),
-            cancels: self.alert_cancels.clone(),
+            timer,
+            cancels,
         })
     }
 
@@ -236,8 +263,11 @@ impl HighlightFormState {
             alert_priority: None,
             alert_when: None,
             alert_rearm: None,
-            alert_timer: None,
-            alert_cancels: Vec::new(),
+            alert_timer_label: String::new(),
+            alert_timer_duration: String::new(),
+            alert_timer_id: String::new(),
+            alert_timer_color: String::new(),
+            alert_cancels: String::new(),
             is_global: true,
             error: None,
         }
@@ -292,11 +322,34 @@ impl HighlightFormState {
             alert_priority: pattern.alert.as_ref().and_then(|a| a.priority),
             alert_when: pattern.alert.as_ref().and_then(|a| a.when.clone()),
             alert_rearm: pattern.alert.as_ref().and_then(|a| a.rearm),
-            alert_timer: pattern.alert.as_ref().and_then(|a| a.timer.clone()),
+            alert_timer_label: pattern
+                .alert
+                .as_ref()
+                .and_then(|a| a.timer.as_ref())
+                .map(|t| t.label.clone())
+                .unwrap_or_default(),
+            alert_timer_duration: pattern
+                .alert
+                .as_ref()
+                .and_then(|a| a.timer.as_ref())
+                .map(|t| t.duration.to_string())
+                .unwrap_or_default(),
+            alert_timer_id: pattern
+                .alert
+                .as_ref()
+                .and_then(|a| a.timer.as_ref())
+                .and_then(|t| t.id.clone())
+                .unwrap_or_default(),
+            alert_timer_color: pattern
+                .alert
+                .as_ref()
+                .and_then(|a| a.timer.as_ref())
+                .and_then(|t| t.color.clone())
+                .unwrap_or_default(),
             alert_cancels: pattern
                 .alert
                 .as_ref()
-                .map(|a| a.cancels.clone())
+                .map(|a| a.cancels.join(", "))
                 .unwrap_or_default(),
             is_global,
             error: None,
@@ -793,6 +846,45 @@ impl VellumGuiApp {
                                         );
                                         ui.text_edit_singleline(&mut form.alert_id);
                                         ui.end_row();
+
+                                        // ---- Countdown timer ------------
+                                        ui.label("Timer label").on_hover_text(
+                                            "Start a countdown bar in the Timers window when \
+                                             this fires. The label names the bar; leave empty \
+                                             for no timer.",
+                                        );
+                                        ui.text_edit_singleline(&mut form.alert_timer_label);
+                                        ui.end_row();
+
+                                        ui.label("Timer seconds").on_hover_text(
+                                            "How long the bar runs. Empty or invalid = 10s.",
+                                        );
+                                        ui.text_edit_singleline(&mut form.alert_timer_duration);
+                                        ui.end_row();
+
+                                        ui.label("Timer id").on_hover_text(
+                                            "Stable name other rules can cancel by. Re-firing \
+                                             restarts this bar instead of stacking a second \
+                                             one. Empty = the alert's own id.",
+                                        );
+                                        ui.text_edit_singleline(&mut form.alert_timer_id);
+                                        ui.end_row();
+
+                                        ui.label("Timer color").on_hover_text(
+                                            "Bar fill color (name or #hex). Empty = widget \
+                                             accent.",
+                                        );
+                                        ui.text_edit_singleline(&mut form.alert_timer_color);
+                                        ui.end_row();
+
+                                        ui.label("Cancels timers").on_hover_text(
+                                            "Timer ids to stop when this fires, comma-\
+                                             separated. 'The boss died' should cancel \
+                                             'boss cast' — a countdown for something already \
+                                             over is a lie on screen.",
+                                        );
+                                        ui.text_edit_singleline(&mut form.alert_cancels);
+                                        ui.end_row();
                                     });
 
                                 ui.separator();
@@ -986,6 +1078,61 @@ mod tests {
             "the condition tree survives edit-save-reload"
         );
         assert_eq!(alert2.rearm, alert.rearm);
+    }
+
+    #[test]
+    fn timer_and_cancels_round_trip_through_the_form() {
+        let mut form = HighlightFormState::empty();
+        form.name = "boss".to_string();
+        form.pattern = "begins to cast".to_string();
+        form.alert_banner = "CAST".to_string();
+        form.alert_timer_label = "Boss cast".to_string();
+        form.alert_timer_duration = "12".to_string();
+        form.alert_timer_id = "boss-cast".to_string();
+        form.alert_cancels = "adds, phase-two".to_string();
+
+        let (_, pattern) = form.build_pattern().expect("builds");
+        let alert = pattern.alert.clone().expect("alert");
+        let timer = alert.timer.as_ref().expect("timer authored");
+        assert_eq!(timer.label, "Boss cast");
+        assert_eq!(timer.duration, 12.0);
+        assert_eq!(timer.id.as_deref(), Some("boss-cast"));
+        assert_eq!(alert.cancels, vec!["adds", "phase-two"], "comma list split");
+
+        // Reload into a fresh form and save again: nothing lost.
+        let reloaded = HighlightFormState::from_pattern("boss", &pattern, true);
+        assert_eq!(reloaded.alert_timer_label, "Boss cast");
+        assert_eq!(reloaded.alert_timer_duration, "12");
+        assert_eq!(reloaded.alert_cancels, "adds, phase-two");
+        let (_, again) = reloaded.build_pattern().expect("rebuilds");
+        assert_eq!(
+            again.alert.expect("alert").cancels,
+            vec!["adds", "phase-two"]
+        );
+    }
+
+    #[test]
+    fn a_timer_label_alone_is_a_valid_alert() {
+        // A rule whose only job is starting a bar has no banner/art/flash;
+        // it must still save rather than being judged "no alert".
+        let mut form = HighlightFormState::empty();
+        form.name = "t".to_string();
+        form.pattern = "the ritual begins".to_string();
+        form.alert_timer_label = "Ritual".to_string();
+        let (_, pattern) = form.build_pattern().expect("builds");
+        assert!(pattern.alert.expect("alert").timer.is_some());
+    }
+
+    #[test]
+    fn a_duration_without_a_label_is_not_a_timer() {
+        // There is nothing to write on the bar, so no timer is authored —
+        // and with nothing else set, no alert either.
+        let mut form = HighlightFormState::empty();
+        form.name = "t".to_string();
+        form.pattern = "x".to_string();
+        form.alert_timer_duration = "30".to_string();
+        let (_, pattern) = form.build_pattern().expect("builds");
+        assert!(pattern.alert.is_none());
     }
 
     #[test]

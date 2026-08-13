@@ -131,8 +131,8 @@ impl Default for EdgeState {
 /// The live alert set plus per-rule cooldown bookkeeping.
 #[derive(Debug, Default)]
 pub struct AlertState {
-    /// Currently visible alerts, oldest first (spawn order). Eviction pops the
-    /// front, so this ordering is load-bearing.
+    /// Currently visible alerts, oldest first (spawn order). Renderers stack
+    /// in this order; eviction picks by (priority, age), not position.
     active: Vec<ActiveAlert>,
     /// Last fire time per rule key, for cooldown enforcement. Pruned when
     /// entries age out so a long session with many one-off rules doesn't grow
@@ -216,10 +216,21 @@ impl AlertState {
             priority: spec.priority.unwrap_or(0),
         });
 
-        // Over the cap, drop the oldest: the newest alert is the one still
-        // describing what is happening right now.
+        // Over the cap, evict the LOWEST-priority alert, oldest among ties.
+        // Priority is what lets a stun warning displace ambiance instead of
+        // whatever happens to be oldest — and it also means a low-priority
+        // newcomer loses to a full board of higher ones, including losing
+        // its own slot immediately, which is exactly what "lower priority"
+        // is supposed to mean.
         while self.active.len() > MAX_CONCURRENT {
-            self.active.remove(0);
+            let victim = self
+                .active
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, a)| (a.priority, a.spawned))
+                .map(|(i, _)| i)
+                .expect("len > cap implies non-empty");
+            self.active.remove(victim);
         }
         true
     }
@@ -388,6 +399,80 @@ mod tests {
             state.active().last().expect("non-empty").key,
             format!("rule{}", MAX_CONCURRENT + 2)
         );
+    }
+
+    #[test]
+    fn priority_eviction_sacrifices_ambiance_before_warnings() {
+        // A full board of important alerts plus one low-priority ambiance:
+        // the next warning must displace the ambiance, not the oldest
+        // warning.
+        let mut state = AlertState::new();
+        let t0 = Instant::now();
+        let mut fire = |key: &str, priority: i32, at: Instant, state: &mut AlertState| {
+            let mut s = spec(key);
+            s.cooldown = Some(0.0);
+            s.duration = Some(60.0);
+            s.priority = Some(priority);
+            state.fire(trigger(key, s), at);
+        };
+
+        fire("ambiance", -10, t0, &mut state); // oldest AND lowest
+        for i in 0..(MAX_CONCURRENT - 1) {
+            fire(&format!("warn{i}"), 5, t0 + Duration::from_millis(i as u64 + 1), &mut state);
+        }
+        assert_eq!(state.active().len(), MAX_CONCURRENT, "board full");
+
+        fire("stun", 10, t0 + Duration::from_secs(1), &mut state);
+        assert_eq!(state.active().len(), MAX_CONCURRENT);
+        assert!(
+            !state.active().iter().any(|a| a.key == "ambiance"),
+            "the ambiance lost its slot"
+        );
+        assert!(state.active().iter().any(|a| a.key == "warn0"),
+            "the oldest WARNING survived — eviction is by priority, not age");
+        assert!(state.active().iter().any(|a| a.key == "stun"));
+    }
+
+    #[test]
+    fn a_low_priority_newcomer_loses_to_a_full_board_of_higher_ones() {
+        // "Lower priority" has to mean something even for the arrival: five
+        // active warnings are not displaced by fresh ambiance.
+        let mut state = AlertState::new();
+        let t0 = Instant::now();
+        for i in 0..MAX_CONCURRENT {
+            let mut s = spec(&format!("warn{i}"));
+            s.cooldown = Some(0.0);
+            s.duration = Some(60.0);
+            s.priority = Some(5);
+            state.fire(trigger(&format!("warn{i}"), s), t0);
+        }
+
+        let mut ambiance = spec("rain");
+        ambiance.cooldown = Some(0.0);
+        ambiance.priority = Some(-10);
+        state.fire(trigger("rain", ambiance), t0 + Duration::from_secs(1));
+
+        assert_eq!(state.active().len(), MAX_CONCURRENT);
+        assert!(
+            !state.active().iter().any(|a| a.key == "rain"),
+            "the newcomer was the lowest and lost its own slot"
+        );
+    }
+
+    #[test]
+    fn equal_priorities_still_evict_the_oldest() {
+        // With no priorities authored (all default 0), behavior is exactly
+        // the pre-priority rule: oldest goes first.
+        let mut state = AlertState::new();
+        let t0 = Instant::now();
+        for i in 0..(MAX_CONCURRENT + 1) {
+            let mut s = spec(&format!("a{i}"));
+            s.cooldown = Some(0.0);
+            s.duration = Some(60.0);
+            state.fire(trigger(&format!("a{i}"), s), t0 + Duration::from_millis(i as u64));
+        }
+        assert!(!state.active().iter().any(|a| a.key == "a0"), "oldest evicted");
+        assert!(state.active().iter().any(|a| a.key == "a1"));
     }
 
     #[test]
