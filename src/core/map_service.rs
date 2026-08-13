@@ -208,6 +208,24 @@ pub struct MapService {
 }
 
 impl MapService {
+    /// The promote staging file: personal edits move here on `.mappromote`
+    /// and it loads as a community layer every session, so a promotion is
+    /// durable on this machine immediately — merging it into
+    /// defaults/map_overrides.json (+ rebuild) is only what ships it to
+    /// everyone else.
+    fn staging_path(overrides_path: &std::path::Path) -> PathBuf {
+        overrides_path.with_file_name("map_overrides_promoted.json")
+    }
+
+    /// Community base = embedded shipped curation, overlaid by this
+    /// machine's promote staging (the owner's newer, not-yet-shipped work).
+    fn base_community(overrides_path: &std::path::Path) -> MapOverrides {
+        overrides::overlay(
+            overrides::embedded_community(),
+            overrides::load(&Self::staging_path(overrides_path)),
+        )
+    }
+
     pub fn new(cache_dir: PathBuf, overrides_path: PathBuf) -> MapService {
         let loaded_overrides = overrides::load(&overrides_path);
         let (job_tx, job_rx) = mpsc::channel::<MapJob>();
@@ -295,9 +313,9 @@ impl MapService {
             layouts: HashMap::new(),
             scenes: HashMap::new(),
             pending: Default::default(),
+            community_overrides: Self::base_community(&overrides_path),
             overrides: loaded_overrides,
             overrides_path,
-            community_overrides: overrides::embedded_community(),
             ghosts: Default::default(),
             current_ghost: None,
             last_command: None,
@@ -414,10 +432,11 @@ impl MapService {
         self.scenes.clear();
         self.pending.clear();
         self.revision += 1;
-        // Community layers: the curation shipped with the app, overlaid by
-        // any overrides traveling with the db they were curated against.
+        // Community layers: shipped curation + local promote staging,
+        // overlaid by any overrides traveling with the db they were curated
+        // against.
         self.community_overrides = overrides::overlay(
-            overrides::embedded_community(),
+            Self::base_community(&self.overrides_path),
             match crate::core::mapdb_update::community_overrides_for(&path) {
                 Some(p) => overrides::load(&p),
                 None => MapOverrides::default(),
@@ -786,9 +805,7 @@ impl MapService {
         &mut self,
         key: Option<&str>,
     ) -> Result<(Vec<String>, PathBuf), String> {
-        let staging_path = self
-            .overrides_path
-            .with_file_name("map_overrides_promoted.json");
+        let staging_path = Self::staging_path(&self.overrides_path);
         let keys: Vec<String> = match key {
             Some(key) => {
                 if !self.overrides.locations.contains_key(key) {
@@ -1285,6 +1302,18 @@ mod tests {
         );
         let staged = overrides::load(&staging_path);
         assert_eq!(staged.locations["town"].group_offsets[&100], Cell { x: 2, y: 1 });
+
+        // A fresh service (= app restart) loads the staging file as a
+        // community layer: the promotion survives without any rebuild.
+        let restarted = MapService::new(
+            dir.path().join("cache"),
+            dir.path().join("map_overrides.json"),
+        );
+        assert_eq!(
+            restarted.community_overrides.locations["town"].group_offsets[&100],
+            Cell { x: 2, y: 1 },
+            "promoted edits persist across restart via the staging layer"
+        );
 
         // `all` sweeps the rest; nothing left to promote errors cleanly.
         let (rest, _) = svc.promote_overrides(None).unwrap();
