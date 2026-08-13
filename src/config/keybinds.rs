@@ -536,6 +536,12 @@ pub struct WheelSlice {
     /// rotation entirely — the user owns the geometry.
     #[serde(default, skip_serializing_if = "wheel_flag_is_false")]
     pub back: bool,
+    /// Per-slice fire type (wheel v2): `none` (dead-zone slice — holds its
+    /// seat but can't be aimed or fired), `release`, `edge`, or `retract`.
+    /// Absent = inherit the global `[controller_tuning] fire_mode`, so
+    /// configs from before this key behave exactly as they did (F3a).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fire_type: Option<String>,
     /// Designer-session lock: while set, whole-ring operations (even out)
     /// leave this slice's width alone. Never persisted — locks are an
     /// editing aid, not wheel config — but kept on the slice so structural
@@ -575,6 +581,12 @@ pub fn touch_wheel_action_catalog() -> serde_json::Value {
 impl WheelSlice {
     pub fn is_folder(&self) -> bool {
         !self.slices.is_empty()
+    }
+
+    /// A dead-zone slice (`fire_type = "none"`): holds its seat on the
+    /// ring but can never be aimed or fired, on any frontend.
+    pub fn is_none_type(&self) -> bool {
+        self.fire_type.as_deref() == Some("none")
     }
 }
 
@@ -919,6 +931,12 @@ pub struct TuningConfig {
     /// part of the same hold instead of an open/close strobe.
     #[serde(default = "default_wheel_min_open_ms")]
     pub wheel_min_open_ms: u32,
+    /// What the non-movement ("opposing") stick does when it is NOT aiming
+    /// an open wheel: `"scroll"` (default) scrolls the story window and
+    /// cycles interact-mode focus; `"none"` disables both idle actions so a
+    /// stray nudge does nothing. Wheel aiming is unaffected either way.
+    #[serde(default = "default_opposing_stick")]
+    pub opposing_stick: String,
 }
 
 fn default_movement_stick() -> String {
@@ -960,6 +978,9 @@ fn default_trigger_close_pct() -> u8 {
 fn default_wheel_min_open_ms() -> u32 {
     150
 }
+fn default_opposing_stick() -> String {
+    "scroll".to_string()
+}
 
 impl Default for TuningConfig {
     fn default() -> Self {
@@ -977,6 +998,7 @@ impl Default for TuningConfig {
             trigger_open_pct: default_trigger_open_pct(),
             trigger_close_pct: default_trigger_close_pct(),
             wheel_min_open_ms: default_wheel_min_open_ms(),
+            opposing_stick: default_opposing_stick(),
         }
     }
 }
