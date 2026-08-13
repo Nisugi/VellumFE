@@ -16,6 +16,19 @@ impl AppCore {
         self.message_processor.remote = Some(sink);
     }
 
+    /// The port our own web sidecar actually bound, once it has.
+    ///
+    /// The configured port is only a starting point -- `serve` walks upward
+    /// when it is taken, which is exactly what happens when several instances
+    /// run on one machine. The multi-account hub needs the real one so it can
+    /// skip dialing itself.
+    pub fn remote_bound_port(&self) -> Option<u16> {
+        self.message_processor
+            .remote
+            .as_ref()
+            .and_then(|sink| sink.bound_port())
+    }
+
     /// Re-publish radial-wheel definitions to remote clients after the
     /// wheel config changed (keybinds reload, desktop wheel editor).
     /// No-op when web is disabled.

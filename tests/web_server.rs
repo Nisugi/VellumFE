@@ -195,6 +195,16 @@ async fn health_and_static_assets_are_served() {
     assert!(index.contains("VellumFE"));
     assert!(index.contains("cmd-suggestion"));
 
+    // The multi-account status wall: dials every session's /ws in watch
+    // mode client-side, so serving the page is all the server does.
+    let wall = http_get(addr, "/characters").await;
+    assert!(wall.contains("200"));
+    assert!(wall.contains("mode: \"watch\""), "the wall subscribes as a watcher");
+    assert!(
+        wall.contains("subscribe") && wall.contains("resume"),
+        "handshake mirrors the hub: auth, subscribe watch, resume"
+    );
+
     let sessions = http_get(addr, "/sessions").await;
     assert!(sessions.contains("application/json"));
 
@@ -992,4 +1002,354 @@ async fn doll_image_rejects_bad_requests() {
     // Unknown kind is never served, active skin or not.
     let response = http_get(addr, &format!("/doll/image?kind=bogus&token={TEST_TOKEN}")).await;
     assert!(response.starts_with("HTTP/1.1 404"), "got: {response}");
+}
+
+/// Connect as a status-only watcher: send `subscribe {mode:"watch"}` before
+/// `resume`, then drain the snapshot and the macros/wheels that follow.
+async fn connect_watching(addr: std::net::SocketAddr) -> (WsClient, serde_json::Value) {
+    let mut client = WsClient::connect(addr).await;
+    let hello = read_json_timeout(&mut client).await;
+    assert_eq!(hello["t"], "hello");
+    client
+        .send_text(r#"{"t":"subscribe","d":{"mode":"watch"}}"#)
+        .await;
+    client.send_resume(0).await;
+    let snapshot = read_json_timeout(&mut client).await;
+    assert_eq!(snapshot["t"], "snapshot");
+    let macros = read_json_timeout(&mut client).await;
+    assert_eq!(macros["t"], "macros");
+    let wheels = read_json_timeout(&mut client).await;
+    assert_eq!(wheels["t"], "wheels");
+    (client, snapshot)
+}
+
+#[tokio::test]
+async fn watch_client_gets_status_without_scrollback() {
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    // Buffered scrollback that a Play client WOULD receive.
+    sink.push_text("main", styled("pre-connect line", "main"));
+
+    let (_client, snapshot) = connect_watching(addr).await;
+
+    assert!(
+        snapshot["d"].get("text").is_none(),
+        "a watcher must not be sent scrollback: {}",
+        snapshot["d"]
+    );
+    // The status a watcher exists to render is all present.
+    assert!(snapshot["d"].get("vitals").is_some());
+    assert!(snapshot["d"].get("indicators").is_some());
+    assert!(snapshot["d"].get("injuries").is_some());
+    assert!(snapshot["d"].get("rt").is_some());
+}
+
+#[tokio::test]
+async fn watch_client_receives_status_deltas_but_no_text() {
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    let (mut client, _) = connect_watching(addr).await;
+
+    // Text must be filtered out entirely...
+    sink.push_text("main", styled("noise the watcher ignores", "main"));
+
+    // ...so the next frame the watcher sees is the vitals change, not the
+    // text line pushed before it. This is the assertion that proves
+    // filtering rather than mere reordering.
+    let mut gs = GameState::new();
+    gs.vitals.health = 42;
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let frame = read_json_timeout(&mut client).await;
+    assert_eq!(
+        frame["t"], "vitals",
+        "expected vitals, got {} -- text should have been filtered",
+        frame["t"]
+    );
+    assert_eq!(frame["d"]["health"], 42);
+}
+
+#[tokio::test]
+async fn watch_client_receives_group_roster_changes() {
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    let (mut client, _) = connect_watching(addr).await;
+
+    let mut gs = GameState::new();
+    gs.group.replace(
+        vellum_fe::core::group::GroupLeader::SelfLed,
+        vec![vellum_fe::core::group::GroupMember {
+            id: "-1".to_string(),
+            noun: "bob".to_string(),
+            name: "Bob".to_string(),
+        }],
+    );
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let frame = read_json_timeout(&mut client).await;
+    assert_eq!(frame["t"], "group", "got {}", frame["t"]);
+    assert_eq!(frame["d"]["members"][0]["name"], "Bob");
+    assert_eq!(frame["d"]["confirmed"], true);
+}
+
+#[tokio::test]
+async fn a_watcher_and_a_player_share_one_server() {
+    // The multi-account case: a watcher connected alongside the phone must
+    // not change what the phone receives.
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    let (mut player, player_snapshot) = connect_and_sync(addr, 0).await;
+    let (mut watcher, watch_snapshot) = connect_watching(addr).await;
+
+    // The player's snapshot carries scrollback machinery; the watcher's does
+    // not, from the same server at the same moment.
+    assert!(player_snapshot["d"].get("map_state").is_some());
+    assert!(watch_snapshot["d"].get("text").is_none());
+
+    sink.push_text("main", styled("only the player sees this", "main"));
+    let frame = read_json_timeout(&mut player).await;
+    assert_eq!(frame["t"], "text");
+    assert_eq!(
+        frame["d"]["line"]["segments"][0]["text"],
+        "only the player sees this"
+    );
+
+    // Both see a status change.
+    let mut gs = GameState::new();
+    gs.vitals.mana = 7;
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let watcher_frame = read_json_timeout(&mut watcher).await;
+    assert_eq!(watcher_frame["t"], "vitals");
+    assert_eq!(watcher_frame["d"]["mana"], 7);
+
+    let player_frame = read_json_timeout(&mut player).await;
+    assert_eq!(player_frame["t"], "vitals");
+    assert_eq!(player_frame["d"]["mana"], 7);
+}
+
+// ==================== Multi-account hub (end-to-end) ====================
+
+/// The hub's frame appliers, driven by a REAL server rather than by
+/// hand-written JSON. The unit tests assert what the hub does with a frame;
+/// this asserts the frames it actually receives match that shape.
+#[tokio::test]
+async fn hub_applies_real_server_frames_to_a_peer() {
+    use vellum_fe::core::multiaccount::PeerStatus;
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    // Push state the way the app does, then connect as a watcher and feed
+    // every frame through the hub's applier.
+    let mut gs = GameState::new();
+    gs.vitals.health = 63;
+    gs.status.set("IconSTUNNED", true);
+    gs.injuries.insert("head".to_string(), 2);
+    gs.stance.update(80, "defensive (80%)");
+    gs.gs4_experience.update_mind_state(42, "muddled".to_string());
+    gs.encumbrance.update_level(17, "Light".to_string());
+    gs.group.replace(
+        vellum_fe::core::group::GroupLeader::SelfLed,
+        vec![vellum_fe::core::group::GroupMember {
+            id: "-1".to_string(),
+            noun: "bob".to_string(),
+            name: "Bob".to_string(),
+        }],
+    );
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let (_client, snapshot) = connect_watching(addr).await;
+
+    let mut peer = PeerStatus {
+        character: "Alice".to_string(),
+        port: 8040,
+        ..Default::default()
+    };
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &snapshot);
+
+    // Every field the display renders, sourced from a real snapshot.
+    assert_eq!(peer.vitals.health, 63);
+    assert!(peer.indicators.stunned(), "indicators survived the wire");
+    assert_eq!(peer.injuries.get("head"), Some(&2));
+    assert!(peer.group.leads());
+    assert_eq!(peer.group.members[0].name, "Bob");
+    assert_eq!(
+        peer.stance.as_ref().map(|g| g.value),
+        Some(80),
+        "numeric stance, not a re-parsed display string"
+    );
+    assert_eq!(peer.stance.as_ref().map(|g| g.text.as_str()), Some("defensive"));
+    assert_eq!(peer.mind.as_ref().map(|g| g.value), Some(42));
+    assert_eq!(peer.encumbrance.as_ref().map(|g| g.value), Some(17));
+    assert!(peer.connected);
+}
+
+#[tokio::test]
+async fn hub_tracks_live_status_deltas_from_a_real_server() {
+    use vellum_fe::core::multiaccount::PeerStatus;
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    let (mut client, _) = connect_watching(addr).await;
+
+    let mut peer = PeerStatus::default();
+
+    let mut gs = GameState::new();
+    gs.vitals.health = 12;
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+    let frame = read_json_timeout(&mut client).await;
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &frame);
+    assert_eq!(peer.vitals.health, 12);
+
+    // A roster change arrives as its own delta and replaces the roster.
+    gs.group.replace(
+        vellum_fe::core::group::GroupLeader::Other(vellum_fe::core::group::GroupMember {
+            id: "-9".to_string(),
+            noun: "zed".to_string(),
+            name: "Zed".to_string(),
+        }),
+        vec![],
+    );
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+    let frame = read_json_timeout(&mut client).await;
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &frame);
+    assert!(!peer.group.leads(), "now following Zed");
+    assert_eq!(peer.vitals.health, 12, "unrelated state must persist");
+}
+
+#[tokio::test]
+async fn hub_receives_effects_hands_and_absolute_vitals() {
+    use vellum_fe::core::multiaccount::PeerStatus;
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    let mut gs = GameState::new();
+    gs.left_hand = Some("a reinforced shield".to_string());
+    gs.right_hand = Some("a longsword".to_string());
+    gs.spell = Some("Spirit Warding I".to_string());
+    gs.minivitals
+        .update_vital("health", 51, 51, "health 51/51".to_string());
+    gs.minivitals
+        .update_vital("mana", 32, 64, "mana 32/64".to_string());
+    gs.effects.insert(
+        "Cooldowns".to_string(),
+        vellum_fe::data::ActiveEffectsContent {
+            category: "Cooldowns".to_string(),
+            effects: vec![vellum_fe::data::ActiveEffect {
+                id: "1".to_string(),
+                text: "Berserk".to_string(),
+                value: 50,
+                time: "00:01:00".to_string(),
+                expires_at: Some(1_760),
+                bar_color: None,
+                text_color: None,
+            }],
+            generation: 1,
+        },
+    );
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let (_client, snapshot) = connect_watching(addr).await;
+
+    let mut peer = PeerStatus::default();
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &snapshot);
+
+    // Absolute vitals: the "51/51" a percentage cannot express.
+    assert_eq!(peer.minivitals.get("health"), Some(&(51, 51)));
+    assert_eq!(peer.minivitals.get("mana"), Some(&(32, 64)));
+    // Stamina/spirit never reported: absent, not 0/0, which would render as
+    // a dead character.
+    assert!(peer.minivitals.get("stamina").is_none());
+
+    assert_eq!(peer.left_hand.as_deref(), Some("a reinforced shield"));
+    assert_eq!(peer.right_hand.as_deref(), Some("a longsword"));
+    assert_eq!(peer.prepared_spell.as_deref(), Some("Spirit Warding I"));
+
+    let cooldowns = peer.effects.get("Cooldowns").expect("cooldowns category");
+    assert_eq!(cooldowns.effects[0].text, "Berserk");
+    assert_eq!(
+        cooldowns.effects[0].expires_at,
+        Some(1_760),
+        "absolute expiry is what lets the card count down locally"
+    );
+}
+
+#[tokio::test]
+async fn hub_receives_field_exp_and_joined_indicator() {
+    use vellum_fe::core::multiaccount::PeerStatus;
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    let mut gs = GameState::new();
+    gs.gs4_experience.field_exp = Some(1_200);
+    gs.gs4_experience.max_field_exp = Some(1_500);
+    gs.status.set("IconJOINED", true);
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let (_client, snapshot) = connect_watching(addr).await;
+    let mut peer = PeerStatus::default();
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &snapshot);
+
+    assert_eq!(peer.field_exp, Some((1_200, 1_500)));
+    assert!(
+        peer.indicators.joined(),
+        "JOINED must survive the wire -- it is the game's own 'is grouped'"
+    );
+}
+
+#[tokio::test]
+async fn field_exp_is_absent_until_both_halves_are_known() {
+    use vellum_fe::core::multiaccount::PeerStatus;
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    // A value with no cap cannot be drawn as a bar, so it must not ship as a
+    // half-populated gauge that renders at a made-up ratio.
+    let mut gs = GameState::new();
+    gs.gs4_experience.field_exp = Some(900);
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let (_client, snapshot) = connect_watching(addr).await;
+    let mut peer = PeerStatus::default();
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &snapshot);
+
+    assert_eq!(peer.field_exp, None);
+}
+
+#[tokio::test]
+async fn watchers_receive_room_changes_without_the_prose() {
+    use vellum_fe::core::multiaccount::PeerStatus;
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    let (mut client, _) = connect_watching(addr).await;
+
+    // A room change after connect. Before the fix, Room was not in the watch
+    // whitelist at all, so a watcher's room froze at whatever the connect
+    // snapshot held -- or stayed empty forever if the peer had not logged in
+    // yet. That is why the card's room number never appeared.
+    let mut gs = GameState::new();
+    gs.room_name = Some("Town Square".to_string());
+    gs.room_id = Some("12345".to_string());
+    gs.exits = vec!["north".to_string()];
+    gs.room_description = vec![StyledLine {
+        segments: vec![TextSegment::plain("A wide plaza bustles with traffic.")],
+        stream: "main".to_string(),
+        timestamp: None,
+    }];
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let frame = read_json_timeout(&mut client).await;
+    assert_eq!(frame["t"], "room", "got {}", frame["t"]);
+    assert_eq!(frame["d"]["id"], "12345");
+    assert_eq!(frame["d"]["name"], "Town Square");
+    // The prose is the bulk; a watcher must not pay for it.
+    assert!(
+        frame["d"].get("description").is_none()
+            || frame["d"]["description"].as_array().is_some_and(|a| a.is_empty()),
+        "prose must be stripped for watchers: {}",
+        frame["d"]
+    );
+
+    // And the hub applies it.
+    let mut peer = PeerStatus::default();
+    vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &frame);
+    assert_eq!(peer.room_id.as_deref(), Some("12345"));
+    assert_eq!(peer.room_name.as_deref(), Some("Town Square"));
 }

@@ -219,6 +219,7 @@ impl VellumGuiApp {
             effect_countdown_now: self.app_core.config.ui.effect_countdown.then(|| {
                 chrono::Utc::now().timestamp() + self.app_core.server_time_offset
             }),
+            multiaccount_peers: self.multiaccount_peers.clone(),
         }
     }
 

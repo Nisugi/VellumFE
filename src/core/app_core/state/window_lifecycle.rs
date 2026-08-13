@@ -1281,6 +1281,7 @@ impl AppCore {
             WidgetType::Targets => WindowContent::Targets,
             WidgetType::Players => WindowContent::Players,
             WidgetType::MissingSpells => WindowContent::MissingSpells,
+            WidgetType::MultiAccount => WindowContent::MultiAccount,
             WidgetType::Items => WindowContent::Items,
             WidgetType::Container => WindowContent::Container {
                 container_title: String::new(),

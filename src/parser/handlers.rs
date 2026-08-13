@@ -549,6 +549,58 @@ impl XmlParser {
         }
     }
 
+    pub(super) fn handle_pulse(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // <pulse mana="0|1"/> - self-closing pulse announcement (1/min ±15s;
+        // mana='1' on the alternating mana pulses)
+        let mana = Self::extract_attribute(tag, "mana").is_some_and(|v| v == "1");
+        elements.push(ParsedElement::Pulse { mana });
+    }
+
+    pub(super) fn handle_inventory_manager_open(
+        &mut self,
+        tag: &str,
+        elements: &mut Vec<ParsedElement>,
+    ) {
+        // A dangling builder means a previous block never closed (torn feed);
+        // starting a new one discards it rather than merging two snapshots.
+        if self.inv_manager.is_some() {
+            tracing::warn!("inventoryManager block opened while one was in flight; dropping stale block");
+        }
+        self.inv_manager = Some(crate::parser::InvManagerBuilder {
+            token: Self::extract_attribute(tag, "id").unwrap_or_default(),
+            room: Self::extract_attribute(tag, "room").unwrap_or_default(),
+            items: Vec::new(),
+            continuations: Vec::new(),
+        });
+        // Self-closing form = empty snapshot; emit immediately
+        if tag.ends_with("/>") {
+            self.handle_inventory_manager_close(elements);
+        }
+    }
+
+    pub(super) fn handle_inventory_manager_child(&mut self, tag: &str) {
+        let Some(builder) = self.inv_manager.as_mut() else {
+            return;
+        };
+        let attrs = Self::extract_all_attributes(tag);
+        if tag.starts_with("<continuation") {
+            builder.continuations.push(attrs);
+        } else {
+            builder.items.push(attrs);
+        }
+    }
+
+    pub(super) fn handle_inventory_manager_close(&mut self, elements: &mut Vec<ParsedElement>) {
+        if let Some(builder) = self.inv_manager.take() {
+            elements.push(ParsedElement::InventoryManager {
+                token: builder.token,
+                room: builder.room,
+                items: builder.items,
+                continuations: builder.continuations,
+            });
+        }
+    }
+
     pub(super) fn extract_attribute(tag: &str, attr: &str) -> Option<String> {
         // Extract attribute value from tag using simple string parsing.
         // Handles both quote styles; double quotes keep precedence to match

@@ -984,6 +984,414 @@ pub struct SpellsWidgetData {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MissingSpellsWidgetData {}
 
+/// Multi-account cards: which rows each character's card shows.
+///
+/// Every element is opt-in per field rather than a fixed card template,
+/// because what matters differs by playstyle -- a healer wants dolls, a
+/// caster wants mind state. Defaults are the four that answer "is this
+/// character in trouble right now": vitals, RT, status glyphs and the group.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MultiAccountWidgetData {
+    /// Health/mana/stamina/spirit bars.
+    pub show_vitals: bool,
+    /// Roundtime and casttime, interpolated from the peer's own clock.
+    pub show_rt: bool,
+    /// Compact colored glyph row (stunned, bleeding, hidden, ...).
+    pub show_status: bool,
+    /// Injury doll per card, drawn with YOUR installed doll art and the
+    /// peer's reported wounds. Peers ship an injuries map, not art, so a
+    /// character using custom doll art shows on yours -- sending each peer's
+    /// variant and calibration is a later addition.
+    pub show_injuries: bool,
+    /// Mind state bar.
+    pub show_mind: bool,
+    /// Combat stance bar.
+    pub show_stance: bool,
+    /// Unabsorbed field experience, with a warning when at or near the cap --
+    /// the point of watching it is knowing when to go absorb.
+    pub show_field_exp: bool,
+    /// Encumbrance bar.
+    pub show_encumbrance: bool,
+    /// Room name, and the "not with you" cue when it differs from yours.
+    pub show_room: bool,
+    /// Include a card for this character, sorted first and accent-marked.
+    /// On by default: without it a group of three shows only two cards, and
+    /// the others have nothing to be compared against.
+    pub show_self: bool,
+    /// Show absolute vitals ("51/51") instead of percentages, where the peer
+    /// has reported them. Percentages remain the fallback.
+    pub show_absolute_vitals: bool,
+    /// Hands, and the spell being prepared.
+    pub show_hands: bool,
+    /// Debuffs and cooldowns, filtered by `effect_filter`.
+    pub show_effects: bool,
+    /// Which effect categories to draw, in order. Defaults to the two that
+    /// answer "is this character in trouble" -- active spells and buffs are
+    /// long lists that would bury the card.
+    pub effect_categories: Vec<String>,
+    /// Case-insensitive substrings; an effect shows only if its name contains
+    /// one of these. Empty means show everything in the chosen categories.
+    ///
+    /// A filter rather than a fixed list because effect names vary by
+    /// profession and society, and a hardcoded set would be wrong for
+    /// somebody. Empty-means-all keeps the first run useful: you see
+    /// everything, then narrow it.
+    pub effect_filter: Vec<String>,
+    /// Cap on effects drawn per card, after filtering. Six characters with
+    /// unbounded lists is unreadable regardless of the filter.
+    pub max_effects: usize,
+    /// Rows drawn on the same line as the row above them, by row id.
+    ///
+    /// Short rows waste a full line each: RT is one label and the status
+    /// icons are a compact strip, so they pair naturally. Defaults to pairing
+    /// those two, which is the combination every card wants.
+    pub merged_rows: Vec<String>,
+    /// Row order within a card, top to bottom. Names match the toggles:
+    /// "status", "vitals", "rt", "hands", "effects", "mind", "stance",
+    /// "field_exp", "encumbrance", "injuries". The room id is not a row --
+    /// it renders in the card header, gated by `show_room`.
+    ///
+    /// Rows not listed are appended in their default order, so an old config
+    /// (or a partial list) still shows everything -- a missing name hides
+    /// nothing, it just does not reposition it.
+    pub row_order: Vec<String>,
+    /// Relative widths of the card's row columns; the LENGTH is the column
+    /// count. `[1.0]` (default) is the classic single vertical panel;
+    /// `[1.0, 1.4]` is a doll column with a wider info column beside it.
+    /// Same idea as the window Group system's size weights.
+    pub card_column_weights: Vec<f32>,
+    /// Row id -> column index (0-based). Rows not listed sit in column 0;
+    /// indices past the last column clamp to it, so shrinking the column
+    /// count never hides a row.
+    pub card_row_columns: std::collections::BTreeMap<String, usize>,
+    /// Card order: "group" keeps clustered characters together (default),
+    /// "name" sorts alphabetically, "port" is connection order.
+    pub sort_by: String,
+    /// Cards per row before wrapping. 0 means fit as many as the window is
+    /// wide enough for.
+    pub columns: usize,
+    /// Card width in points.
+    pub card_width: f32,
+}
+
+impl Default for MultiAccountWidgetData {
+    fn default() -> Self {
+        Self {
+            show_vitals: true,
+            show_rt: true,
+            show_status: true,
+            show_injuries: true,
+            show_mind: false,
+            show_stance: false,
+            show_field_exp: false,
+            merged_rows: vec!["status".to_string()],
+            row_order: Vec::new(),
+            sort_by: "group".to_string(),
+            show_encumbrance: false,
+            show_room: true,
+            show_self: true,
+            show_absolute_vitals: true,
+            show_hands: false,
+            show_effects: true,
+            effect_categories: vec!["Debuffs".to_string(), "Cooldowns".to_string()],
+            effect_filter: Vec::new(),
+            max_effects: 4,
+            columns: 0,
+            card_width: 150.0,
+            card_column_weights: vec![1.0],
+            card_row_columns: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+
+
+/// One row of a multi-account card, as a real type.
+///
+/// Rows used to be bare strings matched in SIX parallel tables across three
+/// files (order list, label, shown, set_shown, stretches, render arm), and
+/// five of the six failed silently on a missed arm -- a checkbox that
+/// toggled nothing, a row that never drew. The enum makes every table an
+/// exhaustive match the compiler enforces; the TOML representation stays the
+/// same strings via `id`/`from_id`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CardRow {
+    Rt,
+    Status,
+    Vitals,
+    Hands,
+    Effects,
+    Mind,
+    Stance,
+    FieldExp,
+    Encumbrance,
+    Injuries,
+}
+
+impl CardRow {
+    /// Default top-to-bottom order. Roundtime leads -- the most time-critical
+    /// value on the card -- with the status icons sharing its line.
+    pub const ALL: [CardRow; 10] = [
+        CardRow::Rt,
+        CardRow::Status,
+        CardRow::Vitals,
+        CardRow::Hands,
+        CardRow::Effects,
+        CardRow::Mind,
+        CardRow::Stance,
+        CardRow::FieldExp,
+        CardRow::Encumbrance,
+        CardRow::Injuries,
+    ];
+
+    /// The TOML/config string for this row (row_order, merged_rows).
+    pub fn id(self) -> &'static str {
+        match self {
+            CardRow::Rt => "rt",
+            CardRow::Status => "status",
+            CardRow::Vitals => "vitals",
+            CardRow::Hands => "hands",
+            CardRow::Effects => "effects",
+            CardRow::Mind => "mind",
+            CardRow::Stance => "stance",
+            CardRow::FieldExp => "field_exp",
+            CardRow::Encumbrance => "encumbrance",
+            CardRow::Injuries => "injuries",
+        }
+    }
+
+    /// Parse a config string; unknown (stale) names yield None and are
+    /// dropped rather than rendering as phantom rows.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|row| row.id() == id)
+    }
+
+    /// Human label for the editor list.
+    pub fn label(self) -> &'static str {
+        match self {
+            CardRow::Rt => "Roundtime",
+            CardRow::Status => "Status icons",
+            CardRow::Vitals => "Vitals",
+            CardRow::Hands => "Hands / casting",
+            CardRow::Effects => "Debuffs & cooldowns",
+            CardRow::Mind => "Mind state",
+            CardRow::Stance => "Stance",
+            CardRow::FieldExp => "Field experience",
+            CardRow::Encumbrance => "Encumbrance",
+            CardRow::Injuries => "Injury doll",
+        }
+    }
+
+    /// Whether this is one of the BIG rows -- the vitals block and the
+    /// injury doll. A big row never squeezes onto a compact horizontal
+    /// strip (an RT label's line); the doll instead opens a side column
+    /// (see `may_join`).
+    pub fn full_width(self) -> bool {
+        matches!(self, CardRow::Vitals | CardRow::Injuries)
+    }
+
+    /// Whether this row may share the given horizontal line: compact rows
+    /// only. Big rows (vitals, doll) never squeeze onto a strip -- putting
+    /// the doll BESIDE other rows is what card columns are for
+    /// (`card_column_weights` / `card_row_columns`), where each column
+    /// stacks vertically at a proper width.
+    pub fn may_join(self, line: &[CardRow]) -> bool {
+        !self.full_width() && line.iter().all(|other| !other.full_width())
+    }
+
+    /// Whether the row fills the width it is given (bars and the doll) or
+    /// sizes to its own content (labels, icon strips). Decides width shares
+    /// when rows share a line.
+    pub fn stretches(self) -> bool {
+        match self {
+            CardRow::Vitals
+            | CardRow::Mind
+            | CardRow::Stance
+            | CardRow::FieldExp
+            | CardRow::Encumbrance
+            | CardRow::Injuries => true,
+            CardRow::Rt | CardRow::Status | CardRow::Hands | CardRow::Effects => false,
+        }
+    }
+}
+
+impl MultiAccountWidgetData {
+    /// Rows in display order, paired with whether each is shown. Rows missing
+    /// from `row_order` keep their default position, so a partial list never
+    /// hides anything -- the checkbox is what hides.
+    pub fn ordered_rows(&self) -> Vec<(CardRow, bool)> {
+        let mut order: Vec<CardRow> = self
+            .row_order
+            .iter()
+            .filter_map(|name| CardRow::from_id(name))
+            .collect();
+        for row in CardRow::ALL {
+            if !order.contains(&row) {
+                order.push(row);
+            }
+        }
+        order
+            .into_iter()
+            .map(|row| (row, self.row_shown(row)))
+            .collect()
+    }
+
+    /// Whether a row is currently enabled. Exhaustive: a new row cannot ship
+    /// with a checkbox that silently toggles nothing.
+    pub fn row_shown(&self, row: CardRow) -> bool {
+        match row {
+            CardRow::Status => self.show_status,
+            CardRow::Vitals => self.show_vitals,
+            CardRow::Rt => self.show_rt,
+            CardRow::Hands => self.show_hands,
+            CardRow::Effects => self.show_effects,
+            CardRow::Mind => self.show_mind,
+            CardRow::Stance => self.show_stance,
+            CardRow::FieldExp => self.show_field_exp,
+            CardRow::Encumbrance => self.show_encumbrance,
+            CardRow::Injuries => self.show_injuries,
+        }
+    }
+
+    /// Enable or disable a row.
+    pub fn set_row_shown(&mut self, row: CardRow, on: bool) {
+        match row {
+            CardRow::Status => self.show_status = on,
+            CardRow::Vitals => self.show_vitals = on,
+            CardRow::Rt => self.show_rt = on,
+            CardRow::Hands => self.show_hands = on,
+            CardRow::Effects => self.show_effects = on,
+            CardRow::Mind => self.show_mind = on,
+            CardRow::Stance => self.show_stance = on,
+            CardRow::FieldExp => self.show_field_exp = on,
+            CardRow::Encumbrance => self.show_encumbrance = on,
+            CardRow::Injuries => self.show_injuries = on,
+        }
+    }
+
+    /// Raw membership in the merge set -- what the config STORES. The editor
+    /// reads and writes this; only the renderer applies the positional "first
+    /// row cannot merge" rule. Conflating the two was a data-loss bug: the
+    /// view snapshot read the positional answer (false for whatever row was
+    /// first) and wrote it back on any unrelated edit, deleting the stored
+    /// flag.
+    pub fn row_merge_flag(&self, row: CardRow) -> bool {
+        self.merged_rows.iter().any(|r| r == row.id())
+    }
+
+    /// Whether this row RENDERS on the line above it: stored flag, unless the
+    /// row is first (nothing above it to join).
+    pub fn row_merged(&self, row: CardRow) -> bool {
+        if self
+            .ordered_rows()
+            .first()
+            .is_some_and(|(first, _)| *first == row)
+        {
+            return false;
+        }
+        self.row_merge_flag(row)
+    }
+
+    /// Set or clear a row's merge-with-above flag.
+    pub fn set_row_merged(&mut self, row: CardRow, merged: bool) {
+        let present = self.merged_rows.iter().position(|r| r == row.id());
+        match (merged, present) {
+            (true, None) => self.merged_rows.push(row.id().to_string()),
+            (false, Some(idx)) => {
+                self.merged_rows.remove(idx);
+            }
+            _ => {}
+        }
+    }
+
+    /// Column weights sanitized for layout: at least one column, every
+    /// weight positive. Garbage in the config degrades to equal columns
+    /// rather than a zero-width or vanished one.
+    pub fn column_weights(&self) -> Vec<f32> {
+        let mut weights: Vec<f32> = self
+            .card_column_weights
+            .iter()
+            .map(|w| if w.is_finite() && *w > 0.0 { *w } else { 1.0 })
+            .collect();
+        if weights.is_empty() {
+            weights.push(1.0);
+        }
+        weights
+    }
+
+    /// Which column a row renders in, clamped to the columns that exist --
+    /// an assignment to a removed column lands in the last one instead of
+    /// hiding the row.
+    pub fn row_column(&self, row: CardRow) -> usize {
+        let last = self.column_weights().len() - 1;
+        self.card_row_columns
+            .get(row.id())
+            .copied()
+            .unwrap_or(0)
+            .min(last)
+    }
+
+    /// Assign a row to a column. Column 0 is the default, so assigning it
+    /// removes the entry rather than storing a redundant zero.
+    pub fn set_row_column(&mut self, row: CardRow, column: usize) {
+        if column == 0 {
+            self.card_row_columns.remove(row.id());
+        } else {
+            self.card_row_columns.insert(row.id().to_string(), column);
+        }
+    }
+
+    /// One column's rows grouped into lines: each inner vec is one
+    /// horizontal run. Order within the column follows `row_order`.
+    ///
+    /// Hidden rows are dropped BEFORE grouping, so hiding the row a merged
+    /// row was attached to promotes it to its own line rather than leaving a
+    /// dangling continuation. The same applies to rows moved to another
+    /// column: "share line with the row above" chains only within a column.
+    pub fn row_lines(&self, column: usize) -> Vec<Vec<CardRow>> {
+        let mut lines: Vec<Vec<CardRow>> = Vec::new();
+        for (row, shown) in self.ordered_rows() {
+            if !shown || self.row_column(row) != column {
+                continue;
+            }
+            // A merged row joins the line above only when `may_join` allows
+            // it. This is the data-level guard: a config asking vitals to
+            // join the RT strip self-heals to its own line instead of
+            // rendering crushed.
+            let joinable = self.row_merged(row)
+                && lines.last().is_some_and(|line| row.may_join(line));
+            if joinable {
+                lines.last_mut().expect("non-empty").push(row);
+            } else {
+                lines.push(vec![row]);
+            }
+        }
+        lines
+    }
+
+    /// Move a row one place up or down, materializing the full order first so
+    /// a previously-empty `row_order` becomes explicit rather than shifting
+    /// against an implied list.
+    pub fn move_row(&mut self, row: CardRow, up: bool) {
+        let mut order: Vec<CardRow> = self.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        let Some(idx) = order.iter().position(|r| *r == row) else {
+            return;
+        };
+        let target = if up {
+            idx.checked_sub(1)
+        } else if idx + 1 < order.len() {
+            Some(idx + 1)
+        } else {
+            None
+        };
+        if let Some(target) = target {
+            order.swap(idx, target);
+            self.row_order = order.into_iter().map(|r| r.id().to_string()).collect();
+        }
+    }
+}
+
 /// Text replacement rule for perception widget
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextReplacement {
@@ -1389,5 +1797,211 @@ mod visibility_tests {
         let none = parse_base("");
         assert!(none.binding.is_none());
         assert!(!toml::to_string(&none).unwrap().contains("binding"));
+    }
+}
+
+#[cfg(test)]
+mod multiaccount_row_tests {
+    use super::*;
+    use CardRow as R;
+
+    #[test]
+    fn an_empty_order_yields_every_row_in_default_order() {
+        let data = MultiAccountWidgetData::default();
+        let rows: Vec<R> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(rows, R::ALL);
+    }
+
+    #[test]
+    fn a_partial_order_keeps_unlisted_rows() {
+        // Omitting a row must not hide it -- the checkbox is what hides.
+        let mut data = MultiAccountWidgetData::default();
+        data.row_order = vec!["injuries".to_string(), "vitals".to_string()];
+        let rows: Vec<R> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(&rows[..2], &[R::Injuries, R::Vitals]);
+        assert_eq!(rows.len(), R::ALL.len(), "every row still present: {rows:?}");
+    }
+
+    #[test]
+    fn unknown_row_names_are_dropped() {
+        // A stale config naming a row that no longer exists must not add a
+        // phantom entry the editor would render blank.
+        let mut data = MultiAccountWidgetData::default();
+        data.row_order = vec!["nonsense".to_string(), "injuries".to_string()];
+        let rows: Vec<R> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(rows[0], R::Injuries);
+        assert_eq!(rows.len(), R::ALL.len());
+    }
+
+    #[test]
+    fn every_row_round_trips_through_its_id() {
+        // The wire/TOML representation stays strings; the enum must map onto
+        // them losslessly or a saved order comes back rearranged.
+        for row in R::ALL {
+            assert_eq!(R::from_id(row.id()), Some(row));
+        }
+        assert_eq!(R::from_id("not_a_row"), None);
+    }
+
+    #[test]
+    fn moving_a_row_materializes_the_full_order() {
+        // Starting from an empty (implied) order, one move must write the
+        // whole list, or later moves would shift against a different list.
+        let mut data = MultiAccountWidgetData::default();
+        assert!(data.row_order.is_empty());
+        let idx = R::ALL.iter().position(|r| *r == R::Vitals).expect("vitals");
+        let above = R::ALL[idx - 1];
+
+        data.move_row(R::Vitals, true);
+        assert_eq!(data.row_order.len(), R::ALL.len());
+        assert_eq!(data.row_order[idx - 1], R::Vitals.id(), "moved up one");
+        assert_eq!(data.row_order[idx], above.id(), "displaced its neighbour");
+    }
+
+    #[test]
+    fn moving_past_an_edge_is_a_no_op() {
+        let mut data = MultiAccountWidgetData::default();
+        data.move_row(R::Rt, true);
+        let first: Vec<R> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(first[0], R::Rt, "already first, stays first");
+
+        data.move_row(R::Injuries, false);
+        let last: Vec<R> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(last[last.len() - 1], R::Injuries, "already last, stays last");
+    }
+
+    #[test]
+    fn rt_shares_a_line_with_status_by_default() {
+        // Both are short -- one label and a strip of icons -- so a full line
+        // each is wasted space on an already narrow card.
+        let data = MultiAccountWidgetData::default();
+        let lines = data.row_lines(0);
+        assert_eq!(lines[0], vec![R::Rt, R::Status], "{lines:?}");
+    }
+
+    #[test]
+    fn hiding_the_row_above_promotes_a_merged_row_to_its_own_line() {
+        // Otherwise "status" would dangle as a continuation of a line that
+        // is no longer drawn.
+        let mut data = MultiAccountWidgetData::default();
+        data.set_row_shown(R::Rt, false);
+        let lines = data.row_lines(0);
+        assert_eq!(lines[0], vec![R::Status], "{lines:?}");
+    }
+
+    #[test]
+    fn the_first_row_never_renders_merged_but_keeps_its_flag() {
+        // Positional rule for RENDERING only. The stored flag must survive a
+        // stint at the top -- the old positional read-back deleted it when
+        // any unrelated option changed while the row sat first.
+        let mut data = MultiAccountWidgetData::default();
+        data.set_row_merged(R::Status, true);
+        data.row_order = vec!["status".to_string()];
+        assert!(!data.row_merged(R::Status), "first row cannot render merged");
+        assert!(
+            data.row_merge_flag(R::Status),
+            "the stored flag survives being first"
+        );
+        // Move it back down: the pairing resumes without re-configuring.
+        data.row_order = vec!["rt".to_string(), "status".to_string()];
+        assert!(data.row_merged(R::Status));
+    }
+
+    #[test]
+    fn merging_round_trips_and_hidden_rows_never_appear() {
+        let mut data = MultiAccountWidgetData::default();
+        data.set_row_merged(R::Mind, true);
+        assert!(data.row_merged(R::Mind));
+        data.set_row_merged(R::Mind, false);
+        assert!(!data.row_merged(R::Mind));
+
+        data.set_row_shown(R::Injuries, false);
+        let flat: Vec<R> = data.row_lines(0).into_iter().flatten().collect();
+        assert!(!flat.contains(&R::Injuries));
+    }
+
+    /// Big rows (vitals, doll) never squeeze onto a shared horizontal
+    /// strip -- putting things beside them is what card columns are for.
+    #[test]
+    fn big_rows_never_join_a_shared_line() {
+        // Vitals asked to join a compact line self-heals to its own.
+        let mut data = MultiAccountWidgetData::default();
+        data.set_row_merged(R::Vitals, true); // above it: rt + status
+        let lines = data.row_lines(0);
+        assert!(
+            lines.iter().any(|line| line == &vec![R::Vitals]),
+            "vitals must not join the RT line: {lines:?}"
+        );
+
+        // Same for the doll, even directly under the vitals.
+        data.row_order = vec!["vitals".to_string(), "injuries".to_string()];
+        data.set_row_merged(R::Injuries, true);
+        let lines = data.row_lines(0);
+        assert!(
+            lines.iter().any(|line| line == &vec![R::Injuries]),
+            "the doll always gets its own line: {lines:?}"
+        );
+
+        // Compact rows still mix freely.
+        data.set_row_shown(R::Mind, true);
+        data.set_row_shown(R::Stance, true);
+        data.set_row_merged(R::Stance, true);
+        assert!(data.row_merged(R::Stance));
+    }
+
+    /// Card columns: rows land in their assigned column, assignments to a
+    /// removed column clamp to the last one, and weights are sanitized.
+    #[test]
+    fn rows_split_across_card_columns() {
+        let mut data = MultiAccountWidgetData::default();
+        data.card_column_weights = vec![1.0, 1.4];
+        data.set_row_column(R::Injuries, 1);
+        data.set_row_column(R::Vitals, 1);
+
+        let col0: Vec<R> = data.row_lines(0).into_iter().flatten().collect();
+        let col1: Vec<R> = data.row_lines(1).into_iter().flatten().collect();
+        assert!(!col0.contains(&R::Injuries) && !col0.contains(&R::Vitals));
+        assert_eq!(col1, vec![R::Vitals, R::Injuries], "column order follows row_order");
+
+        // Line sharing chains only within a column: rt+status stay paired
+        // in column 0 regardless of what moved to column 1.
+        assert_eq!(data.row_lines(0)[0], vec![R::Rt, R::Status]);
+
+        // Shrinking to one column strands no rows -- assignments clamp.
+        data.card_column_weights = vec![1.0];
+        let all: Vec<R> = data.row_lines(0).into_iter().flatten().collect();
+        assert!(all.contains(&R::Injuries) && all.contains(&R::Vitals));
+
+        // Garbage weights degrade to usable columns instead of vanishing.
+        data.card_column_weights = vec![0.0, f32::NAN, -2.0];
+        assert_eq!(data.column_weights(), vec![1.0, 1.0, 1.0]);
+        data.card_column_weights = Vec::new();
+        assert_eq!(data.column_weights(), vec![1.0]);
+    }
+
+    /// Column assignment round-trips, and column 0 is stored implicitly.
+    #[test]
+    fn row_column_round_trips_and_zero_is_implicit() {
+        let mut data = MultiAccountWidgetData::default();
+        data.card_column_weights = vec![1.0, 1.0];
+        assert_eq!(data.row_column(R::Mind), 0, "unlisted rows sit in column 0");
+        data.set_row_column(R::Mind, 1);
+        assert_eq!(data.row_column(R::Mind), 1);
+        data.set_row_column(R::Mind, 0);
+        assert_eq!(data.row_column(R::Mind), 0);
+        assert!(
+            data.card_row_columns.is_empty(),
+            "column 0 stores no entry: {:?}",
+            data.card_row_columns
+        );
+    }
+
+    #[test]
+    fn row_visibility_round_trips_through_the_helpers() {
+        let mut data = MultiAccountWidgetData::default();
+        assert!(data.row_shown(R::Vitals));
+        data.set_row_shown(R::Vitals, false);
+        assert!(!data.row_shown(R::Vitals));
+        assert!(!data.show_vitals, "the helper writes the real field");
     }
 }

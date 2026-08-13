@@ -34,6 +34,48 @@ pub enum MoveFeedback {
     NeedClimb,
     /// "You can't climb that." — swap `climb` back to `go`.
     CantClimb,
+    /// The command landed during roundtime ("...wait 2 seconds."): nothing
+    /// failed, re-send once the RT clears instead of waiting out a timeout.
+    RtWait,
+    /// A purchase was refused for lack of silver ("You don't have enough
+    /// silvers") - the generic fare/ticket form, distinct from the
+    /// day-pass clerk's DayPassTooPoor phrasing.
+    TooPoor,
+    /// A gated entrance refused a hidden/invisible character - `unhide` and
+    /// retry (Lich move(), global_defs.rb:615-617).
+    MustUnhide,
+    /// A postural rejection ("will have to stand up first") - stand and
+    /// retry (global_defs.rb:714-717).
+    MustStand,
+    /// Standing is impossible HERE and won't become possible ("not enough
+    /// room to stand up", "You'd tip the boat over!", overburdened). go2
+    /// accepts these in its stand_regex and proceeds with the move anyway
+    /// (go2.lic:2321-2335) - never an abort.
+    StandBlocked,
+    /// "Sorry, you may only type ahead" - back off ~1s and re-send; never a
+    /// failure (global_defs.rb:729-731).
+    TypeAhead,
+    /// "You are still stunned." - wait the stun out, then retry
+    /// (global_defs.rb:732-734).
+    StillStunned,
+    /// "You're still recovering from your recent..." - short backoff, retry
+    /// (global_defs.rb:718-720).
+    StillRecovering,
+    /// "You don't seem to be able to move to do that." - senses lost;
+    /// brief wait, retry (global_defs.rb:756-762).
+    NoControl,
+    /// A transient environmental refusal - guard check-ins, fog
+    /// entanglement, vertigo backouts, sinking panic, energy fields. Lich
+    /// retries these forever inside move() with sleep 1 (global_defs.rb:
+    /// 639-642); they must NEVER ban or re-path away from the edge.
+    TransientRetry,
+    /// "It's pitch dark and you can't see a thing!" - needs a light source;
+    /// Lich surfaces the message and treats the move as done
+    /// (global_defs.rb:763-765).
+    PitchDark,
+    /// "You are too injured to be doing any climbing!" - Lich casts Resolve
+    /// if known, else keeps the edge (returns nil, global_defs.rb:662-669).
+    TooInjured,
     /// A hard failure ("You can't go there", impassable, …). The edge is bad;
     /// safe to remove from the graph (Lich's `move` returns `false`).
     MoveFailedRemovable,
@@ -57,6 +99,12 @@ pub enum MoveFeedback {
     /// A bank withdrawal completed ("the teller carefully records" / "flips
     /// through the books"). Ends the day-pass funding wait.
     WithdrawOk,
+    /// The withdrawal was refused - the account here can't cover it ("you
+    /// don't seem to have that much in the account"). GS4 accounts are
+    /// per-town: silver deposited in the Landing is invisible to a Zul
+    /// branch. go2 bails cleanly here ("Not enough silver in current area's
+    /// bank.", go2.lic:2280-2284).
+    WithdrawFailed,
     /// `raise`ing the pass teleported us: "whirlwind of color subsides".
     RaiseTraveled,
     /// `open <container>` reported it was ALREADY open ("That is already
@@ -120,9 +168,87 @@ patterns! {
         "fall flat on your back",
         "The ground approaches you at an alarming rate",
         "You go flying down several feet",
+        // The climb-failure family (global_defs.rb:643-648): sleep, stand,
+        // retry - never a failure.
+        "slip after a few feet and fall",
+        "but quickly realize",
+        "but without success",
+        "wrong approach",
+        "slowly retreat back, reassessing",
+        "can't seem to find purchase",
+        "you make your way back up",
     ],
     NeedClimb => [
         "have to climb that",
+    ],
+    MustUnhide => [
+        "and remain hidden or invisible",
+        "if he can't see you!",
+        "when you can't be seen",
+        "You can't do that without being seen",
+        "no one can see you right now",
+    ],
+    MustStand => [
+        "will have to stand up first",
+        "must be standing first",
+        "You'll have to get up first",
+        "But you're already sitting!",
+        "Shouldn't you be standing first",
+        "Try standing up",
+        "Perhaps you should stand up",
+        "Standing up might help",
+        "You should really stand up first",
+        "You can't do that while sitting",
+        "You must be standing to do that",
+        "You can't do that while lying down",
+        "You must be standing",
+        "You can't do that from that position",
+    ],
+    StandBlocked => [
+        "There's not enough room to do that",
+        "There is not enough room to stand up in here",
+        "You'd tip the boat over",
+        "You are overburdened and cannot manage to stand",
+        "slip and fall flat in the slippery green gook",
+    ],
+    TypeAhead => [
+        "Sorry, you may only type ahead",
+    ],
+    StillStunned => [
+        "You are still stunned",
+    ],
+    StillRecovering => [
+        "You're still recovering from your recent",
+    ],
+    NoControl => [
+        "You don't seem to be able to move to do that",
+    ],
+    TransientRetry => [
+        "you begin to sink!",
+        "You need to make sure you check in",
+        "no way to climb the slippery tendrils",
+        "back to safe ground",
+        "your persistence will pay off",
+        "field of magical crimson and gold energy",
+        "quickly become entangled",
+        "A wave of dizziness hits you",
+        "but the steepness is intimidating",
+        "Struck by vertigo",
+        "your footing is questionable",
+        "doesn't budge",
+        "flounder around in the water",
+        "blunder around in the water",
+        "struggle against the swift current to swim",
+        "slap at the water in a sad failure",
+        "work against the swift current to swim",
+        "current catches you and whips you back to shore",
+        "disk only wobbles briefly",
+    ],
+    PitchDark => [
+        "pitch dark and you can't see a thing",
+    ],
+    TooInjured => [
+        "too injured to be doing any climbing",
     ],
     CantClimb => [
         "You can't climb that",
@@ -145,9 +271,19 @@ patterns! {
         "ASK me again",
         "day pass to",
     ],
+    // "flips through the books" is NOT a success fragment: the REFUSAL line
+    // also opens with it ("The teller flips through the books and then looks
+    // up with an apologetic expression...") and the classifier returns the
+    // leftmost match, so keeping it classified refusals as WithdrawOk.
+    // Success lines: "carefully records the transaction, hands you N
+    // silvers" / "scribbles the transaction" (live log 2026-08-12).
     WithdrawOk => [
         "carefully records the transaction",
-        "flips through the books",
+        "scribbles the transaction",
+    ],
+    WithdrawFailed => [
+        "don't seem to have that much in the account",
+        "You don't have that much in your account",
     ],
     RaiseTraveled => [
         "whirlwind of color subsides",
@@ -182,6 +318,13 @@ patterns! {
         "pass is expired",
         "Raise what",
     ],
+    RtWait => [
+        "...wait",
+    ],
+    TooPoor => [
+        "You don't have enough silvers",
+        "you don't have enough silver",
+    ],
     MoveFailedRemovable => [
         "You can't go there",
         // Specific to a move rejection ("You can't go/swim in that direction");
@@ -198,6 +341,13 @@ patterns! {
         "is too far away",
         "You may not pass",
         "become impassable",
+        "is too far above you to attempt that",
+        "Definitely NOT a good idea",
+        "Your attempt fails",
+        "There doesn't seem to be any way to do that at the moment",
+        "You settle yourself on",
+        "You shouldn't annoy",
+        "That's probably not a very good idea",
         "prevents you from entering",
         "There doesn't seem to be any way to do that at the moment",
     ],
@@ -211,6 +361,10 @@ patterns! {
         "preventing him from being dragged",
         "preventing her from being dragged",
         "perhaps you should try again later",
+        "only performers should go",
+        "carelessly bump into the guard",
+        "Your reputation precedes you",
+        "reads, \"Abandoned.\"",
     ],
 }
 
@@ -267,5 +421,44 @@ mod tests {
         );
         // Ordinary prose doesn't match.
         assert_eq!(classify_line("A cat wanders by."), None);
+    }
+
+    #[test]
+    fn withdraw_refusals_classify_as_failed_not_ok() {
+        // Both teller-refusal shapes from the live 2026-08-12 log. The first
+        // OPENS with "flips through the books" - which must therefore never
+        // be a WithdrawOk fragment (leftmost match would win).
+        assert_eq!(
+            classify_line("The teller flips through the books and then looks up with an apologetic expression and says, \"I'm sorry, Nisugi, you don't seem to have that much in the account.\""),
+            Some(MoveFeedback::WithdrawFailed)
+        );
+        assert_eq!(
+            classify_line("Drumming her fingers on the counter, she says, \"You seem to have already spent what you're trying to withdraw.  You don't have that much in your account.\""),
+            Some(MoveFeedback::WithdrawFailed)
+        );
+        // Success still classifies.
+        assert_eq!(
+            classify_line("The teller carefully records the transaction, hands you 2,000 silvers, and says, \"This brings your total to 1,016,210,847 silvers.\""),
+            Some(MoveFeedback::WithdrawOk)
+        );
+    }
+
+    #[test]
+    fn stand_blocked_rooms_classify_as_stand_blocked_not_must_stand() {
+        // go2's stand_regex accepts these and proceeds without standing
+        // (go2.lic:2328-2332); they must never loop `stand` or abort a trip.
+        for line in [
+            "There is not enough room to stand up in here.",
+            "There's not enough room to do that!",
+            "You'd tip the boat over!",
+            "You are overburdened and cannot manage to stand.",
+            "You attempt to stand, but slip and fall flat in the slippery green gook!",
+        ] {
+            assert_eq!(
+                classify_line(line),
+                Some(MoveFeedback::StandBlocked),
+                "{line}"
+            );
+        }
     }
 }

@@ -115,6 +115,15 @@ struct SnapshotPayload {
     room: RoomPayload,
     hands: HandsPayload,
     indicators: StatusInfo,
+    /// Absolute vitals; omitted until the minivitals dialog reports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    minivitals: Vec<crate::core::remote::RemoteVital>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prepared_spell: Option<String>,
+    /// Group roster. Omitted when not grouped, so existing clients that do
+    /// not read it see no change on the wire.
+    #[serde(default, skip_serializing_if = "group_is_empty")]
+    group: crate::core::group::GroupState,
     rt: RtPayload,
     effects: Vec<ActiveEffectsContent>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -135,7 +144,16 @@ struct SnapshotPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     map_scene: Option<Arc<crate::core::remote::RemoteMapScene>>,
     map_state: crate::core::remote::RemoteMapState,
+    /// Scrollback. Skipped when empty so a watch snapshot does not carry an
+    /// empty array; the phone always has lines, so its wire is unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     text: Vec<SnapshotLine>,
+}
+
+/// An ungrouped character ships no group object at all, so clients that do
+/// not read it (the phone) see an unchanged wire.
+fn group_is_empty(group: &crate::core::group::GroupState) -> bool {
+    !group.is_grouped()
 }
 
 /// First message on every connection.
@@ -164,7 +182,25 @@ pub fn snapshot(
     mode: SnapshotMode,
     seq: u64,
 ) -> String {
-    let payload = SnapshotPayload {
+    snapshot_for(state, lines, mode, seq, SubscribeMode::Play)
+}
+
+/// Snapshot tailored to what the client is here for.
+///
+/// A `Watch` client gets status only. That matters at connect: the text
+/// scrollback is 300 lines PER STREAM, so a dozen live streams is a few
+/// thousand styled lines in one frame, and `map_scene` can be thousands of
+/// rooms on top. Paying that once per sibling connection -- for a display
+/// that renders no text and draws no map -- is the whole reason this mode
+/// exists.
+pub fn snapshot_for(
+    state: &RemoteStateSnapshot,
+    lines: Vec<RemoteLine>,
+    mode: SnapshotMode,
+    seq: u64,
+    sub: SubscribeMode,
+) -> String {
+    let mut payload = SnapshotPayload {
         mode,
         character: state.character.clone(),
         vitals: state.vitals.clone(),
@@ -179,6 +215,9 @@ pub fn snapshot(
             right: state.right_hand.clone(),
         },
         indicators: state.indicators.clone(),
+        minivitals: state.minivitals.clone(),
+        prepared_spell: state.prepared_spell.clone(),
+        group: state.group.clone(),
         rt: RtPayload {
             roundtime_end: state.roundtime_end,
             casttime_end: state.casttime_end,
@@ -206,7 +245,33 @@ pub fn snapshot(
             })
             .collect(),
     };
+    if sub == SubscribeMode::Watch {
+        payload.strip_for_watch();
+    }
     encode("snapshot", seq, payload)
+}
+
+impl SnapshotPayload {
+    /// Everything a Watch client does not pay for, in ONE place.
+    ///
+    /// The old shape was nine inline `if watching` ternaries inside the
+    /// struct literal, which meant every FUTURE payload field shipped to
+    /// watchers by default and invisibly -- with six sibling instances, six
+    /// copies of it per connect. `watch_snapshot_key_allowlist` in the tests
+    /// fails on any new field until it is classified here or there.
+    fn strip_for_watch(&mut self) {
+        // Room identity (name + id) stays: it drives the "not with you" cue.
+        self.room.exits = Vec::new();
+        self.room.description = Vec::new();
+        self.spellbook = Vec::new();
+        self.targets = Vec::new();
+        self.entities = Default::default();
+        self.portals = Vec::new();
+        self.webui_pages = Vec::new();
+        self.map_scene = None;
+        self.map_state = Default::default();
+        self.text = Vec::new();
+    }
 }
 
 /// Encode a broadcast delta. `last_seq` is used as the envelope seq for
@@ -246,6 +311,13 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
             },
         ),
         RemoteDelta::Indicators(status) => encode("indicators", last_seq, status.clone()),
+        RemoteDelta::Group(group) => encode("group", last_seq, group.clone()),
+        RemoteDelta::MiniVitals(vitals) => encode("minivitals", last_seq, vitals.clone()),
+        RemoteDelta::PreparedSpell(spell) => encode(
+            "prepared_spell",
+            last_seq,
+            serde_json::json!({ "spell": spell }),
+        ),
         RemoteDelta::Rt {
             roundtime_end,
             casttime_end,
@@ -536,11 +608,75 @@ pub fn denied() -> String {
     encode("denied", 0, serde_json::json!({}))
 }
 
+/// What a connected client is here to do.
+///
+/// These are two different jobs, not a volume knob. `Play` is the phone
+/// client: the text stream IS the game, so it needs scrollback, room prose,
+/// the map, and everything else. `Watch` is a status observer -- the
+/// multi-account display -- which never renders a line of game text and would
+/// otherwise pay for the full feed once per sibling connection.
+///
+/// `Play` is the default precisely because a client that does not ask is the
+/// phone, which shipped before this existed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SubscribeMode {
+    /// Everything. The default.
+    #[default]
+    Play,
+    /// Status only: no text scrollback, no map, no room prose, no spellbook.
+    Watch,
+}
+
+impl SubscribeMode {
+    fn from_wire(s: &str) -> Self {
+        match s {
+            "watch" => Self::Watch,
+            // Unknown modes fall back to the full feed rather than silently
+            // starving a client of the data it came for.
+            _ => Self::Play,
+        }
+    }
+
+    /// Whether a delta is worth sending to a client in this mode.
+    ///
+    /// Watchers get the status set and nothing else. Addressed request/reply
+    /// deltas are filtered separately by client id, so they are not listed.
+    pub fn wants(&self, delta: &crate::core::remote::RemoteDelta) -> bool {
+        use crate::core::remote::RemoteDelta as D;
+        match self {
+            Self::Play => true,
+            Self::Watch => matches!(
+                delta,
+                D::Vitals(_)
+                    // Room identity drives the card's "not with you" cue; the
+                    // server slims the prose out of the delta for watchers
+                    // before encoding, so this ships name + id, not the
+                    // description.
+                    | D::Room { .. }
+                    | D::MiniVitals(_)
+                    | D::PreparedSpell(_)
+                    | D::Indicators(_)
+                    | D::Group(_)
+                    | D::Rt { .. }
+                    | D::Injuries(_)
+                    | D::CharInfo(_)
+                    | D::Effects(_)
+                    | D::Hands { .. }
+                    | D::Doll { .. }
+                    | D::Session(_)
+            ),
+        }
+    }
+}
+
 /// Messages a client may send. Unknown types are ignored (forward compat).
 #[derive(Debug, PartialEq)]
 pub enum ClientMessage {
     /// Pairing token; must be the first message on every connection.
     Auth { token: String },
+    /// Declare what this connection is for. Optional; absent means `Play`,
+    /// which is what every pre-existing client implies.
+    Subscribe { mode: SubscribeMode },
     /// A typed command destined for the game (or a dot-command).
     Cmd { text: String },
     /// Resume request with the highest text seq the client has rendered
@@ -737,6 +873,18 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
         "resume" => {
             let seq = msg.d.get("seq")?.as_u64()?;
             Some(ClientMessage::Resume { seq })
+        }
+        "subscribe" => {
+            // A missing or unrecognized mode means the full feed, so a
+            // malformed subscribe degrades to today's behavior rather than
+            // leaving a client with no data.
+            let mode = msg
+                .d
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .map(SubscribeMode::from_wire)
+                .unwrap_or_default();
+            Some(ClientMessage::Subscribe { mode })
         }
         "link_tap" => {
             let request_id = msg.d.get("request_id")?.as_u64()?;
@@ -1076,6 +1224,224 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
 mod tests {
     use super::*;
     use crate::data::widget::TextSegment;
+
+    fn snap_json(sub: SubscribeMode, state: &RemoteStateSnapshot) -> serde_json::Value {
+        let lines = vec![RemoteLine {
+            seq: 1,
+            stream: "main".to_string(),
+            line: Arc::new(crate::data::widget::StyledLine {
+                segments: vec![TextSegment::plain("You see a rock.")],
+                stream: "main".to_string(),
+                timestamp: None,
+            }),
+        }];
+        let raw = snapshot_for(state, lines, SnapshotMode::Full, 1, sub);
+        let v: serde_json::Value = serde_json::from_str(&raw).expect("valid json");
+        v["d"].clone()
+    }
+
+    /// The mechanical guard behind strip_for_watch: a watch snapshot built
+    /// from a FULLY populated state must serialize only allowlisted keys.
+    /// Adding a field to SnapshotPayload fails this test until the field is
+    /// classified -- either stripped for watchers or added here on purpose.
+    /// Without it, every new payload field shipped to watchers by default,
+    /// invisibly, times one copy per sibling instance per connect.
+    #[test]
+    fn watch_snapshot_key_allowlist() {
+        let mut state = RemoteStateSnapshot::default();
+        // Populate every bulk field so a leak cannot hide behind
+        // skip_serializing_if on an empty default.
+        state.room_name = Some("Town Square".to_string());
+        state.room_id = Some("1".to_string());
+        state.exits = vec!["north".to_string()];
+        state.room_description = vec![crate::data::widget::StyledLine {
+            segments: vec![TextSegment::plain("prose")],
+            stream: "main".to_string(),
+            timestamp: None,
+        }];
+        state.spellbook = state.room_description.clone();
+        state.portals = vec!["portal".to_string()];
+        state.webui_pages = Vec::new();
+        state.prepared_spell = Some("Spirit Warding I".to_string());
+
+        let lines = vec![RemoteLine {
+            seq: 1,
+            stream: "main".to_string(),
+            line: Arc::new(crate::data::widget::StyledLine {
+                segments: vec![TextSegment::plain("scrollback")],
+                stream: "main".to_string(),
+                timestamp: None,
+            }),
+        }];
+        let raw = snapshot_for(&state, lines, SnapshotMode::Full, 1, SubscribeMode::Watch);
+        let v: serde_json::Value = serde_json::from_str(&raw).expect("json");
+        let allowed = [
+            "mode",
+            "character",
+            "vitals",
+            "room",
+            "hands",
+            "indicators",
+            "minivitals",
+            "prepared_spell",
+            "group",
+            "rt",
+            "effects",
+            "injuries",
+            "doll_variant",
+            "doll_hidden",
+            "targets",
+            "entities",
+            "portals",
+            "char_info",
+            "session",
+            "map_state",
+        ];
+        for key in v["d"].as_object().expect("object").keys() {
+            assert!(
+                allowed.contains(&key.as_str()),
+                "unclassified snapshot field shipped to watchers: {key} --                  strip it in strip_for_watch or allowlist it deliberately"
+            );
+        }
+        // And the stripped bulk stays stripped.
+        assert!(v["d"].get("text").is_none());
+        assert!(v["d"].get("map_scene").is_none());
+        assert!(v["d"]["room"].get("description").is_none());
+    }
+
+    #[test]
+    fn parse_subscribe_defaults_to_play() {
+        assert_eq!(
+            parse_client_message(r#"{"t":"subscribe","d":{"mode":"watch"}}"#),
+            Some(ClientMessage::Subscribe {
+                mode: SubscribeMode::Watch
+            })
+        );
+        assert_eq!(
+            parse_client_message(r#"{"t":"subscribe","d":{"mode":"play"}}"#),
+            Some(ClientMessage::Subscribe {
+                mode: SubscribeMode::Play
+            })
+        );
+        // A malformed or unknown mode degrades to the full feed rather than
+        // starving the client of the data it came for.
+        assert_eq!(
+            parse_client_message(r#"{"t":"subscribe","d":{"mode":"nonsense"}}"#),
+            Some(ClientMessage::Subscribe {
+                mode: SubscribeMode::Play
+            })
+        );
+        assert_eq!(
+            parse_client_message(r#"{"t":"subscribe","d":{}}"#),
+            Some(ClientMessage::Subscribe {
+                mode: SubscribeMode::Play
+            })
+        );
+    }
+
+    /// The phone client predates `subscribe`, so a connection that never
+    /// sends one must get byte-identical output to before this existed.
+    #[test]
+    fn play_mode_snapshot_still_carries_everything() {
+        let state = RemoteStateSnapshot::default();
+        let d = snap_json(SubscribeMode::Play, &state);
+
+        assert!(d.get("text").is_some(), "scrollback must ship");
+        assert_eq!(d["text"].as_array().expect("array").len(), 1);
+        assert!(d.get("targets").is_some());
+        assert!(d.get("entities").is_some());
+        assert!(d.get("map_state").is_some());
+    }
+
+    /// A watcher pays for none of the bulk. This is the whole point of the
+    /// mode: 300 lines PER STREAM at connect, times one connection per
+    /// sibling character, for a display that renders no text.
+    #[test]
+    fn watch_mode_snapshot_drops_text_and_map() {
+        let state = RemoteStateSnapshot::default();
+        let d = snap_json(SubscribeMode::Watch, &state);
+
+        assert!(d.get("text").is_none(), "scrollback must not ship");
+        assert!(d.get("map_scene").is_none(), "map scene must not ship");
+        assert!(
+            d["spellbook"].as_array().map_or(true, |a| a.is_empty()),
+            "spellbook must not ship"
+        );
+
+        // ...but the status a watcher exists to show is all still there.
+        assert!(d.get("vitals").is_some());
+        assert!(d.get("indicators").is_some());
+        assert!(d.get("injuries").is_some());
+        assert!(d.get("rt").is_some());
+        assert!(d.get("char_info").is_some());
+    }
+
+    /// A watcher still wants to know WHERE a character is -- that drives the
+    /// "different room" cue -- but not the prose describing it.
+    #[test]
+    fn watch_mode_keeps_room_identity_without_prose() {
+        let mut state = RemoteStateSnapshot::default();
+        state.room_name = Some("Town Square".to_string());
+        state.room_id = Some("12345".to_string());
+        state.exits = vec!["north".to_string()];
+
+        let d = snap_json(SubscribeMode::Watch, &state);
+        assert_eq!(d["room"]["name"], "Town Square");
+        assert_eq!(d["room"]["id"], "12345");
+        // `description` is skipped when empty, so it drops out of the JSON
+        // entirely rather than shipping an empty array.
+        assert!(
+            d["room"].get("description").is_none(),
+            "room prose must not ship to a watcher: {}",
+            d["room"]
+        );
+
+        // Play mode still carries the prose for the same state.
+        let mut with_prose = RemoteStateSnapshot::default();
+        with_prose.room_name = Some("Town Square".to_string());
+        with_prose.room_description = vec![crate::data::widget::StyledLine {
+            segments: vec![TextSegment::plain("A wide plaza.")],
+            stream: "main".to_string(),
+            timestamp: None,
+        }];
+        let d = snap_json(SubscribeMode::Play, &with_prose);
+        assert!(d["room"].get("description").is_some());
+    }
+
+    #[test]
+    fn watch_mode_delta_filter_keeps_status_drops_bulk() {
+        use crate::core::remote::RemoteDelta as D;
+
+        let watch = SubscribeMode::Watch;
+        let play = SubscribeMode::Play;
+
+        let text = D::Text(RemoteLine {
+            seq: 1,
+            stream: "main".to_string(),
+            line: Arc::new(crate::data::widget::StyledLine {
+                segments: vec![TextSegment::plain("x")],
+                stream: "main".to_string(),
+                timestamp: None,
+            }),
+        });
+        assert!(!watch.wants(&text), "text is the bulk of the feed");
+        assert!(play.wants(&text), "the phone needs it -- it IS the game");
+
+        let vitals = D::Vitals(Default::default());
+        assert!(watch.wants(&vitals));
+        assert!(play.wants(&vitals));
+
+        let group = D::Group(Default::default());
+        assert!(watch.wants(&group), "grouping is what the display shows");
+
+        let indicators = D::Indicators(Default::default());
+        assert!(watch.wants(&indicators));
+
+        // Play mode is unfiltered by construction.
+        let spells = D::Spells(Vec::new());
+        assert!(!watch.wants(&spells));
+        assert!(play.wants(&spells));
+    }
 
     #[test]
     fn parse_client_cmd_and_resume() {

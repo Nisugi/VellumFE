@@ -676,6 +676,9 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
         // ---- Web (phone) --------------------------------------------
         bool_entry!("web.enabled", "Web Server", "Web",
             "Enable the embedded web server for phones", web.enabled),
+        bool_entry!("web.multiaccount", "Multi-Account Status", "Web",
+            "Share status with, and show, your other characters running on this machine (the Characters window). Binds to localhost only.",
+            web.multiaccount),
         SettingDef {
             key: "web.port",
             label: "Web Port",
@@ -773,6 +776,10 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "When to buy a pass if none is held: on/yes, off/no, or a town-pair list like 'sol,wl imt,wl' (needs Get Silvers)", go2.buy_day_pass),
         text_entry!("go2.day_pass_sack", "Day Pass Sack", "Travel",
             "Container holding your Chronomage day passes (noun or name fragment)", go2.day_pass_sack),
+        text_entry!("go2.fwi_trinket", "Four Winds Trinket", "Travel",
+            "Your Isle of Four Winds trinket, by name (e.g. 'silver trinket') - the item travel turns to warp", go2.fwi_trinket),
+        text_entry!("go2.rogue_password", "Rogue Guild Password", "Travel",
+            "Your Rogue Guild door verb sequence, comma-separated (e.g. 'kick, slap, turn, scratch, kick, slap')", go2.rogue_password),
     ];
     defs.sort_by_key(|def| def.key);
     defs

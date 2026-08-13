@@ -269,7 +269,7 @@ async fn async_run(
     // Start the web frontend sidecar if enabled (off by default). The
     // server runs as a tokio task; core feeds it via the attached sink,
     // and remote client commands arrive on remote_rx.
-    let mut remote_rx = if app_core.config.web.enabled {
+    let mut remote_rx = if app_core.config.web.should_serve() {
         let session_label = character
             .clone()
             .or_else(|| app_core.config.connection.character.clone())
@@ -344,6 +344,10 @@ async fn async_run(
     // Get terminal size and initialize windows
     let (width, height) = frontend.size();
     app_core.init_windows(width, height);
+
+    // Connection mode for anything that sends `;` commands (travel's `;go2`
+    // fallback). A direct eAccess session has no Lich to hand off to.
+    app_core.set_lich_connected(direct.is_none());
 
     // Initial render to create widgets (needed before loading history)
     frontend.render(&mut app_core)?;

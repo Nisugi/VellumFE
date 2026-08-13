@@ -60,6 +60,10 @@ pub enum WidgetType {
     /// Watched spells currently NOT active in ActiveSpells/Buffs.
     /// Reads from GameState (character.watched_spells + effects).
     MissingSpells,
+    /// Status cards for every other VellumFE instance on this machine,
+    /// clustered by group. Reads from the MultiAccountHub on the GUI app,
+    /// not from GameState.
+    MultiAccount,
 }
 
 impl WidgetType {
@@ -92,6 +96,7 @@ impl WidgetType {
             "targets" => Some(WidgetType::Targets), // Component-based (default)
             "players" => Some(WidgetType::Players),
             "missingspells" => Some(WidgetType::MissingSpells),
+            "multiaccount" => Some(WidgetType::MultiAccount),
             "items" => Some(WidgetType::Items),
             "spells" => Some(WidgetType::Spells),
             "perception" => Some(WidgetType::Perception),
@@ -132,6 +137,7 @@ impl WidgetType {
         "players",
         "spells",
         "missingspells",
+        "multiaccount",
         "perception",
         "performance",
         "spacer",
@@ -186,6 +192,11 @@ pub enum WindowContent {
     /// Component-based items list (room objs, non-creatures)
     /// Reads from GameState.room_objects
     Items,
+    /// Multi-account status cards: one per sibling VellumFE instance on
+    /// this machine, grouped by `core::multiaccount::cluster_peers`. Carries
+    /// no data -- the peer table lives on the GUI app (MultiAccountHub is
+    /// neither Clone nor Debug) and arrives via WidgetRenderSettings.
+    MultiAccount,
     /// Missing-spells watchlist (watched spells not currently active).
     /// Reads from GameState.character.watched_spells + effects.
     MissingSpells,

@@ -33,6 +33,14 @@ pub struct TravelContext<'a> {
     pub standing: bool,
     pub sitting: bool,
     pub kneeling: bool,
+    /// Hidden or invisible, for scripted-edge `hidden?` branches.
+    pub hidden: bool,
+    /// Home-town citizenship, profession and society — scripted edges gate on
+    /// these (a guild door, a citizen-only gate). `None` when not yet parsed
+    /// from the feed, which evaluates as "doesn't match" (see `eval`).
+    pub citizenship: Option<&'a str>,
+    pub profession: Option<&'a str>,
+    pub society: Option<&'a str>,
     /// Active spell numbers, for scripted-edge `checkspell(N)` branches.
     pub active_spells: &'a [u16],
     /// Roundtime remaining in seconds (0 when free).
@@ -47,7 +55,27 @@ pub struct TravelContext<'a> {
     pub hands: Option<StashInputs<'a>>,
     /// Move-feedback events since the last tick (drained from GameState) —
     /// nav arrivals + recovery signals. Empty when idle (§09/§12).
-    pub feedback: &'a [crate::core::move_feedback::MoveFeedback],
+    pub feedback: &'a [(u64, crate::core::move_feedback::MoveFeedback)],
+    /// The flushed-line count at this tick (stamps match `feedback` entries).
+    /// The task records it at every send; `saw_since` uses it to ignore
+    /// reactive lines that predate the send (Lich's room_count guard - the
+    /// live creek loop: a stale "You can't go there" from a superseded move
+    /// re-triggered the current move, double-sending it).
+    pub game_line_no: u64,
+    /// `<nav>` count at this tick (Lich's $room_count). The gate records it
+    /// at each send; nav_count > sent_nav means we moved since the send.
+    pub game_nav_count: u64,
+    /// Recent raw game lines (seq, text), newest last — what `Await` steps
+    /// match against. A bounded ring, NOT drained per tick like `feedback`:
+    /// an await arms mid-tick and must see lines that landed before it
+    /// started, and several steps may match the same line. Each await
+    /// remembers the seq it armed at and only considers newer entries.
+    /// Empty when the caller doesn't wire it (tests without awaits).
+    pub recent_lines: &'a [(u64, String)],
+    /// The newest line sequence number, i.e. what an await arming NOW should
+    /// record as its starting point. Equals the last `recent_lines` seq, or
+    /// the running counter when the ring is empty.
+    pub line_seq: u64,
     /// When native travel reaches an edge it can't cross, hand off to Lich's
     /// `;go2 <dest>` instead of banning + re-pathing. Only true on a Lich
     /// connection with the setting enabled (the caller gates on direct-mode).
@@ -61,12 +89,38 @@ pub struct TravelContext<'a> {
     /// Live compass exits from the current room (`XMLData.room_exits`) — the
     /// Confluence explorer's only view of the shifting maze.
     pub compass_dirs: &'a [String],
+    /// Names of everything you're carrying, containers included — for
+    /// `Cond::HasItem` (a door that needs its key). Empty when the caller
+    /// doesn't wire inventory, which evaluates as "don't have it".
+    pub carried_names: &'a [String],
     /// Ground-loot nouns in the current room — the Confluence explorer scans
     /// these for the tranquility point / pit landmarks (`GameObj.loot`).
     pub loot_nouns: &'a [String],
     /// Chronomage day-pass crossing inputs, when the planned edge is a day-pass
     /// edge and the caller supplies them (`None` otherwise).
     pub day_pass: Option<DayPassInputs<'a>>,
+    /// The Isle of Four Winds trinket, resolved from `go2.fwi_trinket`
+    /// against live inventory: its exist id, and the container to put it back
+    /// in (`None` when it's worn or held, i.e. nothing to return it to).
+    /// `None` overall when unconfigured or not carried — the crossing then
+    /// can't run and its edges fall back.
+    pub fwi_trinket: Option<TrinketInputs<'a>>,
+}
+
+/// The Four Winds trinket, resolved against live inventory.
+///
+/// Resolved by the caller (which owns the registry) rather than passing the
+/// registry in, matching how `StashInputs` works: the executor stays a pure
+/// state machine over values it was handed.
+#[derive(Clone, Copy, Debug)]
+pub struct TrinketInputs<'a> {
+    /// Exist id, for `turn #<id>`.
+    pub id: &'a str,
+    /// Container command-target to return it to, when it came out of one.
+    /// `None` for a worn/held trinket — nothing to put back.
+    pub return_to: Option<&'a str>,
+    /// Whether it's already in hand (skip the `get`).
+    pub in_hand: bool,
 }
 
 /// What the day-pass crossing needs from live state. The specific pass id and
@@ -95,6 +149,10 @@ pub struct DayPassInputs<'a> {
 pub struct FundingInputs {
     /// Silver on hand (`game_state.silver`); None until a wealth line is seen.
     pub silver: Option<u64>,
+    /// Flushed-line number of that reading. Funding phases only trust a
+    /// reading newer than their own `wealth quiet` probe - the cached value
+    /// can be arbitrarily stale (deposits since it was read).
+    pub silver_line_no: u64,
     /// Permission to withdraw from the bank when short (`go2.get_silvers`).
     pub get_silvers: bool,
     /// Also pre-fund the return trip (`go2.get_return_trip_silvers`).
@@ -136,19 +194,151 @@ impl<'a> StashInputs<'a> {
 }
 
 impl TravelContext<'_> {
-    fn eval(&self, cond: crate::core::pathing::edge::Cond) -> bool {
+    fn eval(&self, cond: &crate::core::pathing::edge::Cond) -> bool {
         use crate::core::pathing::edge::Cond;
+        // Case-insensitive compare against an Option<&str> we may not know.
+        // An UNKNOWN value answers false: refusing a route we might have been
+        // able to take is recoverable (re-path, or hand off to Lich), while
+        // walking one we can't take strands the trip mid-route.
+        let matches = |actual: Option<&str>, want: &str| {
+            actual.is_some_and(|a| a.eq_ignore_ascii_case(want))
+        };
         match cond {
-            Cond::SpellActive(n) => self.active_spells.contains(&n),
+            Cond::SpellActive(n) => self.active_spells.contains(n),
             Cond::Sitting => self.sitting,
             Cond::Kneeling => self.kneeling,
+            Cond::Standing => self.standing,
+            Cond::Hidden => self.hidden,
+            Cond::PathAvailable(dir) => self
+                .compass_dirs
+                .iter()
+                .any(|d| d.eq_ignore_ascii_case(dir)),
+            Cond::RoomHasObject(noun) => self
+                .loot_nouns
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(noun)),
+            Cond::Citizenship(want) => matches(self.citizenship, want),
+            Cond::Profession(want) => matches(self.profession, want),
+            Cond::Society(want) => matches(self.society, want),
+            Cond::Not(inner) => !self.eval(inner),
+            Cond::Any(any) => any.iter().any(|c| self.eval(c)),
+            Cond::InRoom(id) => self.current_room == Some(*id),
+            // Unknown inventory answers false: sending a pile of unlock
+            // commands without the key just fails noisily, and the else
+            // branch (try the door anyway) is the safe one.
+            Cond::HasItem(name) => self.carried_names.iter().any(|n| {
+                let n = n.to_lowercase();
+                let want = name.to_lowercase();
+                n == want || n.contains(&want)
+            }),
+            // Captures live on the executor, not the context; the If arm in
+            // tick_script evaluates them via eval_cond_with_captures before
+            // falling through to here. Reaching this arm means a CaptureIs
+            // leaked somewhere capture-less (a Repeat until, an
+            // override) — unknown answers false, as everywhere.
+            Cond::CaptureIs(..) => false,
         }
     }
 
     fn saw(&self, event: &crate::core::move_feedback::MoveFeedback) -> bool {
-        self.feedback.contains(event)
+        self.feedback.iter().any(|(_, f)| f == event)
+    }
+
+    /// Like `saw`, but only counts events from lines AFTER `since` - the
+    /// guard for reactive recovery: a failure line older than our last send
+    /// belongs to a superseded move and must not trigger a resend.
+    fn saw_since(&self, since: u64, event: &crate::core::move_feedback::MoveFeedback) -> bool {
+        self.feedback.iter().any(|(no, f)| *no > since && f == event)
     }
 }
+
+/// How the executor will cross a given edge. Mirrors the dispatch order in
+/// `send_edge` exactly.
+///
+/// Exists so coverage reporting asks the question that matters — "can we
+/// cross this?" — instead of "does `transpile()` return Some?". Several
+/// families (Confluence, curated mazes, day passes, curated overrides) are
+/// handled by dedicated strategies BEFORE the transpiler is consulted, so
+/// measuring by transpilability alone counts thousands of perfectly walkable
+/// edges as residue and badly misdirects recognizer work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EdgeCrossing {
+    /// A plain string command.
+    Plain,
+    /// A curated hand-authored override.
+    Override,
+    /// The Plane of Elemental Confluence explorer.
+    Confluence,
+    /// A curated maze's pathcode strategy.
+    Maze,
+    /// The Chronomage day-pass crossing.
+    DayPass,
+    /// A StringProc the transpiler understands.
+    Transpiled,
+    /// A StringProc we can't cross natively (bans + re-paths, or hands to Lich).
+    Untranspiled,
+}
+
+impl EdgeCrossing {
+    /// Whether the executor has SOME native way across.
+    pub fn is_crossable(self) -> bool {
+        !matches!(self, EdgeCrossing::Untranspiled)
+    }
+}
+
+/// Classify how `from -> to` would be crossed. Kept in the same order as
+/// `send_edge`'s dispatch so the two can't disagree.
+pub fn classify_edge(db: &MapDb, from: u32, to: u32, command: &str) -> EdgeCrossing {
+    // The maze strategy takes over at the boundary, but `begin_maze` walks
+    // INBOUND only (from the entrance or start room) and fails from any other
+    // side. Classify only the case it actually handles, so the report doesn't
+    // credit crossings that would fail.
+    if let Some(maze) = super::mazes::maze_containing(to) {
+        if !maze.rooms.contains(&from) && (from == maze.entrance || from == maze.start) {
+            return EdgeCrossing::Maze;
+        }
+    }
+    // Entering the Plane is the `send_edge` boundary check. But the bulk of
+    // the Confluence edges point OUTWARD (23282 -> 188): they are the
+    // `$mapdb_confluence_target = N; Room[N].wayto['N'].call` delegations that
+    // set a goal and hand to the explorer. Once we are inside the zone the
+    // explorer owns every edge, in or out, so classify on either side.
+    if super::confluence::is_confluence_room(from)
+        || super::confluence::is_confluence_room(to)
+    {
+        return EdgeCrossing::Confluence;
+    }
+    if crate::core::pathing::overrides::edge_override(from, to).is_some() {
+        return EdgeCrossing::Override;
+    }
+    if crate::core::day_pass::edge(from, to).is_some() {
+        return EdgeCrossing::DayPass;
+    }
+    if !crate::core::mapdb::is_proc_command(command) {
+        return EdgeCrossing::Plain;
+    }
+    match crate::core::pathing::transpile::transpile_edge(db, command) {
+        Some(_) => EdgeCrossing::Transpiled,
+        None => EdgeCrossing::Untranspiled,
+    }
+}
+
+/// An armed `Await`: what it has already done, so a resume doesn't repeat it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AwaitState {
+    /// Line sequence when the await armed; only newer lines can match. Without
+    /// this a stale line already in the ring would satisfy the await instantly.
+    since_seq: u64,
+    /// Deadline in `now_ms` terms.
+    deadline_ms: u64,
+    /// Whether the `Retry` re-send has already been spent (so it fails on the
+    /// second timeout rather than re-sending forever).
+    retried: bool,
+}
+
+/// Named values captured by `Await` patterns, for `{capture:name}` tokens in
+/// later commands. Scoped to one edge's script run.
+type Captures = Vec<(String, String)>;
 
 /// What a tick produced, in order.
 #[derive(Debug, Clone, PartialEq)]
@@ -161,6 +351,9 @@ pub enum TravelEvent {
     Arrived { destination: u32, seconds: f64 },
     /// Trip abandoned.
     Failed(String),
+    /// A day-pass buy failed on silver: the owner disables day-pass buying
+    /// for the rest of the session (Lich turns the setting off).
+    DisableDayPassBuy,
     /// Native travel can't cross an edge; hand the whole trip to Lich's
     /// `;go2 <destination>` (the P6 fallback bandaid). The owner sends it and
     /// drops the native task.
@@ -182,6 +375,8 @@ enum Step {
         sleep_until: Option<u64>,
         expected: u32,
         from: u32,
+        /// State of an in-progress `Await` at `pc`, if one is armed.
+        awaiting: Option<AwaitState>,
     },
     /// The hands stow/retrieve cascade (an EmptyHands/FillHands action) is
     /// running via the StashService (held on the task). When it finishes we
@@ -229,6 +424,17 @@ enum Step {
         /// on arrival we can record `learned[from][dir] = arrived`.
         pending: Option<ConfluencePending>,
     },
+    /// The minotaur maze walker: same learned-graph shape as Confluence, but
+    /// hunting a specific ROOM rather than a landmark, over a room set carried
+    /// per-edge. See travel::minotaur.
+    Minotaur {
+        /// The room this maze crossing is trying to reach.
+        target: u32,
+        /// Rooms belonging to this maze; arriving outside means we fell out.
+        maze_rooms: Vec<u32>,
+        /// Awaiting arrival after a walk (from-room + direction sent).
+        pending: Option<ConfluencePending>,
+    },
     /// A scripted-edge `StepMove` is in flight: a paced walk command was sent
     /// mid-script and we're waiting for the room to change before resuming the
     /// script at `pc`. `sent_from` is the room it was sent in (any other room
@@ -236,6 +442,9 @@ enum Step {
     ScriptWalk {
         actions: Vec<crate::core::pathing::edge::WalkAction>,
         pc: usize,
+        /// The action that SENT the in-flight command, so an RT rejection
+        /// ("...wait 2 seconds") can re-run it instead of skipping ahead.
+        sent_pc: usize,
         expected: u32,
         from: u32,
         sent_from: u32,
@@ -302,6 +511,10 @@ enum MazePhase {
 /// How long a move may take before it counts as failed. Generous: RT from
 /// the move itself plus lag both land inside this window.
 const STEP_TIMEOUT_MS: u64 = 8_000;
+/// Withdrawal floor when a fare's price isn't in the route model (no
+/// silver-cost tag): enough for any cart/ferry ticket plus change, matching
+/// the corpus's own errands (River's Rest withdraws 2000).
+const GENERIC_FARE_SILVERS: u64 = 2_000;
 /// Slow crossings (urchin guide, portmaster escort, pass-through) can take many
 /// seconds to confirm in a busy room; they get a longer arrival window so a
 /// slow-but-fine crossing isn't re-sent.
@@ -313,6 +526,20 @@ const MAX_STAND_ATTEMPTS: u32 = 5;
 const MAX_EDGE_RETRIES: u32 = 2;
 /// Re-path budget — a trip that restarts this often is going nowhere.
 const MAX_RESTARTS: u32 = 10;
+/// Hard ceiling on `WalkAction::Repeat` iterations, applied by the
+/// interpreter no matter what the map data asks for. Mirrors Lich's
+/// MAX_LOOP_ITERATIONS: bad map data may waste a route, it must never hang
+/// the client waiting on a loop that can't terminate.
+const MAX_SCRIPT_LOOP: u32 = 50;
+/// How many times a `GuidedRoute` may walk its whole direction cycle before
+/// giving up. The landmark normally appears within one lap; more than two
+/// means the table no longer matches the map.
+const GUIDED_ROUTE_LAPS: u32 = 2;
+/// How long one Symbol of Seeking cast gets to offer a room.
+const SEEKING_OFFER_TIMEOUT: f32 = 6.0;
+/// Casts before giving up on a destination the symbol never offers (the
+/// Ruby's `20.times`).
+const SEEKING_MAX_CASTS: u32 = 20;
 /// How long the maze NPC gets to speak a route before the walk gives up.
 const MAZE_ASK_TIMEOUT_MS: u64 = 12_000;
 /// Gap between maze route commands beyond waiting out RT.
@@ -336,6 +563,15 @@ pub struct TravelTask {
     banned: HashSet<(u32, u32)>,
     /// Failures on the current edge (reset on arrival and re-path).
     edge_retries: u32,
+    /// `{capture:name}` values bound by `Await` steps on the CURRENT edge.
+    /// Lives on the task (not threaded through tick_script) so it survives the
+    /// suspend/resume an await necessarily performs. Cleared per edge: a
+    /// capture from a previous crossing has no business filling a later
+    /// command.
+    captures: Captures,
+    /// Re-entries into the current GuidedRoute, so a landmark that never
+    /// appears can't re-arm the direction cycle forever. Reset per edge.
+    guided_laps: u32,
     restarts: u32,
     started_ms: u64,
     /// Set once while waiting out a muckled state so the status line doesn't
@@ -349,6 +585,66 @@ pub struct TravelTask {
     stash_stack: Vec<super::stash::Stowed>,
     /// The silver the trip needs (0 = free). Set at start; drives funding.
     silver_need: u64,
+    /// A mid-script "not enough silvers" already triggered one bank detour;
+    /// a second means the withdrawal cannot cover the fare - fail the edge
+    /// rather than loop bank trips (the day-pass buyer's `funded` guard).
+    fare_funded: bool,
+    /// One bank detour per trip (go2's \$go2_started_go2_bank): short again
+    /// after withdrawing means the bank can't cover it - bail, don't loop.
+    bank_detour_done: bool,
+    /// One `open` per closed door per edge (Lich move()'s `tried_open`): a
+    /// second closed-door line means it's locked - fail the edge, don't loop
+    /// open/go forever. Cleared on arrival.
+    tried_open: bool,
+    /// The character is mounted (Lich's persistent Go2.mounted): suppresses
+    /// the stand-before-move check for the rest of the trip - a mounted
+    /// character can't stand and doesn't need to.
+    mounted: bool,
+    /// Standing is impossible where we are ("not enough room", "tip the
+    /// boat", overburdened) - go2 proceeds with the move anyway. Cleared the
+    /// moment we're observed standing again.
+    stand_waived: bool,
+    /// The flushed-line count at the last move send (Lich's room_count-at-
+    /// put_dir). Reactive feedback from lines at or before this belongs to a
+    /// SUPERSEDED move - acting on it double-sends the current one (the live
+    /// creek bank/creek toggle loop).
+    sent_line_no: u64,
+    /// `<nav>` count at the last move send (Lich's room_count-at-put_dir).
+    /// nav_count moving past this means we moved since the send.
+    sent_nav: u64,
+    /// THE COMMAND GATE - what the last response-bearing send actually said.
+    /// Every retry re-emits THIS, never the wayto text: for a scripted edge
+    /// the wayto is Ruby, and resending it raw asked the game to "Please
+    /// rephrase" (live icy-trail bug). The gate's text is by construction a
+    /// real game command, so that class of bug cannot be written.
+    pending_cmd: Option<String>,
+    /// Failure lines before this instant are ORPHANS: an off-route repath
+    /// abandons its in-flight command WITHOUT consuming its outcome (Lich
+    /// never does - move() blocks until the outcome is read), and the
+    /// abandoned command's trailing "You can't go there" arrives AFTER the
+    /// replacement was sent - passing the line stamp legitimately and
+    /// double-sending the replacement (the live creek toggle, round two).
+    orphan_until_ms: u64,
+    /// FIFO outcome accounting (Lich: one command = one outcome, consumed in
+    /// order). Sends increment; each nav or move-failure line decrements.
+    /// A failure line with older sends still owed belongs to one of THEM -
+    /// reacting to it resends the current command and sustains a one-command
+    /// bubble in the server's type-ahead queue (the reject-once stutter down
+    /// the whole pass, and the creek toggle when the geometry loops).
+    owed: u32,
+    /// Set per tick by consume_outcomes: a failure event this tick was the
+    /// PENDING command's own outcome (owed <= 1 when it arrived). Reactive
+    /// recovery requires this - otherwise the line was an older send's.
+    failure_attributable: bool,
+    /// The flushed-line count when the funding phase sent its `wealth quiet`
+    /// probe. A reading is FRESH only if silver_line_no > this.
+    wealth_probe_line: u64,
+    /// Blocked-but-transient retries on the current edge (Lich retries these
+    /// in place with sleep 1; only exhaustion re-paths, and NEVER bans).
+    keep_retries: u32,
+    /// Don't send anything before this instant - the backoff for type-ahead
+    /// throttles, "still recovering", and transient environmental refusals.
+    hold_until_ms: u64,
     /// True while walking the funding detour to a bank (so arrival there
     /// triggers the withdraw rather than a normal arrival).
     funding_bank: Option<u32>,
@@ -356,6 +652,8 @@ pub struct TravelTask {
     /// Step enum so Step stays Clone+PartialEq, same as `stash`. `Some` only
     /// while inside the Plane.
     confluence: Option<super::confluence::ConfluenceState>,
+    /// Learned graph for an in-progress minotaur maze crossing.
+    minotaur: Option<super::minotaur::MinotaurState>,
     /// The silver reading at the moment a bank withdrawal was sent. The
     /// withdraw confirmation isn't a wealth line, so we re-probe `wealth quiet`
     /// and wait for `game_state.silver` to change from this value (proving the
@@ -407,14 +705,31 @@ impl TravelTask {
             step,
             banned: HashSet::new(),
             edge_retries: 0,
+            captures: Captures::new(),
+            guided_laps: 0,
             restarts: 0,
             started_ms: now_ms,
             muckle_announced: false,
             stash: None,
             stash_stack: Vec::new(),
             silver_need,
+            fare_funded: false,
+            bank_detour_done: false,
+            tried_open: false,
+            mounted: false,
+            stand_waived: false,
+            sent_line_no: 0,
+            sent_nav: 0,
+            pending_cmd: None,
+            orphan_until_ms: 0,
+            owed: 0,
+            failure_attributable: false,
+            wealth_probe_line: 0,
+            keep_retries: 0,
+            hold_until_ms: 0,
             funding_bank: None,
             confluence: None,
+            minotaur: None,
             silver_at_withdraw: None,
             in_transport: false,
             day_pass_close_sack: None,
@@ -468,7 +783,35 @@ impl TravelTask {
     /// `Failed` is always the last event of a finished task, and the caller
     /// drops the task after either.
     pub fn tick(&mut self, ctx: TravelContext) -> Vec<TravelEvent> {
+        let mut events = self.tick_inner(ctx);
+        // Lich runs $fill_hands_actions before EVERY exit, success or not.
+        // Our Fill step covers the success path; this covers aborts and the
+        // Lich handoff — a trip must never end with the walker's items still
+        // stowed. Fire-and-forget retrievals (LIFO, mirroring the Fill order);
+        // there is no task left alive to confirm them.
+        if matches!(
+            events.last(),
+            Some(TravelEvent::Failed(_) | TravelEvent::LichFallback { .. })
+        ) && !self.stash_stack.is_empty()
+        {
+            let terminal = events.pop().expect("just matched");
+            events.push(TravelEvent::Status(
+                "retrieving stowed items before stopping".to_string(),
+            ));
+            while let Some(stowed) = self.stash_stack.pop() {
+                events.push(TravelEvent::Send(stowed.retrieve_command()));
+            }
+            events.push(terminal);
+        }
+        events
+    }
+
+    fn tick_inner(&mut self, ctx: TravelContext) -> Vec<TravelEvent> {
         let mut events = Vec::new();
+        // FIFO outcome accounting first: retire owed sends against this
+        // tick's navs/failures so recovery only ever reacts to an outcome
+        // that is genuinely the pending command's own.
+        self.consume_outcomes(&ctx);
 
         if ctx.dead {
             events.push(TravelEvent::Failed("you're dead - travel aborted".into()));
@@ -536,8 +879,21 @@ impl TravelTask {
             Step::Confluence { pending } => {
                 self.tick_confluence(pending, current, ctx, &mut events);
             }
+            Step::Minotaur { target, maze_rooms, pending } => {
+                self.tick_minotaur(target, maze_rooms, pending, current, ctx, &mut events);
+            }
             Step::AwaitStand { sent_ms, attempts } => {
                 if ctx.standing {
+                    self.step = Step::Prepare;
+                    self.tick_prepare(current, ctx, &mut events);
+                } else if ctx.saw(&crate::core::move_feedback::MoveFeedback::StandBlocked) {
+                    // Standing is impossible here (no room / boat / burden) —
+                    // go2's stand_regex accepts these and moves anyway
+                    // (go2.lic:2328-2332). Proceed without standing.
+                    events.push(TravelEvent::Status(
+                        "can't stand here - moving on anyway".to_string(),
+                    ));
+                    self.stand_waived = true;
                     self.step = Step::Prepare;
                     self.tick_prepare(current, ctx, &mut events);
                 } else if ctx.now_ms.saturating_sub(sent_ms) > STAND_TIMEOUT_MS {
@@ -569,22 +925,55 @@ impl TravelTask {
             Step::ScriptWalk {
                 actions,
                 pc,
+                sent_pc,
                 expected,
                 from,
                 sent_from,
                 sent_ms,
             } => {
-                // Paced walk step in flight. When the room changes off
-                // `sent_from`, resume the script at `pc`. A generous timeout
-                // re-sends by resuming (the next StepMove/Move handles it).
-                if current != sent_from
+                use crate::core::move_feedback::MoveFeedback as F;
+                // The command landed during roundtime: nothing failed, re-run
+                // the SAME action (RT-gated) instead of skipping ahead or
+                // waiting out a timeout.
+                if ctx.saw_since(self.sent_line_no, &F::RtWait) {
+                    // Hold for the game's own "...wait N seconds" number so
+                    // the resend can't hot-loop if the RT feed reads zero.
+                    if let Some(secs) = rt_wait_secs(&ctx) {
+                        self.hold_until_ms =
+                            self.hold_until_ms.max(ctx.now_ms + secs * 1000 + 200);
+                    }
+                    self.tick_script(actions, sent_pc, None, expected, from, None, ctx, &mut events);
+                    return events;
+                }
+                // Paced walk step in flight. Resume the script at `pc` when
+                // ANY movement evidence arrives - a Lich-room change, a <nav>
+                // (the room moved even if its mapped id didn't: multi-uid
+                // rooms like the Whistler's Pass labyrinth are one id across
+                // many physical rooms, and waiting on the id alone stalled
+                // every in-maze step for the full 30s slow timeout), or a
+                // failure line (the Ruby scripts' moves also proceeded on
+                // failure; retry loops re-evaluate immediately). The timeout
+                // stays as the backstop for silent responses.
+                let moved = current != sent_from
+                    || ctx.saw(&F::NavArrived);
+                let failed = ctx.now_ms >= self.orphan_until_ms
+                    && self.failure_attributable
+                    && (ctx.saw_since(self.sent_line_no, &F::MoveFailedRemovable)
+                    || ctx.saw_since(self.sent_line_no, &F::MoveFailedKeep)
+                    || ctx.saw_since(self.sent_line_no, &F::DoorClosed)
+                    || ctx.saw_since(self.sent_line_no, &F::Fell)
+                    || ctx.saw_since(self.sent_line_no, &F::NeedClimb)
+                    || ctx.saw_since(self.sent_line_no, &F::CantClimb));
+                if moved
+                    || failed
                     || ctx.now_ms.saturating_sub(sent_ms) > SLOW_ARRIVAL_TIMEOUT_MS
                 {
-                    self.tick_script(actions, pc, None, expected, from, ctx, &mut events);
+                    self.tick_script(actions, pc, None, expected, from, None, ctx, &mut events);
                 } else {
                     self.step = Step::ScriptWalk {
                         actions,
                         pc,
+                        sent_pc,
                         expected,
                         from,
                         sent_from,
@@ -598,6 +987,7 @@ impl TravelTask {
                 sleep_until,
                 expected,
                 from,
+                awaiting,
             } => {
                 // A scripted edge can land the room change before its
                 // actions finish (multi-command edges): arrival wins.
@@ -606,14 +996,18 @@ impl TravelTask {
                     self.arrive();
                     return events;
                 }
-                if current != from {
-                    events.push(TravelEvent::Status(format!(
-                        "off the planned route (room {current}) - re-pathing"
-                    )));
-                    self.repath(ctx.db, current, &mut events);
-                    return events;
-                }
-                self.tick_script(actions, pc, sleep_until, expected, from, ctx, &mut events);
+                // NO off-route check while a script runs: procs legitimately
+                // wander through mapped side rooms mid-crossing (the
+                // Glo'antern mist trail climbs a MAPPED boulder room to scout
+                // the direction, then climbs back down — treating that as
+                // "fled" aborted the script before its captured move, every
+                // lap, to the restart cap). Lich runs a proc to completion
+                // wherever it goes; a genuinely stuck script is bounded by
+                // its await/step timeouts, and the off-route check after
+                // completion (AwaitArrival) still catches real strays.
+                self.tick_script(
+                    actions, pc, sleep_until, expected, from, awaiting, ctx, &mut events,
+                );
             }
             Step::AwaitArrival {
                 expected,
@@ -655,7 +1049,7 @@ impl TravelTask {
                     events.push(TravelEvent::Status(format!(
                         "off the transport (room {current}) - re-pathing to the destination"
                     )));
-                    self.repath(ctx.db, current, &mut events);
+                    self.repath(ctx.db, current, ctx.lich_fallback, &mut events);
                     return events;
                 }
                 if current != from {
@@ -669,7 +1063,13 @@ impl TravelTask {
                     events.push(TravelEvent::Status(format!(
                         "off the planned route (room {current}) - re-pathing"
                     )));
-                    self.repath(ctx.db, current, &mut events);
+                    // The in-flight command is being ABANDONED unconsumed; its
+                    // trailing failure line is an orphan the replacement must
+                    // not react to (the creek double-send).
+                    self.pending_cmd = None;
+                    self.owed = 0;
+                    self.orphan_until_ms = ctx.now_ms + 1_500;
+                    self.repath(ctx.db, current, ctx.lich_fallback, &mut events);
                     return events;
                 }
                 // Recovery from move feedback (Lich's `move` retry loop). Only
@@ -689,15 +1089,44 @@ impl TravelTask {
                     self.arrive();
                     return events;
                 }
+                // The move landed during roundtime ("...wait 2 seconds"):
+                // nothing failed, so re-send as soon as RT clears — via
+                // Prepare, which gates on rt_remaining — rather than waiting
+                // out the 8s step timeout. Not counted as a retry: the edge
+                // did not fail.
+                if ctx.saw_since(self.sent_line_no, &MoveFeedback::RtWait) {
+                    if let Some(secs) = rt_wait_secs(&ctx) {
+                        self.hold_until_ms =
+                            self.hold_until_ms.max(ctx.now_ms + secs * 1000 + 200);
+                    }
+                    self.step = Step::Prepare;
+                    self.tick_prepare(current, ctx, &mut events);
+                    return events;
+                }
                 let timeout = if slow { SLOW_ARRIVAL_TIMEOUT_MS } else { STEP_TIMEOUT_MS };
                 if ctx.now_ms.saturating_sub(sent_ms) > timeout {
+                    // The timed-out send's outcome is written off - without
+                    // this, every silent retry inflates `owed` and starves
+                    // real failures of attribution.
+                    self.owed = self.owed.saturating_sub(1);
                     if self.edge_retries >= MAX_EDGE_RETRIES {
-                        // go2: "changing Room[..].timeto[..] to nil" + restart.
-                        events.push(TravelEvent::Status(format!(
-                            "move {from} -> {expected} keeps failing - disabling that edge for this session and re-pathing"
-                        )));
-                        self.banned.insert((from, expected));
-                        self.repath(ctx.db, current, &mut events);
+                        // A SILENT giveup is Lich's `nil` - the edge is kept
+                        // (global_defs.rb:772-783: "return nil ... to show the
+                        // direction shouldn't be removed"). go2 only nils the
+                        // edge cost when it never left the FIRST room
+                        // (go2.lic:2466-2478). Banning here on lag poisoned
+                        // good edges for the whole session.
+                        if self.idx == 0 {
+                            events.push(TravelEvent::Status(format!(
+                                "move {from} -> {expected} keeps failing - disabling that edge for this session and re-pathing"
+                            )));
+                            self.banned.insert((from, expected));
+                        } else {
+                            events.push(TravelEvent::Status(format!(
+                                "move {from} -> {expected} got no answer - re-pathing (edge kept)"
+                            )));
+                        }
+                        self.repath(ctx.db, current, ctx.lich_fallback, &mut events);
                     } else {
                         // Retry the same edge (a scripted edge replays its
                         // whole action sequence).
@@ -723,6 +1152,12 @@ impl TravelTask {
     fn arrive(&mut self) {
         self.idx += 1;
         self.edge_retries = 0;
+        self.tried_open = false;
+        self.keep_retries = 0;
+        // Captures are scoped to the edge that bound them; a value read off a
+        // line during the last crossing must not fill a command in the next.
+        self.captures.clear();
+        self.guided_laps = 0;
         // On a funding detour, reaching the bank returns to the funding phase
         // (to withdraw) rather than continuing as a normal walk.
         if let Some(bank) = self.funding_bank {
@@ -942,7 +1377,7 @@ impl TravelTask {
                                 "through the {} maze - continuing",
                                 maze.name
                             )));
-                            self.repath(ctx.db, current, events);
+                            self.repath(ctx.db, current, ctx.lich_fallback, events);
                         }
                         return;
                     }
@@ -1017,7 +1452,110 @@ impl TravelTask {
             self.step = Step::Confluence { pending: None };
         } else {
             // No entry edge from here — re-path.
-            self.repath(ctx.db, current, events);
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
+        }
+    }
+
+    /// The minotaur maze tick: one step of learn-and-navigate toward a room.
+    /// Same shape as `tick_confluence`, different goal (see travel::minotaur).
+    fn tick_minotaur(
+        &mut self,
+        target: u32,
+        maze_rooms: Vec<u32>,
+        pending: Option<ConfluencePending>,
+        current: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        let resume = |pending| Step::Minotaur {
+            target,
+            maze_rooms: maze_rooms.clone(),
+            pending,
+        };
+        // Reached the goal: hand back to the normal walker from here.
+        if current == target {
+            self.minotaur = None;
+            self.step = Step::Prepare;
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
+            return;
+        }
+        if ctx.muckled {
+            if !self.muckle_announced {
+                events.push(TravelEvent::Status(
+                    "stunned/webbed - waiting until you can move".into(),
+                ));
+                self.muckle_announced = true;
+            }
+            self.step = resume(pending);
+            return;
+        }
+        self.muckle_announced = false;
+
+        // A move is in flight: wait for the room to change, then learn it.
+        if let Some(p) = &pending {
+            if current == p.from {
+                if ctx.now_ms.saturating_sub(p.sent_ms) <= STEP_TIMEOUT_MS {
+                    return; // still waiting to land
+                }
+                self.step = resume(None);
+                return;
+            }
+            if let Some(state) = self.minotaur.as_mut() {
+                state.record_arrival(p.from, &p.dir, current);
+            }
+            self.step = resume(None);
+            // fall through and decide from `current`
+        }
+
+        // Fell out of the maze. The Ruby walks back along the arrival room's
+        // own wayto edge to where it came from; we let the router do it, which
+        // handles the walk-back and any re-plan in one place.
+        if !maze_rooms.contains(&current) {
+            self.minotaur = None;
+            events.push(TravelEvent::Status(format!(
+                "left the maze at room {current} - re-pathing"
+            )));
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
+            return;
+        }
+        if ctx.rt_remaining > 0.0 {
+            return;
+        }
+
+        let state = self
+            .minotaur
+            .get_or_insert_with(super::minotaur::MinotaurState::new);
+        // Exits changed since we last stood here → the maze shifted and every
+        // learned edge is now a lie. Wipe rather than route on stale data.
+        if state.record_exits(current, ctx.compass_dirs) {
+            events.push(TravelEvent::Status(
+                "the maze shifted - relearning".into(),
+            ));
+            state.reset();
+            state.record_exits(current, ctx.compass_dirs);
+        }
+        match state.choose_dir(current, target, ctx.compass_dirs) {
+            super::minotaur::MinotaurMove::Arrive => {
+                self.minotaur = None;
+                self.step = Step::Prepare;
+                self.repath(ctx.db, current, ctx.lich_fallback, events);
+            }
+            super::minotaur::MinotaurMove::Go(dir) => {
+                events.push(TravelEvent::Send(dir.clone()));
+                self.step = resume(Some(ConfluencePending {
+                    from: current,
+                    dir,
+                    sent_ms: ctx.now_ms,
+                }));
+            }
+            // No exits at all: don't wander blindly out of a maze.
+            super::minotaur::MinotaurMove::Lost => {
+                self.minotaur = None;
+                events.push(TravelEvent::Status(
+                    "no way out of this maze room - re-pathing".into(),
+                ));
+                self.repath(ctx.db, current, ctx.lich_fallback, events);
+            }
         }
     }
 
@@ -1037,7 +1575,7 @@ impl TravelTask {
             events.push(TravelEvent::Status(
                 "left the Plane - re-pathing to the destination".into(),
             ));
-            self.repath(ctx.db, current, events);
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
             return;
         }
         if ctx.muckled {
@@ -1058,7 +1596,7 @@ impl TravelTask {
             if current == p.from {
                 // Move failed hard (aho-corasick MoveFailed) → random compass
                 // exit, per the Ruby `if r == false` fallback.
-                if ctx.feedback.iter().any(|f| {
+                if ctx.feedback.iter().any(|(_, f)| {
                     matches!(
                         f,
                         crate::core::move_feedback::MoveFeedback::MoveFailedRemovable
@@ -1102,7 +1640,7 @@ impl TravelTask {
         let Some(hot) = super::confluence::hot_side(current) else {
             // Off the zone map (Ruby `$go2_restart = true`) — re-path.
             self.confluence = None;
-            self.repath(ctx.db, current, events);
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
             return;
         };
 
@@ -1149,7 +1687,7 @@ impl TravelTask {
             super::confluence::ConfluenceMove::Restart => {
                 // No exits at all — bail out to a normal re-path.
                 self.confluence = None;
-                self.repath(ctx.db, current, events);
+                self.repath(ctx.db, current, ctx.lich_fallback, events);
             }
         }
     }
@@ -1164,10 +1702,11 @@ impl TravelTask {
         mut sleep_until: Option<u64>,
         expected: u32,
         from: u32,
+        mut awaiting: Option<AwaitState>,
         ctx: TravelContext,
         events: &mut Vec<TravelEvent>,
     ) {
-        use crate::core::pathing::edge::WalkAction;
+        use crate::core::pathing::edge::{Cond, RepeatUntil, WalkAction};
         // Did this run emit any command? A script that finishes without sending
         // anything (a pure `;e true` pass-through, e.g. the virtual urchin
         // hideout entry) causes no room change — so we must NOT arrival-watch
@@ -1182,7 +1721,10 @@ impl TravelTask {
                 if sent_anything {
                     // Something was sent → a room change is expected. Scripted
                     // edges (portmaster escorts, timed jumps) can be slow, so
-                    // give them the longer arrival window.
+                    // give them the longer arrival window. Exactly ONE outcome
+                    // is owed: the final (arrival-watched) command's - the
+                    // burst's fputs answer with neither nav nor move-failure.
+                    self.owed = 1;
                     self.step = Step::AwaitArrival {
                         expected,
                         from,
@@ -1205,7 +1747,18 @@ impl TravelTask {
             match action {
                 WalkAction::Noop => pc += 1,
                 WalkAction::Move(cmd) | WalkAction::Put(cmd) => {
-                    events.push(TravelEvent::Send(cmd));
+                    // {capture:name} from an earlier await — the lever/rune
+                    // puzzles read a value off a line, then act on it.
+                    let Some(cmd) =
+                        crate::core::pathing::edge::expand_captures(&cmd, &self.captures)
+                    else {
+                        events.push(TravelEvent::Status(format!(
+                            "edge {from} -> {expected}: unbound capture in '{cmd}'"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    self.gate_fput(&ctx, events, cmd);
                     sent_anything = true;
                     pc += 1;
                 }
@@ -1213,13 +1766,74 @@ impl TravelTask {
                     // Paced walk step: send it, then suspend until the room
                     // changes before running the next action (so a multi-room
                     // crossing doesn't flood commands ahead of arrival).
-                    if ctx.rt_remaining > 0.0 {
-                        break; // wait out RT; resume this same StepMove next tick
+                    if ctx.rt_remaining > 0.0 || ctx.now_ms < self.hold_until_ms {
+                        break; // wait out RT (or an RtWait hold); resume next tick
                     }
-                    events.push(TravelEvent::Send(cmd));
+                    self.gate_send(&ctx, events, cmd);
                     self.step = Step::ScriptWalk {
                         actions,
                         pc: pc + 1,
+                        sent_pc: pc,
+                        expected,
+                        from,
+                        sent_from: ctx.current_room.unwrap_or(from),
+                        sent_ms: ctx.now_ms,
+                    };
+                    return;
+                }
+                WalkAction::MoveExitExcept(not_dir) => {
+                    // Whichever compass exit is NOT the named one, resolved
+                    // from live room state (the Hidden Plateau's shifting
+                    // rooms — the fixed exit is the wrong one). Compass dirs
+                    // arrive short ("nw"); the mapdb names them long
+                    // ("northwest"), so compare normalized.
+                    if ctx.rt_remaining > 0.0 || ctx.now_ms < self.hold_until_ms {
+                        break;
+                    }
+                    let avoid = short_dir(&not_dir);
+                    let Some(dir) = ctx
+                        .compass_dirs
+                        .iter()
+                        .find(|d| short_dir(d) != avoid)
+                        .cloned()
+                    else {
+                        events.push(TravelEvent::Status(format!(
+                            "edge {from} -> {expected}: no exit other than {not_dir} on offer"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    self.gate_send(&ctx, events, dir);
+                    self.step = Step::ScriptWalk {
+                        actions,
+                        pc: pc + 1,
+                        sent_pc: pc,
+                        expected,
+                        from,
+                        sent_from: ctx.current_room.unwrap_or(from),
+                        sent_ms: ctx.now_ms,
+                    };
+                    return;
+                }
+                WalkAction::MoveAnyExit => {
+                    // The wander step of a shifting-area hunt (Karazja's
+                    // `walk`): any compass exit — random, matching Lich, so a
+                    // static room still eventually tries every door.
+                    if ctx.rt_remaining > 0.0 || ctx.now_ms < self.hold_until_ms {
+                        break;
+                    }
+                    let Some(dir) = pick_random_exit(ctx.compass_dirs, from) else {
+                        events.push(TravelEvent::Status(format!(
+                            "edge {from} -> {expected}: no compass exits to wander"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    self.gate_send(&ctx, events, dir);
+                    self.step = Step::ScriptWalk {
+                        actions,
+                        pc: pc + 1,
+                        sent_pc: pc,
                         expected,
                         from,
                         sent_from: ctx.current_room.unwrap_or(from),
@@ -1228,7 +1842,7 @@ impl TravelTask {
                     return;
                 }
                 WalkAction::WaitRt => {
-                    if ctx.rt_remaining > 0.0 {
+                    if ctx.rt_remaining > 0.0 || ctx.now_ms < self.hold_until_ms {
                         break;
                     }
                     pc += 1;
@@ -1245,7 +1859,8 @@ impl TravelTask {
                     }
                 },
                 WalkAction::If { cond, then, els } => {
-                    let branch = if ctx.eval(cond) { then } else { els };
+                    let taken = eval_cond_with_captures(&cond, &self.captures, &ctx);
+                    let branch = if taken { then } else { els };
                     actions.splice(pc..=pc, branch);
                 }
                 WalkAction::EmptyHands | WalkAction::FillHands => {
@@ -1289,6 +1904,7 @@ impl TravelTask {
                         sleep_until,
                         expected,
                         from,
+                        awaiting: None,
                     });
                     if done_immediately {
                         // Empty stack (nothing to stow) — carry on inline.
@@ -1302,9 +1918,552 @@ impl TravelTask {
                     self.step = Step::Stashing { resume };
                     return;
                 }
+                WalkAction::Await {
+                    cmd,
+                    pattern,
+                    timeout,
+                    on_timeout,
+                    if_match,
+                } => {
+                    use crate::core::pathing::edge::OnTimeout;
+                    let state = match awaiting.take() {
+                        // Already armed: just check for a match / timeout.
+                        Some(state) => state,
+                        // Arming now. Send the command (if active) and record
+                        // the line seq so only NEWER lines can satisfy us.
+                        None => {
+                            if let Some(cmd) = &cmd {
+                                // Fill {capture:...} from earlier awaits. An
+                                // unbound token means we'd send a half-formed
+                                // command, so fail the edge instead.
+                                let Some(cmd) =
+                                    crate::core::pathing::edge::expand_captures(
+                                        cmd,
+                                        &self.captures,
+                                    )
+                                else {
+                                    events.push(TravelEvent::Status(format!(
+                                        "edge {from} -> {expected}: unbound capture in '{cmd}'"
+                                    )));
+                                    self.handle_uncrossable_edge(from, expected, ctx, events);
+                                    return;
+                                };
+                                events.push(TravelEvent::Send(cmd));
+                                sent_anything = true;
+                            }
+                            AwaitState {
+                                since_seq: ctx.line_seq,
+                                deadline_ms: ctx.now_ms
+                                    + (timeout.max(0.0) * 1000.0) as u64,
+                                retried: false,
+                            }
+                        }
+                    };
+                    // Bind named groups from the matching line so later
+                    // commands can interpolate them ({capture:name}).
+                    let hit = ctx
+                        .recent_lines
+                        .iter()
+                        .find(|(seq, line)| *seq > state.since_seq && pattern.is_match(line));
+                    if let Some((_, line)) = hit {
+                        if let Some(bound) = pattern.captures(line) {
+                            for (name, value) in bound {
+                                // Last write wins: a loop re-running an await
+                                // should see the newest value, not the first.
+                                self.captures.retain(|(k, _)| *k != name);
+                                self.captures.push((name, value));
+                            }
+                        }
+                        // The response can decide what happens next: splice
+                        // the branch in only when the line also matches it.
+                        match if_match {
+                            Some((branch_pat, steps)) if branch_pat.is_match(line) => {
+                                actions.splice(pc..=pc, steps);
+                            }
+                            _ => pc += 1,
+                        }
+                        continue;
+                    }
+                    if ctx.now_ms < state.deadline_ms {
+                        // A refused purchase mid-await ("You don't have
+                        // enough silvers" - the mining-cart ticket, ferry
+                        // fares): with Get Silvers on, detour to the bank
+                        // via the same funding pipeline the paid-route
+                        // pre-check uses, then re-plan - the replanned route
+                        // re-crosses this edge with money in pocket. Without
+                        // it (or after one failed attempt), the edge fails
+                        // closed with the reason named.
+                        if ctx.saw(&crate::core::move_feedback::MoveFeedback::TooPoor) {
+                            let get_silvers =
+                                ctx.funding.map(|f| f.get_silvers).unwrap_or(false);
+                            if !get_silvers {
+                                events.push(TravelEvent::Status(
+                                    "not enough silver for this crossing and Get Silvers is off"
+                                        .into(),
+                                ));
+                                self.handle_uncrossable_edge(from, expected, ctx, events);
+                                return;
+                            }
+                            if self.fare_funded {
+                                events.push(TravelEvent::Status(
+                                    "still too poor after withdrawing - the bank can't cover this fare"
+                                        .into(),
+                                ));
+                                self.handle_uncrossable_edge(from, expected, ctx, events);
+                                return;
+                            }
+                            self.fare_funded = true;
+                            self.silver_need = self.silver_need.max(GENERIC_FARE_SILVERS);
+                            events.push(TravelEvent::Status(
+                                "not enough silver for this crossing - detouring to the bank"
+                                    .into(),
+                            ));
+                            self.step = Step::Funding(FundingPhase::AwaitWealth {
+                                sent_ms: self.started_ms,
+                            });
+                            return;
+                        }
+                        // Still waiting: suspend with the state intact.
+                        awaiting = Some(state);
+                        break;
+                    }
+                    match on_timeout {
+                        // Advisory await: the line never came, carry on.
+                        OnTimeout::Continue => {
+                            pc += 1;
+                            continue;
+                        }
+                        // One re-send, then treat a second timeout as failure.
+                        // Only meaningful with a command to re-send; a passive
+                        // await has nothing to retry, so it fails instead.
+                        OnTimeout::Retry if !state.retried && cmd.is_some() => {
+                            let cmd = cmd.clone().expect("checked is_some");
+                            events.push(TravelEvent::Send(cmd));
+                            sent_anything = true;
+                            awaiting = Some(AwaitState {
+                                since_seq: ctx.line_seq,
+                                deadline_ms: ctx.now_ms
+                                    + (timeout.max(0.0) * 1000.0) as u64,
+                                retried: true,
+                            });
+                            break;
+                        }
+                        OnTimeout::Fail | OnTimeout::Retry => {
+                            events.push(TravelEvent::Status(format!(
+                                "edge {from} -> {expected}: timed out waiting for /{}/",
+                                pattern.source()
+                            )));
+                            self.handle_uncrossable_edge(from, expected, ctx, events);
+                            return;
+                        }
+                    }
+                }
+                WalkAction::Repeat { body, until, max } => {
+                    // Unroll one iteration in place, re-emitting the loop
+                    // behind it with a decremented budget. Splicing keeps the
+                    // whole loop inside the existing resumable action list, so
+                    // suspend/resume (RT, sleep, await) works inside a loop
+                    // for free — no separate loop stack to persist.
+                    //
+                    // MAX_SCRIPT_LOOP caps this regardless of the data's own
+                    // number: bad map data may waste a route, never hang us.
+                    let budget = max.min(MAX_SCRIPT_LOOP);
+                    let done = match &until {
+                        RepeatUntil::Count => false,
+                        RepeatUntil::RoomChanged => ctx.current_room != Some(from),
+                        RepeatUntil::Room(id) => ctx.current_room == Some(*id),
+                        RepeatUntil::Cond(cond) => ctx.eval(cond),
+                    };
+                    if done || budget == 0 {
+                        pc += 1;
+                        continue;
+                    }
+                    let mut expansion = body.clone();
+                    expansion.push(WalkAction::Repeat {
+                        body,
+                        until,
+                        max: budget - 1,
+                    });
+                    actions.splice(pc..=pc, expansion);
+                }
+                WalkAction::Break => {
+                    // Drop everything up to and including the enclosing
+                    // Repeat. The loop is always BEHIND us in the spliced
+                    // list (see Repeat), so scan forward for it.
+                    match actions[pc..]
+                        .iter()
+                        .position(|a| matches!(a, WalkAction::Repeat { .. }))
+                    {
+                        Some(offset) => {
+                            actions.drain(pc..=pc + offset);
+                        }
+                        // Outside a loop: a no-op, per Lich.
+                        None => pc += 1,
+                    }
+                }
+                WalkAction::GuidedRoute {
+                    start_rooms,
+                    dirs,
+                    landmarks,
+                } => {
+                    // Already standing at a landmark: enter it without walking.
+                    // Checked first so a route that starts on its destination
+                    // doesn't take a needless lap.
+                    if let Some((_, enter)) = landmarks.iter().find(|(noun, _)| {
+                        ctx.loot_nouns.iter().any(|n| n.eq_ignore_ascii_case(noun))
+                    }) {
+                        actions.splice(pc..=pc, [WalkAction::Move(enter.clone())]);
+                        continue;
+                    }
+                    if landmarks.is_empty() {
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    }
+                    // Join the direction cycle at the offset for the room we
+                    // are actually in. Not knowing where we are is the Ruby's
+                    // `else echo 'error: mini-script expected a different
+                    // room'` branch — it can't walk, so let the edge fall to
+                    // ban/fallback rather than guessing an offset.
+                    let Some(here) = ctx.current_room else {
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    let Some(offset) = start_rooms.iter().position(|&r| r == here) else {
+                        events.push(TravelEvent::Status(format!(
+                            "edge {from} -> {expected}: room {here} isn't on this guided route"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    // The walk re-enters this action to pick its landmark, so
+                    // bound the re-entries: a landmark that never appears would
+                    // otherwise re-arm the cycle forever.
+                    self.guided_laps += 1;
+                    if self.guided_laps > GUIDED_ROUTE_LAPS {
+                        self.guided_laps = 0;
+                        events.push(TravelEvent::Status(format!(
+                            "edge {from} -> {expected}: walked the route without finding a landmark"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    }
+                    if dirs.is_empty() {
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    }
+                    // Lower into primitives: step the cycle until the landmark
+                    // shows up, then enter it. Expressing it this way (rather
+                    // than as bespoke stepping state) means the walk inherits
+                    // RT-waiting and suspend/resume for free, and the loop
+                    // ceiling bounds it.
+                    // Stop as soon as ANY landmark shows up — a route can be
+                    // hunting a door OR a mirror.
+                    let arrived = Cond::Any(
+                        landmarks
+                            .iter()
+                            .map(|(noun, _)| Cond::RoomHasObject(noun.clone()))
+                            .collect(),
+                    );
+                    let cycle = (0..dirs.len())
+                        .map(|i| dirs[(offset + i) % dirs.len()].clone())
+                        .map(|d| {
+                            WalkAction::Repeat {
+                                // One StepMove per iteration, skipped once a
+                                // landmark appears — the loop's own condition
+                                // is what actually ends the walk.
+                                body: vec![WalkAction::StepMove(d)],
+                                until: RepeatUntil::Cond(arrived.clone()),
+                                max: 1,
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    let expansion = vec![
+                        WalkAction::Repeat {
+                            body: cycle,
+                            until: RepeatUntil::Cond(arrived),
+                            max: GUIDED_ROUTE_LAPS,
+                        },
+                        // Re-enter this GuidedRoute once the walk ends: its
+                        // already-at-a-landmark branch above picks whichever
+                        // landmark actually turned up and enters it. We can't
+                        // choose here — the walk hasn't happened yet.
+                        WalkAction::GuidedRoute {
+                            start_rooms,
+                            dirs,
+                            landmarks,
+                        },
+                    ];
+                    actions.splice(pc..=pc, expansion);
+                }
+                WalkAction::VolnSeeking { destination } => {
+                    // The symbol offers rooms by NAME, so we need the
+                    // destination's titles to know when to confirm. ALL
+                    // titles, as an alternation (Lich matches
+                    // destination.title.include?), with any trailing
+                    // " (12345)" room-number suffix stripped - a
+                    // roomnumbers-stamped title otherwise never matches and
+                    // the seek burns every cast.
+                    let titles: Vec<String> = ctx
+                        .db
+                        .room(destination)
+                        .map(|r| {
+                            r.title
+                                .iter()
+                                .map(|t| {
+                                    let t = t.trim_matches(['[', ']']).trim();
+                                    let t = match t.rfind(" (") {
+                                        Some(i)
+                                            if t.ends_with(')')
+                                                && t[i + 2..t.len() - 1]
+                                                    .chars()
+                                                    .all(|c| c.is_ascii_digit()) =>
+                                        {
+                                            &t[..i]
+                                        }
+                                        _ => t,
+                                    };
+                                    regex::escape(t)
+                                })
+                                .filter(|t| !t.is_empty())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if titles.is_empty() {
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    }
+                    let Some(pattern) = crate::core::pathing::edge::AwaitPattern::new(
+                        &titles.join("|"),
+                    ) else {
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    // Cast until the offered room is the one we want, then
+                    // confirm. Bounded: the symbol cycles through rooms, and
+                    // a destination it never offers must not loop forever.
+                    actions.splice(
+                        pc..=pc,
+                        [
+                            WalkAction::Repeat {
+                                body: vec![
+                                    WalkAction::WaitRt,
+                                    WalkAction::Await {
+                                        cmd: Some("symbol of seeking".into()),
+                                        pattern: Box::new(pattern),
+                                        timeout: SEEKING_OFFER_TIMEOUT,
+                                        // A miss just means this cast offered
+                                        // somewhere else; cast again.
+                                        on_timeout:
+                                            crate::core::pathing::edge::OnTimeout::Continue,
+                                        // Confirm ONLY on a match, inside
+                                        // the loop. The old shape confirmed
+                                        // unconditionally AFTER it - an
+                                        // exhausted seek teleported the
+                                        // character to whatever room the
+                                        // last cast happened to offer.
+                                        if_match: Some((
+                                            Box::new(
+                                                crate::core::pathing::edge::AwaitPattern::new(
+                                                    ".",
+                                                )
+                                                .expect("valid"),
+                                            ),
+                                            vec![
+                                                WalkAction::StepMove(
+                                                    "symbol of seeking confirm".into(),
+                                                ),
+                                                WalkAction::Break,
+                                            ],
+                                        )),
+                                    },
+                                ],
+                                until: RepeatUntil::Count,
+                                max: SEEKING_MAX_CASTS,
+                            },
+                            // Nothing after the loop: a successful confirm
+                            // ends here and the arrival check wins; an
+                            // exhausted seek ends with no room change and
+                            // the arrival timeout re-paths (edge kept). A
+                            // trailing action would also run after SUCCESS -
+                            // Break lands just past the Repeat.
+                        ],
+                    );
+                }
+                WalkAction::SetVar { name, value } => {
+                    use crate::core::pathing::transpile::{
+                        set_mapdb_var, CURRENT_ROOM_TOKEN,
+                    };
+                    // `Map.current.id` isn't knowable at transpile time; fill
+                    // it from where we're standing as the action runs.
+                    let value = match value.as_deref() {
+                        Some(CURRENT_ROOM_TOKEN) => {
+                            ctx.current_room.map(|id| id.to_string())
+                        }
+                        _ => value,
+                    };
+                    set_mapdb_var(&name, value);
+                    pc += 1;
+                }
+                WalkAction::TrinketWarp => {
+                    // Unconfigured or not carried: this crossing can't run.
+                    // Fall back rather than sending `turn #` with no id.
+                    let Some(t) = ctx.fwi_trinket else {
+                        events.push(TravelEvent::Status(format!(
+                            "edge {from} -> {expected} needs your Four Winds trinket - \
+                             set it in Settings > Travel"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    // The Ruby scrapes `<a exist=...>` links out of the `get`
+                    // response to learn which container the trinket came from.
+                    // We don't need to: the registry already tracks
+                    // containment, so `return_to` is resolved before we start.
+                    let mut steps = Vec::new();
+                    if !t.in_hand {
+                        steps.push(WalkAction::EmptyHands);
+                        steps.push(WalkAction::Put(format!("get #{}", t.id)));
+                    }
+                    steps.push(WalkAction::StepMove(format!("turn #{}", t.id)));
+                    if !t.in_hand {
+                        steps.push(WalkAction::Put(match t.return_to {
+                            Some(bag) => format!("put #{} in #{bag}", t.id),
+                            // Came from nowhere trackable — stow is the
+                            // Ruby's own fallback for the same case.
+                            None => format!("stow #{}", t.id),
+                        }));
+                        steps.push(WalkAction::FillHands);
+                    }
+                    // The warp lands somewhere the edge can't predict.
+                    steps.push(WalkAction::Replan);
+                    actions.splice(pc..=pc, steps);
+                }
+                WalkAction::TryMove { cmd, fallback } => {
+                    // Lower into: send it, wait for the room to settle, then
+                    // run the fallback only if we're still where we started.
+                    // StepMove already does the send-and-wait (resuming on a
+                    // room change or its timeout), so the whole action is
+                    // that plus a guarded branch — no new suspend state.
+                    let here = ctx.current_room.unwrap_or(from);
+                    actions.splice(
+                        pc..=pc,
+                        [
+                            WalkAction::StepMove(cmd),
+                            WalkAction::If {
+                                cond: Cond::InRoom(here),
+                                then: fallback,
+                                els: Vec::new(),
+                            },
+                        ],
+                    );
+                }
+                WalkAction::RouteTable {
+                    dirs,
+                    target,
+                    verb,
+                    hands_free_in,
+                } => {
+                    let Some(here) = ctx.current_room else {
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    // Arrived: the table's job is done.
+                    if here == target {
+                        pc += 1;
+                        continue;
+                    }
+                    // Off the table. The Ruby picks a random exit and echoes
+                    // "Oh crap.. I'm lost.." — we re-path instead, which is
+                    // the same intent (get back on a known route) without
+                    // swimming blindly further off course.
+                    let Some(dir) = dirs
+                        .iter()
+                        .find(|(room, _)| *room == here)
+                        .map(|(_, d)| d.clone())
+                    else {
+                        events.push(TravelEvent::Status(format!(
+                            "off the route table at room {here} - re-pathing"
+                        )));
+                        self.repath(ctx.db, here, ctx.lich_fallback, events);
+                        return;
+                    };
+                    // Free hands where the table says to, before the first
+                    // stroke rather than mid-swim.
+                    let mut expansion = Vec::new();
+                    if hands_free_in.contains(&here) {
+                        expansion.push(WalkAction::EmptyHands);
+                    }
+                    expansion.push(WalkAction::StepMove(if verb.is_empty() {
+                        dir
+                    } else {
+                        format!("{verb} {dir}")
+                    }));
+                    // Re-enter to look up the next room's direction once this
+                    // step lands. Bounded by the same lap guard as GuidedRoute.
+                    self.guided_laps += 1;
+                    if self.guided_laps > MAX_SCRIPT_LOOP {
+                        self.guided_laps = 0;
+                        events.push(TravelEvent::Status(format!(
+                            "route table from {from} didn't reach room {target}"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    }
+                    expansion.push(WalkAction::RouteTable {
+                        dirs,
+                        target,
+                        verb,
+                        hands_free_in,
+                    });
+                    actions.splice(pc..=pc, expansion);
+                }
+                WalkAction::MinotaurMaze { target, maze_rooms } => {
+                    // Hand off to the learned-graph walker. It owns the whole
+                    // crossing from here — including deciding when we've
+                    // arrived — so this action never returns to the script.
+                    self.minotaur = Some(super::minotaur::MinotaurState::new());
+                    self.step = Step::Minotaur {
+                        target,
+                        maze_rooms,
+                        pending: None,
+                    };
+                    return;
+                }
+                WalkAction::PauseForUser {
+                    msg,
+                    until,
+                    timeout,
+                } => {
+                    // Already satisfied (the user acted, or the gate was never
+                    // closed): carry straight on without bothering them.
+                    if until.as_ref().is_some_and(|c| ctx.eval(c)) {
+                        pc += 1;
+                        continue;
+                    }
+                    // Otherwise abandon rather than block. A walker that waits
+                    // silently on a human is indistinguishable from a hang;
+                    // the message says what to do so the trip can be re-issued.
+                    let _ = timeout;
+                    events.push(TravelEvent::Status(format!(
+                        "edge {from} -> {expected} needs you: {msg}"
+                    )));
+                    self.handle_uncrossable_edge(from, expected, ctx, events);
+                    return;
+                }
                 WalkAction::Replan => {
                     // The edge asked to re-plan from here ($go2_restart).
-                    self.repath(ctx.db, from, events);
+                    //
+                    // Guard it on NOT having landed where the edge says it
+                    // goes (Lich's guard_trailing_replan). Procs set the flag
+                    // unconditionally because a jump can land anywhere, but a
+                    // restart is pure waste when the crossing worked — and
+                    // re-pathing from the destination of the final edge is
+                    // how a completed trip gets reported as a failure.
+                    if ctx.current_room == Some(expected) {
+                        pc += 1;
+                        continue;
+                    }
+                    self.repath(ctx.db, from, ctx.lich_fallback, events);
                     return;
                 }
             }
@@ -1315,6 +2474,7 @@ impl TravelTask {
             sleep_until,
             expected,
             from,
+            awaiting,
         };
     }
 
@@ -1334,7 +2494,7 @@ impl TravelTask {
     ) {
         use crate::core::day_pass;
         let Some((dep, dest)) = day_pass::edge(from, next) else {
-            self.repath(ctx.db, from, events);
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
             return;
         };
         let inputs = ctx.day_pass;
@@ -1353,7 +2513,7 @@ impl TravelTask {
                 "no valid day pass held and buying is off - re-pathing".into(),
             ));
             self.banned.insert((from, next));
-            self.repath(ctx.db, from, events);
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
             return;
         }
         // Expired passes get dropped by the machine's preamble (Lich's
@@ -1450,7 +2610,7 @@ impl TravelTask {
         let Some(&next) = self.path.get(self.idx) else {
             // The virtual room WAS the destination (shouldn't happen for a
             // hideout, but be safe): nothing more to do; re-path to confirm.
-            self.repath(ctx.db, from, events);
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
             return;
         };
         // The crossing command is on the virtual room's wayto for `next`.
@@ -1461,7 +2621,7 @@ impl TravelTask {
         else {
             // No command bridges the virtual room to the next hop — re-path
             // around it from where we physically are.
-            self.repath(ctx.db, from, events);
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
             return;
         };
         if ctx.rt_remaining > 0.0 {
@@ -1477,7 +2637,7 @@ impl TravelTask {
         if crate::core::mapdb::is_proc_command(&command) {
             match crate::core::pathing::transpile::transpile_edge(ctx.db, &command) {
                 Some(actions) => {
-                    self.tick_script(actions, 0, None, next, from, ctx, events);
+                    self.tick_script(actions, 0, None, next, from, None, ctx, events);
                     return;
                 }
                 None => {
@@ -1540,9 +2700,12 @@ impl TravelTask {
                 sleep_until,
                 expected,
                 from,
+                awaiting,
             } = *resume
             {
-                self.tick_script(actions, pc, sleep_until, expected, from, ctx, events);
+                self.tick_script(
+                    actions, pc, sleep_until, expected, from, awaiting, ctx, events,
+                );
             } else {
                 self.step = *resume;
             }
@@ -1672,7 +2835,19 @@ impl TravelTask {
                 // Leave the sack the way we found it before re-pathing.
                 self.flush_day_pass_close(events);
                 self.banned.insert((self.day_pass_buy_from, self.day_pass_buy_dest));
-                self.repath(ctx.db, current, events);
+                self.repath(ctx.db, current, ctx.lich_fallback, events);
+            }
+            BuyEvent::FailedTooPoor(why) => {
+                // Lich turns buy_day_pass off for the session here
+                // (map_strategies.rb:740) so later trips stop planning
+                // through buy edges they can't pay for.
+                events.push(TravelEvent::Status(format!(
+                    "day pass: {why} - disabling day-pass buying for this session and re-pathing"
+                )));
+                events.push(TravelEvent::DisableDayPassBuy);
+                self.flush_day_pass_close(events);
+                self.banned.insert((self.day_pass_buy_from, self.day_pass_buy_dest));
+                self.repath(ctx.db, current, ctx.lich_fallback, events);
             }
         }
     }
@@ -1693,21 +2868,53 @@ impl TravelTask {
                 // (sent_ms == started: first entry — fire the check.)
                 if sent_ms == self.started_ms {
                     events.push(TravelEvent::Send("wealth quiet".into()));
+                    self.wealth_probe_line = ctx.game_line_no;
                     // Move sent_ms forward so we don't re-send every tick.
                     self.step = Step::Funding(FundingPhase::AwaitWealth {
                         sent_ms: ctx.now_ms.max(self.started_ms + 1),
                     });
                     return;
                 }
-                let Some(silver) = funding.and_then(|f| f.silver) else {
+                // Only trust a reading NEWER than our probe: game_state's
+                // cached silver can be stale (the live bug - a deposit after
+                // the last wealth line left the cache at 2000, the preflight
+                // read it before the probe answered, and a broke character
+                // marched into a paid crossing "funded").
+                let fresh = funding
+                    .filter(|f| f.silver.is_some() && f.silver_line_no > self.wealth_probe_line);
+                let Some(silver) = fresh.and_then(|f| f.silver) else {
                     // Still waiting for the wealth line (or no funding inputs).
                     if ctx.now_ms.saturating_sub(sent_ms) > STEP_TIMEOUT_MS {
-                        // No wealth response — proceed and hope for the best
-                        // (Lich's routine only runs under GS; we don't block).
+                        if funding.is_some() && self.keep_retries < MAX_EDGE_RETRIES {
+                            // Re-probe a dropped line before giving up.
+                            self.keep_retries += 1;
+                            events.push(TravelEvent::Send("wealth quiet".into()));
+                            self.wealth_probe_line = ctx.game_line_no;
+                            self.step = Step::Funding(FundingPhase::AwaitWealth {
+                                sent_ms: ctx.now_ms,
+                            });
+                            return;
+                        }
+                        // No wealth response at all — proceed and hope for the
+                        // best (Lich's routine only runs under GS; we don't
+                        // block).
                         self.begin_walk(current, ctx, events);
                     }
                     return;
                 };
+                self.keep_retries = 0;
+                // Return-trip pre-funding (go2.lic:2210-2218): with the
+                // setting on, the way HOME counts too - go2 runs a second
+                // dijkstra dest->start and adds its fares, so the character
+                // is never stranded at a paid crossing with no fare back.
+                if funding.map(|f| f.get_return_trip).unwrap_or(false) {
+                    if let Some(back) = pathing::path_to(ctx.db, self.destination, current) {
+                        let full: Vec<u32> = std::iter::once(self.destination)
+                            .chain(back.iter().copied())
+                            .collect();
+                        self.silver_need += pathing::silver_cost(ctx.db, &full);
+                    }
+                }
                 if silver >= self.silver_need {
                     // Funded — walk the real trip.
                     events.push(TravelEvent::Status(format!(
@@ -1720,13 +2927,27 @@ impl TravelTask {
                 // Short on silver.
                 let get_silvers = funding.map(|f| f.get_silvers).unwrap_or(false);
                 if !get_silvers {
+                    // go2: "Continuing anyway in 10 seconds..." + sleep 10
+                    // (go2.lic:2286-2289) - a window to stop the trip or top
+                    // up before the walker marches into the paid crossing.
                     events.push(TravelEvent::Status(format!(
-                        "trip costs {} silver, you have {silver} - short; enable Get Silvers to auto-withdraw. Continuing anyway.",
+                        "trip costs {} silver, you have {silver} - short; enable Get Silvers to auto-withdraw. Continuing anyway in 10 seconds...",
                         self.silver_need
                     )));
+                    self.hold_until_ms = self.hold_until_ms.max(ctx.now_ms + 10_000);
                     self.begin_walk(current, ctx, events);
                     return;
                 }
+                // A bank detour already ran this trip and we're short AGAIN:
+                // bail cleanly (go2's \$go2_started_go2_bank guard,
+                // go2.lic:2240-2243) instead of flailing through restarts.
+                if self.bank_detour_done {
+                    events.push(TravelEvent::Failed(
+                        "you're too poor to go to the bank".into(),
+                    ));
+                    return;
+                }
+                self.bank_detour_done = true;
                 // Find the nearest bank we can afford to WALK to (its own path
                 // cost must be within current silver — Lich's affordability
                 // check), then redirect the trip there.
@@ -1758,9 +2979,23 @@ impl TravelTask {
                             ));
                             return;
                         };
+                        // go2's bank-detour ETA line (go2.lic:2235): time to
+                        // the bank plus time from the bank to the destination.
+                        let leg1: Vec<u32> = std::iter::once(current)
+                            .chain(bank_path.iter().copied())
+                            .collect();
+                        let mut eta = pathing::estimate_time(ctx.db, &leg1);
+                        let mut rooms = bank_path.len();
+                        if let Some(leg2) = pathing::path_to(ctx.db, bank, real_dest) {
+                            let full: Vec<u32> =
+                                std::iter::once(bank).chain(leg2.iter().copied()).collect();
+                            eta += pathing::estimate_time(ctx.db, &full);
+                            rooms += leg2.len();
+                        }
                         events.push(TravelEvent::Status(format!(
-                            "short {} silver - routing to the nearest bank (room {bank}) to withdraw",
-                            need.saturating_sub(silver)
+                            "short {} silver - routing to the nearest bank (room {bank}) to withdraw. ETA {} ({rooms} rooms via the bank)",
+                            need.saturating_sub(silver),
+                            fmt_eta(eta)
                         )));
                         self.path = bank_path;
                         self.idx = 0;
@@ -1790,6 +3025,11 @@ impl TravelTask {
                     } else {
                         format!("withdraw {amount} silvers")
                     };
+                    // A hidden character's withdraw is ignored by the teller —
+                    // go2 unhides first (go2.lic:2274).
+                    if ctx.hidden {
+                        events.push(TravelEvent::Send("unhide".into()));
+                    }
                     events.push(TravelEvent::Send(cmd));
                     // Re-check wealth after withdrawing: the withdraw
                     // confirmation ("hands you N silvers") isn't a wealth line,
@@ -1797,6 +3037,7 @@ impl TravelTask {
                     // the same — it calls go2_check_silver() (wealth quiet)
                     // again right after the withdraw (go2.lic:2278-2280).
                     events.push(TravelEvent::Send("wealth quiet".into()));
+                    self.wealth_probe_line = ctx.game_line_no;
                     self.funding_bank = None;
                     self.silver_at_withdraw = funding.and_then(|f| f.silver);
                     self.step = Step::Funding(FundingPhase::AwaitWithdraw {
@@ -1815,12 +3056,25 @@ impl TravelTask {
                 need,
                 sent_ms,
             } => {
+                // The teller refused - THIS town's account can't cover it
+                // (GS4 accounts are per-town; silver deposited in the Landing
+                // is invisible to a Zul branch). go2 bails right here ("Not
+                // enough silver in current area's bank.", go2.lic:2280-2284)
+                // - without this the wealth poll spun forever on a reading
+                // that was never going to change (the live Khazar's Hold
+                // `wealth quiet` spam).
+                if ctx.saw(&crate::core::move_feedback::MoveFeedback::WithdrawFailed) {
+                    events.push(TravelEvent::Failed(format!(
+                        "this area's bank account can't cover the {need} silver needed - travel aborted (GS4 accounts are per-town; your silver may be banked elsewhere)"
+                    )));
+                    return;
+                }
                 let reading = funding.and_then(|f| f.silver);
-                // The post-withdraw `wealth quiet` hasn't reflected yet if the
-                // reading still equals what we had when we sent the withdraw
-                // (and we DID have a pre-withdraw reading). Wait for it to move.
-                let refreshed = reading != self.silver_at_withdraw
-                    || (self.silver_at_withdraw.is_none() && reading.is_some());
+                // Fresh only when the reading's line postdates our probe -
+                // the value-diff heuristic missed a withdraw that left the
+                // total unchanged and trusted stale caches.
+                let refreshed = reading.is_some()
+                    && funding.map(|f| f.silver_line_no).unwrap_or(0) > self.wealth_probe_line;
                 let have = reading.unwrap_or(0);
                 if refreshed && have >= need {
                     // Funded — re-plan to the real destination and walk.
@@ -1828,7 +3082,7 @@ impl TravelTask {
                         "withdrew to {have} silver - continuing to room {real_dest}"
                     )));
                     self.destination = real_dest;
-                    self.repath(ctx.db, current, events);
+                    self.repath(ctx.db, current, ctx.lich_fallback, events);
                 } else if refreshed && have < need {
                     // The fresh reading came back and it's still short — the
                     // bank couldn't cover it (Lich's "too poor" bail).
@@ -1836,9 +3090,19 @@ impl TravelTask {
                         "withdrew what the bank had ({have} silver) but the trip needs {need} - aborted"
                     )));
                 } else if ctx.now_ms.saturating_sub(sent_ms) > STEP_TIMEOUT_MS {
-                    // No fresh wealth reading at all — re-probe once more rather
-                    // than abort on a dropped line.
+                    // No fresh wealth reading — re-probe for a dropped line,
+                    // but bounded: an unchanged reading forever means the
+                    // withdraw silently failed (don't spam `wealth quiet`).
+                    if self.keep_retries >= MAX_EDGE_RETRIES {
+                        events.push(TravelEvent::Failed(
+                            "the withdrawal never reflected in your wealth - travel aborted"
+                                .into(),
+                        ));
+                        return;
+                    }
+                    self.keep_retries += 1;
                     events.push(TravelEvent::Send("wealth quiet".into()));
+                    self.wealth_probe_line = ctx.game_line_no;
                     self.step = Step::Funding(FundingPhase::AwaitWithdraw {
                         real_dest,
                         need,
@@ -1891,6 +3155,11 @@ impl TravelTask {
     }
 
     fn tick_prepare(&mut self, current: u32, ctx: TravelContext, events: &mut Vec<TravelEvent>) {
+        // Backoff in force (type-ahead throttle, "still recovering",
+        // transient refusals): hold fire; the per-frame tick re-enters.
+        if ctx.now_ms < self.hold_until_ms {
+            return;
+        }
         if ctx.muckled {
             if !self.muckle_announced {
                 events.push(TravelEvent::Status(
@@ -1904,7 +3173,7 @@ impl TravelTask {
 
         let Some(&next) = self.path.get(self.idx) else {
             // Path exhausted without reaching the destination — re-path.
-            self.repath(ctx.db, current, events);
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
             return;
         };
         // Curated maze boundary: the planned edges inside are junk (movement
@@ -1932,12 +3201,19 @@ impl TravelTask {
             .and_then(|room| room.wayto.get(&next).cloned())
         else {
             // The planned edge doesn't exist from where we actually are.
-            self.repath(ctx.db, current, events);
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
             return;
         };
 
-        // go2: swim/pedal edges skip the stand dance.
-        let needs_stand = !ctx.standing && !command_is_swim_or_pedal(&command);
+        // go2: swim/pedal edges skip the stand dance; a room where standing
+        // is impossible waives it for the trip (cleared when we stand again).
+        if ctx.standing {
+            self.stand_waived = false;
+        }
+        let needs_stand = !ctx.standing
+            && !self.mounted
+            && !self.stand_waived
+            && !command_is_swim_or_pedal(&command);
         if ctx.rt_remaining > 0.0 {
             return; // waitrt?
         }
@@ -1951,7 +3227,7 @@ impl TravelTask {
         }
         // Curated override beats whatever the mapdb says about this edge.
         if let Some(ov) = crate::core::pathing::overrides::edge_override(current, next) {
-            self.tick_script(ov.actions.clone(), 0, None, next, current, ctx, events);
+            self.tick_script(ov.actions.clone(), 0, None, next, current, None, ctx, events);
             return;
         }
         // Chronomage day-pass edge: a self-contained per-town script (open sack
@@ -1968,7 +3244,7 @@ impl TravelTask {
             // transpile — interpreting the proc is our job here, at the edge.
             match crate::core::pathing::transpile::transpile_edge(ctx.db, &command) {
                 Some(actions) => {
-                    self.tick_script(actions, 0, None, next, current, ctx, events);
+                    self.tick_script(actions, 0, None, next, current, None, ctx, events);
                 }
                 None => {
                     // Can't interpret this proc natively. This is where the
@@ -1980,7 +3256,7 @@ impl TravelTask {
             }
             return;
         }
-        events.push(TravelEvent::Send(command));
+        self.gate_send(&ctx, events, command);
         self.step = Step::AwaitArrival {
             expected: next,
             from: current,
@@ -2013,7 +3289,17 @@ impl TravelTask {
         // landed). Reset the arrival window and wait for the room to resolve.
         // Without this, a failure racing the room change bans a good edge and
         // strands the trip (the live Trollfang 1280->1281 abort).
-        if ctx.saw(&F::NavArrived) {
+        if ctx.saw(&F::NavArrived) || ctx.game_nav_count > self.sent_nav {
+            // Lich's actual guard is `room_count > room_count-at-send`, not
+            // "a nav this tick" - a nav consumed in an EARLIER tick still
+            // means we moved since the send and the failure line is stale.
+            // CONSUME the nav (acknowledge it in sent_nav): in a multi-uid
+            // labyrinth the landed room maps to the SAME id as `from`, so
+            // this branch re-fires every tick otherwise - resetting the
+            // arrival timer forever and hanging the walker in total silence
+            // (live 13016089 stall). One nav = one timer reset; after that
+            // the normal timeout/retry path resumes.
+            self.sent_nav = ctx.game_nav_count;
             self.edge_retries = 0;
             self.step = Step::AwaitArrival {
                 expected,
@@ -2024,21 +3310,42 @@ impl TravelTask {
             return true;
         }
         let _ = (sent_ms, slow);
-        let command = ctx
-            .db
-            .room(from)
-            .and_then(|r| r.wayto.get(&expected).cloned())
-            .unwrap_or_default();
+        // Orphan window: a just-abandoned command's late failure line must
+        // not be attributed to its replacement. Genuine failures of the NEW
+        // command repeat on its retry and are handled then.
+        if ctx.now_ms < self.orphan_until_ms {
+            return false;
+        }
+        // FIFO attribution: if this tick's failure line was an OLDER send's
+        // outcome (owed > 1 when it arrived), it is not ours to react to -
+        // reacting re-fed a one-command bubble that stuttered every room of
+        // Whistler's Pass and toggled the creek.
+        if !self.failure_attributable {
+            // Mounted is state, not a retry decision - capture it regardless.
+            if ctx.saw_since(self.sent_line_no, &F::Mounted) {
+                self.mounted = true;
+            }
+            return false;
+        }
+        // Retries below re-emit the GATE's pending command - what was
+        // actually sent, by construction a real game command. The wayto is
+        // never consulted here: for scripted edges it's Ruby, and resending
+        // it raw was the live icy-trail "Please rephrase" bug.
 
         // Mounted → urchin travel is incompatible. Drop urchins for the rest
         // of the trip and re-path on foot (Lich go2:2336-2346). Only acts when
         // urchins were actually in play.
-        if ctx.saw(&F::Mounted) && crate::core::pathing::transpile::urchins_valid() {
+        if ctx.saw_since(self.sent_line_no, &F::Mounted) {
+            // Persistent for the trip (Lich's Go2.mounted): a mounted
+            // character can't stand, and the stand check must stop firing.
+            self.mounted = true;
+        }
+        if ctx.saw_since(self.sent_line_no, &F::Mounted) && crate::core::pathing::transpile::urchins_valid() {
             crate::core::pathing::transpile::set_urchins_valid(false);
             events.push(TravelEvent::Status(
                 "you're mounted - urchin guides don't work mounted; re-routing on foot".into(),
             ));
-            self.repath(ctx.db, from, events);
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
             return true;
         }
 
@@ -2051,33 +3358,91 @@ impl TravelTask {
         // check wins and the edge is never touched. Only after the retries are
         // exhausted (a genuinely dead edge) do we ban it and re-path — matching
         // Lich's `return false` but after its retry loop, not before it.
-        if ctx.saw(&F::MoveFailedRemovable) {
+        if ctx.saw_since(self.sent_line_no, &F::MoveFailedRemovable) {
             if self.edge_retries >= MAX_EDGE_RETRIES {
                 events.push(TravelEvent::Status(format!(
                     "move {from} -> {expected} keeps failing - disabling that edge and re-pathing"
                 )));
                 self.banned.insert((from, expected));
-                self.repath(ctx.db, from, events);
+                self.repath(ctx.db, from, ctx.lich_fallback, events);
             } else {
                 self.edge_retries += 1;
-                if !command.is_empty() && ctx.rt_remaining <= 0.0 {
-                    events.push(TravelEvent::Send(command));
+                if ctx.rt_remaining <= 0.0 {
+                    self.gate_resend(&ctx, events);
                 }
                 self.reset_arrival_timer(from, expected, ctx.now_ms);
             }
             return true;
         }
-        // Blocked-but-keep → don't ban; re-path around it for now (Lich `nil`:
-        // "don't delete the edge"). A future attempt may succeed.
-        if ctx.saw(&F::MoveFailedKeep) {
+        // Blocked-but-keep: Lich retries these in place (sleep 1, waitrt,
+        // re-send - global_defs.rb:639-642) and only gives up at its own
+        // timeout, returning nil ("don't delete the edge"). Retry with a
+        // short backoff; exhaustion re-paths WITHOUT banning.
+        if ctx.saw_since(self.sent_line_no, &F::MoveFailedKeep) || ctx.saw_since(self.sent_line_no, &F::TransientRetry) {
+            if self.keep_retries >= MAX_EDGE_RETRIES + 2 {
+                events.push(TravelEvent::Status(format!(
+                    "move {from} -> {expected} is blocked right now - re-pathing (edge kept)"
+                )));
+                self.repath(ctx.db, from, ctx.lich_fallback, events);
+            } else {
+                self.keep_retries += 1;
+                self.hold_until_ms = ctx.now_ms + 1_200;
+                self.step = Step::Prepare;
+            }
+            return true;
+        }
+        // Gated entrance vs a hidden/invisible character: unhide, retry
+        // (global_defs.rb:615-617). Without this the edge times out and gets
+        // banned - the most common wrongful ban for stealthy characters.
+        if ctx.saw_since(self.sent_line_no, &F::MustUnhide) {
+            events.push(TravelEvent::Send("unhide".into()));
+            self.gate_resend(&ctx, events);
+            self.reset_arrival_timer(from, expected, ctx.now_ms);
+            return true;
+        }
+        // Postural rejection: back through Prepare, whose stand machinery is
+        // RT-gated (global_defs.rb:714-717).
+        if ctx.saw_since(self.sent_line_no, &F::MustStand) {
+            self.step = Step::Prepare;
+            return true;
+        }
+        // Throttles and short-lived incapacities: back off, then re-send via
+        // Prepare (RT + muckled gated). None of these consume an edge retry.
+        if ctx.saw_since(self.sent_line_no, &F::TypeAhead) || ctx.saw_since(self.sent_line_no, &F::NoControl) {
+            self.hold_until_ms = ctx.now_ms + 1_200;
+            self.step = Step::Prepare;
+            return true;
+        }
+        if ctx.saw_since(self.sent_line_no, &F::StillRecovering) {
+            self.hold_until_ms = ctx.now_ms + 2_000;
+            self.step = Step::Prepare;
+            return true;
+        }
+        if ctx.saw_since(self.sent_line_no, &F::StillStunned) {
+            // Prepare's muckled gate waits the stun out.
+            self.step = Step::Prepare;
+            return true;
+        }
+        // Too injured to climb: Lich casts Resolve if known, else keeps the
+        // edge. We can't cast - re-path keeping the edge.
+        if ctx.saw_since(self.sent_line_no, &F::TooInjured) {
             events.push(TravelEvent::Status(format!(
-                "move {from} -> {expected} is blocked right now - re-pathing (edge kept)"
+                "too injured to climb {from} -> {expected} - re-pathing (edge kept)"
             )));
-            self.repath(ctx.db, from, events);
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
+            return true;
+        }
+        // Pitch dark: needs a light source. Surface it and re-path (Lich
+        // tells the user and carries on).
+        if ctx.saw_since(self.sent_line_no, &F::PitchDark) {
+            events.push(TravelEvent::Status(
+                "it's pitch dark - you need a light source for this way; re-pathing".into(),
+            ));
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
             return true;
         }
         // Hands full → run the stash cascade, then retry the move.
-        if ctx.saw(&F::HandsFull) {
+        if ctx.saw_since(self.sent_line_no, &F::HandsFull) {
             if let Some(inputs) = ctx.hands {
                 let mut task = super::stash::StashTask::empty();
                 for ev in task.tick(inputs.to_stash_context(ctx.now_ms)) {
@@ -2099,38 +3464,61 @@ impl TravelTask {
             }
             return true;
         }
-        // Closed door → send the `open` variant, then retry the move.
-        if ctx.saw(&F::DoorClosed) {
-            let open = command.replacen("go", "open", 1).replacen("climb", "open", 1);
-            events.push(TravelEvent::Send(open));
-            events.push(TravelEvent::Send(command));
+        // Closed door → open once and retry; a SECOND closed-door line means
+        // locked (Lich's tried_open one-shot, global_defs.rb:697-706). The
+        // old uncapped loop reset its own timer each pass - the only outright
+        // hang in the walker.
+        if ctx.saw_since(self.sent_line_no, &F::DoorClosed) {
+            if self.tried_open {
+                events.push(TravelEvent::Status(format!(
+                    "the way {from} -> {expected} is locked - disabling that edge and re-pathing"
+                )));
+                self.banned.insert((from, expected));
+                self.repath(ctx.db, from, ctx.lich_fallback, events);
+                return true;
+            }
+            self.tried_open = true;
+            // Derive `open <door>` from what was ACTUALLY sent ("go door" /
+            // "climb gate"), then retry it - works identically for plain and
+            // scripted edges, since the gate only ever holds real commands.
+            if let Some(cmd) = self.pending_cmd.clone() {
+                let open = cmd.replacen("go", "open", 1).replacen("climb", "open", 1);
+                events.push(TravelEvent::Send(open));
+                self.gate_resend(&ctx, events);
+            }
             self.reset_arrival_timer(from, expected, ctx.now_ms);
             return true;
         }
-        // Fell / knocked down → stand, then retry.
-        if ctx.saw(&F::Fell) {
-            if !ctx.standing {
-                events.push(TravelEvent::Send("stand".into()));
-            }
-            events.push(TravelEvent::Send(command));
-            self.reset_arrival_timer(from, expected, ctx.now_ms);
+        // Fell / knocked down → back through Prepare: its stand machinery is
+        // RT-gated, where a blind stand+move pair here landed inside the
+        // fall's roundtime (Lich waitrt?s around the stand,
+        // global_defs.rb:643-648).
+        if ctx.saw_since(self.sent_line_no, &F::Fell) {
+            self.hold_until_ms = ctx.now_ms + 800;
+            self.step = Step::Prepare;
             return true;
         }
         // Verb swaps: go <-> climb.
-        if ctx.saw(&F::NeedClimb) {
-            events.push(TravelEvent::Send(command.replacen("go", "climb", 1)));
+        // Verb swaps on what was actually sent (a swapped retry then BECOMES
+        // the pending command, so a later opposite line swaps back cleanly).
+        if ctx.saw_since(self.sent_line_no, &F::NeedClimb) {
+            if let Some(cmd) = self.pending_cmd.clone() {
+                self.gate_send(&ctx, events, cmd.replacen("go", "climb", 1));
+            }
             self.reset_arrival_timer(from, expected, ctx.now_ms);
             return true;
         }
-        if ctx.saw(&F::CantClimb) {
-            events.push(TravelEvent::Send(command.replacen("climb", "go", 1)));
+        if ctx.saw_since(self.sent_line_no, &F::CantClimb) {
+            if let Some(cmd) = self.pending_cmd.clone() {
+                self.gate_send(&ctx, events, cmd.replacen("climb", "go", 1));
+            }
             self.reset_arrival_timer(from, expected, ctx.now_ms);
             return true;
         }
         // Item at feet → stow it, then retry.
-        if ctx.saw(&F::ItemAtFeet) {
+        if ctx.saw_since(self.sent_line_no, &F::ItemAtFeet) {
             events.push(TravelEvent::Send("stow feet".into()));
-            events.push(TravelEvent::Send(command));
+            self.gate_resend(&ctx, events);
             self.reset_arrival_timer(from, expected, ctx.now_ms);
             return true;
         }
@@ -2138,12 +3526,99 @@ impl TravelTask {
     }
 
     fn reset_arrival_timer(&mut self, from: u32, expected: u32, now_ms: u64) {
+        // Callers re-send the move alongside this - stamp the send so older
+        // failure lines can't retrigger it. (line stamp set by note_send.)
         self.step = Step::AwaitArrival {
             expected,
             from,
             sent_ms: now_ms,
             slow: false,
         };
+    }
+
+    /// THE COMMAND GATE. Every response-bearing send goes through here: it
+    /// stamps the send with the flushed-line and nav counts (so stale lines
+    /// and pre-send navs can never be attributed to it) and remembers the
+    /// text (so retries re-emit what was ACTUALLY sent - always a real game
+    /// command, never wayto Ruby). Lich's move() discipline, made structural.
+    fn gate_send(&mut self, ctx: &TravelContext, events: &mut Vec<TravelEvent>, text: String) {
+        self.sent_line_no = ctx.game_line_no;
+        self.sent_nav = ctx.game_nav_count;
+        self.pending_cmd = Some(text.clone());
+        self.owed = self.owed.saturating_add(1);
+        events.push(TravelEvent::Send(text));
+    }
+
+    /// FIFO outcome consumption, run once per tick before the step machine:
+    /// walk this tick's move-outcome events in arrival order, retiring owed
+    /// sends. A failure only counts as OURS (failure_attributable) when no
+    /// older send was still owed when it arrived.
+    fn consume_outcomes(&mut self, ctx: &TravelContext) {
+        use crate::core::move_feedback::MoveFeedback as F;
+        self.failure_attributable = false;
+        for (no, f) in ctx.feedback {
+            // A line that predates the pending send can never be ITS
+            // outcome (it physically arrived before the command went out).
+            let fresh = *no > self.sent_line_no;
+            match f {
+                F::NavArrived => {
+                    self.owed = self.owed.saturating_sub(1);
+                }
+                F::MoveFailedRemovable
+                | F::MoveFailedKeep
+                | F::TransientRetry
+                | F::RtWait
+                | F::MustStand
+                | F::MustUnhide
+                | F::StandBlocked
+                | F::Fell
+                | F::NeedClimb
+                | F::CantClimb
+                | F::DoorClosed
+                | F::HandsFull
+                | F::ItemAtFeet
+                | F::TypeAhead
+                | F::StillStunned
+                | F::StillRecovering
+                | F::NoControl
+                | F::PitchDark
+                | F::TooInjured
+                | F::Mounted => {
+                    if self.owed > 1 {
+                        // An OLDER send's outcome - retire it silently. This
+                        // is the bubble draining instead of being re-fed.
+                        self.owed -= 1;
+                    } else if self.owed == 1 && fresh {
+                        self.owed = 0;
+                        self.failure_attributable = true;
+                    }
+                    // owed == 0: nothing outstanding - a stale line (e.g.
+                    // trailing a nav that already resolved the send this
+                    // same tick, the per-room cycle of the live bubble).
+                    // Nobody's outcome; swallow.
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// A fire-and-forget script send (Lich's fput): stamps and remembers the
+    /// text but owes NO movement outcome - counting these inflated `owed`
+    /// (an 'open door' answers with neither nav nor move-failure) and
+    /// starved genuine failures of attribution.
+    fn gate_fput(&mut self, ctx: &TravelContext, events: &mut Vec<TravelEvent>, text: String) {
+        self.sent_line_no = ctx.game_line_no;
+        self.sent_nav = ctx.game_nav_count;
+        self.pending_cmd = Some(text.clone());
+        events.push(TravelEvent::Send(text));
+    }
+
+    /// Re-emit the gate's pending command (a retry). No-op if nothing was
+    /// ever sent. Re-stamps the send.
+    fn gate_resend(&mut self, ctx: &TravelContext, events: &mut Vec<TravelEvent>) {
+        if let Some(cmd) = self.pending_cmd.clone() {
+            self.gate_send(ctx, events, cmd);
+        }
     }
 
     /// An edge the router planned (it has a `timeto`) but we can't cross
@@ -2159,28 +3634,37 @@ impl TravelTask {
     ) {
         // With the Lich fallback enabled (Lich connection only), hand the
         // whole trip to `;go2 <dest>` rather than banning the edge.
-        if ctx.lich_fallback {
-            events.push(TravelEvent::Status(format!(
-                "edge {current} -> {next} needs Lich - handing off to ;go2 {}",
-                self.destination
-            )));
-            events.push(TravelEvent::LichFallback {
-                destination: self.destination,
-            });
+        if self.hand_off_to_lich(
+            ctx.lich_fallback,
+            &format!("edge {current} -> {next} needs a script the native walker can't cross"),
+            events,
+        ) {
             return;
         }
         events.push(TravelEvent::Status(format!(
             "edge {current} -> {next} uses a script the native walker can't cross yet - disabling it and re-pathing"
         )));
         self.banned.insert((current, next));
-        self.repath(ctx.db, current, events);
+        self.repath(ctx.db, current, ctx.lich_fallback, events);
     }
 
-    fn repath(&mut self, db: &MapDb, current: u32, events: &mut Vec<TravelEvent>) {
+    /// Re-plan around banned edges. `lich_fallback` mirrors
+    /// `TravelContext::lich_fallback`: when a re-path leaves us with no route
+    /// at all, the trip is only dead if there's no Lich to hand it to.
+    fn repath(
+        &mut self,
+        db: &MapDb,
+        current: u32,
+        lich_fallback: bool,
+        events: &mut Vec<TravelEvent>,
+    ) {
         // A day-pass crossing abandoned mid-way still owes its sack close.
         self.flush_day_pass_close(events);
         self.restarts += 1;
         if self.restarts > MAX_RESTARTS {
+            if self.hand_off_to_lich(lich_fallback, "too many restarts", events) {
+                return;
+            }
             events.push(TravelEvent::Failed(
                 "too many restarts - travel aborted".into(),
             ));
@@ -2212,6 +3696,13 @@ impl TravelTask {
                     });
                 }
                 None => {
+                    if self.hand_off_to_lich(
+                        lich_fallback,
+                        &format!("no native route from room {current} to the bank (room {bank})"),
+                        events,
+                    ) {
+                        return;
+                    }
                     events.push(TravelEvent::Failed(format!(
                         "no remaining route from room {current} to the bank (room {bank}) - travel aborted"
                     )));
@@ -2224,17 +3715,73 @@ impl TravelTask {
             !banned.contains(&(a, b))
         }) {
             Some(path) => {
+                // go2 prints a fresh ETA on every restart (go2.lic:2296-2298).
+                let full_eta: Vec<u32> =
+                    std::iter::once(current).chain(path.iter().copied()).collect();
+                events.push(TravelEvent::Status(format!(
+                    "re-routed: ETA {} ({} rooms)",
+                    fmt_eta(pathing::estimate_time(db, &full_eta)),
+                    path.len()
+                )));
                 self.path = path;
                 self.idx = 0;
-                self.step = Step::Prepare;
+                // go2 re-runs its wealth check on EVERY restart, not just at
+                // launch: a re-plan can route through paid crossings the
+                // original path avoided (a mid-maze ban re-routed one live
+                // trip through the Zul mining cart with silver_need still 0
+                // from the original free route, and the walker hit the till
+                // broke).
+                let full: Vec<u32> =
+                    std::iter::once(current).chain(self.path.iter().copied()).collect();
+                self.silver_need = pathing::silver_cost(db, &full);
+                self.step = if self.silver_need > 0 {
+                    Step::Funding(FundingPhase::AwaitWealth {
+                        sent_ms: self.started_ms,
+                    })
+                } else {
+                    Step::Prepare
+                };
             }
             None => {
+                if self.hand_off_to_lich(
+                    lich_fallback,
+                    &format!(
+                        "no native route from room {current} to {}",
+                        self.destination
+                    ),
+                    events,
+                ) {
+                    return;
+                }
                 events.push(TravelEvent::Failed(format!(
                     "no remaining route from room {current} to {} - travel aborted",
                     self.destination
                 )));
             }
         }
+    }
+
+    /// Hand the remaining trip to Lich's `;go2` when the fallback is armed.
+    /// Returns true if the handoff fired (the caller must not also emit a
+    /// `Failed`). `why` names what the native walker ran out of, so the
+    /// notice doubles as the signal for which edges need recognizer work.
+    fn hand_off_to_lich(
+        &mut self,
+        lich_fallback: bool,
+        why: &str,
+        events: &mut Vec<TravelEvent>,
+    ) -> bool {
+        if !lich_fallback {
+            return false;
+        }
+        events.push(TravelEvent::Status(format!(
+            "{why} - handing off to ;go2 {}",
+            self.destination
+        )));
+        events.push(TravelEvent::LichFallback {
+            destination: self.destination,
+        });
+        true
     }
 
     /// A `Failed`/`Arrived` event ends the task; the owner uses this to know
@@ -2271,6 +3818,28 @@ fn day_pass_tick_inputs<'a>(ctx: &TravelContext<'a>) -> super::day_pass_buy::Buy
     }
 }
 
+/// The N from the newest "...wait N seconds." line, if one is in the ring.
+/// The RT prompt feed usually covers this, but the wait line is the game's
+/// own number — used as a hold floor so an RtWait resend can't hot-loop when
+/// the RT feed reads zero.
+fn rt_wait_secs(ctx: &TravelContext) -> Option<u64> {
+    ctx.recent_lines.iter().rev().find_map(|(_, l)| {
+        let idx = l.find("...wait ")?;
+        l[idx + 8..].split_whitespace().next()?.parse().ok()
+    })
+}
+
+/// Human ETA for status lines (go2's `as_time`): "1h 02m" past an hour,
+/// "3m 05s" otherwise.
+fn fmt_eta(seconds: f64) -> String {
+    let s = seconds.max(0.0).round() as u64;
+    if s >= 3600 {
+        format!("{}h {:02}m", s / 3600, (s % 3600) / 60)
+    } else {
+        format!("{}m {:02}s", s / 60, s % 60)
+    }
+}
+
 /// go2 skips standing for swim/pedal movement commands.
 fn command_is_swim_or_pedal(command: &str) -> bool {
     let lower = command.to_lowercase();
@@ -2283,6 +3852,46 @@ fn command_is_swim_or_pedal(command: &str) -> bool {
 /// fallback (Ruby: `look` the compass, `move options[rand(length)]`). `_room`
 /// is unused but kept for a possible future seed; the pick is uniform-random
 /// over the live `<dir>` values.
+/// Evaluate a condition where `CaptureIs` can see the current edge's Await
+/// captures; everything else defers to the context. `Not`/`Any` recurse here
+/// so a capture test composes under negation and disjunction.
+fn eval_cond_with_captures(
+    cond: &crate::core::pathing::edge::Cond,
+    captures: &Captures,
+    ctx: &TravelContext,
+) -> bool {
+    use crate::core::pathing::edge::Cond;
+    match cond {
+        Cond::CaptureIs(name, want) => captures
+            .iter()
+            .any(|(n, v)| n == name && v.eq_ignore_ascii_case(want)),
+        Cond::Not(inner) => !eval_cond_with_captures(inner, captures, ctx),
+        Cond::Any(any) => any
+            .iter()
+            .any(|c| eval_cond_with_captures(c, captures, ctx)),
+        other => ctx.eval(other),
+    }
+}
+
+/// Normalize a direction to its compass short form, so mapdb long names
+/// ("northwest") compare against live compass dirs ("nw"). Non-compass
+/// strings pass through unchanged.
+fn short_dir(dir: &str) -> &str {
+    match dir {
+        "north" => "n",
+        "northeast" => "ne",
+        "east" => "e",
+        "southeast" => "se",
+        "south" => "s",
+        "southwest" => "sw",
+        "west" => "w",
+        "northwest" => "nw",
+        "up" => "u",
+        "down" => "d",
+        other => other,
+    }
+}
+
 fn pick_random_exit(compass_dirs: &[String], _room: u32) -> Option<String> {
     use rand::seq::IndexedRandom;
     compass_dirs.choose(&mut rand::rng()).cloned()
@@ -2316,18 +3925,30 @@ mod tests {
         standing: bool,
         sitting: bool,
         kneeling: bool,
+        hidden: bool,
+        citizenship: Option<String>,
+        profession: Option<String>,
+        society: Option<String>,
         muckled: bool,
         dead: bool,
         spells: Vec<u16>,
         rt: f64,
         now: u64,
         pathcodes: std::collections::BTreeMap<String, Vec<String>>,
-        feedback: Vec<crate::core::move_feedback::MoveFeedback>,
+        feedback: Vec<(u64, crate::core::move_feedback::MoveFeedback)>,
+        /// The flushed-line counter fed to ctx.game_line_no; `feel` stamps
+        /// events after it so they read as fresh.
+        game_line: u64,
+        /// The nav counter fed to ctx.game_nav_count.
+        nav_count: u64,
         lich_fallback: bool,
         funding: Option<FundingInputs>,
         pinefar: bool,
         compass_dirs: Vec<String>,
         loot_nouns: Vec<String>,
+        /// Raw game lines an `Await` can match, as (seq, text).
+        recent_lines: Vec<(u64, String)>,
+        line_seq: u64,
     }
 
     impl Sim {
@@ -2337,6 +3958,10 @@ mod tests {
                 standing: true,
                 sitting: false,
                 kneeling: false,
+                hidden: false,
+                citizenship: None,
+                profession: None,
+                society: None,
                 muckled: false,
                 dead: false,
                 spells: Vec::new(),
@@ -2344,12 +3969,29 @@ mod tests {
                 now: 0,
                 pathcodes: Default::default(),
                 feedback: Vec::new(),
+                game_line: 0,
+                nav_count: 0,
                 lich_fallback: false,
                 funding: None,
                 pinefar: false,
                 compass_dirs: Vec::new(),
                 loot_nouns: Vec::new(),
+                recent_lines: Vec::new(),
+                line_seq: 0,
             }
+        }
+
+        /// Feed a FRESH move-feedback event (stamped after the last send),
+        /// replacing whatever was queued - the shape tests want by default.
+        fn feel(&mut self, f: crate::core::move_feedback::MoveFeedback) {
+            self.game_line += 1;
+            self.feedback = vec![(self.game_line, f)];
+        }
+
+        /// Feed a game line an `Await` can match, as the parser would.
+        fn say(&mut self, line: &str) {
+            self.line_seq += 1;
+            self.recent_lines.push((self.line_seq, line.to_string()));
         }
 
         fn ctx<'a>(&'a self, db: &'a MapDb) -> TravelContext<'a> {
@@ -2361,17 +4003,27 @@ mod tests {
                 standing: self.standing,
                 sitting: self.sitting,
                 kneeling: self.kneeling,
+                hidden: self.hidden,
+                citizenship: self.citizenship.as_deref(),
+                profession: self.profession.as_deref(),
+                society: self.society.as_deref(),
                 active_spells: &self.spells,
                 rt_remaining: self.rt,
                 now_ms: self.now,
                 pathcodes: &self.pathcodes,
                 hands: None,
                 feedback: &self.feedback,
+                game_line_no: self.game_line,
+                game_nav_count: self.nav_count,
+                recent_lines: &self.recent_lines,
+                line_seq: self.line_seq,
                 lich_fallback: self.lich_fallback,
                 funding: self.funding,
                 at_pinefar_depository: self.pinefar,
                 compass_dirs: &self.compass_dirs,
+                carried_names: &[],
                 loot_nouns: &self.loot_nouns,
+                fwi_trinket: None,
                 day_pass: None,
             }
         }
@@ -2523,8 +4175,10 @@ mod tests {
         sim.current = 5;
         sim.now += 100;
         let events = task.tick(sim.ctx(&db));
+        // The re-path announces itself and prints the fresh ETA (go2 parity).
         assert!(
-            matches!(&events[..], [TravelEvent::Status(s)] if s.contains("re-pathing")),
+            matches!(&events[..], [TravelEvent::Status(s), TravelEvent::Status(eta)]
+                if s.contains("re-pathing") && eta.contains("ETA")),
             "{events:?}"
         );
         // The new route leaves from room 5.
@@ -2647,17 +4301,27 @@ mod tests {
                 standing: true,
                 sitting: false,
                 kneeling: false,
+                hidden: false,
+                citizenship: None,
+                profession: None,
+                society: None,
                 active_spells: &[],
                 rt_remaining: 0.0,
                 now_ms: now,
                 pathcodes,
                 hands: Some(hands),
                 feedback: &[],
+                recent_lines: &[],
+                line_seq: 0,
+                game_line_no: 0,
+                game_nav_count: 0,
                 lich_fallback: false,
                 funding: None,
                 at_pinefar_depository: false,
                 compass_dirs: &[],
+                carried_names: &[],
                 loot_nouns: &[],
+                fwi_trinket: None,
                 day_pass: None,
             }
         }
@@ -2738,17 +4402,27 @@ mod tests {
                     standing: true,
                     sitting: false,
                     kneeling: false,
+                    hidden: false,
+                    citizenship: None,
+                    profession: None,
+                    society: None,
                     active_spells: &[],
                     rt_remaining: 0.0,
                     now_ms: $now,
                     pathcodes: &pathcodes,
                     hands: Some(hands),
                     feedback: &[],
+                    recent_lines: &[],
+                    line_seq: 0,
+                    game_line_no: 0,
+                    game_nav_count: 0,
                     lich_fallback: false,
                     funding: None,
                     at_pinefar_depository: false,
                     compass_dirs: &[],
+                    carried_names: &[],
                     loot_nouns: &[],
+                    fwi_trinket: None,
                     day_pass: None,
                 }
             }};
@@ -2807,7 +4481,7 @@ mod tests {
         assert_eq!(sent(&task.tick(sim.ctx(&db))), ["go door"]);
         // The door is closed: feedback fires while we're still in room 1.
         sim.now += 100;
-        sim.feedback = vec![MoveFeedback::DoorClosed];
+        sim.feel(MoveFeedback::DoorClosed);
         let events = task.tick(sim.ctx(&db));
         assert_eq!(
             sent(&events),
@@ -2840,7 +4514,7 @@ mod tests {
         // edge on the first hit. The retries re-send `north`.
         for _ in 0..MAX_EDGE_RETRIES {
             sim.now += 100;
-            sim.feedback = vec![MoveFeedback::MoveFailedRemovable];
+            sim.feel(MoveFeedback::MoveFailedRemovable);
             assert_eq!(
                 sent(&task.tick(sim.ctx(&db))),
                 ["north"],
@@ -2849,7 +4523,7 @@ mod tests {
         }
         // Now the retries are exhausted: ban 1->2 and re-path via 3.
         sim.now += 100;
-        sim.feedback = vec![MoveFeedback::MoveFailedRemovable];
+        sim.feel(MoveFeedback::MoveFailedRemovable);
         let events = task.tick(sim.ctx(&db));
         assert!(
             events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("keeps failing"))),
@@ -2884,9 +4558,10 @@ mod tests {
         // A failure line AND a nav (room changed) arrive the same tick, but the
         // resolver hasn't updated current_room to 2 yet (still reads 1).
         sim.now += 100;
+        sim.game_line += 1;
         sim.feedback = vec![
-            MoveFeedback::MoveFailedRemovable,
-            MoveFeedback::NavArrived,
+            (sim.game_line, MoveFeedback::MoveFailedRemovable),
+            (sim.game_line, MoveFeedback::NavArrived),
         ];
         let ev = task.tick(sim.ctx(&db));
         assert!(
@@ -2906,6 +4581,180 @@ mod tests {
             matches!(ev.last(), Some(TravelEvent::Arrived { destination: 2, .. })),
             "arrives normally: {ev:?}"
         );
+    }
+
+    #[test]
+    fn stale_failure_lines_do_not_retrigger_the_current_move() {
+        // The live creek loop: a "You can't go there" belonging to an
+        // already-superseded move arrived after the next move was sent and
+        // triggered a resend of it - two moves in the server queue toggled
+        // bank<->creek to the restart cap. Lich guards with room_count-at-
+        // send; ours is the flushed-line stamp.
+        use crate::core::move_feedback::MoveFeedback as F;
+        let db = db();
+        let mut task = TravelTask::start(&db, 1, 3, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.game_line = 10; // lines flushed before the send
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["north"]);
+        // A STALE failure line (flushed before our send): ignored.
+        sim.now += 100;
+        sim.feedback = vec![(9u64, F::MoveFailedRemovable)];
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(
+            sent(&ev),
+            Vec::<String>::new(),
+            "a pre-send failure line must not double-send: {ev:?}"
+        );
+        // A FRESH failure line (flushed after the send): retries as before.
+        sim.now += 100;
+        sim.feedback = vec![(11u64, F::MoveFailedRemovable)];
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev), ["north"], "a fresh failure retries: {ev:?}");
+    }
+
+    #[test]
+    fn pipeline_bubble_drains_instead_of_being_refed() {
+        // The live eastbound Whistler's Pass trace (21:42 log): every room
+        // was [room arrives][You can't go there][next room] - a one-command
+        // bubble in the server queue, SUSTAINED because each rejection
+        // triggered a resend. With FIFO outcome accounting, the per-room
+        // tick sees [nav, can't]: the nav retires the pending send, the
+        // trailing can't finds nothing owed and is swallowed - exactly ONE
+        // command goes out per room, and the bubble dies.
+        use crate::core::move_feedback::MoveFeedback as F;
+        let db = db();
+        let mut task = TravelTask::start(&db, 1, 4, 0).unwrap();
+        let mut sim = Sim::new(1);
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["north"]);
+        // Room 2 arrives WITH a trailing rejection (the bubble surfacing).
+        sim.current = 2;
+        sim.now += 200;
+        sim.nav_count = 1;
+        sim.game_line += 2;
+        sim.feedback = vec![
+            (sim.game_line - 1, F::NavArrived),
+            (sim.game_line, F::MoveFailedRemovable),
+        ];
+        // Arrival tick consumes the nav; the trailing reject is swallowed.
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev), Vec::<String>::new(), "arrival tick: {ev:?}");
+        // Follow-up tick sends exactly ONE command - no reject-fed double.
+        sim.feedback.clear();
+        sim.now += 100;
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["north"]);
+        // Next room, same shape: still exactly one send.
+        sim.current = 3;
+        sim.now += 200;
+        sim.nav_count = 2;
+        sim.game_line += 2;
+        sim.feedback = vec![
+            (sim.game_line - 1, F::NavArrived),
+            (sim.game_line, F::MoveFailedRemovable),
+        ];
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev), Vec::<String>::new(), "{ev:?}");
+        sim.feedback.clear();
+        sim.now += 100;
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["swim river"]);
+    }
+
+    #[test]
+    fn orphaned_failure_after_off_route_repath_does_not_double_send() {
+        // Creek toggle round two: the off-route repath ABANDONS its in-flight
+        // command; that command's trailing "You can't go there" was already
+        // on the wire, arrives after the replacement was sent, passes the
+        // line stamp, and re-triggered the replacement - two moves queued,
+        // toggling rooms forever. Post-repath failure lines are orphans.
+        use crate::core::move_feedback::MoveFeedback as F;
+        let db = db();
+        let mut task = TravelTask::start(&db, 1, 4, 0).unwrap();
+        let mut sim = Sim::new(1);
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["north"]);
+        // We end up off-route (room 5): repath + the fresh route's first move.
+        sim.current = 5;
+        sim.now += 100;
+        sim.nav_count = 1;
+        let ev = task.tick(sim.ctx(&db));
+        assert!(matches!(&ev[0], TravelEvent::Status(s) if s.contains("re-pathing")), "{ev:?}");
+        sim.now += 100;
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev), ["north"], "the new route walks: {ev:?}");
+        // The ABANDONED command's late failure line lands now - fresh by
+        // line stamp, but an orphan. It must not re-send anything.
+        sim.now += 200;
+        sim.feel(F::MoveFailedRemovable);
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(
+            sent(&ev),
+            Vec::<String>::new(),
+            "an orphaned failure must not double-send: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn multi_uid_same_id_landing_retries_after_timeout_instead_of_hanging() {
+        // The live 13016089 stall: in the Whistler's Pass labyrinth a move
+        // LANDS (nav fires) but the new physical room maps to the SAME mapdb
+        // id, so current == from. The nav-count arrival-wins guard then
+        // re-fired every tick, resetting the arrival timer forever - the
+        // walker went totally silent. The guard must consume the nav once;
+        // afterward the timeout/retry path must resend the direction.
+        use crate::core::move_feedback::MoveFeedback as F;
+        let db = db();
+        let mut task = TravelTask::start(&db, 1, 3, 0).unwrap();
+        let mut sim = Sim::new(1);
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["north"]);
+        // The move lands... in another room of the SAME id (current stays 1).
+        sim.now += 100;
+        sim.nav_count = 1;
+        sim.feel(F::NavArrived);
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), Vec::<String>::new());
+        sim.feedback.clear();
+        // Quiet ticks pass; the timeout must eventually RETRY, not hang.
+        let mut resent: Vec<String> = Vec::new();
+        for _ in 0..6 {
+            sim.now += 3_000;
+            let ev = task.tick(sim.ctx(&db));
+            resent.extend(sent(&ev).iter().map(|c| c.to_string()));
+            if !resent.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(resent, ["north"], "the walker must not go silent");
+    }
+
+    #[test]
+    fn proc_edge_retries_rerun_the_script_never_the_raw_ruby() {
+        // Live icy-trail bug: a failure retry on a scripted edge re-sent the
+        // edge's wayto VERBATIM - `;e empty_hands; move 'climb trail'; ...`
+        // went to the game as a command ("Please rephrase that command").
+        // Proc-edge retries must re-enter Prepare and re-run the transpiled
+        // script.
+        use crate::core::move_feedback::MoveFeedback as F;
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Cavern]"],
+                 "wayto": {"2": ";e fput 'open door'; move 'go door'"},
+                 "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Inside]"],
+                 "wayto": {"1": "out"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["open door", "go door"]);
+        // A fresh hard failure arrives while awaiting the room.
+        sim.now += 100;
+        sim.feel(F::MoveFailedRemovable);
+        let ev = task.tick(sim.ctx(&db));
+        assert!(
+            !sent(&ev).iter().any(|c| c.starts_with(";e")),
+            "raw Ruby must never go to the game: {ev:?}"
+        );
+        // The retry re-emits the LAST SENT command (Lich's put_dir.call
+        // resends just the move, not the whole proc) - never the Ruby.
+        assert_eq!(sent(&ev), ["go door"], "the sent move retries: {ev:?}");
     }
 
     #[test]
@@ -2931,7 +4780,7 @@ mod tests {
         let events = {
             let mut ctx = sim.ctx(&db);
             ctx.current_room = None;
-            let fb = vec![MoveFeedback::NavArrived];
+            let fb = vec![(1u64, MoveFeedback::NavArrived)];
             ctx.feedback = &fb;
             task.tick(ctx)
         };
@@ -2966,6 +4815,562 @@ mod tests {
             "hands off to ;go2 2: {events:?}"
         );
         assert!(TravelTask::is_finished(&events), "the fallback ends the task");
+    }
+
+    /// Two-room db with a scripted edge 1->2, for driving raw action lists.
+    fn script_db() -> MapDb {
+        MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
+                 "wayto": {"2": ";e true"}, "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[B]"],
+                 "wayto": {"1": "back"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap()
+    }
+
+    fn pattern(src: &str) -> Box<crate::core::pathing::edge::AwaitPattern> {
+        Box::new(crate::core::pathing::edge::AwaitPattern::new(src).expect("valid pattern"))
+    }
+
+    #[test]
+    fn await_sends_then_waits_for_its_line_before_continuing() {
+        use crate::core::pathing::edge::{OnTimeout, WalkAction};
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+
+        // `await 'go gangplank' for /lowers the gangplank/` then `move out`.
+        let actions = vec![
+            WalkAction::Await {
+                cmd: Some("go gangplank".into()),
+                pattern: pattern(r"lowers the gangplank"),
+                timeout: 30.0,
+                on_timeout: OnTimeout::Fail,
+                if_match: None,
+            },
+            WalkAction::Move("out".into()),
+        ];
+
+        // Arms: sends its command, then blocks - `out` must NOT go out yet.
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert_eq!(sent(&ev), ["go gangplank"], "arms by sending its command");
+
+        // A non-matching line doesn't satisfy it.
+        sim.say("The crewmember ignores you.");
+        sim.now += 1_000;
+        let ev = task.tick(sim.ctx(&db));
+        assert!(sent(&ev).is_empty(), "unrelated line doesn't release the await");
+
+        // The awaited line does.
+        sim.say("An elven crewmember lowers the gangplank.");
+        sim.now += 1_000;
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev), ["out"], "the matching line releases the await");
+    }
+
+    #[test]
+    fn await_that_times_out_continues_or_fails_per_policy() {
+        use crate::core::pathing::edge::{OnTimeout, WalkAction};
+        let db = script_db();
+
+        // Continue (the default): the line never came, carry on anyway.
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        let actions = vec![
+            WalkAction::Await {
+                cmd: None,
+                pattern: pattern(r"never happens"),
+                timeout: 5.0,
+                on_timeout: OnTimeout::Continue,
+                if_match: None,
+            },
+            WalkAction::Move("out".into()),
+        ];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert!(sent(&ev).is_empty(), "passive await sends nothing");
+        sim.now += 6_000;
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev), ["out"], "a Continue timeout runs the next action");
+
+        // Fail: the awaited line was the only evidence the crossing worked.
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        let actions = vec![
+            WalkAction::Await {
+                cmd: None,
+                pattern: pattern(r"never happens"),
+                timeout: 5.0,
+                on_timeout: OnTimeout::Fail,
+                if_match: None,
+            },
+            WalkAction::Move("out".into()),
+        ];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        sim.now += 6_000;
+        let ev = task.tick(sim.ctx(&db));
+        assert!(
+            !sent(&ev).iter().any(|c| *c == "out"),
+            "a Fail timeout does NOT run the next action: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn await_ignores_lines_that_predate_it() {
+        // The ring holds lines from before the await armed. Matching one would
+        // release the await instantly and skip the wait entirely.
+        use crate::core::pathing::edge::{OnTimeout, WalkAction};
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.say("An elven crewmember lowers the gangplank.");
+
+        let actions = vec![
+            WalkAction::Await {
+                cmd: None,
+                pattern: pattern(r"lowers the gangplank"),
+                timeout: 30.0,
+                on_timeout: OnTimeout::Fail,
+                if_match: None,
+            },
+            WalkAction::Move("out".into()),
+        ];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert!(
+            sent(&ev).is_empty(),
+            "a line that predates the await must not satisfy it: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn repeat_runs_its_body_until_the_room_changes() {
+        use crate::core::pathing::edge::{RepeatUntil, WalkAction};
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+
+        // `repeat { fput 'go fog' } until_room_change`
+        let actions = vec![WalkAction::Repeat {
+            body: vec![WalkAction::Put("go fog".into())],
+            until: RepeatUntil::RoomChanged,
+            max: 10,
+        }];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        // Still in room 1, so the body ran - repeatedly, within one tick,
+        // since nothing in it suspends.
+        let sends = sent(&ev);
+        assert!(
+            sends.iter().all(|c| *c == "go fog") && !sends.is_empty(),
+            "the body runs while the room hasn't changed: {sends:?}"
+        );
+        assert!(
+            sends.len() <= MAX_SCRIPT_LOOP as usize,
+            "the interpreter caps iterations at {MAX_SCRIPT_LOOP}, got {}",
+            sends.len()
+        );
+    }
+
+    #[test]
+    fn repeat_max_is_clamped_no_matter_what_the_data_says() {
+        use crate::core::pathing::edge::{RepeatUntil, WalkAction};
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        // Data asking for a million iterations must not hang the client.
+        let actions = vec![WalkAction::Repeat {
+            body: vec![WalkAction::Put("spin".into())],
+            until: RepeatUntil::Count,
+            max: 1_000_000,
+        }];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert_eq!(
+            sent(&ev).len(),
+            MAX_SCRIPT_LOOP as usize,
+            "clamped to the interpreter's ceiling, not the data's number"
+        );
+    }
+
+    #[test]
+    fn break_leaves_the_enclosing_loop() {
+        use crate::core::pathing::edge::{RepeatUntil, WalkAction};
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        // `repeat { fput 'search'; break }` then move — the search runs once.
+        let actions = vec![
+            WalkAction::Repeat {
+                body: vec![WalkAction::Put("search".into()), WalkAction::Break],
+                until: RepeatUntil::Count,
+                max: 50,
+            },
+            WalkAction::Move("go crevice".into()),
+        ];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert_eq!(
+            sent(&ev),
+            ["search", "go crevice"],
+            "break exits the loop and the script continues after it"
+        );
+    }
+
+    #[test]
+    fn a_trailing_replan_is_skipped_when_the_crossing_landed_correctly() {
+        // Procs set $go2_restart unconditionally because a jump can land
+        // anywhere, but re-pathing after a crossing that WORKED is waste -
+        // and on the final edge it turns a completed trip into a failure.
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.current = 2; // landed on the edge's destination
+        let mut ev = Vec::new();
+        task.tick_script(
+            vec![WalkAction::Replan, WalkAction::Put("after".into())],
+            0,
+            None,
+            2,
+            1,
+            None,
+            sim.ctx(&db),
+            &mut ev,
+        );
+        assert_eq!(
+            sent(&ev),
+            ["after"],
+            "the replan is skipped and the script continues: {ev:?}"
+        );
+        assert!(
+            !ev.iter().any(|e| matches!(e, TravelEvent::Failed(_))),
+            "a correct landing is not a failure: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn trinket_warp_retrieves_turns_and_puts_it_back() {
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let mut ctx = sim.ctx(&db);
+        ctx.fwi_trinket = Some(TrinketInputs {
+            id: "500",
+            return_to: Some("77"),
+            in_hand: false,
+        });
+        let mut ev = Vec::new();
+        task.tick_script(
+            vec![WalkAction::TrinketWarp],
+            0,
+            None,
+            2,
+            1,
+            None,
+            ctx,
+            &mut ev,
+        );
+        // Hands are freed, then the trinket comes out. The `turn` is a
+        // StepMove so the put-back waits for the warp to land.
+        let sent = sent(&ev);
+        assert!(
+            sent.iter().any(|c| *c == "get #500"),
+            "retrieves the trinket by its live exist id: {sent:?}"
+        );
+    }
+
+    #[test]
+    fn trinket_warp_without_a_configured_trinket_falls_back() {
+        // Sending `turn #` with no id would be nonsense; the edge should
+        // hand off instead, and say why.
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let mut ev = Vec::new();
+        task.tick_script(
+            vec![WalkAction::TrinketWarp],
+            0,
+            None,
+            2,
+            1,
+            None,
+            sim.ctx(&db),
+            &mut ev,
+        );
+        assert!(sent(&ev).is_empty(), "nothing is sent: {ev:?}");
+        assert!(
+            ev.iter().any(|e| matches!(e, TravelEvent::Status(s)
+                if s.contains("Four Winds trinket"))),
+            "the message names the setting to fix: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn try_move_runs_its_fallback_only_when_the_room_didnt_change() {
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let mut ev = Vec::new();
+        task.tick_script(
+            vec![WalkAction::TryMove {
+                cmd: "go curtain".into(),
+                fallback: vec![
+                    WalkAction::Put("close locker".into()),
+                    WalkAction::Move("go curtain".into()),
+                ],
+            }],
+            0,
+            None,
+            2,
+            1,
+            None,
+            sim.ctx(&db),
+            &mut ev,
+        );
+        // The move goes out first; the fallback waits on whether it landed.
+        assert_eq!(sent(&ev), ["go curtain"], "sends the move first: {ev:?}");
+    }
+
+    #[test]
+    fn guided_route_joins_the_cycle_at_the_current_rooms_offset() {
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        // Room 1 is at offset 1, so the walk starts with the SECOND direction.
+        let actions = vec![WalkAction::GuidedRoute {
+            start_rooms: vec![99, 1, 98],
+            dirs: vec!["north".into(), "east".into(), "south".into()],
+            landmarks: vec![("staircase".into(), "climb staircase".into())],
+        }];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert_eq!(
+            sent(&ev).first(),
+            Some(&"east"),
+            "joins the cycle at the offset for the room we're in: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn guided_route_off_its_table_doesnt_guess_a_direction() {
+        // The Ruby's `else echo 'error: mini-script expected a different
+        // room'` branch. Walking from an unknown offset sends the character
+        // somewhere arbitrary, which is worse than not crossing.
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let actions = vec![WalkAction::GuidedRoute {
+            start_rooms: vec![97, 98, 99],
+            dirs: vec!["north".into()],
+            landmarks: vec![("staircase".into(), "climb staircase".into())],
+        }];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert!(
+            sent(&ev).is_empty(),
+            "no movement is sent from an unknown offset: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn guided_route_stops_once_the_landmark_appears() {
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        // The landmark is already here: enter it without walking the cycle.
+        sim.loot_nouns = vec!["staircase".into()];
+        let actions = vec![WalkAction::GuidedRoute {
+            start_rooms: vec![1],
+            dirs: vec!["north".into(), "east".into()],
+            landmarks: vec![("staircase".into(), "climb staircase".into())],
+        }];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert_eq!(
+            sent(&ev),
+            ["climb staircase"],
+            "the landmark ends the walk immediately: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn a_capture_bound_by_an_await_fills_a_later_command() {
+        use crate::core::pathing::edge::{OnTimeout, WalkAction};
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+
+        let actions = vec![
+            WalkAction::Await {
+                cmd: Some("look wall".into()),
+                pattern: Box::new(
+                    crate::core::pathing::edge::AwaitPattern::new(r"The (?P<v>\w+) door")
+                        .unwrap(),
+                ),
+                timeout: 8.0,
+                on_timeout: OnTimeout::Fail,
+                if_match: None,
+            },
+            WalkAction::Move("go {capture:v} door".into()),
+        ];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert_eq!(sent(&ev), ["look wall"]);
+
+        sim.say("The bronze door stands here.");
+        sim.now += 500;
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(
+            sent(&ev),
+            ["go bronze door"],
+            "the captured word filled the command"
+        );
+    }
+
+    #[test]
+    fn an_unbound_capture_fails_the_edge_rather_than_sending_garbage() {
+        // Sending "go  door" because a capture didn't fire is worse than not
+        // sending: a half-formed command can do something unintended.
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let actions = vec![WalkAction::Move("go {capture:missing} door".into())];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert!(
+            sent(&ev).is_empty(),
+            "nothing is sent with an unbound token: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn character_state_conditions_answer_from_live_state() {
+        use crate::core::pathing::edge::{Cond, WalkAction};
+        let db = script_db();
+
+        // Citizenship matches -> the `then` branch.
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.citizenship = Some("Solhaven".into());
+        let gate = |c: Cond| {
+            vec![WalkAction::If {
+                cond: c,
+                then: vec![WalkAction::Move("go gate".into())],
+                els: vec![WalkAction::Move("go road".into())],
+            }]
+        };
+        let mut ev = Vec::new();
+        task.tick_script(
+            gate(Cond::Citizenship("solhaven".into())),
+            0,
+            None,
+            2,
+            1,
+            None,
+            sim.ctx(&db),
+            &mut ev,
+        );
+        assert_eq!(sent(&ev), ["go gate"], "case-insensitive match");
+
+        // Unknown citizenship answers false, taking the safe `else` branch.
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let mut ev = Vec::new();
+        task.tick_script(
+            gate(Cond::Citizenship("Solhaven".into())),
+            0,
+            None,
+            2,
+            1,
+            None,
+            sim.ctx(&db),
+            &mut ev,
+        );
+        assert_eq!(
+            sent(&ev),
+            ["go road"],
+            "unknown state takes the else branch rather than guessing"
+        );
+    }
+
+    #[test]
+    fn pause_for_user_abandons_rather_than_blocking_forever() {
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let actions = vec![
+            WalkAction::PauseForUser {
+                msg: "put a gem in your hand".into(),
+                until: None,
+                timeout: 0.0,
+            },
+            WalkAction::Move("go portal".into()),
+        ];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert!(
+            !sent(&ev).iter().any(|c| *c == "go portal"),
+            "the crossing doesn't proceed without the user: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(|e| matches!(e, TravelEvent::Status(s)
+                if s.contains("put a gem in your hand"))),
+            "the message names what's needed: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn exhausted_route_hands_off_to_lich_instead_of_aborting() {
+        // The second half of the fallback: an edge got banned, the re-path
+        // found nothing, and the trip would otherwise die with "no remaining
+        // route ... travel aborted". With a Lich attached that trip is not
+        // dead — Lich can still walk it.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
+                 "wayto": {"2": "north"}, "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[B]"],
+                 "wayto": {"1": "south"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        // Ban the only edge, then force the re-path that finds no route.
+        task.banned.insert((1, 2));
+        let mut ev = Vec::new();
+        task.repath(&db, 1, true, &mut ev);
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, TravelEvent::LichFallback { destination: 2 })),
+            "an exhausted route hands off rather than aborting: {ev:?}"
+        );
+        assert!(
+            !ev.iter().any(|e| matches!(e, TravelEvent::Failed(_))),
+            "handoff replaces the abort, it doesn't accompany it: {ev:?}"
+        );
+
+        // Same situation with no Lich: it must still abort cleanly.
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        task.banned.insert((1, 2));
+        let mut ev = Vec::new();
+        task.repath(&db, 1, false, &mut ev);
+        assert!(
+            ev.iter().any(|e| matches!(e, TravelEvent::Failed(_))),
+            "without a Lich the trip still fails: {ev:?}"
+        );
     }
 
     #[test]
@@ -3015,7 +5420,9 @@ mod tests {
     }
 
     fn fund(silver: Option<u64>, get_silvers: bool) -> FundingInputs {
-        FundingInputs { silver, get_silvers, get_return_trip: false }
+        // Tests default to a FRESH reading (stamped after any probe); the
+        // staleness test builds its own with an old line number.
+        FundingInputs { silver, silver_line_no: u64::MAX, get_silvers, get_return_trip: false }
     }
 
     #[test]
@@ -3035,6 +5442,51 @@ mod tests {
     }
 
     #[test]
+    fn stale_wealth_reading_is_not_trusted_by_the_preflight() {
+        // The live 2026-08-12 failure: the last wealth line said 2,000, then
+        // the user deposited EVERYTHING; the preflight sent `wealth quiet`
+        // but read the cached 2,000 on the next tick - before the game
+        // answered - said "funded", and a broke character walked 40 minutes
+        // into a ticket refusal. A reading is only valid if its line number
+        // postdates the probe.
+        let db = funding_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.game_line = 100; // lines seen before the trip
+        // Stale cache: reads 2000, stamped from long before the probe.
+        sim.funding = Some(FundingInputs {
+            silver: Some(2000),
+            silver_line_no: 50,
+            get_silvers: true,
+            get_return_trip: false,
+        });
+        // Tick 1: probe goes out (recorded at line 100).
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["wealth quiet"]);
+        // Tick 2: the stale 2000 must NOT fund the trip.
+        sim.now += 100;
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            !events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("funded"))),
+            "a pre-probe reading must not fund: {events:?}"
+        );
+        assert_eq!(sent(&events), Vec::<String>::new());
+        // The FRESH answer arrives: broke. The walker banks BEFORE leaving.
+        sim.game_line = 101;
+        sim.funding = Some(FundingInputs {
+            silver: Some(0),
+            silver_line_no: 101,
+            get_silvers: true,
+            get_return_trip: false,
+        });
+        sim.now += 100;
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("bank"))),
+            "fresh broke reading routes to the bank first: {events:?}"
+        );
+    }
+
+    #[test]
     fn short_without_permission_warns_and_proceeds() {
         let db = funding_db();
         let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
@@ -3048,7 +5500,13 @@ mod tests {
             events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("short"))),
             "warns about being short"
         );
-        assert_eq!(sent(&events), ["board"], "proceeds anyway");
+        // go2's 10-second grace (go2.lic:2288-2289): nothing sent during it...
+        assert_eq!(sent(&events), Vec::<String>::new(), "holds during the grace");
+        sim.now += 5_000;
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), Vec::<String>::new());
+        // ...then the walk proceeds anyway.
+        sim.now += 6_000;
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["board"], "proceeds after 10s");
     }
 
     #[test]
@@ -3133,7 +5591,7 @@ mod tests {
         // destination (2): funding_bank stays set and the new path ends at the
         // bank, never routing toward the portmaster edge.
         let mut ev = Vec::new();
-        task.repath(&db, 1, &mut ev);
+        task.repath(&db, 1, false, &mut ev);
         assert_eq!(task.funding_bank, Some(3), "still targeting the bank");
         assert_eq!(
             task.path.last(),
@@ -3222,6 +5680,68 @@ mod tests {
         sim.now = 600;
         let events = task.tick(sim.ctx(&db));
         assert_eq!(sent(&events), ["go turnstile"]);
+    }
+
+    #[test]
+    fn script_visiting_a_mapped_side_room_is_not_off_route() {
+        // The live Glo'antern mist-trail loop: the proc climbs a MAPPED
+        // boulder room (1265) to scout the direction, comes back down, and
+        // finishes with the captured move. The old RunScript off-route check
+        // treated the boulder as "fled" and re-pathed before `move dir`,
+        // every lap, to the restart cap. The proc text is verbatim mapdb.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1042, "uid": [13001070], "location": "T", "title": ["[Glo'antern Moor]"],
+                 "wayto": {"1041": ";e move 'climb boulder'\nfput 'look trail'\ndir = matchfindword \"You peer into the mist and see that the trail heads off to the ?\"\nmove 'down'\nsleep 5 if running?('agoto')\nmove dir",
+                           "1265": "climb boulder"},
+                 "timeto": {"1041": 0.2, "1265": 0.2}, "paths": ""},
+                {"id": 1041, "uid": [13001071], "location": "T", "title": ["[Glo'antern Moor]"],
+                 "wayto": {"1042": "southwest"}, "timeto": {"1042": 0.2}, "paths": ""},
+                {"id": 1265, "uid": [13001086], "location": "T", "title": ["[Glo'antern Moor, Boulder]"],
+                 "wayto": {"1042": "down"}, "timeto": {"1042": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1042, 1041, 0).unwrap();
+        let mut sim = Sim::new(1042);
+
+        // The proc edge routes (0.2 beats climbing up and being stuck).
+        let events = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&events), ["climb boulder"], "the scout climb");
+        // Atop the MAPPED boulder: the script must keep running, not repath.
+        sim.current = 1265;
+        sim.now += 300;
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            !events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("off the planned route"))),
+            "a mapped side room mid-script is NOT off-route: {events:?}"
+        );
+        assert_eq!(sent(&events), ["look trail"], "the script continues");
+        // Idle ticks while the await waits — still no repath.
+        sim.now += 300;
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            !events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("off the planned route"))),
+            "{events:?}"
+        );
+        // The scout line lands: capture the direction, climb down.
+        sim.say("You peer into the mist and see that the trail heads off to the east.");
+        sim.now += 300;
+        let events = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&events), ["down"], "back down after the capture");
+        // Down landed: the captured move fires.
+        sim.current = 1042;
+        sim.now += 300;
+        let events = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&events), ["east"], "the captured direction");
+        // And the crossing lands.
+        sim.current = 1041;
+        sim.now += 300;
+        let events = task.tick(sim.ctx(&db));
+        assert!(matches!(
+            events.last(),
+            Some(TravelEvent::Arrived { destination: 1041, .. })
+        ));
     }
 
     #[test]
@@ -3428,9 +5948,12 @@ mod tests {
                 TravelContext {
                     db: &db, current_room: Some($cur), dead: false, muckled: false,
                     standing: true, sitting: false, kneeling: false, active_spells: &[],
+                    hidden: false, citizenship: None, profession: None, society: None,
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
-                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    recent_lines: &[], line_seq: 0, game_line_no: 0, game_nav_count: 0,
+                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
+                    fwi_trinket: None,
                     day_pass: Some(dp),
                 }
             }};
@@ -3443,17 +5966,17 @@ mod tests {
         let ev = task.tick(dpctx!(0, 8635));
         assert_eq!(sent(&ev), ["open #99"], "opens the sack, ONE command: {ev:?}");
         // Tick 2: the open confirmed → get the held pass. Still one command.
-        let ev = task.tick(dpctx!(1_000, 8635, &[F::ContainerOpened]));
+        let ev = task.tick(dpctx!(1_000, 8635, &[(1u64, F::ContainerOpened)]));
         assert_eq!(sent(&ev), ["get #77"], "open answered -> get: {ev:?}");
         // Tick 3: the get landed → raise it.
-        let ev = task.tick(dpctx!(2_000, 8635, &[F::ItemGot]));
+        let ev = task.tick(dpctx!(2_000, 8635, &[(1u64, F::ItemGot)]));
         assert_eq!(sent(&ev), ["raise #77"], "get answered -> raise: {ev:?}");
         // Tick 4: the whirlwind fired and we're at 8916 → the put-back is
         // response-gated too: ONLY the _drag goes out (no close flood).
-        let ev = task.tick(dpctx!(3_000, 8916, &[F::RaiseTraveled]));
+        let ev = task.tick(dpctx!(3_000, 8916, &[(1u64, F::RaiseTraveled)]));
         assert_eq!(sent(&ev), ["_drag #77 #99"], "drag alone, gated: {ev:?}");
         // Tick 5: the stow confirmed → the owed close settles and we conclude.
-        let ev = task.tick(dpctx!(4_000, 8916, &[F::ItemStowed]));
+        let ev = task.tick(dpctx!(4_000, 8916, &[(1u64, F::ItemStowed)]));
         assert!(sent(&ev).contains(&"close #99"), "closes the sack we opened: {ev:?}");
         assert!(!sent(&ev).iter().any(|c| c.contains("ask ") || c.contains("withdraw")));
         // Tick 6: trip complete.
@@ -3468,13 +5991,13 @@ mod tests {
         let mut task = TravelTask::start(&db, 8635, 8916, 0).unwrap();
         let ev = task.tick(dpctx!(0, 8635));
         assert_eq!(sent(&ev), ["open #99"]);
-        let ev = task.tick(dpctx!(1_000, 8635, &[F::ContainerAlreadyOpen]));
+        let ev = task.tick(dpctx!(1_000, 8635, &[(1u64, F::ContainerAlreadyOpen)]));
         assert_eq!(sent(&ev), ["get #77"], "already-open also advances: {ev:?}");
-        let ev = task.tick(dpctx!(2_000, 8635, &[F::ItemGot]));
+        let ev = task.tick(dpctx!(2_000, 8635, &[(1u64, F::ItemGot)]));
         assert_eq!(sent(&ev), ["raise #77"]);
-        let ev = task.tick(dpctx!(3_000, 8916, &[F::RaiseTraveled]));
+        let ev = task.tick(dpctx!(3_000, 8916, &[(1u64, F::RaiseTraveled)]));
         assert_eq!(sent(&ev), ["_drag #77 #99"], "still puts the pass back");
-        let ev = task.tick(dpctx!(4_000, 8916, &[F::ItemStowed]));
+        let ev = task.tick(dpctx!(4_000, 8916, &[(1u64, F::ItemStowed)]));
         assert!(
             !sent(&ev).contains(&"close #99"),
             "already-open sack is left open: {ev:?}"
@@ -3521,9 +6044,12 @@ mod tests {
                 TravelContext {
                     db: &db, current_room: Some($cur), dead: false, muckled: false,
                     standing: true, sitting: false, kneeling: false, active_spells: &[],
+                    hidden: false, citizenship: None, profession: None, society: None,
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
-                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    recent_lines: &[], line_seq: 0, game_line_no: 0, game_nav_count: 0,
+                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
+                    fwi_trinket: None,
                     day_pass: Some(dp),
                 }
             }};
@@ -3531,21 +6057,21 @@ mod tests {
 
         // Walk the machine to the raise.
         task.tick(dpctx!(0, 8635, &[]));
-        task.tick(dpctx!(1_000, 8635, &[F::ContainerAlreadyOpen]));
-        let ev = task.tick(dpctx!(2_000, 8635, &[F::ItemGot]));
+        task.tick(dpctx!(1_000, 8635, &[(1u64, F::ContainerAlreadyOpen)]));
+        let ev = task.tick(dpctx!(2_000, 8635, &[(1u64, F::ItemGot)]));
         assert_eq!(sent(&ev), ["raise #77"]);
         // A stray nav with the room STILL the departure room: must NOT
         // conclude (no cleanup sends, no phantom crossing).
-        let ev = task.tick(dpctx!(3_000, 8635, &[F::NavArrived]));
+        let ev = task.tick(dpctx!(3_000, 8635, &[(1u64, F::NavArrived)]));
         assert!(ev.is_empty(), "stale-room nav must not conclude the raise: {ev:?}");
         // The whirlwind line arrives while the room is STILL stale: the
         // response-gated put-back runs — and nothing re-plans from the stale
         // departure room (no ask/open phantom).
-        let ev = task.tick(dpctx!(4_000, 8635, &[F::RaiseTraveled]));
+        let ev = task.tick(dpctx!(4_000, 8635, &[(1u64, F::RaiseTraveled)]));
         assert_eq!(sent(&ev), ["_drag #77 #99"], "gated cleanup runs: {ev:?}");
         // Stow confirms (room STILL stale) → conclude must arrival-watch the
         // KNOWN landing room instead of re-planning.
-        let ev = task.tick(dpctx!(5_000, 8635, &[F::ItemStowed]));
+        let ev = task.tick(dpctx!(5_000, 8635, &[(1u64, F::ItemStowed)]));
         assert!(
             !sent(&ev)
                 .iter()
@@ -3598,9 +6124,12 @@ mod tests {
                 TravelContext {
                     db: &db, current_room: Some($cur), dead: false, muckled: false,
                     standing: true, sitting: false, kneeling: false, active_spells: &[],
+                    hidden: false, citizenship: None, profession: None, society: None,
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
-                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    recent_lines: &[], line_seq: 0, game_line_no: 0, game_nav_count: 0,
+                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
+                    fwi_trinket: None,
                     day_pass: Some(dp),
                 }
             }};
@@ -3653,6 +6182,7 @@ mod tests {
             };
             room += 1;
             let cur = if last == "raise pass" { 8916 } else { room };
+            let fb: Vec<(u64, F)> = fb.into_iter().map(|f| (1u64, f)).collect();
             let ev = task.tick(buyctx!(now, cur, &fb));
             now += 1_000;
             for c in sent(&ev) {

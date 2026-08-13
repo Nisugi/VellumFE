@@ -11,6 +11,7 @@
 
 use vellum_fe::core::mapdb::{find_latest_mapdb, is_proc_command, MapDb, TimeTo};
 use vellum_fe::core::pathing::{estimate_time, find_nearest_by_tag, path_to, transpile};
+use vellum_fe::core::travel::executor::{classify_edge, EdgeCrossing};
 
 /// Corpus report over the real mapdb. Post-routing-split (go2 plan P1),
 /// two DISTINCT numbers are tracked:
@@ -25,6 +26,55 @@ use vellum_fe::core::pathing::{estimate_time, find_nearest_by_tag, path_to, tran
 ///
 /// Every scripted edge goes through the transpiler — zero panics required —
 /// and the measured idioms must stay covered.
+/// Collapse a StringProc to its IDIOM, so instances of the same shape cluster
+/// together: whitespace normalized, numbers to `N`, quoted strings to `'S'`,
+/// truncated to 160 chars.
+///
+/// Deliberately identical to the key Lich's converter uses for its own
+/// residue report, so the two reports can be diffed edge-family by
+/// edge-family — a recognizer either side writes is a hint for the other.
+fn residue_key(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    let mut last_was_space = false;
+    while let Some(c) = chars.next() {
+        match c {
+            // Quoted string -> 'S' (single and double quotes alike).
+            '\'' | '"' => {
+                let quote = c;
+                out.push_str("'S'");
+                while let Some(n) = chars.next() {
+                    if n == '\\' {
+                        chars.next();
+                    } else if n == quote {
+                        break;
+                    }
+                }
+                last_was_space = false;
+            }
+            // Run of digits -> N.
+            d if d.is_ascii_digit() => {
+                out.push('N');
+                while chars.peek().is_some_and(|n| n.is_ascii_digit() || *n == '.') {
+                    chars.next();
+                }
+                last_was_space = false;
+            }
+            w if w.is_whitespace() => {
+                if !last_was_space {
+                    out.push(' ');
+                    last_was_space = true;
+                }
+            }
+            other => {
+                out.push(other);
+                last_was_space = false;
+            }
+        }
+    }
+    out.chars().take(160).collect()
+}
+
 #[test]
 #[ignore]
 fn real_mapdb_coverage() {
@@ -39,6 +89,20 @@ fn real_mapdb_coverage() {
     let mut plain = 0usize;
     let mut proc_supported = 0usize;
     let mut proc_unsupported = 0usize;
+    // Residue: untranspiled procs clustered by normalized shape, so the
+    // report names IDIOM FAMILIES with counts rather than listing thousands
+    // of near-identical lines. Value -> (count, one sample edge).
+    let mut residue: std::collections::HashMap<String, (usize, String)> =
+        std::collections::HashMap::new();
+    // How each scripted edge gets crossed, so the report shows what carries
+    // the load rather than implying the transpiler does all of it.
+    let mut by_strategy: std::collections::HashMap<EdgeCrossing, usize> =
+        std::collections::HashMap::new();
+    // Every uncrossable edge, verbatim, when VELLUM_RESIDUE_DUMP names a file.
+    // The clustered report above names families; recognizer work needs the raw
+    // bodies. Written once at the end — appending per edge across runs is how
+    // a 484-edge residue turned into a 1880-line file.
+    let mut dumped: Vec<String> = Vec::new();
     // Graph reachability: an edge whose timeto resolves to a number.
     let mut graph_routable = 0usize;
     let mut ids: Vec<u32> = Vec::new();
@@ -50,12 +114,23 @@ fn real_mapdb_coverage() {
     for id in ids {
         let room = db.room(id).expect("indexed room");
         for (dest, command) in &room.wayto {
-            // Execution coverage: can we transpile the wayto proc?
+            // Execution coverage: can the EXECUTOR cross this edge? Not "does
+            // transpile() return Some" — Confluence, curated mazes, day passes
+            // and overrides are dispatched by dedicated strategies before the
+            // transpiler is consulted, and counting them as residue misdirects
+            // recognizer work at the scale of thousands of edges.
             if is_proc_command(command) {
-                if transpile::transpile(command).is_some() {
+                let how = classify_edge(&db, room.id, *dest, command);
+                *by_strategy.entry(how).or_insert(0usize) += 1;
+                if how.is_crossable() {
                     proc_supported += 1;
                 } else {
                     proc_unsupported += 1;
+                    dumped.push(format!("{}\t{dest}\t{command}", room.id));
+                    let entry = residue
+                        .entry(residue_key(command))
+                        .or_insert_with(|| (0, format!("{}:{dest} {command}", room.id)));
+                    entry.0 += 1;
                 }
             } else {
                 plain += 1;
@@ -87,16 +162,53 @@ fn real_mapdb_coverage() {
         "EXECUTION coverage (proc edges we can walk): {proc_supported}/{total_procs} ({:.1}%)",
         proc_supported as f64 / total_procs.max(1) as f64 * 100.0
     );
+    // Which mechanism carries each scripted edge. The transpiler is only one
+    // of several; a report that hid the strategies made Confluence look like
+    // 57% of unsolved work when it is in fact fully handled.
+    let mut strategies: Vec<(&EdgeCrossing, &usize)> = by_strategy.iter().collect();
+    strategies.sort_by(|a, b| b.1.cmp(a.1));
+    println!("  by mechanism:");
+    for (how, count) in strategies {
+        println!(
+            "    {how:?}: {count} ({:.1}%)",
+            *count as f64 / total_procs.max(1) as f64 * 100.0
+        );
+    }
+    // Residue report: the top idiom families we can't yet cross, biggest
+    // first. This is the work queue — write a recognizer for the top cluster,
+    // re-run, repeat. Counts, not raw lines, so the tail stays readable.
+    let mut clusters: Vec<(&String, &(usize, String))> = residue.iter().collect();
+    clusters.sort_by(|a, b| b.1 .0.cmp(&a.1 .0).then(a.0.cmp(b.0)));
+    let covered_by_top: usize = clusters.iter().take(25).map(|(_, (n, _))| n).sum();
+    println!(
+        "\nRESIDUE: {} untranspiled edges in {} idiom families; \
+         the top 25 families are {covered_by_top} edges ({:.1}% of residue)",
+        proc_unsupported,
+        clusters.len(),
+        covered_by_top as f64 / proc_unsupported.max(1) as f64 * 100.0
+    );
+    for (i, (key, (count, sample))) in clusters.iter().take(25).enumerate() {
+        println!("\n{:>3}. {count}x  {key}", i + 1);
+        println!("     e.g. {sample}");
+    }
+
+    if let Ok(file) = std::env::var("VELLUM_RESIDUE_DUMP") {
+        match std::fs::write(&file, dumped.join("\n")) {
+            Ok(()) => println!("\nwrote {} residue edges to {file}", dumped.len()),
+            Err(e) => println!("\ncould not write {file}: {e}"),
+        }
+    }
+
     // The measured corpus shapes must stay covered; dropping below this
     // after a mapdb rebuild means new idioms appeared — extend the
     // transpiler.
     assert!(
-        proc_supported as f64 / total_procs.max(1) as f64 > 0.20,
-        "execution (transpiler) coverage regressed: {proc_supported}/{total_procs}"
+        proc_supported as f64 / total_procs.max(1) as f64 > 0.95,
+        "execution coverage regressed: {proc_supported}/{total_procs}"
     );
     // Graph coverage should be high — most edges have a numeric timeto.
     assert!(
-        graph_routable as f64 / total_edges.max(1) as f64 > 0.80,
+        graph_routable as f64 / total_edges.max(1) as f64 > 0.90,
         "graph coverage regressed: {graph_routable}/{total_edges}"
     );
 }

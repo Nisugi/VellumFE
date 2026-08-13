@@ -33,6 +33,16 @@ struct EdgeEntry {
     actions: Vec<String>,
     #[serde(default)]
     cost: Option<f64>,
+    /// Item that must be somewhere on the character (hands, worn, or inside
+    /// a container) for the crossing to work — an amulet-gated door. When
+    /// it's missing, the walker abandons with `missing` as the explanation
+    /// instead of firing doomed commands into the game.
+    #[serde(default)]
+    require_item: Option<String>,
+    /// What to tell the user when `require_item` isn't carried. Falls back
+    /// to naming the item.
+    #[serde(default)]
+    missing: Option<String>,
 }
 
 /// `"move:go gate"` → `WalkAction::Move("go gate")`, etc. `None` on
@@ -69,7 +79,27 @@ fn parse_table(source: &str, origin: &str, table: &mut HashMap<(u32, u32), Trave
         let actions: Option<Vec<WalkAction>> =
             entry.actions.iter().map(|s| parse_action(s)).collect();
         match actions {
-            Some(actions) if !actions.is_empty() => {
+            Some(mut actions) if !actions.is_empty() => {
+                // An item-gated crossing: run the actions only when the item
+                // is reachable, otherwise abandon with an explanation. The
+                // PauseForUser routes into the same uncrossable-edge path as
+                // any other failure (ban → re-path → Lich fallback), so the
+                // gate degrades exactly like a refused transpile — but with a
+                // message that names the fix.
+                if let Some(item) = entry.require_item {
+                    let msg = entry
+                        .missing
+                        .unwrap_or_else(|| format!("this crossing needs: {item}"));
+                    actions = vec![WalkAction::If {
+                        cond: super::edge::Cond::HasItem(item),
+                        then: actions,
+                        els: vec![WalkAction::PauseForUser {
+                            msg,
+                            until: None,
+                            timeout: 0.0,
+                        }],
+                    }];
+                }
                 table.insert(
                     (entry.from, entry.to),
                     TravelEdgeOverride {
@@ -115,10 +145,22 @@ mod tests {
 
     #[test]
     fn shipped_defaults_parse_clean_and_actions_round_trip() {
-        // The embedded file must never fail to parse (it ships commented).
+        // The embedded file must never fail to parse, and the shipped
+        // River's Rest crossings must load in both directions, item-gated.
         let mut table = HashMap::new();
         parse_table(DEFAULT_OVERRIDES, "defaults", &mut table);
-        assert!(table.is_empty(), "shipped file has no active entries");
+        for edge in [(6274, 11032), (11032, 6274)] {
+            let ov = table.get(&edge).expect("River's Rest crossing ships");
+            let WalkAction::If { cond, then, els } = &ov.actions[0] else {
+                panic!("shipped crossing is item-gated, got {:?}", ov.actions[0]);
+            };
+            assert_eq!(*cond, super::super::edge::Cond::HasItem("crystal amulet".into()));
+            assert_eq!(then.len(), 2, "put amulet + go boot");
+            assert!(
+                matches!(&els[0], WalkAction::PauseForUser { msg, .. } if msg.contains("alchemist")),
+                "missing-amulet message tells the user where to buy one"
+            );
+        }
 
         let mut table = HashMap::new();
         parse_table(

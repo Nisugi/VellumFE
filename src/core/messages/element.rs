@@ -131,9 +131,11 @@ impl MessageProcessor {
                 // room_count increment). Push it for the walk executor even
                 // if the room can't be resolved to a mapdb id — arrival
                 // detection then never hangs on an unmapped room (§12).
+                self.game_line_no += 1;
+                game_state.nav_count += 1;
                 game_state
                     .move_feedback
-                    .push_back(crate::core::move_feedback::MoveFeedback::NavArrived);
+                    .push_back((self.game_line_no, crate::core::move_feedback::MoveFeedback::NavArrived));
                 tracing::debug!("Room ID updated: {}", id);
             }
             ParsedElement::RoomMeta { attrs } => {
@@ -351,6 +353,14 @@ impl MessageProcessor {
                 game_state
                     .move_feedback
                     .extend(self.pending_move_feedback.drain(..));
+                game_state.game_line_no = self.game_line_no;
+
+                // Raw lines for scripted-edge awaits. A bounded ring, not a
+                // queue: an await must see lines that arrived before it armed,
+                // and several steps may match the same line.
+                for line in self.pending_recent_lines.drain(..) {
+                    game_state.push_recent_line(&line);
+                }
 
                 // Character-state lines feed the parser in order (the PROFILE
                 // house parse is stateful).
@@ -366,6 +376,26 @@ impl MessageProcessor {
                 }
                 if let Some(silver) = self.pending_silver.take() {
                     game_state.silver = Some(silver);
+                    game_state.silver_line_no = self.game_line_no;
+                }
+
+                // Group events apply in order: a `group` reply stages its
+                // roster on the "You are leading/grouped with" line and
+                // commits on the status sentinel, so the two must not be
+                // reordered. The staging cursor is local to this drain, so a
+                // reply split across prompts cannot leave the roster
+                // half-applied -- it just fails to commit and stays
+                // unconfirmed, which the display reports honestly.
+                if !self.pending_group.is_empty() {
+                    let mut roster_pending = None;
+                    for (event, members) in self.pending_group.drain(..) {
+                        crate::core::group::apply_event(
+                            &mut game_state.group,
+                            &event,
+                            &members,
+                            &mut roster_pending,
+                        );
+                    }
                 }
 
                 // Container contents extracted from a main-stream look line
@@ -454,7 +484,9 @@ impl MessageProcessor {
                         .as_secs() as i64;
                     self.server_time_offset = server_time - local_time;
                     // Update game_time to the prompt's server timestamp
-                    game_state.game_time = server_time;
+                    // (through the setter so the local receipt stamp that
+                    // keeps RT flowing between lines is taken too).
+                    game_state.update_game_time(server_time);
                 }
 
                 // Reset chunk tracking for next prompt
@@ -959,6 +991,12 @@ impl MessageProcessor {
                     "encumlevel" => {
                         game_state.encumbrance.update_level(*value, text.clone());
                     }
+                    // The stance bar renders into a window widget above, but
+                    // it also belongs in game state: headless and remote
+                    // clients have no stance window to read it from.
+                    "pbarStance" => {
+                        game_state.stance.update(*value, text);
+                    }
                     _ => {}
                 }
             }
@@ -1003,21 +1041,31 @@ impl MessageProcessor {
             ParsedElement::StatusIndicator { id, active } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
-                // Update game state. The parser strips the "Icon" prefix
-                // but preserves casing (e.g. "BLEEDING"), so match
-                // case-insensitively like the indicator widgets below do.
-                match id.to_ascii_lowercase().as_str() {
-                    "stunned" => game_state.status.stunned = *active,
-                    "bleeding" => game_state.status.bleeding = *active,
-                    "hidden" => game_state.status.hidden = *active,
-                    "invisible" => game_state.status.invisible = *active,
-                    "webbed" => game_state.status.webbed = *active,
-                    "dead" => game_state.status.dead = *active,
-                    "standing" => game_state.status.standing = *active,
-                    "kneeling" => game_state.status.kneeling = *active,
-                    "sitting" => game_state.status.sitting = *active,
-                    "prone" => game_state.status.prone = *active,
-                    _ => {}
+                // Store every indicator the game sends, whatever its id.
+                // `set` normalizes case and the "Icon" prefix, so the parser's
+                // casing does not matter here. Previously this was a fixed
+                // match that silently dropped JOINED, POISONED, DISEASED and
+                // anything new Simu added.
+                game_state.status.set(id, *active);
+
+                // JOINED going off is the one authoritative "you are in no
+                // group" signal the feed gives us -- more reliable than
+                // waiting for a leave message that may never arrive (death,
+                // linkdeath). Clear the roster on the falling edge.
+                if id.eq_ignore_ascii_case("joined") {
+                    if *active {
+                        // We are in a group but the roster is not known --
+                        // being ADDED by someone else produces this
+                        // indicator with no message naming the members. Mark
+                        // it unconfirmed so the display says so, and so a
+                        // watcher can tell "grouped, roster pending" from
+                        // "not grouped".
+                        if !game_state.group.is_grouped() {
+                            game_state.group.mark_joined_unconfirmed();
+                        }
+                    } else {
+                        game_state.group.clear();
+                    }
                 }
 
                 // Update Indicator windows whose indicator_id matches
@@ -1465,6 +1513,16 @@ impl MessageProcessor {
                         None => dialog.progress_bars.push(bar),
                     }
                 }
+
+                // Stance arrives by either route depending on how the server
+                // frames the dialog, so mirror it into game state from both.
+                // Everything else here is dialog-slot rendering only.
+                for pb in progress_bars {
+                    if pb.id == "pbarStance" {
+                        game_state.stance.update(pb.value, &pb.text);
+                    }
+                }
+
                 self.sync_shown_dialog(ui_state, id, show);
             }
             ParsedElement::DialogLabelList { id, clear, labels } => {
@@ -1871,7 +1929,69 @@ impl MessageProcessor {
                 self.chunk_has_silent_updates = true;
                 if kind != "container" {
                     ui_state.pending_exposes.push((kind.clone(), id.clone()));
+                } else {
+                    // `<exposeContainer>` is the wire's own "a container just
+                    // opened" - authoritative where prose isn't: flavored
+                    // containers answer `open` with custom verbiage ("You
+                    // carefully lift the rune-covered flap...") that no
+                    // "You open" pattern matches, and the day-pass preamble
+                    // sat out its full 12s response timeout on one (live
+                    // Loci Workshop stall). Feed the typed event directly.
+                    self.game_line_no += 1;
+                    game_state.move_feedback.push_back((
+                        self.game_line_no,
+                        crate::core::move_feedback::MoveFeedback::ContainerOpened,
+                    ));
                 }
+            }
+            ParsedElement::Pulse { mana } => {
+                self.chunk_has_silent_updates = true;
+                game_state.pulse_count += 1;
+                game_state.last_pulse_mana = *mana;
+            }
+            ParsedElement::InventoryManager {
+                token,
+                room,
+                items,
+                continuations,
+            } => {
+                self.chunk_has_silent_updates = true;
+                let parsed: Vec<_> = items
+                    .iter()
+                    .filter_map(|attrs| {
+                        let item = crate::core::state::ManagedInventoryItem::from_attrs(attrs);
+                        if item.is_none() {
+                            tracing::warn!("inventoryManager item missing id/loc, dropped: {:?}", attrs);
+                        }
+                        item
+                    })
+                    .collect();
+                if !continuations.is_empty() {
+                    tracing::warn!(
+                        "inventoryManager response is paginated ({} continuation cursors); \
+                         continuation-following not implemented, snapshot marked incomplete",
+                        continuations.len()
+                    );
+                }
+                let generation = game_state
+                    .managed_inventory
+                    .as_ref()
+                    .map(|s| s.generation + 1)
+                    .unwrap_or(1);
+                tracing::debug!(
+                    "inventoryManager snapshot: token={} room={} items={} complete={}",
+                    token,
+                    room,
+                    parsed.len(),
+                    continuations.is_empty()
+                );
+                game_state.managed_inventory = Some(crate::core::state::ManagedInventoryState {
+                    token: token.clone(),
+                    room: room.clone(),
+                    items: parsed,
+                    complete: continuations.is_empty(),
+                    generation,
+                });
             }
             _ => {
                 // Other elements handled elsewhere or not yet implemented

@@ -53,6 +53,20 @@ impl VellumGuiApp {
         bar
     }
 
+    /// The canonical fill color for a core vital, shared by the vitals
+    /// window and the multi-account cards -- the same mana bar must not be
+    /// two different blues depending on which panel you glance at.
+    pub(super) fn vital_fill(kind: crate::config::VitalKind) -> Color32 {
+        use crate::config::VitalKind as K;
+        match kind {
+            K::Health => Color32::from_rgb(0xcd, 0x4d, 0x4d),
+            K::Mana => Color32::from_rgb(0x47, 0x84, 0xd9),
+            K::Stamina => Color32::from_rgb(0x55, 0xb8, 0x6c),
+            K::Spirit => Color32::from_rgb(0xcb, 0xa9, 0x42),
+            _ => Color32::GRAY,
+        }
+    }
+
     pub(super) fn progress_fraction(value: u32, max: u32) -> f32 {
         if max == 0 {
             0.0
@@ -200,28 +214,28 @@ impl VellumGuiApp {
                     minivitals.health.value,
                     minivitals.health.max,
                     fallback_vitals.health as u32,
-                    Color32::from_rgb(0xcd, 0x4d, 0x4d),
+                    Self::vital_fill(crate::config::VitalKind::Health),
                 ),
                 VitalKind::Mana => (
                     "Mana",
                     minivitals.mana.value,
                     minivitals.mana.max,
                     fallback_vitals.mana as u32,
-                    Color32::from_rgb(0x47, 0x84, 0xd9),
+                    Self::vital_fill(crate::config::VitalKind::Mana),
                 ),
                 VitalKind::Stamina => (
                     "Stamina",
                     minivitals.stamina.value,
                     minivitals.stamina.max,
                     fallback_vitals.stamina as u32,
-                    Color32::from_rgb(0x55, 0xb8, 0x6c),
+                    Self::vital_fill(crate::config::VitalKind::Stamina),
                 ),
                 VitalKind::Spirit => (
                     "Spirit",
                     minivitals.spirit.value,
                     minivitals.spirit.max,
                     fallback_vitals.spirit as u32,
-                    Color32::from_rgb(0xcb, 0xa9, 0x42),
+                    Self::vital_fill(crate::config::VitalKind::Spirit),
                 ),
                 _ => unreachable!("core_vital called with a status vital"),
             }

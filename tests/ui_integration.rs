@@ -52,6 +52,46 @@ fn run_fixture(
     }
 }
 
+/// Feed a raw chunk through parser + processor WITHOUT splitting on lines.
+///
+/// `run_fixture` iterates `.lines()`, which strips the terminators. That is
+/// fine for element-shaped fixtures, but text-line features flush on the
+/// newline, so a fixture fed line-by-line never produces a completed line the
+/// way the real feed does. Group parsing is one of those, so it needs the
+/// terminators preserved.
+fn run_fixture_raw(
+    chunk: &str,
+    ui_state: &mut UiState,
+    processor: &mut MessageProcessor,
+    game_state: &mut GameState,
+    parser: &mut XmlParser,
+) {
+    processor.update_text_stream_subscribers(ui_state);
+
+    let mut room_components: HashMap<String, Vec<Vec<vellum_fe::data::TextSegment>>> =
+        HashMap::new();
+    let mut current_room_component: Option<String> = None;
+    let mut room_window_dirty = false;
+    let mut nav_room_id: Option<String> = None;
+    let mut lich_room_id: Option<String> = None;
+    let mut room_subtitle: Option<String> = None;
+
+    for elem in parser.parse_line(chunk) {
+        processor.process_element(
+            &elem,
+            game_state,
+            ui_state,
+            &mut room_components,
+            &mut current_room_component,
+            &mut room_window_dirty,
+            &mut nav_room_id,
+            &mut lich_room_id,
+            &mut room_subtitle,
+            None,
+        );
+    }
+}
+
 fn init_state() -> (UiState, MessageProcessor, GameState, XmlParser) {
     let config = Config::default();
     let ui_state = UiState::new();
@@ -3089,4 +3129,280 @@ fn highlight_engine_silent_prompt_partial_match_is_not_silent() {
         !result.line_is_silent,
         "Line should NOT be marked as silent when pattern only partially covers it"
     );
+}
+
+// ==================== Group roster (end-to-end) ====================
+//
+// The roster is reconstructed from prose, so these drive real GS4 markup
+// through the actual parser and processor rather than hand-built elements --
+// link extraction is the part most likely to break, and only the real parser
+// exercises it.
+//
+// Each chunk is fed separately, as the wire delivers them. That matters: the
+// parser can emit a <prompt> element ahead of trailing text from the same
+// chunk, so bundling a prompt with the line it terminates flushes the line
+// mid-sentence and the roster never sees a complete sentence.
+
+/// Terminates a response; flushes buffered group events into GameState.
+const PROMPT: &str = "<prompt time=\"1700000000\">&gt;</prompt>";
+
+fn group_state(
+    chunks: &[&str],
+    setup: impl FnOnce(&mut GameState),
+) -> vellum_fe::core::group::GroupState {
+    let (mut ui_state, mut processor, mut game_state, mut parser) = init_state();
+    setup(&mut game_state);
+    for chunk in chunks {
+        run_fixture_raw(
+            chunk,
+            &mut ui_state,
+            &mut processor,
+            &mut game_state,
+            &mut parser,
+        );
+    }
+    game_state.group
+}
+
+fn self_led(gs: &mut GameState) {
+    gs.group
+        .replace(vellum_fe::core::group::GroupLeader::SelfLed, vec![]);
+}
+
+fn names(group: &vellum_fe::core::group::GroupState) -> Vec<&str> {
+    group.members.iter().map(|m| m.name.as_str()).collect()
+}
+
+#[test]
+fn group_roster_builds_from_join_messages() {
+    // Negative exist ids are what players actually carry, and the roster keys
+    // on them rather than on display names.
+    let group = group_state(
+        &[
+            "<a exist=\"-10154507\" noun=\"Bob\">Bob</a> joins your group.\r\n",
+            "<a exist=\"-10154508\" noun=\"Carol\">Carol</a> joins your group.\r\n",
+            PROMPT,
+        ],
+        self_led,
+    );
+
+    assert_eq!(names(&group), vec!["Bob", "Carol"]);
+    assert_eq!(group.members[0].id, "-10154507");
+}
+
+#[test]
+fn group_roster_removes_on_leave() {
+    let group = group_state(
+        &[
+            "<a exist=\"-1\" noun=\"Bob\">Bob</a> joins your group.\r\n",
+            "<a exist=\"-2\" noun=\"Carol\">Carol</a> joins your group.\r\n",
+            "<a exist=\"-1\" noun=\"Bob\">Bob</a> leaves your group.\r\n",
+            PROMPT,
+        ],
+        self_led,
+    );
+
+    assert_eq!(names(&group), vec!["Carol"], "Bob left, Carol remains");
+}
+
+#[test]
+fn group_reply_confirms_the_full_roster() {
+    // The `group` command's reply: roster line, then the status sentinel that
+    // marks the reply complete.
+    let group = group_state(
+        &[
+            "You are leading <a exist=\"-1\" noun=\"Bob\">Bob</a>, \
+             <a exist=\"-2\" noun=\"Carol\">Carol</a>.\r\n",
+            "Your group status is currently open.\r\n",
+            PROMPT,
+        ],
+        |_| {},
+    );
+
+    assert!(group.leads());
+    assert_eq!(names(&group), vec!["Bob", "Carol"]);
+    assert!(group.confirmed, "a completed reply confirms the roster");
+}
+
+#[test]
+fn group_reply_while_following_splits_leader_from_members() {
+    let group = group_state(
+        &[
+            "You are grouped with <a exist=\"-1\" noun=\"Bob\">Bob</a>, \
+             <a exist=\"-2\" noun=\"Carol\">Carol</a>.\r\n",
+            "Your group status is currently closed.\r\n",
+            PROMPT,
+        ],
+        |_| {},
+    );
+
+    match &group.leader {
+        vellum_fe::core::group::GroupLeader::Other(leader) => assert_eq!(leader.name, "Bob"),
+        other => panic!("expected to follow Bob, got {other:?}"),
+    }
+    assert_eq!(names(&group), vec!["Carol"], "the leader is not also a member");
+    assert!(group.confirmed);
+}
+
+#[test]
+fn joining_another_group_records_the_leader_but_stays_unconfirmed() {
+    let group = group_state(
+        &["You join <a exist=\"-1\" noun=\"Bob\">Bob</a>.\r\n", PROMPT],
+        |_| {},
+    );
+
+    match &group.leader {
+        vellum_fe::core::group::GroupLeader::Other(leader) => {
+            assert_eq!(leader.name, "Bob");
+            assert_eq!(leader.id, "-1");
+        }
+        other => panic!("expected to follow Bob, got {other:?}"),
+    }
+    assert!(
+        !group.confirmed,
+        "the join alone does not reveal the rest of Bob's group"
+    );
+}
+
+#[test]
+fn joined_indicator_going_off_clears_the_roster() {
+    // The falling edge of JOINED is the authoritative "no group" signal. It
+    // arrives even when a leave message never does -- death, linkdeath.
+    let group = group_state(
+        &["<indicator id=\"IconJOINED\" visible=\"n\"/>"],
+        |gs| {
+            gs.group.replace(
+                vellum_fe::core::group::GroupLeader::SelfLed,
+                vec![vellum_fe::core::group::GroupMember {
+                    id: "-1".to_string(),
+                    noun: "bob".to_string(),
+                    name: "Bob".to_string(),
+                }],
+            );
+        },
+    );
+
+    assert!(!group.is_grouped());
+    assert!(group.members.is_empty());
+}
+
+#[test]
+fn disbanding_clears_the_roster() {
+    let group = group_state(
+        &[
+            "<a exist=\"-1\" noun=\"Bob\">Bob</a> joins your group.\r\n",
+            "You disband your group.\r\n",
+            PROMPT,
+        ],
+        self_led,
+    );
+
+    assert!(!group.is_grouped());
+}
+
+#[test]
+fn ordinary_prose_mentioning_group_does_not_touch_the_roster() {
+    let group = group_state(
+        &[
+            "A group of tourists wanders past.\r\n",
+            "You see nothing unusual.\r\n",
+            PROMPT,
+        ],
+        |_| {},
+    );
+
+    assert!(!group.is_grouped());
+    assert_eq!(
+        group,
+        vellum_fe::core::group::GroupState::default(),
+        "no spurious roster churn"
+    );
+}
+
+#[test]
+fn a_single_flush_carrying_two_joins_attributes_each_to_its_own_line() {
+    // Nothing flushes on an embedded newline, so a server burst arrives as
+    // ONE chunk holding two game lines. Each event must get only the links
+    // from its own line -- and line-anchored patterns must not be handed the
+    // whole blob, which matches nothing.
+    let group = group_state(
+        &[
+            "<a exist=\"-1\" noun=\"Bob\">Bob</a> joins your group.\r\n\
+             <a exist=\"-2\" noun=\"Carol\">Carol</a> joins your group.\r\n",
+            PROMPT,
+        ],
+        self_led,
+    );
+
+    assert_eq!(names(&group), vec!["Bob", "Carol"]);
+    assert_eq!(group.members[0].id, "-1");
+    assert_eq!(group.members[1].id, "-2");
+}
+
+#[test]
+fn a_group_reply_arriving_in_one_flush_still_commits() {
+    // The roster line and its status sentinel routinely share a flush; the
+    // sentinel must still be seen as a separate line so the roster commits.
+    let group = group_state(
+        &[
+            "You are leading <a exist=\"-1\" noun=\"Bob\">Bob</a>.\r\n\
+             Your group status is currently open.\r\n",
+            PROMPT,
+        ],
+        |_| {},
+    );
+
+    assert!(group.leads());
+    assert_eq!(names(&group), vec!["Bob"]);
+    assert!(group.confirmed);
+}
+
+#[test]
+fn hand_holding_groups_through_the_real_pipeline() {
+    // The regression this pins: the flush gate was a hand-copied duplicate of
+    // might_be_group_line that lacked " hand", so every hold/release event
+    // died BEFORE classification while the classifier's own unit tests stayed
+    // green. This test crosses the gate.
+    let group = group_state(
+        &[
+            "You reach out and hold <a exist=\"-1\" noun=\"Abem\">Abem</a>'s hand.\r\n",
+            PROMPT,
+        ],
+        |_| {},
+    );
+
+    assert!(group.leads(), "holding implies leading: {group:?}");
+    assert_eq!(names(&group), vec!["Abem"]);
+    assert!(group.confirmed, "both ends of a hold are visible");
+}
+
+#[test]
+fn releasing_a_hand_ungroups_through_the_real_pipeline() {
+    let group = group_state(
+        &[
+            "You reach out and hold <a exist=\"-1\" noun=\"Abem\">Abem</a>'s hand.\r\n",
+            "You let go of <a exist=\"-1\" noun=\"Abem\">Abem</a>'s hand.\r\n",
+            PROMPT,
+        ],
+        |_| {},
+    );
+
+    assert!(!group.is_grouped(), "{group:?}");
+    assert!(group.confirmed, "an ended pairing is a known-empty state");
+}
+
+#[test]
+fn having_your_hand_held_follows_through_the_real_pipeline() {
+    let group = group_state(
+        &[
+            "<a exist=\"-2\" noun=\"Ultz\">Ultz</a> reaches out and holds your hand.\r\n",
+            PROMPT,
+        ],
+        |_| {},
+    );
+
+    match &group.leader {
+        vellum_fe::core::group::GroupLeader::Other(leader) => assert_eq!(leader.name, "Ultz"),
+        other => panic!("expected to follow Ultz, got {other:?}"),
+    }
 }

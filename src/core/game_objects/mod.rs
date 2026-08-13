@@ -494,6 +494,66 @@ impl GameObjects {
             .find(|c| parse::title_matches_words(&c.title_lower, &words))
     }
 
+    /// Find one of YOUR items by name, anywhere you can reach it: hands,
+    /// worn, at-feet, or inside a tracked container. Returns the item and
+    /// where it lives.
+    ///
+    /// Matching mirrors [`find_container`] — exact, then substring, then
+    /// per-word subsequence — so "silver trinket" finds "a silver filigreed
+    /// trinket". That last tier is what Lich's mapdb procs express as
+    /// `name.split(' ').join('.*')`.
+    ///
+    /// Search order is deliberate: hands first (a held item needs no
+    /// retrieval), then worn/at-feet, then containers. A caller that wants
+    /// the cheapest route to an item gets it by taking the first hit.
+    pub fn find_item(&self, query: &str) -> Option<(&GameItem, Location)> {
+        let q = query.to_lowercase();
+        let words = parse::strip_articles(&q);
+        let matches = |item: &GameItem| {
+            let name = item.name.to_lowercase();
+            name == q
+                || name.contains(&q)
+                || item.noun.eq_ignore_ascii_case(&q)
+                || (!words.is_empty() && parse::title_matches_words(&name, &words))
+        };
+
+        for (hand, slot) in [(Hand::Left, &self.left_hand), (Hand::Right, &self.right_hand)] {
+            if let Some(item) = slot.as_ref().filter(|i| matches(i)) {
+                return Some((item, Location::Hand(hand)));
+            }
+        }
+        if let Some(item) = self.worn.iter().find(|i| matches(i)) {
+            return Some((item, Location::Worn));
+        }
+        if let Some(item) = self.at_feet.iter().find(|i| matches(i)) {
+            return Some((item, Location::AtFeet));
+        }
+        // Stable container order so repeated lookups don't flip between two
+        // equally-matching items in different bags.
+        let mut ids: Vec<&String> = self.containers.keys().collect();
+        ids.sort();
+        for id in ids {
+            let container = &self.containers[id];
+            if let Some(item) = container.items.iter().find(|i| matches(i)) {
+                return Some((item, Location::Container(container.id.clone())));
+            }
+        }
+        None
+    }
+
+    /// The container holding `item_id`, if we've seen its contents.
+    ///
+    /// This is what lets a crossing put an item back where it came from
+    /// without scraping `<a exist=...>` links out of a `get` response the way
+    /// the mapdb procs do — the registry already knows.
+    pub fn container_holding(&self, item_id: &str) -> Option<&Container> {
+        let mut ids: Vec<&String> = self.containers.keys().collect();
+        ids.sort();
+        ids.into_iter()
+            .map(|id| &self.containers[id])
+            .find(|c| c.items.iter().any(|i| i.id == item_id))
+    }
+
     // ---- classification (delegates to the data-pack classifier) ----
 
     /// All type tags for an item ("gem", "valuable", ...), via
@@ -540,6 +600,45 @@ mod tests {
         // stow: id is the string, target is the object id.
         reg.register_container("stow".into(), "My Shroud".into(), Some("#691".into()));
         assert_eq!(reg.container("stow").unwrap().command_target(), "691");
+    }
+
+    #[test]
+    fn find_item_matches_words_in_order_across_every_location() {
+        let mut reg = GameObjects::default();
+        reg.register_container("77".into(), "boar hide bandolier".into(), Some("#77".into()));
+        reg.add_container_item(
+            "77",
+            GameItem::new("500", "trinket", "silver filigreed trinket"),
+        );
+        reg.set_worn(vec![GameItem::new("600", "cloak", "heavy wool cloak")]);
+
+        // Per-word subsequence: what the mapdb procs express as
+        // `name.split(' ').join('.*')`.
+        let (item, loc) = reg.find_item("silver trinket").expect("found in a container");
+        assert_eq!(item.id, "500");
+        assert_eq!(loc, Location::Container("77".into()));
+        // And we know which bag to put it back in — no link scraping needed.
+        assert_eq!(reg.container_holding("500").unwrap().id, "77");
+
+        // Worn items are reachable too.
+        assert_eq!(reg.find_item("wool cloak").unwrap().0.id, "600");
+        // A bare noun works.
+        assert_eq!(reg.find_item("trinket").unwrap().0.id, "500");
+        assert!(reg.find_item("emerald ring").is_none());
+    }
+
+    #[test]
+    fn find_item_prefers_a_held_item_over_a_stowed_one() {
+        // Search order matters: a held item needs no retrieval, so a caller
+        // taking the first hit gets the cheapest route to the item.
+        let mut reg = GameObjects::default();
+        reg.register_container("77".into(), "bandolier".into(), Some("#77".into()));
+        reg.add_container_item("77", GameItem::new("500", "trinket", "silver trinket"));
+        reg.set_hand(Hand::Right, Some(GameItem::new("501", "trinket", "silver trinket")));
+
+        let (item, loc) = reg.find_item("silver trinket").unwrap();
+        assert_eq!(item.id, "501", "the held one wins");
+        assert_eq!(loc, Location::Hand(Hand::Right));
     }
 
     #[test]

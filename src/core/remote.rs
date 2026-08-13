@@ -17,7 +17,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::config::{Config, MacrosConfig};
@@ -384,6 +384,13 @@ pub enum RemoteDelta {
         right: Option<String>,
     },
     Indicators(StatusInfo),
+    /// Absolute vitals changed (current/max per vital).
+    MiniVitals(Vec<RemoteVital>),
+    /// The spell being prepared changed (None = stopped preparing).
+    PreparedSpell(Option<String>),
+    /// Group roster changed. Small and infrequent, so it ships whole rather
+    /// than as a member diff.
+    Group(crate::core::group::GroupState),
     Rt {
         roundtime_end: Option<i64>,
         casttime_end: Option<i64>,
@@ -775,6 +782,15 @@ pub struct RemoteStateSnapshot {
     pub left_hand: Option<String>,
     pub right_hand: Option<String>,
     pub indicators: StatusInfo,
+    /// Absolute vitals (current/max), where percentages are not enough --
+    /// "51/51" tells a healer what "100%" cannot. Empty until the minivitals
+    /// dialog has reported.
+    pub minivitals: Vec<RemoteVital>,
+    /// Spell currently being prepared, if any.
+    pub prepared_spell: Option<String>,
+    /// Group roster. Carries `confirmed` so a viewer can distinguish a known
+    /// roster from a partial one rather than presenting a guess as fact.
+    pub group: crate::core::group::GroupState,
     pub roundtime_end: Option<i64>,
     pub casttime_end: Option<i64>,
     pub server_time: i64,
@@ -862,6 +878,12 @@ pub struct RemoteTarget {
 /// Character-sheet lines for the status drawer: experience, encumbrance,
 /// bounty, society — pre-formatted core-side so every client renders the
 /// same text. Empty sections are omitted from the wire.
+///
+/// The `Vec<String>` sections are display text and stay that way; the phone
+/// client renders them verbatim. `gauges` carries the same values in numeric
+/// form for clients that need to draw a bar rather than print a line — the
+/// multi-account display would otherwise have to re-parse "Mind: clear (0%)"
+/// back into a number.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct RemoteCharInfo {
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -872,6 +894,86 @@ pub struct RemoteCharInfo {
     pub bounty: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub society: Vec<String>,
+    /// Numeric mirrors of the above, for bar-drawing clients.
+    #[serde(skip_serializing_if = "RemoteGauges::is_empty")]
+    pub gauges: RemoteGauges,
+}
+
+/// Numeric character gauges: percent plus the label the game gave it.
+/// Every field is optional because a session may not have reported one yet,
+/// and a display should show "unknown" rather than a confident zero.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RemoteGauges {
+    /// Mind state 0-100 with its text ("clear", "muddled", ...).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mind: Option<RemoteGauge>,
+    /// Encumbrance 0-100 with its level text ("None", "Light", ...).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encumbrance: Option<RemoteGauge>,
+    /// Stance 0-100 (percent contributing to defense) with its name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stance: Option<RemoteGauge>,
+    /// Unabsorbed field experience, as current/max rather than a percent --
+    /// "how close to capped" is the number that matters, and the cap varies
+    /// by character.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_exp: Option<RemoteFieldExp>,
+}
+
+/// Unabsorbed field experience and the character's own cap.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteFieldExp {
+    pub value: u64,
+    pub max: u64,
+}
+
+impl RemoteGauges {
+    fn is_empty(&self) -> bool {
+        self.mind.is_none()
+            && self.encumbrance.is_none()
+            && self.stance.is_none()
+            && self.field_exp.is_none()
+    }
+}
+
+/// One vital with its absolute numbers. Percentages already ride `vitals`;
+/// this is the "226/226" a card shows when the ratio alone is not enough.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteVital {
+    /// "health", "mana", "stamina", "spirit" (DR concentration maps to mana).
+    pub id: String,
+    pub value: u32,
+    pub max: u32,
+}
+
+impl RemoteVital {
+    /// Build the wire list, skipping vitals the session has not reported --
+    /// `max == 0` means "never seen", and shipping 0/0 would render as a dead
+    /// character.
+    pub fn from_state(state: &crate::core::state::MiniVitalsState) -> Vec<Self> {
+        [
+            ("health", &state.health),
+            ("mana", &state.mana),
+            ("stamina", &state.stamina),
+            ("spirit", &state.spirit),
+        ]
+        .into_iter()
+        .filter(|(_, entry)| entry.max > 0)
+        .map(|(id, entry)| Self {
+            id: id.to_string(),
+            value: entry.value,
+            max: entry.max,
+        })
+        .collect()
+    }
+}
+
+/// One numeric gauge: a percent and the game's own word for it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RemoteGauge {
+    pub value: u32,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub text: String,
 }
 
 /// One drawable room on the phone map. Short field names on purpose — a
@@ -1025,6 +1127,9 @@ impl RemoteStateSnapshot {
             left_hand: game_state.left_hand.clone(),
             right_hand: game_state.right_hand.clone(),
             indicators: game_state.status.clone(),
+            minivitals: RemoteVital::from_state(&game_state.minivitals),
+            prepared_spell: game_state.spell.clone(),
+            group: game_state.group.clone(),
             roundtime_end: game_state.roundtime_end,
             casttime_end: game_state.casttime_end,
             server_time: game_state.game_time,
@@ -1123,6 +1228,45 @@ impl RemoteStateSnapshot {
                     info.bounty.push(game_state.bounty.raw_text.clone());
                 }
                 info.society = game_state.society.lines.clone();
+
+                // Numeric mirrors for bar-drawing clients. Gated on the same
+                // "have we seen it" checks as the text above, so an
+                // unreported gauge is absent rather than a misleading zero.
+                // Gate on generation, not on text. A dialog can report a
+                // value with an empty label (and stance routinely does), and
+                // gating on text meant such a gauge never shipped at all --
+                // the peer card showed a dash while the character's own
+                // window showed a bar. generation bumps on the first update
+                // either way, which is the honest "has this ever arrived".
+                if exp.generation > 0 {
+                    info.gauges.mind = Some(RemoteGauge {
+                        value: exp.mind_state_value,
+                        text: exp.mind_state_text.clone(),
+                    });
+                }
+                if enc.generation > 0 {
+                    info.gauges.encumbrance = Some(RemoteGauge {
+                        value: enc.value,
+                        text: enc.text.clone(),
+                    });
+                }
+                // Both halves must be known: a value with no cap cannot be
+                // drawn as a bar, and a cap alone says nothing.
+                if let (Some(value), Some(max)) = (
+                    exp.field_exp,
+                    exp.max_field_exp,
+                ) {
+                    if max > 0 {
+                        info.gauges.field_exp = Some(RemoteFieldExp { value, max });
+                    }
+                }
+                let stance = &game_state.stance;
+                if stance.generation > 0 {
+                    info.gauges.stance = Some(RemoteGauge {
+                        value: stance.value,
+                        text: stance.text.clone(),
+                    });
+                }
                 info
             },
             session: RemoteSessionInfo::default(),
@@ -1584,6 +1728,19 @@ impl RemoteSink {
                 .delta_tx
                 .send(RemoteDelta::Indicators(snap.indicators.clone()));
         }
+        if snap.minivitals != self.last.minivitals {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::MiniVitals(snap.minivitals.clone()));
+        }
+        if snap.prepared_spell != self.last.prepared_spell {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::PreparedSpell(snap.prepared_spell.clone()));
+        }
+        if snap.group != self.last.group {
+            let _ = self.delta_tx.send(RemoteDelta::Group(snap.group.clone()));
+        }
         if snap.effects != self.last.effects {
             let _ = self
                 .delta_tx
@@ -1673,6 +1830,62 @@ mod tests {
             stream: "main".to_string(),
             timestamp: None,
         })
+    }
+
+    #[test]
+    fn gauges_carry_numeric_mind_encumbrance_and_stance() {
+        let mut gs = GameState::new();
+        gs.gs4_experience.update_mind_state(42, "muddled".to_string());
+        gs.encumbrance.update_level(17, "Light".to_string());
+        gs.stance.update(80, "defensive (80%)");
+
+        let snap = RemoteStateSnapshot::from_game_state(&gs, &[]);
+        let g = &snap.char_info.gauges;
+
+        let mind = g.mind.as_ref().expect("mind gauge");
+        assert_eq!(mind.value, 42);
+        assert_eq!(mind.text, "muddled");
+
+        let enc = g.encumbrance.as_ref().expect("encumbrance gauge");
+        assert_eq!(enc.value, 17);
+        assert_eq!(enc.text, "Light");
+
+        let stance = g.stance.as_ref().expect("stance gauge");
+        assert_eq!(stance.value, 80);
+        assert_eq!(stance.text, "defensive");
+
+        // The pre-formatted display lines the phone reads are unchanged --
+        // gauges are additive, not a replacement.
+        assert!(snap
+            .char_info
+            .experience
+            .iter()
+            .any(|l| l == "Mind: muddled (42%)"));
+        assert!(snap
+            .char_info
+            .encumbrance
+            .iter()
+            .any(|l| l == "Light (17%)"));
+    }
+
+    /// An unreported gauge must be absent from the wire rather than a zero.
+    /// A multi-account card showing "stance 0%" for a character that never
+    /// reported stance would read as "fully offensive", which is a lie.
+    #[test]
+    fn unreported_gauges_are_absent_not_zero() {
+        let gs = GameState::new();
+        let snap = RemoteStateSnapshot::from_game_state(&gs, &[]);
+
+        assert!(snap.char_info.gauges.mind.is_none());
+        assert!(snap.char_info.gauges.encumbrance.is_none());
+        assert!(snap.char_info.gauges.stance.is_none());
+
+        // ...and the whole gauges object drops out of the JSON entirely.
+        let json = serde_json::to_string(&snap.char_info).expect("serialize");
+        assert!(
+            !json.contains("gauges"),
+            "empty gauges must not ship: {json}"
+        );
     }
 
     #[test]

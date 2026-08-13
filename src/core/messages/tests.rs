@@ -1118,6 +1118,189 @@ fn dashboard_auto_discovers_unclaimed_indicator() {
     assert_eq!(dashboard_ids(&ui_state), vec!["STANDING"]);
 }
 
+/// CHARACTERIZATION: the ten indicator ids that `element.rs` actually writes
+/// into `GameState.status`. Pins the parser->GameState boundary before the
+/// general-map refactor. Note JOINED is absent from this list by design --
+/// see `characterize_joined_indicator_is_dropped` below.
+#[test]
+fn characterize_statusinfo_fields_written_by_parser() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    for id in [
+        "STUNNED",
+        "BLEEDING",
+        "HIDDEN",
+        "INVISIBLE",
+        "WEBBED",
+        "DEAD",
+        "STANDING",
+        "KNEELING",
+        "SITTING",
+        "PRONE",
+    ] {
+        feed_indicator(&mut processor, &mut game_state, &mut ui_state, id, true);
+    }
+
+    let s = &game_state.status;
+    assert!(s.stunned() && s.bleeding() && s.hidden() && s.invisible() && s.webbed());
+    assert!(s.dead() && s.standing() && s.kneeling() && s.sitting() && s.prone());
+
+    // Clearing round-trips too.
+    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "STUNNED", false);
+    assert!(!game_state.status.stunned());
+}
+
+/// FIXED (was a defect): `element.rs` had no `"joined"` match arm, so
+/// `IconJOINED` was swallowed by the `_ => {}` fallthrough and `status.joined`
+/// stayed false forever -- despite being serialized to remote clients. Group
+/// membership is a prerequisite for the multi-account roster.
+#[test]
+fn joined_indicator_reaches_gamestate() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "JOINED", true);
+    assert!(game_state.status.joined());
+
+    // And it still reaches the dashboard widget path.
+    assert!(dashboard_ids(&ui_state).contains(&"JOINED".to_string()));
+
+    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "JOINED", false);
+    assert!(!game_state.status.joined());
+}
+
+/// FIXED (was a defect): POISONED/DISEASED are real game indicators and
+/// shipped presets, but had no `StatusInfo` field, so they reached the
+/// dashboard while nothing in core could read them. The general map stores
+/// every id the game sends.
+#[test]
+fn unmapped_indicators_now_reach_gamestate() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    for id in ["POISONED", "DISEASED"] {
+        feed_indicator(&mut processor, &mut game_state, &mut ui_state, id, true);
+    }
+
+    // Widget path still sees them...
+    let ids = dashboard_ids(&ui_state);
+    assert!(ids.contains(&"POISONED".to_string()));
+    assert!(ids.contains(&"DISEASED".to_string()));
+
+    // ...and now so does GameState.
+    assert!(game_state.status.poisoned());
+    assert!(game_state.status.diseased());
+}
+
+/// Stance reaches GameState via the bare `<progressBar>` route.
+///
+/// Previously the stance bar rendered only into a window widget, so a client
+/// with no stance window -- headless, remote, or the multi-account display --
+/// had no stance value at all.
+#[test]
+fn stance_progress_bar_reaches_gamestate() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    let element = ParsedElement::ProgressBar {
+        id: "pbarStance".to_string(),
+        value: 80,
+        max: 100,
+        text: "defensive (80%)".to_string(),
+    };
+    processor.process_element(
+        &element,
+        &mut game_state,
+        &mut ui_state,
+        &mut std::collections::HashMap::new(),
+        &mut None,
+        &mut false,
+        &mut None,
+        &mut None,
+        &mut None,
+        None,
+    );
+
+    assert_eq!(game_state.stance.value, 80);
+    assert_eq!(game_state.stance.text, "defensive");
+}
+
+/// Stance also reaches GameState via the `<dialogData>` route, which is how
+/// the server usually frames it. Both paths must populate state or stance
+/// would be present only on some connections.
+#[test]
+fn stance_dialog_progress_bar_reaches_gamestate() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    let element = ParsedElement::DialogProgressBars {
+        id: "stance".to_string(),
+        clear: false,
+        progress_bars: vec![crate::parser::DialogProgressBarSpec {
+            id: "pbarStance".to_string(),
+            value: 0,
+            text: "offensive (0%)".to_string(),
+            layout: None,
+        }],
+    };
+    processor.process_element(
+        &element,
+        &mut game_state,
+        &mut ui_state,
+        &mut std::collections::HashMap::new(),
+        &mut None,
+        &mut false,
+        &mut None,
+        &mut None,
+        &mut None,
+        None,
+    );
+
+    assert_eq!(game_state.stance.value, 0);
+    assert_eq!(game_state.stance.text, "offensive");
+}
+
+/// An id with no typed accessor and no preset must still round-trip, so a new
+/// game indicator needs no code change to become readable by conditions.
+#[test]
+fn novel_indicator_ids_round_trip_without_code_changes() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    feed_indicator(
+        &mut processor,
+        &mut game_state,
+        &mut ui_state,
+        "SOMETHINGNEW",
+        true,
+    );
+    assert!(game_state.status.get("somethingnew"));
+    assert!(game_state.status.is_known("SOMETHINGNEW"));
+}
+
+/// CHARACTERIZATION: the parser strips the `Icon` prefix but preserves case,
+/// and the GameState write is case-insensitive. Both castings must land.
+/// This behavior must SURVIVE the refactor unchanged.
+#[test]
+fn characterize_indicator_write_is_case_insensitive() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "stunned", true);
+    assert!(game_state.status.stunned(), "lowercase id must write");
+
+    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "STUNNED", false);
+    assert!(!game_state.status.stunned(), "uppercase id must write too");
+}
+
 #[test]
 fn dashboard_suppresses_claimed_indicator() {
     // A combined POSTURE indicator claims STANDING/KNEELING/PRONE/SITTING;

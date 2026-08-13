@@ -4,7 +4,7 @@
 //! character info, room state, inventory, etc.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use super::highlight_engine::SoundTrigger;
 
@@ -54,6 +54,13 @@ pub struct GameState {
     /// Game server time from last prompt (Unix timestamp)
     /// This is the authoritative time source for roundtime/casttime comparisons
     pub game_time: i64,
+
+    /// When `game_time` was last updated, on the LOCAL clock. Prompts only
+    /// arrive with traffic, so during silence `game_time` stands still - and
+    /// a roundtime measured against it never counts down, freezing travel
+    /// until any line lands (a `look` used to unstick it). Extrapolating from
+    /// this stamp keeps RT flowing through quiet stretches.
+    pub game_time_received: Option<std::time::Instant>,
 
     /// Roundtime end timestamp (Unix time from game server)
     pub roundtime_end: Option<i64>,
@@ -154,6 +161,19 @@ pub struct GameState {
     /// Room metadata codes from the `<roommeta>` tag
     pub room_meta: RoomMetaState,
 
+    /// Latest structured inventory snapshot (`<inventoryManager>`, extended
+    /// feed). None until the client has sent `_inventory manager <token>`
+    /// and received an answer.
+    pub managed_inventory: Option<ManagedInventoryState>,
+
+    /// Count of `<pulse .../>` announcements received (extended feed). A
+    /// pulse fires every minute ±15s: each one absorbs field exp (when any
+    /// is pooled), and every other pulse is also a mana pulse. Serves as
+    /// the pulse clock's generation counter.
+    pub pulse_count: u64,
+    /// Whether the most recent pulse was a mana pulse (alternates)
+    pub last_pulse_mana: bool,
+
     /// Unified game-object registry: items (containers/worn/hands/at-feet/
     /// ground), creatures, players. The single source for game objects;
     /// see `core::game_objects`.
@@ -163,7 +183,29 @@ pub struct GameState {
     /// door, …) awaiting the walk executor. The parser pushes on each matching
     /// game line; `tick_travel` drains this once per tick so each event fires
     /// exactly once. See `core::move_feedback` and §09/§12 of the go2 plan.
-    pub move_feedback: std::collections::VecDeque<crate::core::move_feedback::MoveFeedback>,
+    pub move_feedback: std::collections::VecDeque<(u64, crate::core::move_feedback::MoveFeedback)>,
+    /// The message processor's flushed-line count at the last prompt - the
+    /// executor stamps its sends with this so stale failure lines (belonging
+    /// to an already-superseded move) can be told from fresh ones.
+    pub game_line_no: u64,
+
+    /// Recent raw game lines for scripted-edge `Await` steps, newest last.
+    ///
+    /// `move_feedback` is a fixed enum of pre-classified recovery events; an
+    /// `Await` needs the TEXT, because the pattern comes from mapdb data we
+    /// can't enumerate ahead of time (a ferry's arrival line, a lever's
+    /// response, a captured group interpolated into a later command).
+    ///
+    /// Unlike `move_feedback` this is NOT drained by the consumer — an await
+    /// arms mid-tick and must see lines that arrived before it started, and
+    /// several steps may match the same line. It is a bounded ring instead:
+    /// pushed on every line, capped at `RAW_LINE_RING`, with each entry
+    /// carrying the sequence number an await compares against so it only
+    /// matches lines newer than its own arming point.
+    pub recent_lines: std::collections::VecDeque<(u64, String)>,
+    /// Monotonic counter stamped onto `recent_lines`; also the "now" an await
+    /// records when it arms. Never reset.
+    pub line_seq: u64,
 
     /// Character state parsed from the feed (society status/rank, profession,
     /// CHE/House, citizenship) — gates seeking, guild, and locker travel.
@@ -178,6 +220,15 @@ pub struct GameState {
     /// Silver on hand, parsed from `wealth`/`wealth quiet` output. `None`
     /// until first seen. Drives go2's silver-funding for paid travel.
     pub silver: Option<u64>,
+    /// Flushed-line number of the last wealth reading. The funding phases
+    /// only trust a reading NEWER than their `wealth quiet` probe - deciding
+    /// on the cached value walked a broke character into a paid crossing
+    /// (the live 'you have 2000 - funded' on a freshly emptied purse).
+    pub silver_line_no: u64,
+    /// Count of `<nav>` tags seen - Lich's `$room_count`. The command gate
+    /// records it at each send; "a nav arrived since my send" is the
+    /// movement test, independent of how fast the room id resolves.
+    pub nav_count: u64,
 
     /// Chronomage day-pass expiry cache, learned by `look`ing at passes (Lich's
     /// `$mapdb_day_passes` + `mapdb_day_pass_monitor`). Gates day-pass travel.
@@ -191,6 +242,14 @@ pub struct GameState {
 
     /// Encumbrance dialog state (from encum dialog)
     pub encumbrance: EncumbranceState,
+
+    /// Combat stance (from the stance dialog's pbarStance)
+    pub stance: StanceState,
+
+    /// Group roster, reconstructed from the game's group messaging. The
+    /// feed's only structured group signal is the JOINED indicator, a bare
+    /// flag with no members, so the roster comes from parsed text.
+    pub group: crate::core::group::GroupState,
 
     /// Betrayer panel state (blood points + items) - GS4 only
     pub betrayer: BetrayerState,
@@ -218,20 +277,96 @@ pub struct GameState {
     pub sound_queue: SoundQueue,
 }
 
-/// Player status information
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// Player status information.
+///
+/// Backed by a general id -> bool map rather than fixed fields, because the
+/// game sends indicators we do not know about ahead of time (POISONED,
+/// DISEASED, and whatever Simu adds next). Ids are normalized to lowercase on
+/// the way in, so `"IconSTUNNED"`, `"STUNNED"` and `"stunned"` are one key.
+///
+/// Wire compatibility: this serializes as a flat lowercase-keyed object,
+/// byte-identical to the struct it replaced for every id the phone client
+/// reads (`app.js` looks up `d["stunned"]` and friends). Unknown extra keys
+/// are ignored by that client, and absent keys read falsy, so adding ids is
+/// backward compatible in both directions.
+///
+/// The typed accessors below are the supported read path -- prefer
+/// `status.stunned()` over `status.get("stunned")` so a typo is a compile
+/// error rather than a silent `false`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct StatusInfo {
-    pub standing: bool,
-    pub kneeling: bool,
-    pub sitting: bool,
-    pub prone: bool,
-    pub stunned: bool,
-    pub bleeding: bool,
-    pub hidden: bool,
-    pub invisible: bool,
-    pub webbed: bool,
-    pub joined: bool,
-    pub dead: bool,
+    /// Lowercase indicator id -> active. Absent means "never reported",
+    /// which reads as inactive.
+    flags: BTreeMap<String, bool>,
+}
+
+impl StatusInfo {
+    /// Normalize an id to its map key. Strips the `Icon` prefix the game uses
+    /// on the wire so callers may pass either form.
+    fn key(id: &str) -> String {
+        let bare = id.strip_prefix("Icon").unwrap_or(id);
+        bare.to_ascii_lowercase()
+    }
+
+    /// Set an indicator. Returns true if the value changed -- callers use this
+    /// to avoid emitting no-op deltas.
+    pub fn set(&mut self, id: &str, active: bool) -> bool {
+        self.flags.insert(Self::key(id), active) != Some(active)
+    }
+
+    /// Read an indicator. Unknown ids read `false`, matching "the game never
+    /// told us, so it is not happening".
+    pub fn get(&self, id: &str) -> bool {
+        self.flags.get(&Self::key(id)).copied().unwrap_or(false)
+    }
+
+    /// Distinguishes "reported inactive" from "never reported". Conditions do
+    /// not need this, but a multi-account display does: an unreported
+    /// indicator should render as unknown rather than as a confident "no".
+    pub fn is_known(&self, id: &str) -> bool {
+        self.flags.contains_key(&Self::key(id))
+    }
+
+    /// Every id the game has reported, with its current value.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, bool)> {
+        self.flags.iter().map(|(k, v)| (k.as_str(), *v))
+    }
+}
+
+/// Typed accessors for the indicators the client reasons about by name.
+/// Generated so the list stays in one place; `StatusInfo::set` still accepts
+/// any id the game invents.
+macro_rules! status_accessors {
+    ($($(#[$m:meta])* $name:ident),* $(,)?) => {
+        impl StatusInfo {
+            $(
+                $(#[$m])*
+                pub fn $name(&self) -> bool {
+                    self.get(stringify!($name))
+                }
+            )*
+        }
+    };
+}
+
+status_accessors! {
+    standing,
+    kneeling,
+    sitting,
+    prone,
+    stunned,
+    bleeding,
+    hidden,
+    invisible,
+    webbed,
+    /// True while grouped. Before the map refactor this was never written --
+    /// the parser had no arm for it -- so any code reading it saw a permanent
+    /// `false`. It now reflects `IconJOINED`.
+    joined,
+    dead,
+    poisoned,
+    diseased,
 }
 
 /// Player vitals (percentages only)
@@ -713,6 +848,112 @@ impl RoomMetaState {
     }
 }
 
+/// One item from an `<inventoryManager>` snapshot, mapped from the raw
+/// `<i .../>` attributes. Lenient where Saga's own validator is strict:
+/// a malformed field degrades to a default instead of dropping the item.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ManagedInventoryItem {
+    /// Exist id
+    pub id: String,
+    /// worn/righthand/lefthand/atfeet/reserved (parent = player),
+    /// in/on/behind/underneath (parent = a container's exist id), or "room"
+    pub relation: String,
+    /// "player", "room", or the parent container's exist id
+    pub parent: String,
+    /// Full display name (article + adjective + noun)
+    pub name: String,
+    pub article: String,
+    pub adjective: String,
+    pub noun: String,
+    /// Long description when it differs from `name` (`$_..$_` markers stripped)
+    pub long: Option<String>,
+    /// Item weight in pounds; -1 = unknown (the wire's sentinel, e.g. on
+    /// room furniture)
+    pub weight: i32,
+    /// Container capacity (contents), when the item is a container
+    pub in_max: Option<u32>,
+    /// Surface capacity (on top), when the item is a surface
+    pub on_max: Option<u32>,
+    /// Raw flags from the comma-separated `flags` attribute (e.g. "closed")
+    pub flags: Vec<String>,
+}
+
+impl ManagedInventoryItem {
+    /// Map one `<i .../>`'s raw attributes; None only when the id or loc is
+    /// missing/unusable (an item we could never anchor in the tree).
+    pub fn from_attrs(attrs: &[(String, String)]) -> Option<Self> {
+        let get = |name: &str| {
+            attrs
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.as_str())
+        };
+        let id = get("id")?.to_string();
+        let loc = get("loc")?;
+        let (relation, parent) = if loc == "room" {
+            ("room".to_string(), "room".to_string())
+        } else {
+            let (rel, parent) = loc.split_once(',')?;
+            (rel.trim().to_string(), parent.trim().to_string())
+        };
+        // name is "article,adjective,noun"; either of the first two may be
+        // empty. Anything that doesn't split into three keeps the whole
+        // string as the noun rather than losing the item.
+        let raw_name = get("name").unwrap_or_default();
+        let (article, adjective, noun) = match raw_name.splitn(3, ',').collect::<Vec<_>>()[..] {
+            [a, adj, n] => (a.trim().to_string(), adj.trim().to_string(), n.trim().to_string()),
+            _ => (String::new(), String::new(), raw_name.trim().to_string()),
+        };
+        let name = [article.as_str(), adjective.as_str(), noun.as_str()]
+            .iter()
+            .filter(|s| !s.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let long = get("long")
+            .map(|l| l.replace("$_", "").trim().to_string())
+            .filter(|l| !l.is_empty());
+        Some(Self {
+            id,
+            relation,
+            parent,
+            name,
+            article,
+            adjective,
+            noun,
+            long,
+            weight: get("weight").and_then(|w| w.trim().parse().ok()).unwrap_or(0),
+            in_max: get("in_max").and_then(|v| v.trim().parse().ok()),
+            on_max: get("on_max").and_then(|v| v.trim().parse().ok()),
+            flags: get("flags")
+                .map(|f| {
+                    f.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+    }
+}
+
+/// Latest `<inventoryManager>` snapshot (the structured inventory tree the
+/// extended feed serves in response to `_inventory manager <token>`).
+#[derive(Clone, Debug, Default)]
+pub struct ManagedInventoryState {
+    /// Correlation token from the request
+    pub token: String,
+    /// Room uid the snapshot was taken in
+    pub room: String,
+    pub items: Vec<ManagedInventoryItem>,
+    /// False when the response carried continuation cursors (paginated
+    /// inventory); continuation-following isn't implemented yet, so an
+    /// incomplete snapshot stays incomplete.
+    pub complete: bool,
+    /// Bumped on every snapshot for change detection
+    pub generation: u64,
+}
+
 /// GS4 Experience dialog state (from `<openDialog id='expr'>`)
 /// Composite of: yourLvl label + mindState progress + nextLvlPB progress
 #[derive(Clone, Debug, Default)]
@@ -897,6 +1138,58 @@ impl EncumbranceState {
     }
 }
 
+/// Combat stance, from `<progressBar id='pbarStance' value='100'
+/// text='defensive (100%)'/>` inside the stance dialog.
+///
+/// Before this existed the stance bar rendered straight into a window widget
+/// and never reached game state, so headless and remote clients -- anything
+/// without a stance window -- had no stance at all. It is stored here for the
+/// same reason injuries and vitals are: the data belongs to the session, not
+/// to whichever window happens to be on screen.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StanceState {
+    /// Percent of stance contributing to defense (0-100). 100 is fully
+    /// defensive, 0 fully offensive.
+    pub value: u32,
+    /// Stance name parsed out of the bar text ("defensive", "offensive", ...).
+    /// Empty until the first stance bar arrives.
+    pub text: String,
+    /// Generation counter for change detection
+    pub generation: u64,
+}
+
+impl StanceState {
+    /// Update from progress bar data; returns true if changed.
+    ///
+    /// The feed's text is `"defensive (100%)"` -- the percent is already in
+    /// `value`, so the parenthetical is stripped and only the name kept.
+    /// Callers pass the raw text; parsing lives here so every entry point
+    /// (dialog path and bare progressBar path) normalizes identically.
+    pub fn update(&mut self, value: u32, text: &str) -> bool {
+        let name = text
+            .split('(')
+            .next()
+            .unwrap_or(text)
+            .trim()
+            .to_ascii_lowercase();
+        if self.value != value || self.text != name {
+            self.value = value;
+            self.text = name;
+            self.generation += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Clear on disconnect/login.
+    pub fn clear(&mut self) {
+        self.value = 0;
+        self.text.clear();
+        self.generation += 1;
+    }
+}
+
 /// Betrayer panel state (from `<dialogData id='BetrayerPanel'>`)
 /// Displays blood points as progress bar + list of contributing items
 #[derive(Clone, Debug, Default)]
@@ -947,7 +1240,44 @@ impl BetrayerState {
         self.generation += 1;
     }
 }
+/// How many recent game lines stay available to `Await` steps. An await
+/// polls once per tick, so this only has to cover the burst a single tick can
+/// miss; 64 is far more than any observed edge needs and costs nothing.
+pub const RAW_LINE_RING: usize = 64;
+
 impl GameState {
+    /// Record a game line for scripted-edge awaits, evicting the oldest past
+    /// [`RAW_LINE_RING`]. Returns nothing; awaits read `recent_lines`.
+    pub fn push_recent_line(&mut self, line: &str) {
+        // Blank lines can't match a meaningful pattern and would evict real
+        // content from a small ring.
+        if line.trim().is_empty() {
+            return;
+        }
+        self.line_seq += 1;
+        self.recent_lines.push_back((self.line_seq, line.to_string()));
+        while self.recent_lines.len() > RAW_LINE_RING {
+            self.recent_lines.pop_front();
+        }
+    }
+
+    /// Whether a named debuff is on the Debuffs board right now. Lich's
+    /// `Status.bound?`/`Status.sleeping?` gate on the Bind/Sleep debuff
+    /// entries; the feed removes expired entries, so presence is the signal.
+    /// Matches the display text exactly or as a leading word ("Bind" also
+    /// matches "Bind (214)").
+    pub fn debuff_active(&self, name: &str) -> bool {
+        self.effects
+            .get("Debuffs")
+            .map(|c| {
+                c.effects.iter().any(|e| {
+                    let t = e.text.trim();
+                    t == name || t.starts_with(&format!("{name} "))
+                })
+            })
+            .unwrap_or(false)
+    }
+
     pub fn new() -> Self {
         Self {
             connected: false,
@@ -956,6 +1286,7 @@ impl GameState {
             room_name: None,
             exits: Vec::new(),
             game_time: 0,
+            game_time_received: None,
             roundtime_end: None,
             casttime_end: None,
             spell: None,
@@ -983,8 +1314,16 @@ impl GameState {
             spellbook: Vec::new(),
             spellbook_generation: 0,
             room_meta: RoomMetaState::default(),
+            managed_inventory: None,
+            pulse_count: 0,
+            last_pulse_mana: false,
             objects: crate::core::game_objects::GameObjects::default(),
             move_feedback: std::collections::VecDeque::new(),
+            game_line_no: 0,
+            silver_line_no: 0,
+            nav_count: 0,
+            recent_lines: std::collections::VecDeque::new(),
+            line_seq: 0,
             spell_names_seen: std::collections::HashMap::new(),
             character: crate::core::character_state::CharacterState::default(),
             silver: None,
@@ -992,6 +1331,8 @@ impl GameState {
             dr_experience: DRExperienceState::default(),
             gs4_experience: GS4ExperienceState::default(),
             encumbrance: EncumbranceState::default(),
+            stance: StanceState::default(),
+            group: crate::core::group::GroupState::default(),
             minivitals: MiniVitalsState::default(),
             betrayer: BetrayerState::default(),
             bounty: BountyState::default(),
@@ -1006,6 +1347,7 @@ impl GameState {
     /// Also periodically recalculates estimated lag (every 30 seconds of game time).
     pub fn update_game_time(&mut self, prompt_time: i64) {
         self.game_time = prompt_time;
+        self.game_time_received = Some(std::time::Instant::now());
 
         // Periodically calculate lag (every LAG_CHECK_INTERVAL_SECS)
         if prompt_time - self.last_lag_check_time >= LAG_CHECK_INTERVAL_SECS {
@@ -1023,21 +1365,31 @@ impl GameState {
         }
     }
 
+    /// Server "now", extrapolated: the last prompt's timestamp plus how long
+    /// ago it arrived on the local clock. Timers keep flowing between lines.
+    pub fn game_time_now(&self) -> i64 {
+        self.game_time
+            + self
+                .game_time_received
+                .map(|at| at.elapsed().as_secs() as i64)
+                .unwrap_or(0)
+    }
+
     /// Check if currently in roundtime.
-    /// Compares against game server time, not system time.
+    /// Compares against extrapolated game server time, not system time.
     pub fn in_roundtime(&self) -> bool {
         if let Some(end_time) = self.roundtime_end {
-            self.game_time < end_time
+            self.game_time_now() < end_time
         } else {
             false
         }
     }
 
     /// Check if currently in casttime.
-    /// Compares against game server time, not system time.
+    /// Compares against extrapolated game server time, not system time.
     pub fn in_casttime(&self) -> bool {
         if let Some(end_time) = self.casttime_end {
-            self.game_time < end_time
+            self.game_time_now() < end_time
         } else {
             false
         }
@@ -1046,7 +1398,7 @@ impl GameState {
     /// Get remaining roundtime in seconds (0 if not in roundtime)
     pub fn roundtime_remaining(&self) -> i64 {
         if let Some(end_time) = self.roundtime_end {
-            (end_time - self.game_time).max(0)
+            (end_time - self.game_time_now()).max(0)
         } else {
             0
         }
@@ -1055,7 +1407,7 @@ impl GameState {
     /// Get remaining casttime in seconds (0 if not in casttime)
     pub fn casttime_remaining(&self) -> i64 {
         if let Some(end_time) = self.casttime_end {
-            (end_time - self.game_time).max(0)
+            (end_time - self.game_time_now()).max(0)
         } else {
             0
         }
@@ -1225,17 +1577,17 @@ mod tests {
     #[test]
     fn test_game_state_status_default() {
         let state = GameState::new();
-        assert!(!state.status.standing);
-        assert!(!state.status.kneeling);
-        assert!(!state.status.sitting);
-        assert!(!state.status.prone);
-        assert!(!state.status.stunned);
-        assert!(!state.status.bleeding);
-        assert!(!state.status.hidden);
-        assert!(!state.status.invisible);
-        assert!(!state.status.webbed);
-        assert!(!state.status.joined);
-        assert!(!state.status.dead);
+        assert!(!state.status.standing());
+        assert!(!state.status.kneeling());
+        assert!(!state.status.sitting());
+        assert!(!state.status.prone());
+        assert!(!state.status.stunned());
+        assert!(!state.status.bleeding());
+        assert!(!state.status.hidden());
+        assert!(!state.status.invisible());
+        assert!(!state.status.webbed());
+        assert!(!state.status.joined());
+        assert!(!state.status.dead());
     }
 
     // ========== Game Time tests ==========
@@ -1450,29 +1802,141 @@ mod tests {
     #[test]
     fn test_status_info_default() {
         let status = StatusInfo::default();
-        assert!(!status.standing);
-        assert!(!status.kneeling);
-        assert!(!status.sitting);
-        assert!(!status.prone);
-        assert!(!status.stunned);
-        assert!(!status.bleeding);
-        assert!(!status.hidden);
-        assert!(!status.invisible);
-        assert!(!status.webbed);
-        assert!(!status.joined);
-        assert!(!status.dead);
+        assert!(!status.standing());
+        assert!(!status.kneeling());
+        assert!(!status.sitting());
+        assert!(!status.prone());
+        assert!(!status.stunned());
+        assert!(!status.bleeding());
+        assert!(!status.hidden());
+        assert!(!status.invisible());
+        assert!(!status.webbed());
+        assert!(!status.joined());
+        assert!(!status.dead());
     }
 
     #[test]
     fn test_status_info_clone() {
         let mut status = StatusInfo::default();
-        status.standing = true;
-        status.hidden = true;
+        status.set("standing", true);
+        status.set("hidden", true);
 
         let cloned = status.clone();
-        assert!(cloned.standing);
-        assert!(cloned.hidden);
-        assert!(!cloned.dead);
+        assert!(cloned.standing());
+        assert!(cloned.hidden());
+        assert!(!cloned.dead());
+    }
+
+    #[test]
+    fn stance_parses_name_out_of_bar_text() {
+        let mut stance = StanceState::default();
+        // The feed's text is "defensive (100%)" -- the percent is already in
+        // `value`, so only the name is kept.
+        assert!(stance.update(100, "defensive (100%)"));
+        assert_eq!(stance.value, 100);
+        assert_eq!(stance.text, "defensive");
+
+        assert!(stance.update(0, "offensive (0%)"));
+        assert_eq!(stance.value, 0);
+        assert_eq!(stance.text, "offensive");
+    }
+
+    #[test]
+    fn stance_handles_text_without_percent() {
+        let mut stance = StanceState::default();
+        // Defensive against a feed that omits the parenthetical.
+        stance.update(50, "guarded");
+        assert_eq!(stance.text, "guarded");
+
+        // ...and against casing drift.
+        stance.update(50, "Advance (50%)");
+        assert_eq!(stance.text, "advance");
+    }
+
+    #[test]
+    fn stance_reports_changes_for_delta_suppression() {
+        let mut stance = StanceState::default();
+        assert!(stance.update(100, "defensive (100%)"));
+        // Same value and name: no change, so no delta is emitted.
+        assert!(!stance.update(100, "defensive (100%)"));
+        // A percent change alone counts.
+        assert!(stance.update(75, "defensive (75%)"));
+        let gen = stance.generation;
+        assert!(!stance.update(75, "defensive (75%)"));
+        assert_eq!(stance.generation, gen, "no-op must not bump generation");
+    }
+
+    #[test]
+    fn stance_clear_resets() {
+        let mut stance = StanceState::default();
+        stance.update(100, "defensive (100%)");
+        stance.clear();
+        assert_eq!(stance.value, 0);
+        assert!(stance.text.is_empty());
+    }
+
+    #[test]
+    fn status_info_normalizes_case_and_icon_prefix() {
+        let mut status = StatusInfo::default();
+        // The game sends "IconSTUNNED"; config stores "STUNNED"; the old code
+        // matched "stunned". All three must be one key.
+        status.set("IconSTUNNED", true);
+        assert!(status.stunned());
+        assert!(status.get("STUNNED"));
+        assert!(status.get("stunned"));
+
+        // ...and clearing through a different casing clears the same key.
+        status.set("Stunned", false);
+        assert!(!status.stunned());
+    }
+
+    #[test]
+    fn status_info_stores_arbitrary_ids() {
+        let mut status = StatusInfo::default();
+        // Ids with no typed accessor still round-trip -- the whole point of
+        // the map. POISONED/DISEASED previously had nowhere to live.
+        status.set("POISONED", true);
+        status.set("SOME_FUTURE_ICON", true);
+        assert!(status.poisoned());
+        assert!(status.get("some_future_icon"));
+    }
+
+    #[test]
+    fn status_info_distinguishes_unreported_from_inactive() {
+        let mut status = StatusInfo::default();
+        assert!(!status.is_known("stunned"), "never reported");
+        assert!(!status.get("stunned"), "and reads false");
+
+        status.set("stunned", false);
+        assert!(status.is_known("stunned"), "explicitly reported inactive");
+        assert!(!status.get("stunned"));
+    }
+
+    #[test]
+    fn status_info_set_reports_changes() {
+        let mut status = StatusInfo::default();
+        // First report is a change even when the value is the default...
+        assert!(status.set("stunned", false));
+        // ...but a repeat of the same value is not, so no delta is emitted.
+        assert!(!status.set("stunned", false));
+        assert!(status.set("stunned", true));
+        assert!(!status.set("stunned", true));
+    }
+
+    /// The phone client reads flat lowercase keys (`d["stunned"]` in app.js),
+    /// so the map MUST serialize transparently -- no wrapper object, no
+    /// uppercase. This pins the wire shape against accidental restructuring.
+    #[test]
+    fn status_info_serializes_as_flat_lowercase_object() {
+        let mut status = StatusInfo::default();
+        status.set("IconSTUNNED", true);
+        status.set("BLEEDING", false);
+
+        let json = serde_json::to_string(&status).expect("serialize");
+        assert_eq!(json, r#"{"bleeding":false,"stunned":true}"#);
+
+        let back: StatusInfo = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, status);
     }
 
     // ========== Vitals tests ==========
@@ -1522,10 +1986,16 @@ mod tests {
 
     #[test]
     fn test_status_info_debug() {
-        let status = StatusInfo::default();
+        // A default StatusInfo is now an EMPTY map -- nothing reported yet --
+        // so Debug names the type but lists no ids. Reported ids appear.
+        let mut status = StatusInfo::default();
         let debug_str = format!("{:?}", status);
         assert!(debug_str.contains("StatusInfo"));
-        assert!(debug_str.contains("standing"));
+        assert!(!debug_str.contains("standing"), "nothing reported yet");
+
+        status.set("STANDING", true);
+        let debug_str = format!("{:?}", status);
+        assert!(debug_str.contains("standing"), "reported ids are listed");
     }
 
     #[test]

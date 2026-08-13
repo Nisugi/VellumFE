@@ -366,6 +366,39 @@ pub enum ParsedElement {
         container_id: String,
         content: String, // Full line with links preserved
     },
+    /// `<pulse mana="0|1"/>` — the game's pulse announcement (extended feed,
+    /// served to clients identifying as WRAYTH 1.0.1.28+). A pulse fires
+    /// every minute ±15s; every pulse absorbs field experience (when any is
+    /// pooled), and every OTHER pulse is also a mana pulse — `mana` says
+    /// which kind this one was. Replaces the old trick of inferring pulses
+    /// from observed mana gain or exp absorption.
+    Pulse {
+        mana: bool,
+    },
+    /// `<inventoryManager id='<token>' room='...'>` ... `</inventoryManager>`
+    /// — structured inventory snapshot (extended feed), sent only in response
+    /// to a client `_inventory manager <token>` request. Each entry in
+    /// `items` is the raw attributes of one `<i .../>` child; `continuations`
+    /// carries raw `<continuation root=... last=.../>` cursors from paginated
+    /// responses. Attributes are passed raw so the core layer owns the field
+    /// mapping, like CreatureStatus.
+    InventoryManager {
+        token: String,
+        room: String,
+        items: Vec<Vec<(String, String)>>,
+        continuations: Vec<Vec<(String, String)>>,
+    },
+}
+
+/// In-flight `<inventoryManager>` block: children accumulate here between
+/// the open and close tags (the whole response arrives on one line, but the
+/// builder keeps the parser correct if a server ever splits it).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct InvManagerBuilder {
+    pub(crate) token: String,
+    pub(crate) room: String,
+    pub(crate) items: Vec<Vec<(String, String)>>,
+    pub(crate) continuations: Vec<Vec<(String, String)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -443,6 +476,8 @@ pub struct XmlParser {
     // Menu tracking
     current_menu_id: Option<String>, // ID of menu being parsed
     current_menu_coords: Vec<(String, Option<String>)>, // (coord, optional noun) pairs for current menu
+    /// In-flight `<inventoryManager>` block (None outside one)
+    pub(crate) inv_manager: Option<InvManagerBuilder>,
 
     // Event pattern matching
     event_matchers: Vec<(Regex, crate::config::EventPattern)>, // Compiled regexes + patterns
@@ -506,6 +541,7 @@ impl XmlParser {
             current_preset_id: None,
             current_menu_id: None,
             current_menu_coords: Vec::new(),
+            inv_manager: None,
             event_matchers,
         }
     }
@@ -893,6 +929,23 @@ impl XmlParser {
         }
         else if tag.starts_with("<roommeta ") {
             self.handle_roommeta(tag, elements);
+        }
+        // Extended feed (WRAYTH 1.0.1.28+ banner): pulse tick and the
+        // structured inventory response to `_inventory manager <token>`
+        else if tag.starts_with("<pulse") {
+            self.handle_pulse(tag, elements);
+        } else if tag.starts_with("<inventoryManager") {
+            self.handle_inventory_manager_open(tag, elements);
+        } else if Self::is_close_tag(tag, "inventoryManager") {
+            self.handle_inventory_manager_close(elements);
+        }
+        // `<i>`/`<continuation>` children only mean something inside an
+        // inventoryManager block; the guard keeps a bare `<i ...>` elsewhere
+        // from being swallowed here.
+        else if self.inv_manager.is_some()
+            && (tag.starts_with("<i ") || tag.starts_with("<continuation "))
+        {
+            self.handle_inventory_manager_child(tag);
         }
         // Debug: catch any dropdown-related tags we might be missing
         // (case-sensitive checks - avoids a per-tag to_lowercase allocation)

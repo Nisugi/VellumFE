@@ -79,6 +79,14 @@ fn town_code(town: &str) -> Option<&'static str> {
         "Solhaven" => "sol",
         "Wehnimer's Landing" => "wl",
         "Icemule Trace" => "imt",
+        // The Elven Nations pairs go2's config validation accepts
+        // (go2.lic:440). The live mapdb ships NO eastern day-pass procs
+        // (verified 2026-08-12: the only buy_day_pass edges are the six
+        // western ones), so DEPARTURES stays western until the data exists —
+        // but held eastern passes and config pairs must still resolve.
+        "Ta'Illistim" => "ill",
+        "Ta'Vaalor" => "val",
+        "Cysaegir" => "cys",
         _ => return None,
     })
 }
@@ -254,9 +262,23 @@ pub struct DayPassCache {
     /// The town pair captured from the most recent description line, awaiting
     /// its expiry line (Lich's `last_id`).
     pending_id: Option<String>,
+    /// A buy attempt failed for lack of silver this session — Lich turns the
+    /// buy_day_pass setting off for the run (map_strategies.rb:740) so the
+    /// router stops planning through buy edges it can't pay for.
+    buy_disabled: bool,
 }
 
 impl DayPassCache {
+    /// Session suppression of day-pass BUYING after a too-poor failure
+    /// (Lich's "Turning off buy_day_pass setting."). Held passes still route.
+    pub fn buy_disabled(&self) -> bool {
+        self.buy_disabled
+    }
+
+    pub fn disable_buy(&mut self) {
+        self.buy_disabled = true;
+    }
+
     /// Feed one game line as the client sees it after `<a>` markup is stripped
     /// to plain text. `pass_id` is the exist-id of the line's `noun="pass"`
     /// link, when present (the description/EXPIRED lines carry one). The expiry
@@ -377,6 +399,11 @@ impl DayPassCache {
     /// this to decide which passes still need a `look`.
     pub fn contains(&self, id: &str) -> bool {
         self.passes.contains_key(id)
+    }
+
+    /// All learned pass ids, for the sack-sweep prune.
+    pub fn ids(&self) -> impl Iterator<Item = &String> {
+        self.passes.keys()
     }
 
     pub fn forget(&mut self, id: &str) {
@@ -518,6 +545,20 @@ mod tests {
         assert!(!buy_permits("sol,imt", a, b));
         // A different pair with a matching config.
         assert!(buy_permits("sol,imt", "Solhaven", "Icemule Trace"));
+        // The Elven Nations pairs go2's validation accepts (go2.lic:440):
+        // codes resolve even though the mapdb ships no eastern buy procs yet.
+        assert!(buy_permits("ill,val", "Ta'Illistim", "Ta'Vaalor"));
+        assert!(buy_permits("cys,ill", "Ta'Illistim", "Cysaegir"));
+        assert!(buy_permits("val,cys", "Cysaegir", "Ta'Vaalor"));
+        assert!(!buy_permits("ill,val", "Ta'Illistim", "Cysaegir"));
+    }
+
+    #[test]
+    fn buy_disabled_flag_starts_clear_and_sticks() {
+        let mut cache = DayPassCache::default();
+        assert!(!cache.buy_disabled());
+        cache.disable_buy();
+        assert!(cache.buy_disabled());
     }
 
     #[test]

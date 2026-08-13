@@ -75,6 +75,56 @@ pub(super) struct EncumConfig {
     pub(super) show_label: bool,
 }
 
+/// Multi-account card contents (MultiAccountWidgetData).
+#[derive(Clone, Debug)]
+pub(super) struct MultiAccountConfig {
+    /// The widget data verbatim -- the UI edits this copy directly. The old
+    /// shape mirrored twelve fields with hand-written copy-in and copy-out
+    /// blocks, where a forgotten copy-out meant a checkbox that flipped in
+    /// the menu and was silently discarded on the next frame's rebuild.
+    pub(super) data: crate::config::MultiAccountWidgetData,
+    /// Rows in display order: (row, shown, merge-flag). The merge flag is
+    /// the RAW stored membership (`row_merge_flag`), not the positional
+    /// render answer -- reading the positional answer here and writing it
+    /// back deleted the flag of whichever row sat first whenever any
+    /// unrelated option changed.
+    pub(super) rows: Vec<(crate::config::CardRow, bool, bool)>,
+    /// The effect name filter as one editable comma-separated line.
+    pub(super) effect_filter: String,
+}
+
+impl MultiAccountConfig {
+    pub(super) fn from_data(data: &crate::config::MultiAccountWidgetData) -> Self {
+        Self {
+            data: data.clone(),
+            rows: data
+                .ordered_rows()
+                .into_iter()
+                .map(|(row, shown)| (row, shown, data.row_merge_flag(row)))
+                .collect(),
+            effect_filter: data.effect_filter.join(", "),
+        }
+    }
+
+    /// Write the whole view back into the layout's widget data.
+    pub(super) fn apply_to(&self, data: &mut crate::config::MultiAccountWidgetData) {
+        *data = self.data.clone();
+        data.row_order = self.rows.iter().map(|(r, _, _)| r.id().to_string()).collect();
+        for (row, shown, merged) in &self.rows {
+            data.set_row_shown(*row, *shown);
+            data.set_row_merged(*row, *merged);
+        }
+        data.effect_filter = self
+            .effect_filter
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        data.max_effects = data.max_effects.max(1);
+    }
+}
+
 /// Everything the Window and widget sections of the context menu render,
 /// resolved up front so the menu body stays a static fn.
 pub(super) struct WindowConfigView {
@@ -107,6 +157,7 @@ pub(super) struct WindowConfigView {
     pub(super) targets: Option<TargetsConfig>,
     pub(super) experience: Option<ExperienceConfig>,
     pub(super) encum: Option<EncumConfig>,
+    pub(super) multiaccount: Option<MultiAccountConfig>,
     /// MiniVitals: the shared vitals options (GuiUiSettings.vitals).
     pub(super) vitals: Option<crate::frontend::gui::persistence::VitalsConfig>,
     /// Widget types with a dedicated editor reachable from the menu.
@@ -159,6 +210,7 @@ fn widget_section_label(widget_type: &crate::data::WidgetType) -> Option<&'stati
         W::Compass => "Compass",
         W::Hand => "Hand",
         W::Dashboard => "Dashboard",
+        W::MultiAccount => "Characters",
         _ => return None,
     })
 }
@@ -259,6 +311,7 @@ impl VellumGuiApp {
             targets: None,
             experience: None,
             encum: None,
+            multiaccount: None,
             vitals: None,
             is_tabbed: matches!(window.content, WindowContent::TabbedText(_)),
             is_hotkeybar: window.widget_type == crate::data::WidgetType::Hotkeybar,
@@ -342,6 +395,9 @@ impl VellumGuiApp {
                     mind_bar_color: data.mind_bar_color.clone().unwrap_or_default(),
                     exp_bar_color: data.exp_bar_color.clone().unwrap_or_default(),
                 });
+            }
+            Some(crate::config::WindowDef::MultiAccount { data, .. }) => {
+                view.multiaccount = Some(MultiAccountConfig::from_data(data));
             }
             Some(crate::config::WindowDef::Encumbrance { data, .. }) => {
                 view.encum = Some(EncumConfig {
@@ -657,6 +713,22 @@ impl VellumGuiApp {
                     };
                     data.mind_bar_color = opt(&experience.mind_bar_color);
                     data.exp_bar_color = opt(&experience.exp_bar_color);
+                    self.app_core.schedule_layout_autosave();
+                }
+            }
+            GuiWindowMenuCommand::MoveMultiAccountRow { row, up } => {
+                if let Some(crate::config::WindowDef::MultiAccount { data, .. }) =
+                    self.layout_def_mut(&name)
+                {
+                    data.move_row(row, up);
+                    self.app_core.schedule_layout_autosave();
+                }
+            }
+            GuiWindowMenuCommand::SetMultiAccountConfig(ma) => {
+                if let Some(crate::config::WindowDef::MultiAccount { data, .. }) =
+                    self.layout_def_mut(&name)
+                {
+                    ma.apply_to(data);
                     self.app_core.schedule_layout_autosave();
                 }
             }
@@ -1096,6 +1168,229 @@ impl VellumGuiApp {
                 }
             });
         }
+        if let Some(ma) = &view.multiaccount {
+            ui.label("Card contents");
+            let mut next = ma.clone();
+            let mut changed = false;
+            changed |= ui
+                .checkbox(&mut next.data.show_self, "Your own card")
+                .changed();
+            changed |= ui
+                .checkbox(&mut next.data.show_room, "Room id in header")
+                .on_hover_text(
+                    "The room number, top-right, red when that character is \
+                     not in your room. Hover it for the room name.",
+                )
+                .changed();
+            if next.data.show_vitals {
+                ui.indent("ma_vitals", |ui| {
+                    changed |= ui
+                        .checkbox(
+                            &mut next.data.show_absolute_vitals,
+                            "Vitals as numbers (51/51)",
+                        )
+                        .changed();
+                });
+            }
+            if next.data.show_effects {
+                ui.indent("ma_effects", |ui| {
+                    ui.label(RichText::new("Only show effects matching:").small());
+                    changed |= ui
+                        .text_edit_singleline(&mut next.effect_filter)
+                        .on_hover_text(
+                            "Comma-separated name fragments, e.g. \"sleep, bind, web\". \
+                             Leave empty to show everything.",
+                        )
+                        .changed();
+                    let mut cap = next.data.max_effects as u32;
+                    if ui
+                        .add(egui::Slider::new(&mut cap, 1..=12).text("Max per card"))
+                        .changed()
+                    {
+                        next.data.max_effects = cap as usize;
+                        changed = true;
+                    }
+                });
+            }
+            ui.separator();
+            // Card columns, the window Group model in miniature: pick how
+            // many, weight their widths, then assign each row below. One
+            // column is the classic vertical panel; "doll left, info right"
+            // is two.
+            ui.horizontal(|ui| {
+                ui.label("Card columns");
+                let current = next.data.column_weights().len();
+                for n in 1..=3usize {
+                    if ui
+                        .selectable_label(current == n, format!("{n}"))
+                        .clicked()
+                        && current != n
+                    {
+                        let mut weights = next.data.column_weights();
+                        weights.resize(n, 1.0);
+                        next.data.card_column_weights = weights;
+                        changed = true;
+                    }
+                }
+            });
+            if next.data.column_weights().len() > 1 {
+                ui.horizontal(|ui| {
+                    ui.label("Size weights");
+                    let mut weights = next.data.column_weights();
+                    let mut edited = false;
+                    for weight in weights.iter_mut() {
+                        if ui
+                            .add(
+                                egui::DragValue::new(weight)
+                                    .speed(0.05)
+                                    .range(0.2..=5.0)
+                                    .max_decimals(2),
+                            )
+                            .changed()
+                        {
+                            edited = true;
+                        }
+                    }
+                    if edited {
+                        next.data.card_column_weights = weights;
+                        changed = true;
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Relative column widths, like the Group system's size \
+                     weights: 1 and 2 makes the second column twice as wide.",
+                );
+            }
+            ui.label(RichText::new("Rows (top to bottom)").small());
+            {
+                // Same vocabulary as the Group section above: arrows to
+                // reorder, a cue on rows living in the line above, a
+                // fully-worded share checkbox in an indent, and -- with
+                // several columns -- a column picker per row.
+                let column_count = next.data.column_weights().len();
+                let last = ma.rows.len().saturating_sub(1);
+                for (index, (row, shown, merged)) in ma.rows.iter().enumerate() {
+                    let row = *row;
+                    let shares = index > 0 && *merged;
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(index > 0, egui::Button::new("\u{2B06}").small())
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::MoveMultiAccountRow {
+                                row,
+                                up: true,
+                            });
+                        }
+                        if ui
+                            .add_enabled(index < last, egui::Button::new("\u{2B07}").small())
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::MoveMultiAccountRow {
+                                row,
+                                up: false,
+                            });
+                        }
+                        if shares {
+                            // Visual cue: this row draws on the line opened
+                            // by the row above it (Group list convention).
+                            // U+00BB, not U+2514 -- the box-drawing corner
+                            // is missing from the bundled fonts and rendered
+                            // as a tofu square.
+                            ui.label(RichText::new("\u{00BB}").weak())
+                                .on_hover_text("Shares the line above");
+                        }
+                        let mut on = *shown;
+                        if ui.checkbox(&mut on, row.label()).changed() {
+                            if let Some(entry) =
+                                next.rows.iter_mut().find(|(r, _, _)| *r == row)
+                            {
+                                entry.1 = on;
+                            }
+                            changed = true;
+                        }
+                        if column_count > 1 {
+                            // Right-aligned column picker so labels stay in
+                            // a clean left edge.
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let current = next.data.row_column(row);
+                                    for col in (0..column_count).rev() {
+                                        if ui
+                                            .selectable_label(
+                                                current == col,
+                                                format!("{}", col + 1),
+                                            )
+                                            .on_hover_text(format!(
+                                                "Draw this row in column {}",
+                                                col + 1
+                                            ))
+                                            .clicked()
+                                            && current != col
+                                        {
+                                            next.data.set_row_column(row, col);
+                                            changed = true;
+                                        }
+                                    }
+                                },
+                            );
+                        }
+                    });
+                    // Big rows (vitals, doll) never squeeze onto a shared
+                    // horizontal strip -- putting things BESIDE them is what
+                    // the columns above are for -- so no share checkbox.
+                    if index > 0 && *shown && !row.full_width() {
+                        ui.indent((row.id(), "ma_row_share"), |ui| {
+                            let mut share = *merged;
+                            if ui
+                                .checkbox(&mut share, "Share line with the row above")
+                                .on_hover_text(
+                                    "Compact rows mix freely on one line \
+                                     (within the same column).",
+                                )
+                                .changed()
+                            {
+                                if let Some(entry) =
+                                    next.rows.iter_mut().find(|(r, _, _)| *r == row)
+                                {
+                                    entry.2 = share;
+                                }
+                                changed = true;
+                            }
+                        });
+                    }
+                }
+            }
+            ui.horizontal(|ui| {
+                ui.label("Card order");
+                for (value, label) in [
+                    ("group", "Group"),
+                    ("name", "Name"),
+                    ("port", "Connected"),
+                ] {
+                    if ui
+                        .selectable_label(next.data.sort_by == value, label)
+                        .clicked()
+                    {
+                        next.data.sort_by = value.to_string();
+                        changed = true;
+                    }
+                }
+            });
+            changed |= ui
+                .add(
+                    egui::Slider::new(&mut next.data.card_width, 90.0..=320.0)
+                        .text("Card width")
+                        .suffix(" px"),
+                )
+                .changed();
+            if changed {
+                command = Some(GuiWindowMenuCommand::SetMultiAccountConfig(next));
+            }
+        }
+
         if let Some(encum) = &view.encum {
             let mut show_bar = encum.show_bar;
             if ui.checkbox(&mut show_bar, "Level bar").changed() {

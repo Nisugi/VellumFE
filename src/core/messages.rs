@@ -141,7 +141,19 @@ pub struct MessageProcessor {
     /// Move-feedback events classified during flush (no `game_state` there);
     /// drained into `game_state.move_feedback` at the prompt so the walk
     /// executor sees each one exactly once.
-    pending_move_feedback: Vec<crate::core::move_feedback::MoveFeedback>,
+    pending_move_feedback: Vec<(u64, crate::core::move_feedback::MoveFeedback)>,
+    /// Monotone count of flushed game lines - the stamp on move-feedback
+    /// events (Lich's room_count guard generalized): the executor ignores
+    /// reactive events whose line predates its last send.
+    pub game_line_no: u64,
+    /// Raw game lines captured during flush (no `game_state` there); pushed
+    /// into `game_state.recent_lines` at the prompt for scripted-edge awaits.
+    pending_recent_lines: Vec<String>,
+    /// Whether to buffer raw lines at all. Off unless a travel task is
+    /// running: awaits are the only consumer, and copying every game line into
+    /// a ring for a feature nobody is using is pure waste. `tick_travel`
+    /// raises it when travel starts and drops it when travel ends.
+    pub capture_recent_lines: bool,
     /// Character-state lines captured during flush (no `game_state` there);
     /// fed into `game_state.character` at the prompt. Society/profession/CHE/
     /// citizenship output from SOCIETY/INFO/PROFILE/CITIZENSHIP.
@@ -152,6 +164,11 @@ pub struct MessageProcessor {
     /// Silver on hand parsed from a `wealth` line during flush; applied to
     /// `game_state.silver` at the prompt.
     pending_silver: Option<u64>,
+    /// Group events captured during flush, with the line's `<a exist noun>`
+    /// links. Text says what happened; the links say to whom. Applied to
+    /// `game_state.group` at the prompt IN ORDER -- a `group` reply's roster
+    /// line and its status sentinel must not be reordered.
+    pending_group: Vec<(crate::core::group::GroupEvent, Vec<crate::core::group::GroupMember>)>,
 
     /// Track if chunk (since last prompt) has main stream text
     chunk_has_main_text: bool,
@@ -338,9 +355,13 @@ impl MessageProcessor {
             pending_container_ingest: None,
             pending_ready_stow: Vec::new(),
             pending_move_feedback: Vec::new(),
+            game_line_no: 0,
+            pending_recent_lines: Vec::new(),
+            capture_recent_lines: false,
             pending_character_lines: Vec::new(),
             pending_day_pass_lines: Vec::new(),
             pending_silver: None,
+            pending_group: Vec::new(),
             remote: None,
             pending_client_commands: Vec::new(),
             chunk_has_main_text: false,
