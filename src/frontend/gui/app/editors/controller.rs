@@ -105,6 +105,11 @@ pub(in super::super) struct ControllerEditorState {
     wheel_selected_slice: Option<usize>,
     /// Designer: drag in progress on the canvas.
     wheel_drag: WheelDesignerDrag,
+    /// Undo stack for structural wheel edits (§2a): whole-buffer snapshots
+    /// plus the wheel meta's `start`, pushed before every structural op.
+    /// Bounded; cleared on wheel switch. Field edits (label/command text)
+    /// stay outside it by design.
+    wheel_undo: Vec<(Vec<WheelSlice>, Option<f32>)>,
     /// Save scope for every write in this editor: `true` = the shared global
     /// controller.toml, `false` = the active character's override file. Load
     /// always merges character over global; this only picks where edits land,
@@ -127,10 +132,14 @@ impl ControllerEditorState {
             wheel_designer_path: Vec::new(),
             wheel_selected_slice: None,
             wheel_drag: WheelDesignerDrag::None,
+            wheel_undo: Vec::new(),
             is_global: true,
         }
     }
 }
+
+/// Cap for the wheel undo stack — behind this, oldest snapshots fall off.
+const WHEEL_UNDO_CAP: usize = 50;
 
 /// Structural edit collected while rendering the slice tree (applied
 /// after the pass; in-place text/color edits mutate the buffer directly).
@@ -148,42 +157,132 @@ fn wheel_slices_at<'a>(slices: &'a mut Vec<WheelSlice>, path: &[usize]) -> Optio
     Some(level)
 }
 
-fn apply_wheel_op(slices: &mut Vec<WheelSlice>, op: WheelOp) {
+/// Apply a queued structural op, honoring locks (wheel v2): on a level
+/// with any locked slice, deletes go through the position-preserving
+/// `ring_delete`, adds split the widest unlocked slice instead of
+/// re-splitting the auto pool, and swaps touching a locked slice are
+/// refused. Lock-free levels keep the legacy behavior (autos stay auto).
+/// Returns a status message when an op is refused; sets `start_dirty`
+/// when the wheel's `start` changed and must be saved.
+fn apply_wheel_op_v2(
+    slices: &mut Vec<WheelSlice>,
+    op: WheelOp,
+    back_anchor: &str,
+    meta: &mut crate::config::WheelMeta,
+    start_dirty: &mut bool,
+) -> Option<String> {
+    // Materialize a locked level and return the op-space start angle (the
+    // view's real seat 0 center — meta.start at the top, the anchor
+    // rotation in folders).
+    fn prep_locked(
+        level: &mut Vec<WheelSlice>,
+        in_folder: bool,
+        back_anchor: &str,
+        start: f32,
+    ) -> f32 {
+        let view =
+            super::super::gamepad::WheelView::build(level, in_folder, back_anchor, start);
+        materialize_spans(level, &view.layout);
+        view.layout
+            .seats
+            .first()
+            .map(|s| s.center_deg())
+            .unwrap_or(0.0)
+    }
+    // Write a top-level start change back to the meta buffer.
+    fn store_start(meta: &mut crate::config::WheelMeta, new_start: f32, dirty: &mut bool) {
+        let norm = new_start.rem_euclid(360.0);
+        let new = if norm.abs() < 1e-4 { None } else { Some(norm) };
+        if new != meta.start {
+            meta.start = new;
+            *dirty = true;
+        }
+    }
+
     match op {
         WheelOp::Delete(path) => {
-            let (last, parent) = match path.split_last() {
-                Some(split) => split,
-                None => return,
-            };
-            if let Some(level) = wheel_slices_at(slices, parent) {
-                if *last < level.len() {
-                    level.remove(*last);
-                }
+            let (last, parent) = path.split_last()?;
+            let at_top = parent.is_empty();
+            let start = meta.start.unwrap_or(0.0);
+            let level = wheel_slices_at(slices, parent)?;
+            if *last >= level.len() {
+                return None;
             }
+            if level.iter().any(|s| s.locked) {
+                let op_start = prep_locked(level, !at_top, back_anchor, start);
+                if let Some((new_start, _)) = ring_delete(level, op_start, *last) {
+                    if at_top {
+                        store_start(meta, new_start, start_dirty);
+                    }
+                }
+            } else {
+                level.remove(*last);
+            }
+            None
         }
         WheelOp::AddChild(path) => {
             // path addresses the slice whose children gain the new entry
             // (an empty path adds a top-level slice).
-            if let Some(level) = wheel_slices_at(slices, &path) {
+            let at_top = path.is_empty();
+            let start = meta.start.unwrap_or(0.0);
+            let level = wheel_slices_at(slices, &path)?;
+            if level.iter().any(|s| s.locked) {
+                // Splitting the widest unlocked slice keeps every lock (and
+                // everything else outside that wedge) exactly in place.
+                let op_start = prep_locked(level, !at_top, back_anchor, start);
+                let min = crate::config::WHEEL_MIN_SPAN_DEG;
+                let candidate = level
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| !s.locked && s.span.unwrap_or(0.0) >= 2.0 * min)
+                    .max_by(|a, b| {
+                        a.1.span
+                            .unwrap_or(0.0)
+                            .total_cmp(&b.1.span.unwrap_or(0.0))
+                    })
+                    .map(|(i, _)| i);
+                let Some(i) = candidate else {
+                    return Some(
+                        "No room for a new slice — unlock or widen one first."
+                            .to_string(),
+                    );
+                };
+                // Cut at the wedge's midpoint.
+                let leading0 = op_start - level[0].span.unwrap_or(0.0) / 2.0;
+                let seat_leading = leading0
+                    + level[..i].iter().map(|s| s.span.unwrap_or(0.0)).sum::<f32>();
+                let at = seat_leading + level[i].span.unwrap_or(0.0) / 2.0;
+                if let Some((new_start, new_idx)) = ring_split(level, op_start, i, at) {
+                    level[new_idx].label = "new".to_string();
+                    if at_top {
+                        store_start(meta, new_start, start_dirty);
+                    }
+                }
+            } else {
                 level.push(WheelSlice {
                     label: "new".to_string(),
                     ..Default::default()
                 });
             }
+            None
         }
         WheelOp::MoveUp(path) => {
-            let (last, parent) = match path.split_last() {
-                Some(split) => split,
-                None => return,
-            };
+            let (last, parent) = path.split_last()?;
             if *last == 0 {
-                return;
+                return None;
             }
-            if let Some(level) = wheel_slices_at(slices, parent) {
-                if *last < level.len() {
-                    level.swap(*last, *last - 1);
-                }
+            let level = wheel_slices_at(slices, parent)?;
+            if *last >= level.len() {
+                return None;
             }
+            if level[*last].locked || level[*last - 1].locked {
+                return Some(
+                    "A locked slice holds its seat — unlock it to reorder."
+                        .to_string(),
+                );
+            }
+            level.swap(*last, *last - 1);
+            None
         }
     }
 }
@@ -1599,6 +1698,7 @@ fn render_wheels_tab(
             state.wheel_designer_path.clear();
             state.wheel_selected_slice = None;
             state.wheel_drag = WheelDesignerDrag::None;
+            state.wheel_undo.clear();
         };
         egui::ComboBox::from_id_salt("controller_wheel_pick")
             .selected_text(if state.wheel_selected.is_empty() {
@@ -1846,6 +1946,7 @@ fn render_wheels_tab(
     });
 
     let mut ops: Vec<WheelOp> = Vec::new();
+    let mut undo_clicked = false;
     match state.wheel_view_mode {
         WheelViewMode::Numeric => {
             egui::ScrollArea::vertical()
@@ -1872,7 +1973,7 @@ fn render_wheels_tab(
             let meta = state
                 .wheel_meta_buffer
                 .get_or_insert_with(Default::default);
-            render_wheel_designer(
+            undo_clicked = render_wheel_designer(
                 ui,
                 wheel_name,
                 buffer,
@@ -1886,11 +1987,49 @@ fn render_wheels_tab(
                 inner_ceiling,
                 &config.controller_tuning.fire_mode,
                 &mut ops,
+                &mut state.wheel_undo,
+                &mut state.wheel_status,
             );
         }
     }
+    if !ops.is_empty() {
+        // §2a: ops mutate after the render pass — bank the pre-op state.
+        let meta_start = state.wheel_meta_buffer.as_ref().and_then(|m| m.start);
+        state.wheel_undo.push((buffer.clone(), meta_start));
+        if state.wheel_undo.len() > WHEEL_UNDO_CAP {
+            let drop = state.wheel_undo.len() - WHEEL_UNDO_CAP;
+            state.wheel_undo.drain(..drop);
+        }
+    }
+    let mut start_dirty = false;
+    let meta = state.wheel_meta_buffer.get_or_insert_with(Default::default);
     for op in ops {
-        apply_wheel_op(buffer, op);
+        if let Some(msg) = apply_wheel_op_v2(
+            buffer,
+            op,
+            &config.controller_tuning.back_slice,
+            meta,
+            &mut start_dirty,
+        ) {
+            state.wheel_status = Some(msg);
+        }
+    }
+    if start_dirty {
+        *meta_save = Some((wheel_name.to_string(), meta.clone()));
+    }
+    if undo_clicked {
+        if let Some((snap_buffer, snap_start)) = state.wheel_undo.pop() {
+            *buffer = snap_buffer;
+            if meta.start != snap_start {
+                meta.start = snap_start;
+                *meta_save = Some((wheel_name.to_string(), meta.clone()));
+            }
+            state.wheel_selected_slice = None;
+            state.wheel_drag = WheelDesignerDrag::None;
+            if wheel_slices_at(buffer, &state.wheel_designer_path).is_none() {
+                state.wheel_designer_path.clear();
+            }
+        }
     }
 
     // Inline advisory: warn (without blocking) when the current buffer's
@@ -2130,13 +2269,22 @@ fn render_wheel_designer(
     inner_ceiling: u8,
     default_fire: &str,
     ops: &mut Vec<WheelOp>,
-) {
+    undo: &mut Vec<(Vec<WheelSlice>, Option<f32>)>,
+    status: &mut Option<String>,
+) -> bool {
     // A structural edit (delete, move) can strand the path; fall back to
     // the top level rather than a blank canvas.
     if wheel_slices_at(buffer, designer_path).is_none() {
         designer_path.clear();
         *selected_slice = None;
     }
+
+    // §2a undo: snapshot the pre-edit state once per frame; pushed at the
+    // end only when a structural edit actually ran this frame. (Edits
+    // queued as WheelOps are snapshotted by the caller instead.)
+    let undo_snapshot = (buffer.clone(), meta.start);
+    let mut mutated = false;
+    let mut undo_clicked = false;
 
     // Breadcrumb: wheel name, then each folder down to the shown level.
     let crumbs: Vec<String> = {
@@ -2230,10 +2378,16 @@ fn render_wheel_designer(
         // within grab range. The ghost Back seat's width is the runtime's
         // to decide, so neither of its edges is draggable — and a locked
         // slice's width can't be traded, so neither of its edges is
-        // either.
+        // either. With any lock on the level, the two dividers touching
+        // seat 0 are also frozen: trading seat 0's width rotates `start`,
+        // which would move every locked slice.
+        let any_lock = level.iter().any(|s| s.locked);
         let draggable = |b: usize| {
             let structural = if has_ghost { b + 1 < real_len } else { real_len >= 2 };
-            structural && !level[b].locked && !level[(b + 1) % real_len].locked
+            structural
+                && !level[b].locked
+                && !level[(b + 1) % real_len].locked
+                && !(any_lock && (b == 0 || (b + 1) % real_len == 0))
         };
         let nearest = view
             .layout
@@ -2292,11 +2446,18 @@ fn render_wheel_designer(
                     if let Some(seat) =
                         super::super::gamepad::seat_index_at_angle(v.x, -v.y, &view.layout)
                     {
-                        if seat < level.len() {
+                        // A locked slice can't be grabbed — unlock first
+                        // (F5: direct moves of a locked slice are blocked).
+                        if seat < level.len() && !level[seat].locked {
                             grabbed = WheelDesignerDrag::Wedge { slice: seat, target: seat };
                         }
                     }
                 }
+            }
+            // Any grab that mutates (divider materialize now, wedge move
+            // on release, floor drag next frames) snapshots pre-edit state.
+            if grabbed != WheelDesignerDrag::None {
+                mutated = true;
             }
             *drag = grabbed;
         }
@@ -2355,7 +2516,7 @@ fn render_wheel_designer(
             }
         }
     }
-    if let WheelDesignerDrag::Wedge { target, .. } = drag {
+    if let WheelDesignerDrag::Wedge { slice, target } = drag {
         if response.dragged() {
             if let Some(pos) = response.interact_pointer_pos() {
                 let v = pos - center;
@@ -2364,7 +2525,10 @@ fn render_wheel_designer(
                     super::super::gamepad::seat_index_at_angle(v.x, -v.y, &view.layout)
                 {
                     if seat < level.len() {
-                        *target = seat;
+                        // A move never carries a slice across a lock:
+                        // reorders are confined to the run of unlocked
+                        // slices around it, so no locked slice shifts.
+                        *target = clamp_move_target(level, *slice, seat);
                     }
                 }
             }
@@ -2477,10 +2641,15 @@ fn render_wheel_designer(
 
         // A dot on the rim end of every draggable divider (the ghost
         // Back's edges are the runtime's, and a locked slice's edges
-        // can't trade width, so those get none)...
+        // can't trade width, so those get none; with any lock present,
+        // seat 0's two dividers freeze too — see grab_handle)...
+        let any_lock = level.iter().any(|s| s.locked);
         let draggable = |b: usize| {
             let structural = if has_ghost { b + 1 < real_len } else { real_len >= 2 };
-            structural && !level[b].locked && !level[(b + 1) % real_len].locked
+            structural
+                && !level[b].locked
+                && !level[(b + 1) % real_len].locked
+                && !(any_lock && (b == 0 || (b + 1) % real_len == 0))
         };
         for (b, seat) in view.layout.seats.iter().enumerate() {
             if !draggable(b) {
@@ -2576,6 +2745,149 @@ fn render_wheel_designer(
                 };
             }
         }
+        // ----- Split / merge gestures (F6): right-click on the ring. Over
+        // a divider dot the gesture is merge (remove that divider); over a
+        // wedge body it's split (insert a divider at the cursor angle). A
+        // ghost preview shows what the right-click would do. -----
+        if *drag == WheelDesignerDrag::None {
+            // The op-space start: the view's real seat 0 center — identical
+            // to meta.start at the top level, and the anchor-derived
+            // rotation inside a folder, so cursor angles and ring-op
+            // bookkeeping share one coordinate system.
+            let op_start = view.layout.seats[0].center_deg();
+            // A divider is mergeable if it's a real boundary (not the ghost
+            // Back's edge). Lock guards live in ring_merge itself.
+            let mergeable = |b: usize| {
+                if has_ghost { b + 1 < real_len } else { real_len >= 2 }
+            };
+            let hover = response.hover_pos().filter(|p| {
+                let r = (*p - center).length();
+                r >= hub * 0.6 && r <= outer + 12.0
+            });
+            let hovered_divider = hover.and_then(|pos| {
+                let aim = aim_of(pos);
+                view.layout
+                    .seats
+                    .iter()
+                    .enumerate()
+                    .filter(|(b, _)| mergeable(*b))
+                    .map(|(b, seat)| {
+                        let angle = (seat.start_deg + seat.span_deg).rem_euclid(360.0);
+                        (b, super::super::gamepad::angular_gap(aim, angle))
+                    })
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .filter(|(_, gap)| *gap <= 8.0)
+                    .map(|(b, _)| b)
+            });
+            // Split candidate: the real wedge under the cursor, when both
+            // halves would clear MIN_SPAN (the ghost simply doesn't appear
+            // when there's no room).
+            let split_at = hover.filter(|_| hovered_divider.is_none()).and_then(|pos| {
+                let v = pos - center;
+                let r = v.length();
+                if r < hub || r > outer {
+                    return None;
+                }
+                let seat =
+                    super::super::gamepad::seat_index_at_angle(v.x, -v.y, &view.layout)?;
+                if seat >= real_len {
+                    return None;
+                }
+                let s = &view.layout.seats[seat];
+                let aim = aim_of(pos);
+                let off = (aim - s.start_deg).rem_euclid(360.0);
+                let min = crate::config::WHEEL_MIN_SPAN_DEG;
+                (off >= min && s.span_deg - off >= min).then_some((seat, aim))
+            });
+
+            // Ghost previews.
+            if let Some(b) = hovered_divider {
+                // Merge ghost: thicken the divider that would be removed.
+                let seat = &view.layout.seats[b];
+                let a = (seat.start_deg + seat.span_deg).to_radians()
+                    - std::f32::consts::FRAC_PI_2;
+                let dir = egui::vec2(a.cos(), a.sin());
+                painter.line_segment(
+                    [center + dir * hub, center + dir * outer],
+                    egui::Stroke::new(2.5, ui.visuals().warn_fg_color),
+                );
+                response.clone().on_hover_text(
+                    "Right-click to merge: this divider goes away and the \
+                     counter-clockwise slice keeps the union.",
+                );
+            } else if let Some((_, aim)) = split_at {
+                // Split ghost: dashed radial line + dashed rim marker at
+                // the cut angle.
+                let a = aim.to_radians() - std::f32::consts::FRAC_PI_2;
+                let dir = egui::vec2(a.cos(), a.sin());
+                let line: Vec<egui::Pos2> =
+                    vec![center + dir * hub, center + dir * outer];
+                painter.extend(egui::Shape::dashed_line(
+                    &line,
+                    egui::Stroke::new(1.5, ui.visuals().selection.stroke.color),
+                    5.0,
+                    4.0,
+                ));
+                let rim: Vec<egui::Pos2> = (-4..=4)
+                    .map(|k| {
+                        let da = (k as f32 * 1.2).to_radians();
+                        center
+                            + egui::vec2((a + da).cos(), (a + da).sin()) * (outer + 5.0)
+                    })
+                    .collect();
+                painter.extend(egui::Shape::dashed_line(
+                    &rim,
+                    egui::Stroke::new(1.5, ui.visuals().selection.stroke.color),
+                    3.0,
+                    3.0,
+                ));
+                response.clone().on_hover_text(
+                    "Right-click to split this slice at the cursor angle.",
+                );
+            }
+
+            if response.secondary_clicked() {
+                if let Some(b) = hovered_divider {
+                    let view = build_view(level, meta);
+                    materialize_spans(level, &view.layout);
+                    match ring_merge(level, op_start, b) {
+                        Ok((new_start, survivor)) => {
+                            mutated = true;
+                            *selected_slice = Some(survivor);
+                            if at_top {
+                                let norm = new_start.rem_euclid(360.0);
+                                let new =
+                                    if norm.abs() < 1e-4 { None } else { Some(norm) };
+                                if new != meta.start {
+                                    meta.start = new;
+                                    *meta_save =
+                                        Some((wheel_name.to_string(), meta.clone()));
+                                }
+                            }
+                        }
+                        Err(msg) => *status = Some(msg.to_string()),
+                    }
+                } else if let Some((seat, aim)) = split_at {
+                    let view = build_view(level, meta);
+                    materialize_spans(level, &view.layout);
+                    if let Some((new_start, new_idx)) =
+                        ring_split(level, op_start, seat, aim)
+                    {
+                        mutated = true;
+                        *selected_slice = Some(new_idx);
+                        if at_top {
+                            let norm = new_start.rem_euclid(360.0);
+                            let new = if norm.abs() < 1e-4 { None } else { Some(norm) };
+                            if new != meta.start {
+                                meta.start = new;
+                                *meta_save = Some((wheel_name.to_string(), meta.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Double-click descends into a folder wedge; on the Back ghost it
         // ascends — the wheel's own navigation, mirrored.
         if response.double_clicked() {
@@ -2625,12 +2937,18 @@ fn render_wheel_designer(
                 .map(|s| s.span_deg)
                 .collect();
             even_out_runs(level, &widths);
+            mutated = true;
         }
         if ui
             .button("Mirror")
-            .on_hover_text("Flip this level left↔right; every slice keeps its width.")
+            .on_hover_text(
+                "Flip this level left↔right; every slice keeps its width. \
+                 Deliberately includes locked slices — the one whole-ring \
+                 transform besides ±15° that overrides a lock.",
+            )
             .clicked()
         {
+            mutated = true;
             mirror_slices(level);
             if at_top {
                 // Seat 0's center mirrors too: start → −start.
@@ -2662,6 +2980,7 @@ fn render_wheel_designer(
                     )
                     .clicked()
                 {
+                    mutated = true;
                     level.retain(|s| !s.back);
                     *selected_slice = None;
                 }
@@ -2674,6 +2993,7 @@ fn render_wheel_designer(
                 )
                 .clicked()
             {
+                mutated = true;
                 level.push(WheelSlice {
                     label: "◂ Back".to_string(),
                     back: true,
@@ -2682,33 +3002,63 @@ fn render_wheel_designer(
                 *selected_slice = Some(level.len() - 1);
             }
         }
-        if at_top {
-            let mut rotate = 0.0f32;
-            if ui
-                .button("-15°")
-                .on_hover_text(
-                    "Rotate the whole ring 15° counter-clockwise (adjusts the \
-                     wheel's Start).",
-                )
-                .clicked()
-            {
-                rotate = -15.0;
-            }
-            if ui
-                .button("+15°")
-                .on_hover_text(
-                    "Rotate the whole ring 15° clockwise (adjusts the wheel's \
-                     Start).",
-                )
-                .clicked()
-            {
-                rotate = 15.0;
-            }
-            if rotate != 0.0 {
-                let norm = (meta.start.unwrap_or(0.0) + rotate).rem_euclid(360.0);
-                meta.start = if norm.abs() < 1e-4 { None } else { Some(norm) };
-                *meta_save = Some((wheel_name.to_string(), meta.clone()));
-            }
+        // ±15° rotate (F4b): the top level rotates via the wheel's `start`.
+        // Inside a folder the Back anchor owns the rotation (Back stays put
+        // across levels), so rotate is disabled there — unless the ring has
+        // no anchored Back (back_slice = none, or an explicit Back seat),
+        // where the user owns the geometry and `start` applies as usual.
+        let can_rotate =
+            at_top || back_anchor == "none" || level.iter().any(|s| s.back);
+        let mut rotate = 0.0f32;
+        let rot_hint = if can_rotate {
+            "Rotate the whole ring 15° (adjusts the wheel's Start). \
+             Deliberately includes locked slices."
+        } else {
+            "This folder ring is anchored by its Back slice, which owns \
+             the rotation. Add an explicit Back (or set the Back anchor \
+             to none in Tuning) to rotate it."
+        };
+        if ui
+            .add_enabled(can_rotate, egui::Button::new("-15°"))
+            .on_hover_text(rot_hint)
+            .on_disabled_hover_text(rot_hint)
+            .clicked()
+        {
+            rotate = -15.0;
+        }
+        if ui
+            .add_enabled(can_rotate, egui::Button::new("+15°"))
+            .on_hover_text(rot_hint)
+            .on_disabled_hover_text(rot_hint)
+            .clicked()
+        {
+            rotate = 15.0;
+        }
+        if rotate != 0.0 {
+            mutated = true;
+            let norm = (meta.start.unwrap_or(0.0) + rotate).rem_euclid(360.0);
+            meta.start = if norm.abs() < 1e-4 { None } else { Some(norm) };
+            *meta_save = Some((wheel_name.to_string(), meta.clone()));
+        }
+        // §2a: undo the most recent structural edit. Ctrl+Z works too while
+        // no text field has focus (the canvas is the natural focus here).
+        let can_undo = !undo.is_empty();
+        if ui
+            .add_enabled(can_undo, egui::Button::new("Undo"))
+            .on_hover_text(
+                "Undo the last structural edit (split, merge, delete, drag, \
+                 reorder, Even out, Mirror, ±15°). Ctrl+Z. Label/command \
+                 text edits aren't tracked.",
+            )
+            .clicked()
+        {
+            undo_clicked = true;
+        }
+        if can_undo
+            && ui.ctx().memory(|m| m.focused().is_none())
+            && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Z))
+        {
+            undo_clicked = true;
         }
     });
 
@@ -2731,9 +3081,11 @@ fn render_wheel_designer(
                 if ui
                     .checkbox(&mut locked, "lock")
                     .on_hover_text(
-                        "Lock this slice's width: freezes it at its current \
-                         degrees and Even out leaves it alone. Unlocking keeps \
-                         the width; Even out returns it to the automatic share.",
+                        "Hold this slice in place: freezes its position and \
+                         width for this editing session. Neighbours reflow \
+                         around it; Even out, deletes, drags, and reorders \
+                         never move it. Mirror and ±15° still do (whole-ring \
+                         transforms). Locks aren't saved with the wheel.",
                     )
                     .changed()
                 {
@@ -2742,8 +3094,41 @@ fn render_wheel_designer(
                         level[i].span = Some(resolved_width);
                     }
                 }
-                if ui.small_button("^").on_hover_text("Move up").clicked() {
-                    ops.push(WheelOp::MoveUp(slice_path.clone()));
+                // F15: reorder reads the way it looks — < / > shift the
+                // slice around the ring, and the selection follows it.
+                let is_locked = level[i].locked;
+                let n = level.len();
+                let ccw_to = if i == 0 { n - 1 } else { i - 1 };
+                let cw_to = (i + 1) % n;
+                let reorder_hint = if is_locked {
+                    "Locked — unlock to move this slice."
+                } else {
+                    "Shift this slice one seat around the ring. It never \
+                     crosses a locked slice."
+                };
+                if ui
+                    .add_enabled(!is_locked && n > 1, egui::Button::new("<").small())
+                    .on_hover_text(reorder_hint)
+                    .on_disabled_hover_text(reorder_hint)
+                    .clicked()
+                {
+                    let to = clamp_move_target(level, i, ccw_to);
+                    if let Some(at) = move_slice(level, i, to) {
+                        mutated = true;
+                        *selected_slice = Some(at);
+                    }
+                }
+                if ui
+                    .add_enabled(!is_locked && n > 1, egui::Button::new(">").small())
+                    .on_hover_text(reorder_hint)
+                    .on_disabled_hover_text(reorder_hint)
+                    .clicked()
+                {
+                    let to = clamp_move_target(level, i, cw_to);
+                    if let Some(at) = move_slice(level, i, to) {
+                        mutated = true;
+                        *selected_slice = Some(at);
+                    }
                 }
                 if !level[i].back
                     && ui
@@ -2760,7 +3145,11 @@ fn render_wheel_designer(
             });
         }
         None => {
-            ui.weak("Click a wedge to edit it · drag a wedge to reorder.");
+            ui.weak(
+                "Click a wedge to edit it · drag a wedge to reorder · \
+                 right-click the ring to split a slice · right-click a \
+                 divider dot to merge.",
+            );
         }
     }
     if ui.button("+ Add slice").clicked() {
@@ -2769,6 +3158,16 @@ fn render_wheel_designer(
         *selected_slice = Some(level.len());
         ops.push(WheelOp::AddChild(designer_path.clone()));
     }
+
+    // §2a: a structural edit ran this frame — bank the pre-edit snapshot.
+    if mutated {
+        undo.push(undo_snapshot);
+        if undo.len() > WHEEL_UNDO_CAP {
+            let drop = undo.len() - WHEEL_UNDO_CAP;
+            undo.drain(..drop);
+        }
+    }
+    undo_clicked
 }
 
 /// Freeze every real slice at this level to its resolved width in the
@@ -3048,6 +3447,34 @@ fn ring_merge(
     };
     let new_start = (new_first_leading + w(&level[0]) / 2.0).rem_euclid(360.0);
     Ok((new_start.rem_euclid(360.0), survivor_now))
+}
+
+/// Clamp a reorder target so the moved slice never crosses a locked one:
+/// every slice that would shift (those strictly between `from` and `to`)
+/// must be unlocked. Returns the nearest reachable seat toward `to`.
+fn clamp_move_target(level: &[WheelSlice], from: usize, to: usize) -> usize {
+    if from >= level.len() || to >= level.len() || from == to {
+        return to.min(level.len().saturating_sub(1));
+    }
+    if to > from {
+        let mut reach = from;
+        for t in (from + 1)..=to {
+            if level[t].locked {
+                break;
+            }
+            reach = t;
+        }
+        reach
+    } else {
+        let mut reach = from;
+        for t in (to..from).rev() {
+            if level[t].locked {
+                break;
+            }
+            reach = t;
+        }
+        reach
+    }
 }
 
 /// Move the slice at `from` so it occupies the seat at `to`, shifting the
@@ -3548,6 +3975,26 @@ mod designer_tests {
         assert_eq!(after[1], before[2], "c untouched");
         assert!((gamepad::angular_gap(after[2].0, before[3].0)) < 1e-3, "union starts at d's edge");
         assert!((after[2].1 - 180.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn clamp_move_target_confines_to_the_unlocked_run() {
+        let mut level = vec![
+            named("a", None),
+            named("b", None),
+            locked_named("L", 90.0),
+            named("c", None),
+            named("d", None),
+        ];
+        // a can reach b but not cross L.
+        assert_eq!(clamp_move_target(&level, 0, 1), 1);
+        assert_eq!(clamp_move_target(&level, 0, 4), 1);
+        // d can walk back to c but not across L either.
+        assert_eq!(clamp_move_target(&level, 4, 3), 3);
+        assert_eq!(clamp_move_target(&level, 4, 0), 3);
+        // Without locks the full range opens up.
+        level[2].locked = false;
+        assert_eq!(clamp_move_target(&level, 0, 4), 4);
     }
 
     #[test]
