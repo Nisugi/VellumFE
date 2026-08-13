@@ -1104,7 +1104,119 @@ pub struct ManagedInventoryState {
     pub generation: u64,
 }
 
+/// Recursive weight of one item: its own weight plus everything inside,
+/// per Saga's accounting. None = unknown (a -1 weight somewhere below).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WeightBreakdown {
+    /// The item's own weight; None when the wire said -1 (unknown/fixed)
+    pub own: Option<f32>,
+    /// Sum of contents' totals; None when any is unknown
+    pub contents: Option<f32>,
+    /// own + contents; None when contents are unknown
+    pub total: Option<f32>,
+}
+
 impl ManagedInventoryState {
+    /// Recursive weight breakdowns for every item, keyed by exist id.
+    /// GS rules ported from Saga's manager: a 0-weight item counts as
+    /// 0.1 lb, and `in` contents are skipped when the container reports
+    /// `in_encum == 0` (deep/weightless containers don't pass their
+    /// contents' weight to the carrier). Cycle-safe.
+    pub fn weight_breakdowns(
+        &self,
+    ) -> std::collections::HashMap<String, WeightBreakdown> {
+        let mut children: std::collections::HashMap<&str, Vec<&ManagedInventoryItem>> =
+            std::collections::HashMap::new();
+        for item in &self.items {
+            if item.parent != "player" && item.parent != "room" {
+                children.entry(item.parent.as_str()).or_default().push(item);
+            }
+        }
+        let by_id: std::collections::HashMap<&str, &ManagedInventoryItem> =
+            self.items.iter().map(|i| (i.id.as_str(), i)).collect();
+
+        fn resolve<'a>(
+            item: &'a ManagedInventoryItem,
+            children: &std::collections::HashMap<&'a str, Vec<&'a ManagedInventoryItem>>,
+            memo: &mut std::collections::HashMap<String, WeightBreakdown>,
+            visiting: &mut std::collections::HashSet<String>,
+        ) -> WeightBreakdown {
+            if let Some(done) = memo.get(&item.id) {
+                return *done;
+            }
+            if !visiting.insert(item.id.clone()) {
+                // Parent cycle: report unknown rather than recurse forever.
+                return WeightBreakdown::default();
+            }
+            let own = match item.weight {
+                w if w < 0 => None,
+                0 => Some(0.1),
+                w => Some(w as f32),
+            };
+            let mut contents = Some(0.0f32);
+            for kid in children.get(item.id.as_str()).into_iter().flatten() {
+                // Weightless/deep containers: `in` contents don't weigh on
+                // the carrier when the container reports in_encum == 0.
+                if kid.relation == "in" && item.in_encum == Some(0) {
+                    continue;
+                }
+                match (
+                    contents,
+                    resolve(kid, children, memo, visiting).total,
+                ) {
+                    (Some(sum), Some(t)) => {
+                        contents = Some(((sum + t) * 10.0).round() / 10.0)
+                    }
+                    _ => {
+                        contents = None;
+                        break;
+                    }
+                }
+            }
+            visiting.remove(&item.id);
+            let total = match (own, contents) {
+                (o, Some(c)) => Some(((o.unwrap_or(0.0) + c) * 10.0).round() / 10.0),
+                _ => None,
+            };
+            let out = WeightBreakdown {
+                own,
+                contents,
+                total,
+            };
+            memo.insert(item.id.clone(), out);
+            out
+        }
+
+        let mut memo = std::collections::HashMap::new();
+        let mut visiting = std::collections::HashSet::new();
+        for item in &self.items {
+            resolve(item, &children, &mut memo, &mut visiting);
+        }
+        let _ = by_id;
+        memo
+    }
+
+    /// Descendant item counts per container (everything nested below, not
+    /// just direct children), keyed by exist id. Non-containers are absent.
+    pub fn descendant_counts(&self) -> std::collections::HashMap<String, usize> {
+        let by_id: std::collections::HashMap<&str, &ManagedInventoryItem> =
+            self.items.iter().map(|i| (i.id.as_str(), i)).collect();
+        let mut counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for item in &self.items {
+            let mut seen = std::collections::HashSet::new();
+            let mut parent = item.parent.as_str();
+            while parent != "player" && parent != "room" && seen.insert(parent) {
+                *counts.entry(parent.to_string()).or_insert(0) += 1;
+                match by_id.get(parent) {
+                    Some(p) => parent = p.parent.as_str(),
+                    None => break,
+                }
+            }
+        }
+        counts
+    }
+
     /// Human-readable location of an item: the container chain walked up
     /// to its root ("worn", a hand, at feet, or the room floor), innermost
     /// last, closed containers flagged. E.g.

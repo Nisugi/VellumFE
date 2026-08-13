@@ -56,6 +56,10 @@ impl VellumGuiApp {
         for item in &snap.items {
             children.entry(item.parent.as_str()).or_default().push(item);
         }
+        // Saga-accounting weights (own + contents, 0.1lb floor, deep-container
+        // rule) and nested descendant counts, computed once per frame.
+        let weights = snap.weight_breakdowns();
+        let counts = snap.descendant_counts();
 
         // Roots split by the wire's relation vocabulary, with containers
         // separated from plain items inside worn and room - the sections
@@ -121,7 +125,9 @@ impl VellumGuiApp {
                     );
                     ui.separator();
                     for item in group {
-                        Self::containers_node(ui, item, &children, 0, &mut clicked, &mut click);
+                        Self::containers_node(
+                            ui, item, &children, &weights, &counts, 0, &mut clicked, &mut click,
+                        );
                     }
                 }
                 if room_items_hidden {
@@ -132,11 +138,23 @@ impl VellumGuiApp {
         clicked
     }
 
+    /// Format an optional pounds value ("unknown" for None, trim .0).
+    fn fmt_lbs(v: Option<f32>) -> String {
+        match v {
+            None => "unknown".to_string(),
+            Some(v) if (v - v.round()).abs() < f32::EPSILON => format!("{}", v.round() as i64),
+            Some(v) => format!("{v:.1}"),
+        }
+    }
+
     /// One item row; containers recurse as collapsible headers.
+    #[allow(clippy::too_many_arguments)]
     fn containers_node(
         ui: &mut egui::Ui,
         item: &crate::core::state::ManagedInventoryItem,
         children: &std::collections::HashMap<&str, Vec<&crate::core::state::ManagedInventoryItem>>,
+        weights: &std::collections::HashMap<String, crate::core::state::WeightBreakdown>,
+        counts: &std::collections::HashMap<String, usize>,
         depth: usize,
         clicked: &mut Option<GuiLinkClick>,
         click: &mut impl FnMut(&egui::Ui, &egui::Response, String) -> Option<GuiLinkClick>,
@@ -149,7 +167,8 @@ impl VellumGuiApp {
         let is_container = item.is_container() || kids.is_some_and(|k| !k.is_empty());
 
         if is_container {
-            // Header label: state glyph + name + count/capacity.
+            // Header label: state glyph + name + nested count, carried
+            // weight (own + contents, Saga accounting), capacity.
             let glyph = if item.is_locked() {
                 "🔒 "
             } else if item.is_closed() {
@@ -157,14 +176,19 @@ impl VellumGuiApp {
             } else {
                 ""
             };
-            let count = kids.map(|k| k.len()).unwrap_or(0);
-            let capacity = match (item.in_encum, item.in_capacity()) {
-                (Some(cur), Some(cap)) => format!(" · {cur}/{} lbs", cap.pounds),
-                (None, Some(cap)) => format!(" · {} lbs cap", cap.pounds),
-                _ => String::new(),
+            let count = if item.is_locked() {
+                "locked".to_string()
+            } else {
+                let n = counts.get(item.id.as_str()).copied().unwrap_or(0);
+                format!("{n} item{}", if n == 1 { "" } else { "s" })
             };
-            let title = format!("{glyph}{} — {count} item{}{capacity}", item.name,
-                if count == 1 { "" } else { "s" });
+            let bd = weights.get(item.id.as_str()).copied().unwrap_or_default();
+            let weight = format!(" · {} lbs", Self::fmt_lbs(bd.total));
+            let capacity = match item.in_capacity() {
+                Some(cap) => format!(" · {} lbs cap", cap.pounds),
+                None => String::new(),
+            };
+            let title = format!("{glyph}{} — {count}{weight}{capacity}", item.name);
             let header = egui::CollapsingHeader::new(title)
                 .id_salt(("containers_node", item.id.as_str()))
                 .default_open(false);
@@ -172,7 +196,9 @@ impl VellumGuiApp {
                 .show(ui, |ui| {
                     if let Some(kids) = kids {
                         for kid in kids {
-                            Self::containers_node(ui, kid, children, depth + 1, clicked, click);
+                            Self::containers_node(
+                                ui, kid, children, weights, counts, depth + 1, clicked, click,
+                            );
                         }
                     } else if item.is_closed() {
                         ui.weak("closed");
@@ -180,7 +206,12 @@ impl VellumGuiApp {
                         ui.weak("empty");
                     }
                 })
-                .header_response;
+                .header_response
+                .on_hover_text(format!(
+                    "Container: {} lbs, Contents: {} lbs",
+                    Self::fmt_lbs(bd.own),
+                    Self::fmt_lbs(bd.contents)
+                ));
             Self::containers_context_menu(ui, &response, item, clicked, click);
         } else {
             let weight = if item.weight > 0 {

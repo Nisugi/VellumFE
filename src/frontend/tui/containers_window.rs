@@ -91,6 +91,8 @@ impl ContainersWindow {
                 roots[group_of(item)].push(item);
             }
         }
+        let weights = snap.weight_breakdowns();
+        let counts = snap.descendant_counts();
         let mut room_items_hidden = false;
         for (gi, group) in roots.iter().enumerate() {
             if group.is_empty() {
@@ -106,7 +108,7 @@ impl ContainersWindow {
                 None,
             );
             for item in group {
-                self.add_node(item, &children, 0);
+                self.add_node(item, &children, &weights, &counts, 0);
             }
         }
         if room_items_hidden {
@@ -129,11 +131,22 @@ impl ContainersWindow {
         &mut self,
         item: &ManagedInventoryItem,
         children: &std::collections::HashMap<&str, Vec<&ManagedInventoryItem>>,
+        weights: &std::collections::HashMap<String, crate::core::state::WeightBreakdown>,
+        counts: &std::collections::HashMap<String, usize>,
         depth: usize,
     ) {
         if depth > 16 {
             return; // malformed parent cycle guard
         }
+        let fmt_lbs = |v: Option<f32>| -> String {
+            match v {
+                None => "?".to_string(),
+                Some(v) if (v - v.round()).abs() < f32::EPSILON => {
+                    format!("{}", v.round() as i64)
+                }
+                Some(v) => format!("{v:.1}"),
+            }
+        };
         let indent = " ".repeat(depth * 2);
         let kids = children.get(item.id.as_str());
         let is_container = item.is_container() || kids.is_some_and(|k| !k.is_empty());
@@ -145,10 +158,15 @@ impl ContainersWindow {
             } else {
                 ""
             };
-            let count = kids.map(|k| k.len()).unwrap_or(0);
-            let capacity = match (item.in_encum, item.in_capacity()) {
-                (Some(cur), Some(cap)) => format!(" {cur}/{} lbs", cap.pounds),
-                _ => String::new(),
+            let count = if item.is_locked() {
+                "locked".to_string()
+            } else {
+                counts.get(item.id.as_str()).copied().unwrap_or(0).to_string()
+            };
+            let bd = weights.get(item.id.as_str()).copied().unwrap_or_default();
+            let capacity = match item.in_capacity() {
+                Some(cap) => format!("/{} lbs", cap.pounds),
+                None => " lbs".to_string(),
             };
             let color = if item.is_closed() || item.is_locked() {
                 CLOSED_COLOR
@@ -156,13 +174,17 @@ impl ContainersWindow {
                 CONTAINER_COLOR
             };
             self.widget.add_simple_line(
-                format!("{indent}{}{state} ({count}){capacity}", item.name),
+                format!(
+                    "{indent}{}{state} ({count}) {}{capacity}",
+                    item.name,
+                    fmt_lbs(bd.total)
+                ),
                 Some(color.to_string()),
                 None,
             );
             if let Some(kids) = kids {
                 for kid in kids {
-                    self.add_node(kid, children, depth + 1);
+                    self.add_node(kid, children, weights, counts, depth + 1);
                 }
             }
         } else {

@@ -2640,6 +2640,59 @@ fn test_managed_inventory_location_of() {
 }
 
 #[test]
+fn test_weight_breakdowns_and_descendant_counts() {
+    use crate::core::state::{ManagedInventoryItem, ManagedInventoryState};
+    let item = |id: &str, parent: &str, relation: &str, weight: i32| ManagedInventoryItem {
+        id: id.to_string(),
+        parent: parent.to_string(),
+        relation: relation.to_string(),
+        noun: format!("thing{id}"),
+        name: format!("thing{id}"),
+        weight,
+        ..Default::default()
+    };
+    let mut deep = item("deep", "player", "worn", 4);
+    deep.in_max = Some(1000);
+    deep.in_encum = Some(0); // weightless container: contents don't count
+    let mut sack = item("sack", "player", "worn", 2);
+    sack.in_max = Some(500);
+    sack.in_encum = Some(7);
+    let snap = ManagedInventoryState {
+        items: vec![
+            sack,
+            item("gem", "sack", "in", 0),   // 0 lb -> counts as 0.1
+            item("rock", "sack", "in", 5),
+            item("box", "sack", "in", 1),
+            item("coin", "box", "in", 0),   // nested: box total = 1.1
+            deep,
+            item("anvil", "deep", "in", 50), // skipped: in_encum == 0
+            item("fixture", "room", "room", -1), // unknown own weight
+        ],
+        complete: true,
+        ..Default::default()
+    };
+    let w = snap.weight_breakdowns();
+    // sack: own 2 + gem 0.1 + rock 5 + box (1 + 0.1) = 8.2
+    let sack = w.get("sack").unwrap();
+    assert_eq!(sack.own, Some(2.0));
+    assert_eq!(sack.contents, Some(6.2));
+    assert_eq!(sack.total, Some(8.2));
+    // deep container: anvil skipped, total = own only
+    assert_eq!(w.get("deep").unwrap().total, Some(4.0));
+    // Unknown own weight contributes 0 to the total (Saga: `o ?? 0`);
+    // the hover breakdown still shows "unknown" for the container itself.
+    let fixture = w.get("fixture").unwrap();
+    assert_eq!(fixture.own, None);
+    assert_eq!(fixture.total, Some(0.0));
+
+    let counts = snap.descendant_counts();
+    assert_eq!(counts.get("sack"), Some(&4), "nested coin counts too");
+    assert_eq!(counts.get("box"), Some(&1));
+    assert_eq!(counts.get("deep"), Some(&1), "count includes skipped-weight items");
+    assert_eq!(counts.get("gem"), None, "non-containers absent");
+}
+
+#[test]
 fn test_world_event_tag() {
     let mut parser = XmlParser::new();
     let elements = parser.parse_line(
