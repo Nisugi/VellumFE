@@ -7,11 +7,13 @@
 //! our own layout engine places the rooms. Nothing of Saga's placement data
 //! is copied or redistributed.
 //!
-//! Two sources, layered:
-//! - a snapshot TOML (`global/data/curated_maps.toml`, or one committed to
-//!   the repo) so users without Saga installed still get curated boundaries;
-//! - a local Saga install, when found, refreshes/extends the snapshot as
-//!   Simu bakes more maps.
+//! The membership ships WITH the app: `defaults/curated_maps.toml` is
+//! embedded at build time and is the data every user gets — no Saga
+//! install is ever required at runtime. The `extract-curated-maps` CLI
+//! subcommand is a maintainer tool: run it against a local Saga install
+//! to refresh the committed file when Simu bakes more maps. A user-side
+//! `global/data/curated_maps.toml`, when present, overrides the embedded
+//! data (power users can maintain their own rosters).
 //!
 //! Everything *not* in a curated map becomes satellite-map material
 //! (connected components of the remaining graph) — see the membership
@@ -119,6 +121,14 @@ impl CuratedMaps {
         })
     }
 
+    /// The membership shipped with this build (defaults/curated_maps.toml).
+    pub fn embedded() -> Result<Self> {
+        Self::from_toml(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/defaults/curated_maps.toml"
+        )))
+    }
+
     /// Load a snapshot TOML.
     pub fn from_toml(text: &str) -> Result<Self> {
         toml::from_str(text).context("curated_maps.toml did not parse")
@@ -222,6 +232,14 @@ mod tests {
         let index = maps.uid_index();
         assert_eq!(index[&100], "town-a");
         assert_eq!(index[&200], "town-a-annex");
+    }
+
+    #[test]
+    fn embedded_rosters_parse_and_cover_the_world() {
+        let maps = CuratedMaps::embedded().expect("shipped curated_maps.toml must parse");
+        assert!(maps.maps.len() >= 100, "expected the full curated set, got {}", maps.maps.len());
+        assert!(maps.coverage_len() >= 10_000);
+        assert!(maps.maps.contains_key("wehnimers-landing-town"));
     }
 
     #[test]

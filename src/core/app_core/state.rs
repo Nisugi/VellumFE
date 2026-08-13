@@ -868,31 +868,35 @@ impl AppCore {
         self.map.ensure_db(source);
     }
 
-    /// Load curated base-map membership: the snapshot TOML first, then a
-    /// local Saga install layered over it (fresh rosters win per map).
-    /// Neither present = fallback mode, maps stay location-bucketed.
-    /// `set_curated` no-ops on identical data, so calling this on every
-    /// source refresh is cheap in steady state.
+    /// Load curated base-map membership: the rosters embedded in the build
+    /// (defaults/curated_maps.toml — every user has them, no external
+    /// install involved), overridden by a user-maintained
+    /// `global/data/curated_maps.toml` when one exists. `set_curated`
+    /// no-ops on identical data, so calling this on every source refresh
+    /// is cheap in steady state.
     fn refresh_curated_maps(&mut self) {
         use crate::core::curated_maps;
-        let mut curated = Config::global_data_dir()
+        let user_file = Config::global_data_dir()
             .ok()
             .map(|dir| dir.join("curated_maps.toml"))
             .and_then(|path| std::fs::read_to_string(path).ok())
             .and_then(|text| match curated_maps::CuratedMaps::from_toml(&text) {
                 Ok(snapshot) => Some(snapshot),
                 Err(e) => {
-                    tracing::warn!("curated_maps.toml unreadable, ignoring: {e}");
+                    tracing::warn!("curated_maps.toml unreadable, using built-in: {e}");
                     None
                 }
-            })
-            .unwrap_or_default();
-        if let Some(layouts) = curated_maps::find_saga_layouts(None) {
-            match curated_maps::extract_from_saga(&layouts) {
-                Ok(fresh) => curated.merge_from(fresh),
-                Err(e) => tracing::warn!("Saga layouts extract failed: {e}"),
-            }
-        }
+            });
+        let curated = match user_file {
+            Some(user) => user,
+            None => match curated_maps::CuratedMaps::embedded() {
+                Ok(embedded) => embedded,
+                Err(e) => {
+                    tracing::error!("embedded curated_maps.toml unreadable: {e}");
+                    return;
+                }
+            },
+        };
         if !curated.is_empty() {
             self.map.set_curated(curated);
         }

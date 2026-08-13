@@ -191,8 +191,11 @@ enum Commands {
         verbose: bool,
     },
 
-    /// Extract curated base-map membership (uid rosters only, no
-    /// coordinates) from a local Saga install into curated_maps.toml
+    /// Maintainer tool: extract curated base-map membership (uid rosters
+    /// only, no coordinates) from a local Saga install. Use --out
+    /// defaults/curated_maps.toml to refresh the file shipped with the app;
+    /// the no --out form writes a user-side override instead. End users
+    /// never need this — the shipped rosters are built in.
     ExtractCuratedMaps {
         /// Saga resources directory (default: auto-detect the stock install)
         #[arg(long, value_name = "DIR")]
