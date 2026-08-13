@@ -15,6 +15,56 @@ pub use model::{
     is_proc_command, rooms_for_location, rooms_from_array, Room, RoomTable, TimeTo,
 };
 
+/// Service-tag vocabulary: the mapdb room tags that mark a room as offering
+/// a service worth a map marker (`.go2 bank` destinations). Everything else
+/// on a room's tag list (meta:*, hunting tags) is not marker material.
+pub const SERVICE_TAGS: &[&str] = &[
+    "advguard",
+    "advguard2",
+    "advguild",
+    "advpickup",
+    "alchemist",
+    "armorshop",
+    "bakery",
+    "bank",
+    "bardguild",
+    "boutique",
+    "chronomage",
+    "clericguild",
+    "clericshop",
+    "cobbling",
+    "collectibles",
+    "consignment",
+    "empathguild",
+    "exchange",
+    "fletcher",
+    "forge",
+    "furrier",
+    "gemshop",
+    "general store",
+    "grocer",
+    "herbalist",
+    "inn",
+    "locksmith",
+    "mail",
+    "movers",
+    "npccleric",
+    "npchealer",
+    "pawnshop",
+    "portmaster",
+    "postoffice",
+    "rangerguild",
+    "smokeshop",
+    "sorcererguild",
+    "sunfist",
+    "town",
+    "treasuremaster",
+    "voln",
+    "warriorguild",
+    "weaponshop",
+    "wizardguild",
+];
+
 /// Rooms carrying this tag are player-shop warrens — hundreds of
 /// near-identical rooms that dwarf their town on the map.
 const PLAYERSHOP_TAG: &str = "meta:playershop";

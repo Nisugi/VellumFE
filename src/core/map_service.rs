@@ -16,7 +16,9 @@ use crate::core::layout_engine::positioner::Cell;
 use crate::core::layout_engine::{
     build_scene, overrides, Layout, LayoutCache, LocationOverrides, MapOverrides, MapScene,
 };
-use crate::core::mapdb::{find_latest_mapdb, MapDb, RoomTable};
+use crate::core::curated_maps::CuratedMaps;
+use crate::core::mapdb::{find_latest_mapdb, MapDb, Room, RoomTable};
+use crate::core::membership::Membership;
 
 /// Lich's per-game data subdirectory for a VellumFE game code
 /// (`--game prime` → `data/GSIV`).
@@ -64,15 +66,25 @@ pub fn resolve_source(
 
 enum MapJob {
     LoadDb(PathBuf),
-    Generate {
-        location: String,
+    /// Decompose curated coverage + satellites off the UI thread.
+    BuildMembership {
         db: Arc<MapDb>,
+        curated: CuratedMaps,
+    },
+    Generate {
+        /// Map key: a curated slug, a satellite key, or (fallback mode) a
+        /// mapdb location. Opaque to generation, cache, and overrides.
+        location: String,
+        /// The map's rooms, resolved by the caller through membership (or
+        /// `db.rooms(location)` in fallback mode).
+        rooms: Vec<Room>,
         overrides: LocationOverrides,
     },
 }
 
 enum MapEvent {
     DbLoaded(Result<Arc<MapDb>, String>),
+    MembershipReady(Arc<Membership>),
     LayoutReady {
         location: String,
         layout: Arc<Layout>,
@@ -149,6 +161,15 @@ pub struct MapService {
     mapdb: Option<Arc<MapDb>>,
     pub db_error: Option<String>,
 
+    /// Curated base-map rosters, when available (Saga snapshot). Set once
+    /// by the app at startup; None = pure location fallback, today's world.
+    curated: Option<CuratedMaps>,
+    /// Built on the worker after each db load when `curated` is set.
+    membership: Option<Arc<Membership>>,
+    /// True between db load and MembershipReady: room resolution is
+    /// deferred so the first layout generated is the right one.
+    membership_pending: bool,
+
     /// Generated layouts by location (backed by the disk cache on the worker).
     layouts: HashMap<String, Arc<Layout>>,
     /// Drawable scenes matching `layouts`.
@@ -187,6 +208,24 @@ pub struct MapService {
 }
 
 impl MapService {
+    /// The promote staging file: personal edits move here on `.mappromote`
+    /// and it loads as a community layer every session, so a promotion is
+    /// durable on this machine immediately — merging it into
+    /// defaults/map_overrides.json (+ rebuild) is only what ships it to
+    /// everyone else.
+    fn staging_path(overrides_path: &std::path::Path) -> PathBuf {
+        overrides_path.with_file_name("map_overrides_promoted.json")
+    }
+
+    /// Community base = embedded shipped curation, overlaid by this
+    /// machine's promote staging (the owner's newer, not-yet-shipped work).
+    fn base_community(overrides_path: &std::path::Path) -> MapOverrides {
+        overrides::overlay(
+            overrides::embedded_community(),
+            overrides::load(&Self::staging_path(overrides_path)),
+        )
+    }
+
     pub fn new(cache_dir: PathBuf, overrides_path: PathBuf) -> MapService {
         let loaded_overrides = overrides::load(&overrides_path);
         let (job_tx, job_rx) = mpsc::channel::<MapJob>();
@@ -203,14 +242,15 @@ impl MapService {
                                 Err(e) => Err(format!("{}: {e}", path.display())),
                             })
                         }
+                        MapJob::BuildMembership { db, curated } => {
+                            MapEvent::MembershipReady(Membership::build(&db, &curated))
+                        }
                         MapJob::Generate {
                             location,
-                            db,
+                            rooms,
                             overrides: location_overrides,
                         } => {
-                            let Some(rooms) = db.rooms(&location) else {
-                                continue;
-                            };
+                            let rooms: &[Room] = &rooms;
                             // Curated maze rooms never lay out: their edges
                             // are movement-scramble junk that draws as a
                             // spiderweb. Filtering here changes the content
@@ -267,12 +307,15 @@ impl MapService {
             db_state: DbState::NotLoaded,
             mapdb: None,
             db_error: None,
+            curated: None,
+            membership: None,
+            membership_pending: false,
             layouts: HashMap::new(),
             scenes: HashMap::new(),
             pending: Default::default(),
+            community_overrides: Self::base_community(&overrides_path),
             overrides: loaded_overrides,
             overrides_path,
-            community_overrides: MapOverrides::default(),
             ghosts: Default::default(),
             current_ghost: None,
             last_command: None,
@@ -290,6 +333,50 @@ impl MapService {
 
     pub fn mapdb(&self) -> Option<&Arc<MapDb>> {
         self.mapdb.as_ref()
+    }
+
+    /// The curated/satellite membership, once built. None in fallback mode
+    /// (no curated data) or while the build is still in flight.
+    pub fn membership(&self) -> Option<&Arc<Membership>> {
+        self.membership.as_ref()
+    }
+
+    /// Provide curated base-map rosters. Call once at startup (and again if
+    /// the snapshot is refreshed); kicks the membership build if the db is
+    /// already loaded.
+    pub fn set_curated(&mut self, curated: CuratedMaps) {
+        if curated.is_empty() || self.curated.as_ref() == Some(&curated) {
+            return;
+        }
+        self.curated = Some(curated);
+        self.membership = None;
+        if let Some(db) = self.mapdb.clone() {
+            self.membership_pending = true;
+            let _ = self.job_tx.send(MapJob::BuildMembership {
+                db,
+                curated: self.curated.clone().expect("just set"),
+            });
+        }
+    }
+
+    /// Map key for a mappable room: membership when built, else the mapdb
+    /// location — one resolution rule for switching and generation alike.
+    fn map_key_of_room(&self, db: &MapDb, room_id: u32) -> Option<String> {
+        if let Some(membership) = &self.membership {
+            if let Some(key) = membership.map_of_room(room_id) {
+                return Some(key.to_string());
+            }
+        }
+        db.location_of_room_id(room_id).map(str::to_owned)
+    }
+
+    /// Display name for a map key ("Wehnimers Landing Town" for a curated
+    /// slug, the auto satellite name, or the location string itself).
+    pub fn display_name<'a>(&'a self, key: &'a str) -> &'a str {
+        match &self.membership {
+            Some(membership) => membership.display_name(key),
+            None => key,
+        }
     }
 
     /// Inject a mapdb directly (tests only — the live path loads from disk).
@@ -339,16 +426,22 @@ impl MapService {
         };
         self.db_state = DbState::Loading;
         self.mapdb = None;
+        self.membership = None;
+        self.membership_pending = false;
         self.layouts.clear();
         self.scenes.clear();
         self.pending.clear();
         self.revision += 1;
-        // Community overrides travel with the db they were curated against.
-        self.community_overrides =
+        // Community layers: shipped curation + local promote staging,
+        // overlaid by any overrides traveling with the db they were curated
+        // against.
+        self.community_overrides = overrides::overlay(
+            Self::base_community(&self.overrides_path),
             match crate::core::mapdb_update::community_overrides_for(&path) {
                 Some(p) => overrides::load(&p),
                 None => MapOverrides::default(),
-            };
+            },
+        );
         let _ = self.job_tx.send(MapJob::LoadDb(path));
     }
 
@@ -395,6 +488,12 @@ impl MapService {
         let Some(db) = self.mapdb.clone() else {
             return;
         };
+        // Membership is being built: hold. MembershipReady re-resolves the
+        // remembered identifiers, so nothing is lost — this only prevents a
+        // throwaway location layout in the gap.
+        if self.membership_pending {
+            return;
+        }
         // Lich reports id 0 for rooms missing from its mapdb, but 0 is also a
         // real room id — the fallback must never trust it. A uid miss plus id
         // 0 means "somewhere unmapped".
@@ -444,7 +543,7 @@ impl MapService {
     /// Commit a resolved room id: update current room/location and kick off
     /// the location's layout if it isn't built yet.
     fn apply_resolved_room(&mut self, db: &crate::core::mapdb::MapDb, room_id: u32) {
-        let location = db.location_of_room_id(room_id).map(str::to_owned);
+        let location = self.map_key_of_room(db, room_id);
 
         if Some(room_id) != self.current_room_id || location != self.current_location {
             self.current_room_id = Some(room_id);
@@ -560,7 +659,20 @@ impl MapService {
         let Some(db) = self.mapdb.clone() else {
             return;
         };
-        if db.rooms(location).is_none() {
+        // Resolve the map's rooms here (worker jobs carry them): membership
+        // key first, mapdb location as the fallback namespace.
+        let rooms: Vec<Room> = match self
+            .membership
+            .as_ref()
+            .and_then(|m| m.rooms_of_map(location))
+        {
+            Some(ids) => ids.iter().filter_map(|&id| db.room(id).cloned()).collect(),
+            None => match db.rooms(location) {
+                Some(rooms) => rooms.to_vec(),
+                None => return,
+            },
+        };
+        if rooms.is_empty() {
             return;
         }
         self.pending.insert(location.to_owned());
@@ -571,7 +683,7 @@ impl MapService {
         );
         let _ = self.job_tx.send(MapJob::Generate {
             location: location.to_owned(),
-            db,
+            rooms,
             overrides: location_overrides,
         });
     }
@@ -680,10 +792,84 @@ impl MapService {
         self.request_location(&location);
     }
 
+    /// Promote personal map edits into the staging export that feeds the
+    /// shipped community layer (defaults/map_overrides.json).
+    ///
+    /// Whole-map semantics: each promoted map's staging entry is REPLACED
+    /// by the current personal state, and the personal entry is cleared —
+    /// the promoted data now reaches the user through the community layer
+    /// instead (leaving it personal too would double-apply group-offset
+    /// deltas, which ADD across layers). `key = None` promotes every map
+    /// with personal edits. Returns the promoted keys and the staging path.
+    pub fn promote_overrides(
+        &mut self,
+        key: Option<&str>,
+    ) -> Result<(Vec<String>, PathBuf), String> {
+        let staging_path = Self::staging_path(&self.overrides_path);
+        let keys: Vec<String> = match key {
+            Some(key) => {
+                if !self.overrides.locations.contains_key(key) {
+                    return Err(format!("no personal edits for '{key}'"));
+                }
+                vec![key.to_owned()]
+            }
+            None => self.overrides.locations.keys().cloned().collect(),
+        };
+        if keys.is_empty() {
+            return Err("no personal map edits to promote".into());
+        }
+        let mut staging = overrides::load(&staging_path);
+        for key in &keys {
+            if let Some(entry) = self.overrides.locations.remove(key) {
+                staging.locations.insert(key.clone(), entry);
+            }
+        }
+        overrides::save(&staging_path, &staging)
+            .map_err(|e| format!("staging save failed: {e}"))?;
+        if let Err(e) = overrides::save(&self.overrides_path, &self.overrides) {
+            return Err(format!("personal overrides save failed: {e}"));
+        }
+        // Promoted maps render from the community layer now — but this
+        // session's community store predates the promotion, so overlay the
+        // promoted entries in memory and regenerate.
+        for key in &keys {
+            if let Some(entry) = staging.locations.get(key) {
+                self.community_overrides
+                    .locations
+                    .insert(key.clone(), entry.clone());
+            }
+            self.layouts.remove(key);
+            self.scenes.remove(key);
+            self.request_location(key);
+        }
+        self.revision += 1;
+        Ok((keys, staging_path))
+    }
+
+    /// Re-home overrides stored under keys that are no longer maps (legacy
+    /// location names, or a satellite whose key churned) to whichever map
+    /// now contains their anchor uid. Anchors that resolve nowhere stay
+    /// under their old key — the apply path already skips orphans silently,
+    /// and a future membership may claim them.
+    fn remap_overrides_to_membership(&mut self) {
+        let (Some(db), Some(membership)) = (self.mapdb.clone(), self.membership.clone()) else {
+            return;
+        };
+        let changed = remap_overrides(&mut self.overrides, &db, &membership);
+        remap_overrides(&mut self.community_overrides, &db, &membership);
+        if changed {
+            if let Err(e) = overrides::save(&self.overrides_path, &self.overrides) {
+                tracing::warn!("map overrides save after remap failed: {e}");
+            }
+        }
+    }
+
     /// Work is in flight (db load or generation); callers should keep
     /// repainting until it drains.
     pub fn has_pending(&self) -> bool {
-        !self.pending.is_empty() || matches!(self.db_state, DbState::Loading)
+        !self.pending.is_empty()
+            || self.membership_pending
+            || matches!(self.db_state, DbState::Loading)
     }
 
     /// Drain worker results. Call once per frame/tick.
@@ -691,12 +877,31 @@ impl MapService {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 MapEvent::DbLoaded(Ok(db)) => {
-                    self.mapdb = Some(db);
+                    self.mapdb = Some(db.clone());
                     self.db_state = DbState::Loaded;
                     self.revision += 1;
-                    // Room identifiers may have arrived while loading.
-                    // No stream snapshot here; if this resolves into a ghost,
-                    // the next same-room report backfills title/exits.
+                    if let Some(curated) = self.curated.clone() {
+                        // Defer room resolution until membership lands so the
+                        // first layout generated is the curated one, not a
+                        // throwaway location layout.
+                        self.membership_pending = true;
+                        let _ = self.job_tx.send(MapJob::BuildMembership { db, curated });
+                    } else {
+                        // Room identifiers may have arrived while loading.
+                        // No stream snapshot here; if this resolves into a
+                        // ghost, the next same-room report backfills
+                        // title/exits.
+                        self.resolve_current_room(Default::default());
+                    }
+                }
+                MapEvent::MembershipReady(membership) => {
+                    self.membership = Some(membership);
+                    self.membership_pending = false;
+                    // Overrides authored against location maps re-home to
+                    // whichever map now holds their anchor uid — personal
+                    // ones persist; community ones remap in memory only.
+                    self.remap_overrides_to_membership();
+                    self.revision += 1;
                     self.resolve_current_room(Default::default());
                 }
                 MapEvent::DbLoaded(Err(e)) => {
@@ -718,6 +923,92 @@ impl MapService {
             }
         }
     }
+}
+
+/// Move each override item stored under a non-map key to the map that now
+/// contains its anchor uid. Existing destination entries win on conflict
+/// (never clobber something the user authored against the new map). Returns
+/// true when anything moved.
+fn remap_overrides(store: &mut MapOverrides, db: &MapDb, membership: &Membership) -> bool {
+    let dest_of = |uid: i64| -> Option<String> {
+        let id = db.room_id_of_uid(uid)?;
+        membership.map_of_room(id).map(str::to_owned)
+    };
+    let legacy_keys: Vec<String> = store
+        .locations
+        .keys()
+        .filter(|key| membership.rooms_of_map(key).is_none())
+        .cloned()
+        .collect();
+    let mut moved = false;
+    for key in legacy_keys {
+        let Some(entry) = store.locations.remove(&key) else {
+            continue;
+        };
+        let mut keep = LocationOverrides::default();
+        for (anchor, cell) in entry.group_offsets {
+            match dest_of(anchor) {
+                Some(dest) if dest != key => {
+                    store.locations.entry(dest).or_default().group_offsets.entry(anchor).or_insert(cell);
+                    moved = true;
+                }
+                _ => {
+                    keep.group_offsets.insert(anchor, cell);
+                }
+            }
+        }
+        for (room, pin) in entry.room_pins {
+            match dest_of(room) {
+                Some(dest) if dest != key => {
+                    store.locations.entry(dest).or_default().room_pins.entry(room).or_insert(pin);
+                    moved = true;
+                }
+                _ => {
+                    keep.room_pins.insert(room, pin);
+                }
+            }
+        }
+        for (anchor, name) in entry.names {
+            match dest_of(anchor) {
+                Some(dest) if dest != key => {
+                    store.locations.entry(dest).or_default().names.entry(anchor).or_insert(name);
+                    moved = true;
+                }
+                _ => {
+                    keep.names.insert(anchor, name);
+                }
+            }
+        }
+        for (anchor, choice) in entry.sheets {
+            match dest_of(anchor) {
+                Some(dest) if dest != key => {
+                    store.locations.entry(dest).or_default().sheets.entry(anchor).or_insert(choice);
+                    moved = true;
+                }
+                _ => {
+                    keep.sheets.insert(anchor, choice);
+                }
+            }
+        }
+        for edge in entry.edges {
+            match dest_of(edge.a) {
+                Some(dest) if dest != key => {
+                    let dest_entry = store.locations.entry(dest).or_default();
+                    if !dest_entry.edges.iter().any(|e| (e.a, e.b) == (edge.a, edge.b)) {
+                        dest_entry.edges.push(edge);
+                    }
+                    moved = true;
+                }
+                _ => {
+                    keep.edges.push(edge);
+                }
+            }
+        }
+        if !keep.is_empty() {
+            store.locations.insert(key, keep);
+        }
+    }
+    moved
 }
 
 #[cfg(test)]
@@ -911,6 +1202,184 @@ mod tests {
         assert_eq!(svc.current_ghost, None);
         assert_eq!(svc.current_room_id, Some(369));
         assert_eq!(svc.ghosts().len(), 2);
+    }
+
+    /// Curated membership rewires switching: covered rooms resolve to the
+    /// curated slug, un-covered clusters to their satellite key, and tiny
+    /// one-room closets hold the base map they portal from. Without curated
+    /// data everything stays location-bucketed (the other tests).
+    #[test]
+    fn curated_membership_drives_room_to_map_switching() {
+        let tmp = std::env::temp_dir();
+        let db_path = tmp.join("vellum-map-svc-membership-test.json");
+        std::fs::write(
+            &db_path,
+            r#"[
+                {"id": 1, "uid": [100], "location": "Town",
+                 "title": ["[Town, Square]"],
+                 "wayto": {"10": "go well", "20": "go closet"},
+                 "timeto": {"10": 0.2, "20": 0.2}, "paths": ""},
+                {"id": 10, "uid": [200], "location": "Town",
+                 "title": ["[Town, Well Top]"], "wayto": {"1": "out", "11": "down"},
+                 "timeto": {"1": 0.2, "11": 0.2}, "paths": ""},
+                {"id": 11, "uid": [201], "location": "Town",
+                 "title": ["[Town, Well Bottom]"], "wayto": {"10": "up"},
+                 "timeto": {"10": 0.2}, "paths": ""},
+                {"id": 20, "uid": [300], "location": "Town",
+                 "title": ["[Town, Closet]"], "wayto": {"1": "out"},
+                 "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut svc = MapService::new(
+            tmp.join("vellum-map-svc-membership-cache"),
+            tmp.join("vellum-map-svc-membership-overrides.json"),
+        );
+        svc.mapdb = Some(Arc::new(MapDb::load(&db_path).unwrap()));
+        svc.set_curated(
+            crate::core::curated_maps::CuratedMaps::from_saga_layouts_json(
+                r#"{"layoutVersion": 1, "layouts": {"town||i:1": {"pos": [[100, 0, 0]]}}}"#,
+            )
+            .unwrap(),
+        );
+        // Membership builds on the worker; wait for it to land.
+        for _ in 0..500 {
+            svc.poll();
+            if svc.membership().is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(svc.membership().is_some(), "membership build timed out");
+
+        // While the build was pending, resolution held (nothing generated).
+        svc.note_room(Some(100), Some(1), Default::default());
+        assert_eq!(svc.current_location.as_deref(), Some("town"), "covered → curated slug");
+        assert_eq!(svc.display_name("town"), "Town");
+
+        svc.note_room(Some(200), Some(10), Default::default());
+        assert_eq!(svc.current_location.as_deref(), Some("sat-200"), "well → satellite");
+
+        svc.note_room(Some(300), Some(20), Default::default());
+        assert_eq!(
+            svc.current_location.as_deref(),
+            Some("town"),
+            "tiny closet holds the base map"
+        );
+        assert_eq!(svc.current_room_id, Some(20), "but the room itself is tracked");
+    }
+
+    /// Promote moves a map's personal edits into the staging export, clears
+    /// them from the personal store (group offsets would double-apply
+    /// across layers otherwise), and the community layer serves them for
+    /// the rest of the session.
+    #[test]
+    fn promote_moves_personal_edits_to_staging_and_community() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut svc = MapService::new(
+            dir.path().join("cache"),
+            dir.path().join("map_overrides.json"),
+        );
+        svc.apply_override_edit(OverrideEdit::GroupOffset {
+            location: "town".into(),
+            anchor: 100,
+            delta: Cell { x: 2, y: 1 },
+        });
+        svc.apply_override_edit(OverrideEdit::GroupName {
+            location: "sat-200".into(),
+            anchor: 200,
+            name: Some("The Well".into()),
+        });
+
+        let (promoted, staging_path) = svc.promote_overrides(Some("town")).unwrap();
+        assert_eq!(promoted, vec!["town".to_string()]);
+        assert!(svc.overrides_for("town").is_none(), "personal entry cleared");
+        assert!(svc.overrides_for("sat-200").is_some(), "other maps untouched");
+        assert_eq!(
+            svc.community_overrides.locations["town"].group_offsets[&100],
+            Cell { x: 2, y: 1 },
+            "community layer serves the promoted edits immediately"
+        );
+        let staged = overrides::load(&staging_path);
+        assert_eq!(staged.locations["town"].group_offsets[&100], Cell { x: 2, y: 1 });
+
+        // A fresh service (= app restart) loads the staging file as a
+        // community layer: the promotion survives without any rebuild.
+        let restarted = MapService::new(
+            dir.path().join("cache"),
+            dir.path().join("map_overrides.json"),
+        );
+        assert_eq!(
+            restarted.community_overrides.locations["town"].group_offsets[&100],
+            Cell { x: 2, y: 1 },
+            "promoted edits persist across restart via the staging layer"
+        );
+
+        // `all` sweeps the rest; nothing left to promote errors cleanly.
+        let (rest, _) = svc.promote_overrides(None).unwrap();
+        assert_eq!(rest, vec!["sat-200".to_string()]);
+        assert!(svc.promote_overrides(None).is_err());
+        let staged = overrides::load(&staging_path);
+        assert_eq!(staged.locations.len(), 2, "staging accumulates across promotes");
+    }
+
+    /// Community layering: shipped defaults under a mapdb release's
+    /// overrides (whole-location replace), personal merged on top at use.
+    #[test]
+    fn community_overlay_replaces_per_location() {
+        let mut base = MapOverrides::default();
+        base.locations.entry("town".into()).or_default().names.insert(1, "Old".into());
+        base.locations.entry("keep".into()).or_default().names.insert(2, "Kept".into());
+        let mut top = MapOverrides::default();
+        top.locations.entry("town".into()).or_default().names.insert(1, "New".into());
+        let merged = overrides::overlay(base, top);
+        assert_eq!(merged.locations["town"].names[&1], "New");
+        assert_eq!(merged.locations["keep"].names[&2], "Kept");
+    }
+
+    /// Legacy location-keyed overrides re-home to the map now holding their
+    /// anchor uid; unresolvable anchors stay put under the old key.
+    #[test]
+    fn overrides_remap_to_membership_keys() {
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [100], "location": "Town",
+                 "title": ["[Town, Square]"], "wayto": {"10": "go well"},
+                 "timeto": {"10": 0.2}, "paths": ""},
+                {"id": 10, "uid": [200], "location": "Town",
+                 "title": ["[Town, Well Top]"], "wayto": {"1": "out", "11": "down"},
+                 "timeto": {"1": 0.2, "11": 0.2}, "paths": ""},
+                {"id": 11, "uid": [201], "location": "Town",
+                 "title": ["[Town, Well Bottom]"], "wayto": {"10": "up"},
+                 "timeto": {"10": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let curated = crate::core::curated_maps::CuratedMaps::from_saga_layouts_json(
+            r#"{"layoutVersion": 1, "layouts": {"town||i:1": {"pos": [[100, 0, 0]]}}}"#,
+        )
+        .unwrap();
+        let membership = crate::core::membership::Membership::build(&db, &curated);
+
+        let mut store = MapOverrides::default();
+        let entry = store.locations.entry("Town".to_string()).or_default();
+        entry.group_offsets.insert(100, Cell { x: 1, y: 0 }); // → curated "town"
+        entry.group_offsets.insert(200, Cell { x: 0, y: 2 }); // → sat-200
+        entry.names.insert(999_999, "Nowhere".into()); // unresolvable: stays
+
+        assert!(remap_overrides(&mut store, &db, &membership));
+        assert_eq!(
+            store.locations["town"].group_offsets[&100],
+            Cell { x: 1, y: 0 }
+        );
+        assert_eq!(
+            store.locations["sat-200"].group_offsets[&200],
+            Cell { x: 0, y: 2 }
+        );
+        assert_eq!(store.locations["Town"].names[&999_999], "Nowhere");
+        assert!(store.locations["Town"].group_offsets.is_empty());
+        // Second pass is a no-op: everything resolvable already moved.
+        assert!(!remap_overrides(&mut store, &db, &membership));
     }
 
     /// Rooms that arrive with no uid and no Lich id (interfaces that never

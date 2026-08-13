@@ -255,7 +255,7 @@ impl DirectionMap {
                 continue;
             };
             match edge.action {
-                EdgeAction::Hide | EdgeAction::Dash => {}
+                EdgeAction::Hide | EdgeAction::Dash | EdgeAction::Dots => {}
                 EdgeAction::Connector => {
                     self.map.remove(&(a, b));
                     self.map.remove(&(b, a));

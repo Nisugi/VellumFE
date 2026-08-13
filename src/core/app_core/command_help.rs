@@ -88,6 +88,11 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                 "Manage downloaded map data (status by default)"
             ),
             entry!(
+                &["mappromote"],
+                "[<map-key>|all]",
+                "Promote personal map edits to the shipped-curation staging file (current map by default)"
+            ),
+            entry!(
                 &["data"],
                 "[status|reload|update <name>]",
                 "Shared game-data assets: source + age (Lich folder > local > bundled)"

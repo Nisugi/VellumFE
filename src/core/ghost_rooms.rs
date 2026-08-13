@@ -365,6 +365,8 @@ mod tests {
                 group: 0,
                 entrance: i == 1,
                 title: format!("[East Row {i}]"),
+                terrain: None,
+                service_tags: Vec::new(),
             })
             .collect();
         let scene = MapScene {
