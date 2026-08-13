@@ -128,6 +128,7 @@ impl VellumGuiApp {
             if in_ghost { None } else { compass },
             true,
             group_filter.as_ref(),
+            &app_core.config.map.pinned_tags,
             &style,
         );
         if let Some(overlay) = ghost_overlay.as_ref().filter(|o| !o.is_empty()) {

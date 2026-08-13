@@ -857,6 +857,7 @@ impl AppCore {
     /// changes. Called at startup, after the settings editor saves, and when
     /// the updater installs a fresh download.
     pub fn refresh_map_source(&mut self) {
+        self.refresh_curated_maps();
         let base = Config::base_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let source = crate::core::map_service::resolve_source(
             self.config.map.mapdb_path.as_deref(),
@@ -865,6 +866,40 @@ impl AppCore {
             &crate::core::mapdb_update::download_dir(&base),
         );
         self.map.ensure_db(source);
+    }
+
+    /// Load curated base-map membership: the rosters embedded in the build
+    /// (defaults/curated_maps.toml — every user has them, no external
+    /// install involved), overridden by a user-maintained
+    /// `global/data/curated_maps.toml` when one exists. `set_curated`
+    /// no-ops on identical data, so calling this on every source refresh
+    /// is cheap in steady state.
+    fn refresh_curated_maps(&mut self) {
+        use crate::core::curated_maps;
+        let user_file = Config::global_data_dir()
+            .ok()
+            .map(|dir| dir.join("curated_maps.toml"))
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| match curated_maps::CuratedMaps::from_toml(&text) {
+                Ok(snapshot) => Some(snapshot),
+                Err(e) => {
+                    tracing::warn!("curated_maps.toml unreadable, using built-in: {e}");
+                    None
+                }
+            });
+        let curated = match user_file {
+            Some(user) => user,
+            None => match curated_maps::CuratedMaps::embedded() {
+                Ok(embedded) => embedded,
+                Err(e) => {
+                    tracing::error!("embedded curated_maps.toml unreadable: {e}");
+                    return;
+                }
+            },
+        };
+        if !curated.is_empty() {
+            self.map.set_curated(curated);
+        }
     }
 
     /// Drain the map worker and the mapdb updater; a freshly installed
@@ -1913,7 +1948,10 @@ fn wire_map_scene(
             .iter()
             .filter(|e| pass(e.group))
             .map(|e| {
-                let stub = e.kind == SceneEdgeKind::Stub;
+                // Stubs and dot pairs both need their room ids on the wire
+                // (stub labels; dot-pair color hashing).
+                let wants_rooms =
+                    matches!(e.kind, SceneEdgeKind::Stub | SceneEdgeKind::DotPair);
                 RemoteMapEdge {
                     x1: e.a.x,
                     y1: e.a.y,
@@ -1921,12 +1959,13 @@ fn wire_map_scene(
                     y2: e.b.y,
                     k: match e.kind {
                         SceneEdgeKind::Directional => 0,
-                        SceneEdgeKind::Connector => 1,
+                        SceneEdgeKind::Connector | SceneEdgeKind::ForcedDash => 1,
                         SceneEdgeKind::Stub => 2,
+                        SceneEdgeKind::DotPair => 3,
                     },
                     l: e.label.clone(),
-                    ar: stub.then_some(e.a_room),
-                    br: stub.then_some(e.b_room),
+                    ar: wants_rooms.then_some(e.a_room),
+                    br: wants_rooms.then_some(e.b_room),
                 }
             })
             .collect(),

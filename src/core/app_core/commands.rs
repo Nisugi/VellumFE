@@ -500,7 +500,12 @@ impl AppCore {
             self.add_system_message("No mapdb room resolved yet.");
             return;
         };
-        let location = self.map.current_location.clone().unwrap_or_else(|| "?".into());
+        let location = self
+            .map
+            .current_location
+            .as_deref()
+            .map(|key| self.map.display_name(key).to_owned())
+            .unwrap_or_else(|| "?".into());
         let mut summary = format!("Resolved: room {room_id} in {location}");
         if let Some(db) = self.map.mapdb() {
             if let Some(room) = db.room(room_id) {
@@ -2076,6 +2081,41 @@ impl AppCore {
             "mapdb" => {
                 let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
                 self.handle_mapdb(&args);
+            }
+
+            // Promote personal map edits into the staging export that gets
+            // committed as defaults/map_overrides.json — the path from "I
+            // dragged this map into shape" to "everyone's map looks like
+            // this". Whole-map: promoted maps move out of the personal file.
+            "mappromote" => {
+                let arg = parts.get(1).map(|s| s.to_string());
+                let key = match arg.as_deref() {
+                    None => match self.map.current_location.clone() {
+                        Some(key) => Some(key),
+                        None => {
+                            self.add_system_message(
+                                "No current map; .mappromote <map-key> or .mappromote all",
+                            );
+                            return Ok(CommandOutcome::Handled);
+                        }
+                    },
+                    Some("all") => None,
+                    Some(key) => Some(key.to_owned()),
+                };
+                match self.map.promote_overrides(key.as_deref()) {
+                    Ok((promoted, path)) => {
+                        self.add_system_message(&format!(
+                            "Promoted {} map(s) to {}: {}",
+                            promoted.len(),
+                            path.display(),
+                            promoted.join(", ")
+                        ));
+                        self.add_system_message(
+                            "Ship it: merge that file into defaults/map_overrides.json and commit.",
+                        );
+                    }
+                    Err(e) => self.add_system_message(&format!("mappromote: {e}")),
+                }
             }
 
             // Asset manager (the native jinx client): download and update

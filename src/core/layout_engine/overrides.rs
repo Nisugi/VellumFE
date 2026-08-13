@@ -26,6 +26,10 @@ pub enum EdgeAction {
     /// solid line would overstate the connection. Unlike `Connector`, the
     /// edge keeps anchoring positioning, so the layout does not change.
     Dash,
+    /// Draw as a matching-color dot pair on the two linked rooms instead of
+    /// a line (presentation only, geometry untouched) — for long links
+    /// where any line, dashed or not, just crosses the sheet as noise.
+    Dots,
     /// Treat as a directionless passage: no geometry constraint, drawn
     /// dashed. Un-welds rooms the solver placed adjacent on bad data.
     Connector,
@@ -55,6 +59,35 @@ pub enum SheetChoice {
 pub struct MapOverrides {
     #[serde(default)]
     pub locations: HashMap<String, LocationOverrides>,
+}
+
+/// Community overrides shipped with the app (defaults/map_overrides.json):
+/// the owner's promoted map curation, the base community layer every user
+/// gets. A mapdb release's `overrides-<tag>.json` overlays it per location;
+/// personal edits merge on top of both at use time.
+pub fn embedded_community() -> MapOverrides {
+    let text = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/defaults/map_overrides.json"
+    ));
+    match serde_json::from_str(text) {
+        Ok(overrides) => overrides,
+        Err(e) => {
+            tracing::error!("embedded map_overrides.json unreadable: {e}");
+            MapOverrides::default()
+        }
+    }
+}
+
+/// Overlay one community store on another: `top`'s location entries replace
+/// `base`'s wholesale. Used only between community layers (shipped defaults
+/// under a mapdb release's overrides) — replacement, not the delta-adding
+/// personal merge, because both layers are absolute curation.
+pub fn overlay(mut base: MapOverrides, top: MapOverrides) -> MapOverrides {
+    for (location, entry) in top.locations {
+        base.locations.insert(location, entry);
+    }
+    base
 }
 
 /// Layer a personal overrides section on top of a community base, at use
@@ -133,16 +166,16 @@ impl LocationOverrides {
     /// The subset that changes GENERATION (not just presentation): edge and
     /// classification overrides feed positioning and packing, so the cache
     /// entry records a hash of them and regenerates when it moves. Position
-    /// pins and names stay out — they apply after loading. `Dash` edges are
-    /// pure styling and stay out too, so dashing a line is a cache hit, not
-    /// a re-layout. (`Hide` is also presentation-only but stays in: dropping
+    /// pins and names stay out — they apply after loading. `Dash` and
+    /// `Dots` edges are pure styling and stay out too, so restyling a line
+    /// is a cache hit, not a re-layout. (`Hide` is also presentation-only but stays in: dropping
     /// it would shift every existing user's curated hashes for no gain.)
     pub fn generation_subset(&self) -> LocationOverrides {
         LocationOverrides {
             edges: self
                 .edges
                 .iter()
-                .filter(|e| e.action != EdgeAction::Dash)
+                .filter(|e| !matches!(e.action, EdgeAction::Dash | EdgeAction::Dots))
                 .cloned()
                 .collect(),
             sheets: self.sheets.clone(),

@@ -78,6 +78,91 @@ impl MapStyle {
     }
 }
 
+/// Terrain hue for a mapdb terrain string, or None for neutral ground
+/// ("hard, flat" streets, "none", unknown). The full GS4 vocabulary is
+/// ~19 values; matching is by keyword so variants ("deciduous" vs
+/// "deciduous forest") share a family.
+fn terrain_hue(terrain: &str) -> Option<Color32> {
+    let t = terrain.trim().to_ascii_lowercase();
+    if t.is_empty() || t == "none" || t == "hard, flat" {
+        return None;
+    }
+    let c = |r, g, b| Some(Color32::from_rgb(r, g, b));
+    if t.contains("coniferous") {
+        c(46, 110, 74) // deep pine green
+    } else if t.contains("deciduous") || t.contains("tropical") {
+        c(84, 140, 66) // leafy green
+    } else if t.contains("grass") || t.contains("cultivated") {
+        c(128, 154, 62) // yellow-green fields
+    } else if t.contains("scrub") {
+        c(140, 132, 78) // dusty olive
+    } else if t.contains("riparian") || t.contains("wetland") {
+        c(64, 128, 128) // waterside teal
+    } else if t.contains("sandy") {
+        c(190, 168, 110) // sand
+    } else if t.contains("dirt") || t.contains("muddy") {
+        c(134, 100, 66) // earth brown
+    } else if t.contains("mountain") || t.contains("hilly") || t.contains("rough") {
+        c(122, 116, 110) // slate
+    } else if t.contains("subterranean") {
+        c(96, 90, 104) // cave violet-grey
+    } else if t.contains("icy") || t.contains("glacier") {
+        c(150, 190, 210) // pale ice
+    } else {
+        None
+    }
+}
+
+/// Room fill for a terrain: the terrain hue pulled toward the theme fill so
+/// tinted rooms stay readable on both light and dark grounds and untinted
+/// rooms don't look foreign next to them.
+fn terrain_fill(terrain: Option<&str>, base: Color32) -> Color32 {
+    let Some(hue) = terrain.and_then(terrain_hue) else {
+        return base;
+    };
+    let mix = |a: u8, b: u8| ((a as u16 * 60 + b as u16 * 40) / 100) as u8;
+    Color32::from_rgb(
+        mix(hue.r(), base.r()),
+        mix(hue.g(), base.g()),
+        mix(hue.b(), base.b()),
+    )
+}
+
+/// Connectors at or under this cell length keep the dashed line (a local
+/// "go arch" between adjacent rooms reads better as a line); anything
+/// longer renders as paired dots unless the edge carries a Dash override.
+const CONNECTOR_DASH_MAX_CELLS: f32 = 2.5;
+
+/// Stable per-category color for service-tag markers, same recipe as the
+/// connector pair colors: hash the tag name onto a golden-ratio hue wheel,
+/// darker/steadier than the pair dots so markers read as chrome, not links.
+fn service_tag_color(tag: &str) -> Color32 {
+    let mut h: u32 = 0x811c9dc5;
+    for byte in tag.bytes() {
+        h ^= byte as u32;
+        h = h.wrapping_mul(0x01000193);
+    }
+    let hue = (h as f32 / u32::MAX as f32 * 0.618_034).fract();
+    egui::ecolor::Hsva::new(hue, 0.65, 0.62, 1.0).into()
+}
+
+/// Stable per-pair color for long-connector dots: the same two rooms get
+/// the same hue every session, and different pairs spread across a wheel of
+/// well-separated hues. Saturation/value sit high enough to read on both
+/// light and dark grounds.
+fn connector_pair_color(a: u32, b: u32) -> Color32 {
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    // FNV-1a over the pair for a stable, well-mixed hue index.
+    let mut h: u32 = 0x811c9dc5;
+    for byte in lo.to_le_bytes().into_iter().chain(hi.to_le_bytes()) {
+        h ^= byte as u32;
+        h = h.wrapping_mul(0x01000193);
+    }
+    // Golden-ratio spacing keeps nearby hash values far apart on the wheel.
+    let hue = (h as f32 / u32::MAX as f32 * 0.618_034).fract();
+    egui::ecolor::Hsva::new(hue, 0.75, 0.85, 1.0).into()
+}
+
 /// A text label whose paint is deferred until after the rooms. `candidates`
 /// lists alternative anchor positions in preference order; the first whose
 /// spot is free of room squares wins, so labels land in empty space instead
@@ -134,6 +219,9 @@ pub fn paint_sheet(
     // building — cluster of groups — the character is in on the interiors
     // sheet); None = the whole sheet.
     group_filter: Option<&std::collections::HashSet<usize>>,
+    // Service-tag categories drawn as room markers (config pinned_tags);
+    // empty = no markers.
+    pinned_tags: &[String],
     style: &MapStyle,
 ) -> MapViewResult {
     let painter = ui.painter().with_clip_rect(rect);
@@ -156,6 +244,9 @@ pub fn paint_sheet(
     // Text painted after the rooms, so a label can never be buried under a
     // room square (they used to paint in the edge pass, beneath everything).
     let mut deferred_labels: Vec<DeferredLabel> = Vec::new();
+    // Long-connector pair dots, painted after the rooms so they sit on the
+    // squares' shoulders instead of underneath them.
+    let mut deferred_dots: Vec<(Pos2, f32, Color32)> = Vec::new();
 
     // --- Edges (under rooms) ---
     for edge in &sheet.edges {
@@ -173,38 +264,71 @@ pub fn paint_sheet(
             SceneEdgeKind::Directional => {
                 painter.line_segment([a, b], style.directional);
             }
-            SceneEdgeKind::Connector => {
-                painter.extend(egui::Shape::dashed_line(
-                    &[a, b],
-                    style.connector,
-                    ppc * 0.25,
-                    ppc * 0.18,
-                ));
-                // Labels whenever zoomed in enough to read them — short
-                // passages included ("go arch" between adjacent bank rooms);
-                // the deferred placement hunts for empty space around the
-                // line, so the old minimum-length gate is unnecessary.
-                if show_connector_labels {
-                    if let Some(label) = &edge.label {
-                        // Slide along the line, then perpendicular of the
-                        // midpoint, hunting for a room-free spot.
-                        let perp = {
-                            let d = (b - a).normalized();
-                            Vec2::new(-d.y, d.x) * ppc * 0.75
-                        };
-                        let mid = a.lerp(b, 0.5);
-                        deferred_labels.push(DeferredLabel {
-                            candidates: vec![
-                                mid,
-                                a.lerp(b, 0.35),
-                                a.lerp(b, 0.65),
-                                mid + perp,
-                                mid - perp,
-                            ],
-                            align: Align2::CENTER_CENTER,
-                            text: label.clone(),
-                            font_size: (ppc * 0.45).clamp(8.0, 13.0),
-                        });
+            SceneEdgeKind::Connector | SceneEdgeKind::DotPair | SceneEdgeKind::ForcedDash => {
+                // Auto rule: long connectors read as dot pairs (a dashed
+                // line that long just crosses the sheet as noise); short
+                // local hops keep the quiet dash. Per-edge overrides trump
+                // it in both directions: Dots forces dots at any length,
+                // Dash (ForcedDash) forces the line at any length.
+                let as_dots = match edge.kind {
+                    SceneEdgeKind::DotPair => true,
+                    SceneEdgeKind::ForcedDash => false,
+                    _ => (ax - bx).hypot(ay - by) > CONNECTOR_DASH_MAX_CELLS,
+                };
+                if as_dots {
+                    // No line at all: a matching-color dot on each linked
+                    // room's shoulder (toward its partner) says "these two
+                    // connect" without crossing the sheet.
+                    let color = connector_pair_color(edge.a_room, edge.b_room);
+                    let dot_r = (ppc * 0.14).clamp(2.0, 5.0);
+                    let dir = (b - a).normalized();
+                    for (from, toward) in [(a, dir), (b, -dir)] {
+                        let dot = from + toward * (room_size * 0.5 + dot_r + 1.5);
+                        deferred_dots.push((dot, dot_r, color));
+                        if show_connector_labels {
+                            if let Some(label) = &edge.label {
+                                deferred_labels.push(DeferredLabel {
+                                    candidates: vec![
+                                        dot + toward * (dot_r + ppc * 0.45),
+                                        dot + Vec2::new(0.0, -ppc * 0.55),
+                                        dot + Vec2::new(0.0, ppc * 0.55),
+                                    ],
+                                    align: Align2::CENTER_CENTER,
+                                    text: label.clone(),
+                                    font_size: (ppc * 0.4).clamp(7.0, 12.0),
+                                });
+                            }
+                        }
+                    }
+                } else {
+                    painter.extend(egui::Shape::dashed_line(
+                        &[a, b],
+                        style.connector,
+                        ppc * 0.25,
+                        ppc * 0.18,
+                    ));
+                    if show_connector_labels {
+                        if let Some(label) = &edge.label {
+                            // Slide along the line, then perpendicular of
+                            // the midpoint, hunting for a room-free spot.
+                            let perp = {
+                                let d = (b - a).normalized();
+                                Vec2::new(-d.y, d.x) * ppc * 0.75
+                            };
+                            let mid = a.lerp(b, 0.5);
+                            deferred_labels.push(DeferredLabel {
+                                candidates: vec![
+                                    mid,
+                                    a.lerp(b, 0.35),
+                                    a.lerp(b, 0.65),
+                                    mid + perp,
+                                    mid - perp,
+                                ],
+                                align: Align2::CENTER_CENTER,
+                                text: label.clone(),
+                                font_size: (ppc * 0.45).clamp(8.0, 13.0),
+                            });
+                        }
                     }
                 }
             }
@@ -307,10 +431,34 @@ pub fn paint_sheet(
         painter.rect(
             room_rect,
             1.5,
-            style.room_fill,
+            terrain_fill(room.terrain.as_deref(), style.room_fill),
             style.room_stroke,
             egui::StrokeKind::Middle,
         );
+        if !pinned_tags.is_empty() {
+            if let Some(tag) = room
+                .service_tags
+                .iter()
+                .find(|t| pinned_tags.iter().any(|p| p == *t))
+            {
+                // Service marker: a category-colored disc on the room's
+                // top-right corner, with the category's initial when
+                // zoomed in enough to read it.
+                let color = service_tag_color(tag);
+                let r = (room_size * 0.32).clamp(2.5, 7.0);
+                let center = room_rect.right_top();
+                painter.circle(center, r, color, Stroke::new(1.0, style.label_bg));
+                if ppc >= 14.0 {
+                    painter.text(
+                        center,
+                        Align2::CENTER_CENTER,
+                        tag.chars().next().unwrap_or('?').to_uppercase().to_string(),
+                        FontId::proportional((r * 1.4).clamp(7.0, 11.0)),
+                        Color32::WHITE,
+                    );
+                }
+            }
+        }
         if room.entrance {
             // Door marker: a small warm dot on the room's top edge.
             painter.circle_filled(
@@ -350,6 +498,11 @@ pub fn paint_sheet(
                 response.on_hover_text(format!("{} ({})", room.title, room.id));
             }
         }
+    }
+
+    // --- Long-connector pair dots, on the rooms' shoulders ---
+    for (pos, r, color) in deferred_dots {
+        painter.circle_filled(pos, r, color);
     }
 
     // --- Labels, on top and hunting for empty space (a label under a room

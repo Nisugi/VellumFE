@@ -738,6 +738,8 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "GitHub owner/repo for mapdb downloads (empty disables)", map.mapdb_repo),
         bool_entry!("map.mapping_mode", "Mapping Mode", "Map",
             "Sketch unmapped rooms as ghost overlays", map.mapping_mode),
+        list_entry!("map.pinned_tags", "Pinned Map Markers", "Map",
+            "Service-tag categories drawn as room markers (bank, inn, ...)", map.pinned_tags),
         // ---- Travel --------------------------------------------------
         bool_entry!("go2.native_map_clicks", "Native Map Clicks", "Travel",
             "Map clicks travel natively instead of sending ;go2", go2.native_map_clicks),

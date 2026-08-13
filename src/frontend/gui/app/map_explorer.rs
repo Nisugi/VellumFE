@@ -69,6 +69,8 @@ struct ExplorerOutput {
     walk_to: Option<u32>,
     request_location: Option<String>,
     override_edit: Option<OverrideEdit>,
+    /// Service-tag category to pin/unpin in config.map.pinned_tags.
+    toggle_pinned_tag: Option<String>,
 }
 
 impl VellumGuiApp {
@@ -145,6 +147,18 @@ impl VellumGuiApp {
         if let Some(edit) = out.override_edit {
             self.app_core.map.apply_override_edit(edit);
         }
+        if let Some(tag) = out.toggle_pinned_tag {
+            let pinned = &mut self.app_core.config.map.pinned_tags;
+            match pinned.iter().position(|t| *t == tag) {
+                Some(i) => {
+                    pinned.remove(i);
+                }
+                None => pinned.push(tag),
+            }
+            if let Err(e) = self.app_core.save_config() {
+                tracing::warn!("pinned-tags config save failed: {e}");
+            }
+        }
     }
 
     fn explorer_toolbar(
@@ -157,7 +171,11 @@ impl VellumGuiApp {
         egui::Panel::top("map_explorer_toolbar").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 // Location picker with a filter box inside the popup.
-                let selected_text = ex.location.as_deref().unwrap_or("(no location)");
+                let selected_text = ex
+                    .location
+                    .as_deref()
+                    .map(|key| map.display_name(key))
+                    .unwrap_or("(no location)");
                 egui::ComboBox::from_id_salt("map_explorer_location")
                     .selected_text(selected_text)
                     .width(240.0)
@@ -171,31 +189,66 @@ impl VellumGuiApp {
                         );
                         ui.separator();
                         let filter = ex.filter.to_lowercase();
-                        if let Some(db) = map.mapdb() {
-                            egui::ScrollArea::vertical()
-                                .max_height(320.0)
-                                .show(ui, |ui| {
-                                    for location in db.locations() {
-                                        if !filter.is_empty()
-                                            && !location.to_lowercase().contains(&filter)
-                                        {
-                                            continue;
-                                        }
-                                        let is_current = ex.location.as_deref() == Some(location);
-                                        if ui.selectable_label(is_current, location).clicked() {
-                                            if !is_current {
-                                                ex.location = Some(location.to_owned());
-                                                ex.follow = false;
-                                                ex.selected = None;
-                                                ex.centered = false;
-                                                ex.sheet = Sheet::Outdoor;
-                                                out.request_location = Some(location.to_owned());
-                                            }
-                                            ui.close();
+                        // With curated membership: curated maps first, then
+                        // satellites (auto components — the set the filter
+                        // box exists for). Fallback mode lists locations.
+                        let entries: Vec<(String, String)> =
+                            if let Some(membership) = map.membership() {
+                                membership
+                                    .list_maps()
+                                    .into_iter()
+                                    .map(|(key, name, size, curated)| {
+                                        let label = if curated {
+                                            name
+                                        } else {
+                                            format!("{name} ({size})")
+                                        };
+                                        (key, label)
+                                    })
+                                    .collect()
+                            } else if let Some(db) = map.mapdb() {
+                                db.locations()
+                                    .map(|l| (l.to_owned(), l.to_owned()))
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
+                        let curated_count = map
+                            .membership()
+                            .map(|m| entries.iter().filter(|(k, _)| m.is_curated(k)).count())
+                            .unwrap_or(0);
+                        egui::ScrollArea::vertical()
+                            .max_height(320.0)
+                            .show(ui, |ui| {
+                                for (index, (key, label)) in entries.iter().enumerate() {
+                                    if !filter.is_empty()
+                                        && !label.to_lowercase().contains(&filter)
+                                        && !key.to_lowercase().contains(&filter)
+                                    {
+                                        continue;
+                                    }
+                                    if curated_count > 0 && filter.is_empty() {
+                                        if index == 0 {
+                                            ui.weak("Curated maps");
+                                        } else if index == curated_count {
+                                            ui.separator();
+                                            ui.weak("Satellites");
                                         }
                                     }
-                                });
-                        }
+                                    let is_current = ex.location.as_deref() == Some(key.as_str());
+                                    if ui.selectable_label(is_current, label).clicked() {
+                                        if !is_current {
+                                            ex.location = Some(key.clone());
+                                            ex.follow = false;
+                                            ex.selected = None;
+                                            ex.centered = false;
+                                            ex.sheet = Sheet::Outdoor;
+                                            out.request_location = Some(key.clone());
+                                        }
+                                        ui.close();
+                                    }
+                                }
+                            });
                     });
 
                 ui.separator();
@@ -219,6 +272,23 @@ impl VellumGuiApp {
                         ex.centered = false;
                     }
                 });
+
+                ui.separator();
+                ui.menu_button("Markers", |ui| {
+                    ui.label("Service markers on rooms");
+                    ui.separator();
+                    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                        for &tag in crate::core::mapdb::SERVICE_TAGS {
+                            let mut pinned =
+                                app_core.config.map.pinned_tags.iter().any(|t| t == tag);
+                            if ui.checkbox(&mut pinned, tag).changed() {
+                                out.toggle_pinned_tag = Some(tag.to_string());
+                            }
+                        }
+                    });
+                })
+                .response
+                .on_hover_text("Pick which service tags get room markers (bank, inn, ...)");
 
                 ui.separator();
                 if ui
@@ -555,6 +625,7 @@ impl VellumGuiApp {
                                                 None => "auto".to_string(),
                                                 Some(EdgeAction::Hide) => "hidden".to_string(),
                                                 Some(EdgeAction::Dash) => "dashed".to_string(),
+                                                Some(EdgeAction::Dots) => "dots".to_string(),
                                                 Some(EdgeAction::Connector) => {
                                                     "passage".to_string()
                                                 }
@@ -611,6 +682,12 @@ impl VellumGuiApp {
                                                         "dashed",
                                                         "Draw dashed, keep the layout (looks only)",
                                                         Some(EdgeAction::Dash),
+                                                    );
+                                                    pick(
+                                                        ui,
+                                                        "dots",
+                                                        "No line: matching-color dot on both rooms (looks only)",
+                                                        Some(EdgeAction::Dots),
                                                     );
                                                     pick(
                                             ui,
@@ -857,8 +934,18 @@ impl VellumGuiApp {
                 None
             };
             let exits = (current.is_some()).then(|| app_core.game_state.compass_dirs.as_slice());
-            let result =
-                map_view::paint_sheet(ui, rect, sheet, camera, current, exits, true, None, &style);
+            let result = map_view::paint_sheet(
+                ui,
+                rect,
+                sheet,
+                camera,
+                current,
+                exits,
+                true,
+                None,
+                &app_core.config.map.pinned_tags,
+                &style,
+            );
             if let Some(overlay) = ghost_overlay.as_ref().filter(|o| !o.is_empty()) {
                 map_view::paint_ghosts(
                     ui,
