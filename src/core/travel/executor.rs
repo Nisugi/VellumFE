@@ -3253,6 +3253,13 @@ impl TravelTask {
             // Lich's actual guard is `room_count > room_count-at-send`, not
             // "a nav this tick" - a nav consumed in an EARLIER tick still
             // means we moved since the send and the failure line is stale.
+            // CONSUME the nav (acknowledge it in sent_nav): in a multi-uid
+            // labyrinth the landed room maps to the SAME id as `from`, so
+            // this branch re-fires every tick otherwise - resetting the
+            // arrival timer forever and hanging the walker in total silence
+            // (live 13016089 stall). One nav = one timer reset; after that
+            // the normal timeout/retry path resumes.
+            self.sent_nav = ctx.game_nav_count;
             self.edge_retries = 0;
             self.step = Step::AwaitArrival {
                 expected,
@@ -4481,6 +4488,38 @@ mod tests {
         sim.feedback = vec![(11u64, F::MoveFailedRemovable)];
         let ev = task.tick(sim.ctx(&db));
         assert_eq!(sent(&ev), ["north"], "a fresh failure retries: {ev:?}");
+    }
+
+    #[test]
+    fn multi_uid_same_id_landing_retries_after_timeout_instead_of_hanging() {
+        // The live 13016089 stall: in the Whistler's Pass labyrinth a move
+        // LANDS (nav fires) but the new physical room maps to the SAME mapdb
+        // id, so current == from. The nav-count arrival-wins guard then
+        // re-fired every tick, resetting the arrival timer forever - the
+        // walker went totally silent. The guard must consume the nav once;
+        // afterward the timeout/retry path must resend the direction.
+        use crate::core::move_feedback::MoveFeedback as F;
+        let db = db();
+        let mut task = TravelTask::start(&db, 1, 3, 0).unwrap();
+        let mut sim = Sim::new(1);
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["north"]);
+        // The move lands... in another room of the SAME id (current stays 1).
+        sim.now += 100;
+        sim.nav_count = 1;
+        sim.feel(F::NavArrived);
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), Vec::<String>::new());
+        sim.feedback.clear();
+        // Quiet ticks pass; the timeout must eventually RETRY, not hang.
+        let mut resent: Vec<String> = Vec::new();
+        for _ in 0..6 {
+            sim.now += 3_000;
+            let ev = task.tick(sim.ctx(&db));
+            resent.extend(sent(&ev).iter().map(|c| c.to_string()));
+            if !resent.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(resent, ["north"], "the walker must not go silent");
     }
 
     #[test]
