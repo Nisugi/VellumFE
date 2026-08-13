@@ -228,61 +228,108 @@ impl VellumGuiApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                // ---- Stat tiles -----------------------------------------
-                let mut tiles: Vec<(String, String)> = Vec::new();
+                // ---- Stat chips -----------------------------------------
+                // Framed label-over-value chips in wrapped rows, grouped:
+                // primary stats, then attacks, then TDs on one line
+                // (compressed to a single chip when all circles match).
+                let chip = |ui: &mut egui::Ui, label: &str, value: &str| {
+                    egui::Frame::group(ui.style())
+                        .inner_margin(egui::Margin::symmetric(8, 4))
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    egui::RichText::new(label.to_uppercase())
+                                        .size(9.5)
+                                        .weak(),
+                                );
+                                ui.label(
+                                    egui::RichText::new(value).strong().size(15.0),
+                                );
+                            });
+                        });
+                };
+                let mut primary: Vec<(String, String)> = Vec::new();
                 if let Some(hp) = entry.max_hp {
-                    tiles.push(("HP".into(), hp.to_string()));
+                    primary.push(("HP".into(), hp.to_string()));
                 }
+                if let Some(d) = &entry.defense {
+                    if let Some(asg) = &d.asg {
+                        primary.push(("ASG".into(), asg.clone()));
+                    }
+                    if let Some(v) = d.melee {
+                        primary.push(("Melee DS".into(), v.display()));
+                    }
+                    if let Some(v) = d.ranged {
+                        primary.push(("Ranged DS".into(), v.display()));
+                    }
+                    if let Some(v) = d.bolt {
+                        primary.push(("Bolt DS".into(), v.display()));
+                    }
+                    if let Some(v) = d.udf {
+                        primary.push(("UDF".into(), v.display()));
+                    }
+                }
+                let mut attacks: Vec<(String, String)> = Vec::new();
                 for a in &entry.offense.physical {
                     if let Some(v) = a.value {
-                        tiles.push((format!("AS {}", a.name.to_lowercase()), v.display()));
+                        attacks.push((format!("{} AS", a.name), v.display()));
+                    }
+                }
+                for a in &entry.offense.bolt {
+                    if let Some(v) = a.value {
+                        attacks.push((format!("{} AS", a.name), v.display()));
                     }
                 }
                 for a in &entry.offense.warding {
                     if let Some(v) = a.value {
-                        tiles.push(("CS".into(), v.display()));
+                        attacks.push((format!("{} CS", a.name), v.display()));
                     }
+                }
+                if !primary.is_empty() || !attacks.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, value) in primary.iter().chain(attacks.iter()) {
+                            chip(ui, label, value);
+                        }
+                    });
                 }
                 if let Some(d) = &entry.defense {
-                    if let Some(asg) = &d.asg {
-                        tiles.push(("ASG".into(), asg.clone()));
-                    }
-                    if let Some(v) = d.melee {
-                        tiles.push(("Melee DS".into(), v.display()));
-                    }
-                    if let Some(v) = d.ranged {
-                        tiles.push(("Ranged DS".into(), v.display()));
-                    }
-                    if let Some(v) = d.bolt {
-                        tiles.push(("Bolt DS".into(), v.display()));
-                    }
-                    if let Some(v) = d.udf {
-                        tiles.push(("UDF".into(), v.display()));
-                    }
-                    for (k, v) in &d.td {
-                        tiles.push((format!("TD {k}"), v.display()));
-                    }
-                }
-                if !tiles.is_empty() {
-                    let cols = 5usize;
-                    egui::Grid::new("bestiary_stats")
-                        .num_columns(cols)
-                        .spacing([10.0, 6.0])
-                        .show(ui, |ui| {
-                            for (i, (label, value)) in tiles.iter().enumerate() {
-                                ui.vertical(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(label.to_uppercase())
-                                            .size(9.0)
-                                            .weak(),
-                                    );
-                                    ui.label(egui::RichText::new(value).strong().size(14.0));
-                                });
-                                if (i + 1) % cols == 0 {
-                                    ui.end_row();
-                                }
+                    if !d.td.is_empty() {
+                        let values: Vec<String> =
+                            d.td.values().map(|v| v.display()).collect();
+                        let all_same =
+                            values.len() > 1 && values.iter().all(|v| v == &values[0]);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(egui::RichText::new("TD").size(9.5).weak());
+                            if all_same {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "all circles {}",
+                                        values[0]
+                                    ))
+                                    .strong(),
+                                );
+                            } else {
+                                let parts: Vec<String> =
+                                    d.td.iter()
+                                        .map(|(k, v)| {
+                                            format!(
+                                                "{} {}",
+                                                k.to_uppercase(),
+                                                v.display()
+                                            )
+                                        })
+                                        .collect();
+                                ui.label(
+                                    egui::RichText::new(parts.join("  ·  ")).strong(),
+                                );
                             }
                         });
+                    }
+                }
+                if !primary.is_empty()
+                    || !attacks.is_empty()
+                    || entry.defense.as_ref().is_some_and(|d| !d.td.is_empty())
+                {
                     ui.separator();
                 }
 

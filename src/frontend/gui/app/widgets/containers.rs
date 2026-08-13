@@ -7,6 +7,24 @@
 use super::*;
 
 impl VellumGuiApp {
+    /// One fixed-width, right-aligned stat cell. Allocates the exact width
+    /// whether or not there's text, so columns line up across rows; the
+    /// text is painted (not a Label) because labels shrink to content.
+    fn stat_col(ui: &mut egui::Ui, text: &str, width: f32) {
+        let height = ui.text_style_height(&egui::TextStyle::Body);
+        let (rect, _) =
+            ui.allocate_exact_size(egui::Vec2::new(width, height), egui::Sense::hover());
+        if !text.is_empty() {
+            ui.painter().text(
+                rect.right_center(),
+                egui::Align2::RIGHT_CENTER,
+                text,
+                egui::TextStyle::Body.resolve(ui.style()),
+                ui.visuals().weak_text_color(),
+            );
+        }
+    }
+
     pub(super) fn render_containers_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
@@ -405,19 +423,13 @@ impl VellumGuiApp {
                     ui.with_layout(
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
-                            let col = |ui: &mut egui::Ui, text: String, width: f32| {
-                                ui.allocate_ui_with_layout(
-                                    egui::Vec2::new(width, 16.0),
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.label(egui::RichText::new(text).weak());
-                                    },
-                                );
-                            };
-                            // Right-to-left: rightmost column first.
-                            col(ui, capacity.clone(), 78.0);
-                            col(ui, weight.clone(), 64.0);
-                            col(ui, count.clone(), 64.0);
+                            // Right-to-left: rightmost column first. Exact
+                            // allocations so an empty cell still reserves
+                            // its column (painter text, not labels — labels
+                            // shrink and break the grid).
+                            Self::stat_col(ui, &capacity, 70.0);
+                            Self::stat_col(ui, &weight, 62.0);
+                            Self::stat_col(ui, &count, 62.0);
                         },
                     );
                 })
@@ -442,12 +454,23 @@ impl VellumGuiApp {
             Self::containers_context_menu(ui, &response, item, clicked, click);
         } else {
             let weight = if item.weight > 0 {
-                format!("  ({} lb{})", item.weight, if item.weight == 1 { "" } else { "s" })
+                format!("{} lb{}", item.weight, if item.weight == 1 { "" } else { "s" })
             } else {
                 String::new()
             };
-            let response = ui
-                .add(egui::Label::new(format!("{}{weight}", item.name)).sense(egui::Sense::click()))
+            // Same column treatment as container rows: name left, weight in
+            // a fixed right-aligned column.
+            let mut name_response = None;
+            ui.horizontal(|ui| {
+                name_response = Some(
+                    ui.add(egui::Label::new(&item.name).sense(egui::Sense::click())),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    Self::stat_col(ui, &weight, 62.0);
+                });
+            });
+            let response = name_response
+                .expect("horizontal closure ran")
                 .on_hover_text(item.long.as_deref().unwrap_or(&item.name));
             // Left-click loads the item into the Item tab.
             if response.clicked() && clicked.is_none() {
