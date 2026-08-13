@@ -103,6 +103,21 @@ impl VellumGuiApp {
             .is_some_and(|uid| uid.to_string() != snap.room);
         let heading_color = widget_accent(ui.ctx(), ui.visuals());
 
+        // Focus mode: one container as a flat sortable list. Focus id lives
+        // in egui temp data (cleared by the back button or a vanished id).
+        let focus_key = egui::Id::new("containers_focus");
+        let focus_id: Option<String> = ui.ctx().data(|d| d.get_temp(focus_key));
+        if let Some(fid) = focus_id.as_deref() {
+            if let Some(focused) = snap.items.iter().find(|i| i.id == fid) {
+                return Self::render_focused_container(
+                    app_core, ui, snap, focused, &children, &weights, &counts, focus_key,
+                    heading_color, clicked, &mut click,
+                );
+            }
+            // Focused container no longer in the snapshot: drop focus.
+            ui.ctx().data_mut(|d| d.remove_temp::<String>(focus_key));
+        }
+
         // Reserve room for the inspector panel when a detail is loaded.
         let inspector = app_core.game_state.viewed_item.as_ref();
         let tree_height = if inspector.is_some() {
@@ -170,6 +185,99 @@ impl VellumGuiApp {
                     }
                 });
         }
+        clicked
+    }
+
+    /// Focus mode: one container's entire subtree as a flat, name-sorted
+    /// list with a back button. The digging-through-one-bag view.
+    #[allow(clippy::too_many_arguments)]
+    fn render_focused_container(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+        snap: &crate::core::state::ManagedInventoryState,
+        focused: &crate::core::state::ManagedInventoryItem,
+        children: &std::collections::HashMap<&str, Vec<&crate::core::state::ManagedInventoryItem>>,
+        weights: &std::collections::HashMap<String, crate::core::state::WeightBreakdown>,
+        counts: &std::collections::HashMap<String, usize>,
+        focus_key: egui::Id,
+        heading_color: Color32,
+        mut clicked: Option<GuiLinkClick>,
+        click: &mut impl FnMut(&egui::Ui, &egui::Response, String) -> Option<GuiLinkClick>,
+    ) -> Option<GuiLinkClick> {
+        let _ = app_core;
+        if ui.button("◀ All containers").clicked() {
+            ui.ctx().data_mut(|d| d.remove_temp::<String>(focus_key));
+        }
+        let bd = weights.get(focused.id.as_str()).copied().unwrap_or_default();
+        let count = counts.get(focused.id.as_str()).copied().unwrap_or(0);
+        ui.label(
+            egui::RichText::new(format!(
+                "{} — {count} item{} · {} lbs",
+                focused.name,
+                if count == 1 { "" } else { "s" },
+                Self::fmt_lbs(bd.total)
+            ))
+            .strong()
+            .color(heading_color),
+        );
+        ui.separator();
+
+        // Flatten the subtree (cycle-bounded), then sort by name.
+        let mut flat: Vec<&crate::core::state::ManagedInventoryItem> = Vec::new();
+        let mut stack: Vec<(&crate::core::state::ManagedInventoryItem, usize)> =
+            children
+                .get(focused.id.as_str())
+                .into_iter()
+                .flatten()
+                .map(|i| (*i, 0))
+                .collect();
+        while let Some((item, depth)) = stack.pop() {
+            if depth > 16 {
+                continue;
+            }
+            flat.push(item);
+            for kid in children.get(item.id.as_str()).into_iter().flatten() {
+                stack.push((kid, depth + 1));
+            }
+        }
+        flat.sort_by(|a, b| a.noun.cmp(&b.noun).then(a.name.cmp(&b.name)));
+
+        egui::ScrollArea::vertical()
+            .id_salt("containers_focus_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if flat.is_empty() {
+                    ui.weak(if focused.is_closed() { "closed" } else { "empty" });
+                }
+                for item in &flat {
+                    let weight = if item.weight > 0 {
+                        format!("  ({} lb{})", item.weight, if item.weight == 1 { "" } else { "s" })
+                    } else {
+                        String::new()
+                    };
+                    // Items nested deeper than the focused bag get their
+                    // holder appended so the flat list stays unambiguous.
+                    let holder = if item.parent != focused.id {
+                        snap.items
+                            .iter()
+                            .find(|p| p.id == item.parent)
+                            .map(|p| format!("  · in {}", p.noun))
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    let response = ui
+                        .add(
+                            egui::Label::new(format!("{}{weight}{holder}", item.name))
+                                .sense(egui::Sense::click()),
+                        )
+                        .on_hover_text(item.long.as_deref().unwrap_or(&item.name));
+                    if response.clicked() && clicked.is_none() {
+                        clicked = click(ui, &response, format!(".viewitem {}", item.id));
+                    }
+                    Self::containers_context_menu(ui, &response, item, &mut clicked, click);
+                }
+            });
         clicked
     }
 
@@ -306,6 +414,12 @@ impl VellumGuiApp {
             }
             if item.is_container() {
                 menu_ui.separator();
+                if menu_ui.button("Focus").clicked() {
+                    menu_ui.ctx().data_mut(|d| {
+                        d.insert_temp(egui::Id::new("containers_focus"), item.id.clone())
+                    });
+                    menu_ui.close();
+                }
                 if item.is_closed() {
                     if menu_ui.button("Open").clicked() {
                         chosen = Some(format!("open #{}", item.id));
