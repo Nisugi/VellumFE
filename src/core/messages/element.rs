@@ -2060,29 +2060,61 @@ impl MessageProcessor {
             }
             ParsedElement::InventoryViewItem(resp) => {
                 self.chunk_has_silent_updates = true;
-                if let Some(verdict) = self.inv_service.on_viewitem(
-                    &resp.token,
-                    &resp.exist,
-                    resp.state.as_deref(),
-                    resp.closed_attr,
-                ) {
-                    // Probe answer: the envelope's closed attribute is the
-                    // authoritative container state - update the snapshot.
+                use crate::core::inventory_service::ViewItemOutcome;
+                // The envelope's closed attribute is authoritative container
+                // state whichever path answered - apply it either way.
+                let apply_closed = |game_state: &mut GameState, exist: &str, closed: bool| {
                     if let Some(snapshot) = game_state.managed_inventory.as_mut() {
                         if let Some(item) =
-                            snapshot.items.iter_mut().find(|i| i.id == verdict.exist)
+                            snapshot.items.iter_mut().find(|i| i.id == exist)
                         {
                             let was_closed = item.is_closed();
-                            if verdict.closed && !was_closed {
+                            if closed && !was_closed {
                                 item.flags.push("closed".to_string());
-                            } else if !verdict.closed && was_closed {
+                            } else if !closed && was_closed {
                                 item.flags.retain(|f| f != "closed");
                             }
-                            if was_closed != verdict.closed {
+                            if was_closed != closed {
                                 snapshot.generation += 1;
                             }
                         }
                     }
+                };
+                match self.inv_service.on_viewitem(
+                    &resp.token,
+                    &resp.exist,
+                    resp.state.as_deref(),
+                    resp.closed_attr,
+                    &resp.results,
+                ) {
+                    ViewItemOutcome::Probe(verdict) => {
+                        apply_closed(game_state, &verdict.exist, verdict.closed);
+                    }
+                    ViewItemOutcome::Detail {
+                        exist,
+                        closed,
+                        results,
+                    } => {
+                        apply_closed(game_state, &exist, closed);
+                        let name = game_state
+                            .managed_inventory
+                            .as_ref()
+                            .and_then(|s| s.items.iter().find(|i| i.id == exist))
+                            .map(|i| i.name.clone())
+                            .unwrap_or_else(|| format!("#{exist}"));
+                        let generation = game_state
+                            .viewed_item
+                            .as_ref()
+                            .map(|v| v.generation + 1)
+                            .unwrap_or(1);
+                        game_state.viewed_item = Some(crate::core::state::ViewedItem {
+                            exist,
+                            name,
+                            results,
+                            generation,
+                        });
+                    }
+                    ViewItemOutcome::Ignored => {}
                 }
             }
             _ => {

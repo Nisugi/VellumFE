@@ -89,6 +89,22 @@ pub struct ProbeResult {
     pub closed: bool,
 }
 
+/// What an `<inventoryViewItem>` response meant to us.
+#[derive(Debug, PartialEq)]
+pub enum ViewItemOutcome {
+    /// Background open/closed probe answered.
+    Probe(ProbeResult),
+    /// User-requested item detail (`.viewitem`): the parsed result
+    /// sections, ready for display.
+    Detail {
+        exist: String,
+        closed: bool,
+        results: Vec<(String, String)>,
+    },
+    /// Foreign token / failed state - nothing to do.
+    Ignored,
+}
+
 #[derive(Debug, Default)]
 pub struct InventoryService {
     active: Option<ActiveLoad>,
@@ -103,6 +119,9 @@ pub struct InventoryService {
     probe_queue: VecDeque<Probe>,
     /// The single outstanding probe: (token, exist, deadline).
     probe_in_flight: Option<(String, String, u64)>,
+    /// The single outstanding user detail request: (token, exist, deadline).
+    /// Sent immediately (user gesture), unlike prompt-paced probes.
+    view_in_flight: Option<(String, String, u64)>,
 }
 
 impl InventoryService {
@@ -284,6 +303,13 @@ impl InventoryService {
                 self.probe_in_flight = None;
             }
         }
+        // Same for an unanswered detail request.
+        if let Some((_, exist, deadline)) = self.view_in_flight.as_ref() {
+            if now_ms >= *deadline {
+                tracing::debug!("viewitem detail for {exist} timed out");
+                self.view_in_flight = None;
+            }
+        }
         std::mem::take(&mut self.outbox)
     }
 
@@ -344,31 +370,63 @@ impl InventoryService {
         self.outbox.push(cmd);
     }
 
-    /// Feed an `<inventoryViewItem>` response. Returns the open/closed
-    /// verdict when it answers our outstanding probe; None for foreign
-    /// tokens (e.g. a future detail-view request path) or failed states.
+    /// Send a user-requested item detail view (`_inventory viewitem`),
+    /// immediately - a user gesture doesn't wait for a prompt slot.
+    /// Replaces any earlier unanswered detail request.
+    pub fn request_view(&mut self, exist: &str, via: Option<&str>, now_ms: u64) {
+        let token = self.next_token(now_ms);
+        let cmd = match via {
+            Some(v) => format!("_inventory viewitem {token} {exist} via {v}"),
+            None => format!("_inventory viewitem {token} {exist}"),
+        };
+        self.view_in_flight = Some((token, exist.to_string(), now_ms + PROBE_TIMEOUT_MS));
+        self.outbox.push(cmd);
+    }
+
+    /// Feed an `<inventoryViewItem>` response: a user detail request wins,
+    /// then the background probe; anything else is ignored.
     pub fn on_viewitem(
         &mut self,
         token: &str,
         exist: &str,
         state: Option<&str>,
         closed_attr: bool,
-    ) -> Option<ProbeResult> {
-        let (probe_token, probe_exist, _) = self.probe_in_flight.as_ref()?;
+        results: &[(String, String)],
+    ) -> ViewItemOutcome {
+        if let Some((view_token, view_exist, _)) = self.view_in_flight.as_ref() {
+            if view_token == token {
+                let expected = view_exist.clone();
+                self.view_in_flight = None;
+                if state.is_some_and(|s| !s.is_empty()) || expected != exist {
+                    tracing::debug!(
+                        "viewitem detail for {expected} failed (state={state:?}, exist={exist})"
+                    );
+                    return ViewItemOutcome::Ignored;
+                }
+                return ViewItemOutcome::Detail {
+                    exist: exist.to_string(),
+                    closed: closed_attr,
+                    results: results.to_vec(),
+                };
+            }
+        }
+        let Some((probe_token, probe_exist, _)) = self.probe_in_flight.as_ref() else {
+            return ViewItemOutcome::Ignored;
+        };
         if probe_token != token {
-            return None;
+            return ViewItemOutcome::Ignored;
         }
         let expected = probe_exist.clone();
         self.probe_in_flight = None;
         if state.is_some_and(|s| !s.is_empty()) {
             tracing::debug!("viewitem probe for {expected} failed (state={state:?})");
-            return None;
+            return ViewItemOutcome::Ignored;
         }
         if expected != exist {
             tracing::debug!("viewitem probe answered with wrong exist ({exist}, wanted {expected})");
-            return None;
+            return ViewItemOutcome::Ignored;
         }
-        Some(ProbeResult {
+        ViewItemOutcome::Probe(ProbeResult {
             exist: exist.to_string(),
             closed: closed_attr,
         })
@@ -611,8 +669,11 @@ mod tests {
 
         // Answer: closed attr present = closed verdict; slot frees.
         let token = token_of(&sent[0]);
-        let verdict = svc.on_viewitem(&token, "10", None, true).unwrap();
-        assert_eq!(verdict, ProbeResult { exist: "10".to_string(), closed: true });
+        let verdict = svc.on_viewitem(&token, "10", None, true, &[]);
+        assert_eq!(
+            verdict,
+            ViewItemOutcome::Probe(ProbeResult { exist: "10".to_string(), closed: true })
+        );
         svc.on_prompt(2);
         let sent = svc.tick(2);
         assert_eq!(sent.len(), 1);
@@ -620,8 +681,11 @@ mod tests {
 
         // Absent closed attr = open verdict.
         let token = token_of(&sent[0]);
-        let verdict = svc.on_viewitem(&token, "11", None, false).unwrap();
-        assert!(!verdict.closed);
+        let verdict = svc.on_viewitem(&token, "11", None, false, &[]);
+        assert!(matches!(
+            verdict,
+            ViewItemOutcome::Probe(ProbeResult { closed: false, .. })
+        ));
         // Queue drained: further prompts send nothing.
         svc.on_prompt(3);
         assert!(svc.tick(3).is_empty());
@@ -643,7 +707,7 @@ mod tests {
         // First probe is the locker itself: no strict ancestor, no via.
         assert!(sent[0].ends_with(" 1"), "{}", sent[0]);
         let t = token_of(&sent[0]);
-        svc.on_viewitem(&t, "1", None, false);
+        svc.on_viewitem(&t, "1", None, false, &[]);
         svc.on_prompt(1);
         let sent = svc.tick(1);
         assert!(
@@ -669,7 +733,7 @@ mod tests {
         let sent = svc.tick(PROBE_TIMEOUT_MS + 2);
         assert!(sent[0].ends_with(" 11"));
         // The stale answer arriving late no longer matches anything.
-        assert!(svc.on_viewitem(&stale_token, "10", None, true).is_none());
+        assert!(svc.on_viewitem(&stale_token, "10", None, true, &[]) == ViewItemOutcome::Ignored);
     }
 
     #[test]
@@ -678,7 +742,37 @@ mod tests {
         svc.queue_container_probes(&snapshot(vec![container("10", "player", None)]));
         svc.on_prompt(0);
         let t = token_of(&svc.tick(0)[0]);
-        assert!(svc.on_viewitem(&t, "10", Some("malformed"), true).is_none());
+        assert!(svc.on_viewitem(&t, "10", Some("malformed"), true, &[]) == ViewItemOutcome::Ignored);
+    }
+
+    #[test]
+    fn detail_request_fires_immediately_and_wins_over_probe() {
+        let mut svc = InventoryService::new();
+        svc.queue_container_probes(&snapshot(vec![container("10", "player", None)]));
+        svc.on_prompt(0);
+        let probe_token = token_of(&svc.tick(0)[0]);
+
+        // User detail request goes out immediately, no prompt needed.
+        svc.request_view("42", Some("locker"), 10);
+        let sent = svc.tick(10);
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].ends_with(" 42 via locker"), "{}", sent[0]);
+        let view_token = token_of(&sent[0]);
+
+        // Detail answer routes to Detail with its result sections.
+        let results = vec![("look".to_string(), "A sturdy box.".to_string())];
+        let out = svc.on_viewitem(&view_token, "42", None, false, &results);
+        assert_eq!(
+            out,
+            ViewItemOutcome::Detail {
+                exist: "42".to_string(),
+                closed: false,
+                results,
+            }
+        );
+        // The probe slot is untouched and still answers as a probe.
+        let out = svc.on_viewitem(&probe_token, "10", None, true, &[]);
+        assert!(matches!(out, ViewItemOutcome::Probe(_)));
     }
 
     #[test]

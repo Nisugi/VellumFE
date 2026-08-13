@@ -103,8 +103,17 @@ impl VellumGuiApp {
             .is_some_and(|uid| uid.to_string() != snap.room);
         let heading_color = widget_accent(ui.ctx(), ui.visuals());
 
+        // Reserve room for the inspector panel when a detail is loaded.
+        let inspector = app_core.game_state.viewed_item.as_ref();
+        let tree_height = if inspector.is_some() {
+            (ui.available_height() - 140.0).max(60.0)
+        } else {
+            ui.available_height()
+        };
+
         egui::ScrollArea::vertical()
             .id_salt("containers_scroll")
+            .max_height(tree_height)
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let mut room_items_hidden = false;
@@ -135,6 +144,32 @@ impl VellumGuiApp {
                     ui.weak("Room items omitted - snapshot is from another room (Refresh).");
                 }
             });
+
+        // Inspector: the last .viewitem answer (click an item to load one).
+        if let Some(view) = inspector {
+            ui.separator();
+            ui.label(
+                egui::RichText::new(&view.name)
+                    .strong()
+                    .color(heading_color),
+            );
+            egui::ScrollArea::vertical()
+                .id_salt("containers_inspector")
+                .max_height(110.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for (command, text) in &view.results {
+                        if text.trim().is_empty() {
+                            continue;
+                        }
+                        ui.small(command.to_uppercase());
+                        ui.label(text);
+                    }
+                    if view.results.iter().all(|(_, t)| t.trim().is_empty()) {
+                        ui.weak("nothing further to see");
+                    }
+                });
+        }
         clicked
     }
 
@@ -222,6 +257,10 @@ impl VellumGuiApp {
             let response = ui
                 .add(egui::Label::new(format!("{}{weight}", item.name)).sense(egui::Sense::click()))
                 .on_hover_text(item.long.as_deref().unwrap_or(&item.name));
+            // Left-click loads the item into the inspector panel.
+            if response.clicked() && clicked.is_none() {
+                *clicked = click(ui, &response, format!(".viewitem {}", item.id));
+            }
             Self::containers_context_menu(ui, &response, item, clicked, click);
         }
     }
@@ -238,6 +277,10 @@ impl VellumGuiApp {
         response.context_menu(|menu_ui| {
             menu_ui.label(&item.name);
             menu_ui.separator();
+            if menu_ui.button("Inspect").clicked() {
+                chosen = Some(format!(".viewitem {}", item.id));
+                menu_ui.close();
+            }
             if menu_ui.button("Look").clicked() {
                 chosen = Some(format!("look #{}", item.id));
                 menu_ui.close();

@@ -174,6 +174,11 @@ pub struct GameState {
     /// Whether the NEXT pulse restores mana — the wire's `mana` attribute
     /// declares the alternation up front (Saga semantics), nothing inferred.
     pub next_pulse_mana: bool,
+    /// Last user-requested item detail (`.viewitem` / inspector click):
+    /// the parsed `<inventoryViewItem>` result sections. Generation bumps
+    /// on every answer for display change detection.
+    pub viewed_item: Option<ViewedItem>,
+
     /// Active world events (`<worldEvent>`, extended feed), pruned of
     /// expired entries whenever a new one arrives.
     pub world_events: Vec<WorldEventState>,
@@ -955,6 +960,19 @@ pub struct ManagedInventoryItem {
     pub flags: Vec<String>,
 }
 
+/// A user-requested item detail from `<inventoryViewItem>`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ViewedItem {
+    /// Exist id of the viewed item
+    pub exist: String,
+    /// Display name resolved from the managed snapshot at answer time
+    pub name: String,
+    /// (command, flattened text) sections in feed order ("look", "read", ...)
+    pub results: Vec<(String, String)>,
+    /// Bumps per answer, for display change detection
+    pub generation: u64,
+}
+
 /// One active `<worldEvent>` announcement.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorldEventState {
@@ -1194,6 +1212,26 @@ impl ManagedInventoryState {
         }
         let _ = by_id;
         memo
+    }
+
+    /// The `via` selector for addressing an item: the nearest strict
+    /// ancestor with an `in_selector` (lockers speak noun phrases, not
+    /// `#id` paths). None for normally-addressed items.
+    pub fn via_selector_for(&self, exist: &str) -> Option<String> {
+        let by_id: std::collections::HashMap<&str, &ManagedInventoryItem> =
+            self.items.iter().map(|i| (i.id.as_str(), i)).collect();
+        let mut parent = by_id.get(exist)?.parent.as_str();
+        let mut seen = std::collections::HashSet::new();
+        while let Some(p) = by_id.get(parent) {
+            if !seen.insert(p.id.as_str()) {
+                return None; // cycle
+            }
+            if let Some(sel) = p.in_selector.as_deref() {
+                return Some(sel.to_string());
+            }
+            parent = p.parent.as_str();
+        }
+        None
     }
 
     /// Descendant item counts per container (everything nested below, not
@@ -1652,6 +1690,7 @@ impl GameState {
             room_meta: RoomMetaState::default(),
             managed_inventory: None,
             pulse_count: 0,
+            viewed_item: None,
             world_events: Vec::new(),
             pantheon_value: None,
             next_pulse_mana: false,

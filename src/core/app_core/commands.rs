@@ -2502,6 +2502,24 @@ impl AppCore {
                         Some(crate::core::travel::stash::StashTask::fill(stack));
                 }
             }
+            "viewitem" | "inspect" => {
+                // Item detail over the extended feed: parsed look/read
+                // sections echo to main and feed the GUI inspector panel.
+                let Some(exist) = parts.get(1) else {
+                    self.add_system_message("Usage: .viewitem <exist-id>");
+                    return Ok(CommandOutcome::Handled);
+                };
+                let exist = exist.trim_start_matches('#').to_string();
+                let via = self
+                    .game_state
+                    .managed_inventory
+                    .as_ref()
+                    .and_then(|s| s.via_selector_for(&exist));
+                let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+                self.message_processor
+                    .inv_service
+                    .request_view(&exist, via.as_deref(), now_ms);
+            }
             "drag" => {
                 // Verified item moves over the extended feed's _drag verb:
                 //   .drag <exist> left|right|drop|wear|feet

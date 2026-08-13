@@ -163,6 +163,8 @@ pub struct AppCore {
     /// Token of the last managed-inventory snapshot announced to the user
     /// (keyed by token, not generation, so probe flag updates stay quiet).
     last_announced_inv_token: String,
+    /// Generation of the last `.viewitem` detail echoed to main.
+    last_announced_view_generation: u64,
     /// User-invoked hands stow/retrieve (`.emptyhands`/`.fillhands`) - the
     /// same StashTask the travel executor uses, run standalone.
     pub(crate) hand_stash: Option<crate::core::travel::stash::StashTask>,
@@ -432,6 +434,7 @@ impl AppCore {
             timed_commands: Vec::new(),
             item_mover: crate::core::item_mover::ItemMover::new(),
             last_announced_inv_token: String::new(),
+            last_announced_view_generation: 0,
             hand_stash: None,
             hand_stash_stack: Vec::new(),
             remote_map_cache: None,
@@ -630,6 +633,7 @@ impl AppCore {
             timed_commands: Vec::new(),
             item_mover: crate::core::item_mover::ItemMover::new(),
             last_announced_inv_token: String::new(),
+            last_announced_view_generation: 0,
             hand_stash: None,
             hand_stash_stack: Vec::new(),
             remote_map_cache: None,

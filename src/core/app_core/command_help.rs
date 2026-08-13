@@ -184,6 +184,13 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                 "Retrieve exactly what .emptyhands stowed, in reverse order"
             ),
             entry!(
+                &["viewitem", "inspect"],
+                "<exist-id>",
+                "Item detail over the extended feed (look/read sections)",
+                &["Echoes to main and feeds the Containers window inspector panel.",
+                  "Requires direct mode (WRAYTH banner)."]
+            ),
+            entry!(
                 &["find"],
                 "<name fragment>",
                 "Find items in the .invsync snapshot and show where they live",

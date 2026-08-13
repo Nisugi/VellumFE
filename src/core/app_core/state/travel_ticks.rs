@@ -594,6 +594,28 @@ impl AppCore {
                 ));
             }
         }
+        // Echo a fresh .viewitem answer to main (the GUI inspector shows it
+        // too; the TUI has no panel, so main is its display).
+        if let Some(view) = self.game_state.viewed_item.as_ref() {
+            if view.generation != self.last_announced_view_generation {
+                self.last_announced_view_generation = view.generation;
+                let lines: Vec<String> = {
+                    let view = self.game_state.viewed_item.as_ref().expect("checked");
+                    let mut out = vec![format!("[view] {}:", view.name)];
+                    for (command, text) in &view.results {
+                        if text.trim().is_empty() {
+                            continue;
+                        }
+                        out.push(format!("  {}:", command.to_uppercase()));
+                        out.extend(text.lines().map(|l| format!("    {l}")));
+                    }
+                    out
+                };
+                for line in lines {
+                    self.add_system_message(&line);
+                }
+            }
+        }
         let (mover_cmds, outcome) = self.item_mover.tick(&hands, now_ms);
         commands.extend(mover_cmds);
         match outcome {
