@@ -2469,6 +2469,45 @@ fn test_managed_inventory_item_from_attrs() {
 
     // Missing loc = unanchorable = dropped
     assert!(ManagedInventoryItem::from_attrs(&to_attrs(&[("id", "1"), ("name", "a,b,c")])).is_none());
+
+    // Capacity decode + locker metadata: packed v/10 pounds, v%10 count.
+    let item = ManagedInventoryItem::from_attrs(&to_attrs(&[
+        ("id", "9001"),
+        ("loc", "room"),
+        ("name", ",storage,locker"),
+        ("weight", "-1"),
+        ("in_max", "1005"),
+        ("in_encum", "37"),
+        ("in_selector", "locker"),
+        ("locker", "1"),
+        ("flags", "closed,locked"),
+    ]))
+    .unwrap();
+    let cap = item.in_capacity().expect("container");
+    assert_eq!(cap.pounds, 100);
+    assert_eq!(cap.max_items, Some(5));
+    assert_eq!(item.in_encum, Some(37));
+    assert_eq!(item.in_selector.as_deref(), Some("locker"));
+    assert!(item.locker && !item.familyvault);
+    assert!(item.is_closed() && item.is_locked());
+    assert!(!item.can_pick_up(), "weight -1, no encum override = fixed");
+
+    // Unlimited count (v % 10 == 0); encum -1 = cannot pick up even with
+    // real weight; encum 0 overrides a -1 weight to portable.
+    let item = ManagedInventoryItem::from_attrs(&to_attrs(&[
+        ("id", "9002"),
+        ("loc", "worn,player"),
+        ("name", "a,canvas,sack"),
+        ("weight", "4"),
+        ("encum", "-1"),
+        ("in_max", "200"),
+    ]))
+    .unwrap();
+    let cap = item.in_capacity().unwrap();
+    assert_eq!(cap.pounds, 20);
+    assert_eq!(cap.max_items, None, "0 = unlimited count");
+    assert!(!item.can_pick_up(), "encum -1 wins over real weight");
+    assert!(item.is_container());
 }
 
 // ==================== roommeta / mindState exp Parsing ====================

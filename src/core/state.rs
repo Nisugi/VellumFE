@@ -878,12 +878,36 @@ pub struct ManagedInventoryItem {
     /// Item weight in pounds; -1 = unknown (the wire's sentinel, e.g. on
     /// room furniture)
     pub weight: i32,
-    /// Container capacity (contents), when the item is a container
+    /// Encumbrance override; -1 (or weight -1 when absent) = the item
+    /// cannot be picked up (fixed furniture, room fixtures).
+    pub encum: Option<i32>,
+    /// Packed container capacity (contents): `v/10` = weight capacity in
+    /// pounds, `v % 10` = max item count (0 = unlimited count). Nonzero =
+    /// the item is a container. Decode with [`Self::in_capacity`].
     pub in_max: Option<u32>,
-    /// Surface capacity (on top), when the item is a surface
+    /// Packed surface capacity (on top), same encoding as `in_max`.
     pub on_max: Option<u32>,
-    /// Raw flags from the comma-separated `flags` attribute (e.g. "closed")
+    /// Current contained encumbrance (pounds), when the server reports it
+    pub in_encum: Option<u32>,
+    /// Noun phrase to use in commands instead of `#id` paths (lockers and
+    /// similar containers the game addresses by selector)
+    pub in_selector: Option<String>,
+    /// `locker="1"`: this container is a locker
+    pub locker: bool,
+    /// `familyvault="1"`: this container is a family vault
+    pub familyvault: bool,
+    /// Raw flags from the comma-separated `flags` attribute (e.g. "closed",
+    /// "locked")
     pub flags: Vec<String>,
+}
+
+/// Decoded packed capacity from `in_max`/`on_max`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContainerCapacity {
+    /// Weight capacity in pounds
+    pub pounds: u32,
+    /// Maximum item count; None = unlimited
+    pub max_items: Option<u32>,
 }
 
 impl ManagedInventoryItem {
@@ -931,8 +955,15 @@ impl ManagedInventoryItem {
             noun,
             long,
             weight: get("weight").and_then(|w| w.trim().parse().ok()).unwrap_or(0),
+            encum: get("encum").and_then(|v| v.trim().parse().ok()),
             in_max: get("in_max").and_then(|v| v.trim().parse().ok()),
             on_max: get("on_max").and_then(|v| v.trim().parse().ok()),
+            in_encum: get("in_encum").and_then(|v| v.trim().parse().ok()),
+            in_selector: get("in_selector")
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            locker: get("locker") == Some("1"),
+            familyvault: get("familyvault") == Some("1"),
             flags: get("flags")
                 .map(|f| {
                     f.split(',')
@@ -942,6 +973,53 @@ impl ManagedInventoryItem {
                 })
                 .unwrap_or_default(),
         })
+    }
+
+    /// Decode a packed capacity value (`floor(v/10)` pounds, `v % 10` max
+    /// item count with 0 = unlimited).
+    fn decode_capacity(packed: u32) -> ContainerCapacity {
+        ContainerCapacity {
+            pounds: packed / 10,
+            max_items: match packed % 10 {
+                0 => None,
+                n => Some(n),
+            },
+        }
+    }
+
+    /// Contents capacity when the item is a container (nonzero `in_max`).
+    pub fn in_capacity(&self) -> Option<ContainerCapacity> {
+        self.in_max.filter(|v| *v > 0).map(Self::decode_capacity)
+    }
+
+    /// Surface capacity when things can rest on the item (nonzero `on_max`).
+    pub fn on_capacity(&self) -> Option<ContainerCapacity> {
+        self.on_max.filter(|v| *v > 0).map(Self::decode_capacity)
+    }
+
+    /// True when the item is a container in either orientation.
+    pub fn is_container(&self) -> bool {
+        self.in_capacity().is_some() || self.on_capacity().is_some()
+    }
+
+    /// False for fixed items: `encum == -1`, or `weight == -1` with no
+    /// encum override (Saga's Tc rule).
+    pub fn can_pick_up(&self) -> bool {
+        match self.encum {
+            Some(e) => e != -1,
+            None => self.weight != -1,
+        }
+    }
+
+    /// The wire flags the item as closed (containers only carry this when
+    /// the server knows).
+    pub fn is_closed(&self) -> bool {
+        self.flags.iter().any(|f| f == "closed")
+    }
+
+    /// The wire flags the item as locked.
+    pub fn is_locked(&self) -> bool {
+        self.flags.iter().any(|f| f == "locked")
     }
 }
 
