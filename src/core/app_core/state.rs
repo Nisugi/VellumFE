@@ -1832,6 +1832,61 @@ impl AppCore {
         tracing::warn!("No window found subscribed to 'main' stream for system message: {}", message);
     }
 
+    /// Deliver a client-generated line to every window subscribed to a
+    /// dedicated stream (like `inspect`). Unlike add_system_message there
+    /// is no fallback to main - a dedicated stream with no subscriber
+    /// drops the line, matching game streams. Returns whether anyone got it.
+    pub fn add_stream_message(&mut self, stream: &str, message: &str) -> bool {
+        use crate::data::{SpanType, StyledLine, TextSegment, WindowContent};
+        let line = StyledLine {
+            segments: vec![TextSegment {
+                text: message.to_string(),
+                fg: Some(self.config.colors.ui.system_message_color.clone()),
+                bg: None,
+                bold: false,
+                mono: false,
+                span_type: SpanType::System,
+                link_data: None,
+                custom_emoji: None,
+                inline_image: None,
+            }],
+            stream: stream.to_string(),
+            timestamp: None,
+        };
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_text(stream, std::sync::Arc::new(line.clone()));
+        }
+        let mut delivered = false;
+        for window in self.ui_state.windows.values_mut() {
+            match &mut window.content {
+                WindowContent::Text(ref mut content) => {
+                    if content.streams.iter().any(|s| s.eq_ignore_ascii_case(stream)) {
+                        content.add_line(line.clone());
+                        delivered = true;
+                    }
+                }
+                WindowContent::TabbedText(ref mut content) => {
+                    for tab in content.tabs.iter_mut() {
+                        if tab
+                            .definition
+                            .streams
+                            .iter()
+                            .any(|s| s.eq_ignore_ascii_case(stream))
+                        {
+                            tab.content.add_line(line.clone());
+                            delivered = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if delivered {
+            self.needs_render = true;
+        }
+        delivered
+    }
+
     /// Inject a test line through the complete pipeline (parser → message processor → UI)
     /// This simulates receiving a line from the game server for testing highlights and squelch
     pub(super) fn inject_test_line(&mut self, text: &str) {

@@ -594,25 +594,35 @@ impl AppCore {
                 ));
             }
         }
-        // Echo a fresh .viewitem answer to main (the GUI inspector shows it
-        // too; the TUI has no panel, so main is its display).
+        // Route a fresh .viewitem answer to the dedicated `inspect` stream
+        // (the GUI Containers window shows it on its Item tab regardless).
+        // Never the story window - ANALYZE text alone can run pages. With
+        // no subscriber, a one-line pointer tells the user where it went.
         if let Some(view) = self.game_state.viewed_item.as_ref() {
             if view.generation != self.last_announced_view_generation {
                 self.last_announced_view_generation = view.generation;
-                let lines: Vec<String> = {
+                let (name, lines): (String, Vec<String>) = {
                     let view = self.game_state.viewed_item.as_ref().expect("checked");
-                    let mut out = vec![format!("[view] {}:", view.name)];
+                    let mut out = vec![format!("── {} ──", view.name)];
                     for (command, text) in &view.results {
                         if text.trim().is_empty() {
                             continue;
                         }
-                        out.push(format!("  {}:", command.to_uppercase()));
-                        out.extend(text.lines().map(|l| format!("    {l}")));
+                        out.push(format!("{}:", command.to_uppercase()));
+                        out.extend(text.lines().map(str::to_string));
+                        out.push(String::new());
                     }
-                    out
+                    (view.name.clone(), out)
                 };
+                let mut delivered = false;
                 for line in lines {
-                    self.add_system_message(&line);
+                    delivered |= self.add_stream_message("inspect", &line);
+                }
+                if !delivered {
+                    self.add_system_message(&format!(
+                        "[view] {name} - shown in the Containers window (Item tab); \
+                         add a text window on the 'inspect' stream for a log."
+                    ));
                 }
             }
         }

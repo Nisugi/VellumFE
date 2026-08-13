@@ -186,9 +186,9 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
             entry!(
                 &["viewitem", "inspect"],
                 "<exist-id>",
-                "Item detail over the extended feed (look/read sections)",
-                &["Echoes to main and feeds the Containers window inspector panel.",
-                  "Requires direct mode (WRAYTH banner)."]
+                "Item detail over the extended feed (look/inspect/analyze/read)",
+                &["Shows on the Containers window's Item tab and routes to the 'inspect'",
+                  "stream (subscribe a text window to log it). Requires direct mode."]
             ),
             entry!(
                 &["find"],
