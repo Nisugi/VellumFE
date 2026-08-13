@@ -770,6 +770,24 @@ impl MapService {
         self.request_location(&location);
     }
 
+    /// Re-home overrides stored under keys that are no longer maps (legacy
+    /// location names, or a satellite whose key churned) to whichever map
+    /// now contains their anchor uid. Anchors that resolve nowhere stay
+    /// under their old key — the apply path already skips orphans silently,
+    /// and a future membership may claim them.
+    fn remap_overrides_to_membership(&mut self) {
+        let (Some(db), Some(membership)) = (self.mapdb.clone(), self.membership.clone()) else {
+            return;
+        };
+        let changed = remap_overrides(&mut self.overrides, &db, &membership);
+        remap_overrides(&mut self.community_overrides, &db, &membership);
+        if changed {
+            if let Err(e) = overrides::save(&self.overrides_path, &self.overrides) {
+                tracing::warn!("map overrides save after remap failed: {e}");
+            }
+        }
+    }
+
     /// Work is in flight (db load or generation); callers should keep
     /// repainting until it drains.
     pub fn has_pending(&self) -> bool {
@@ -803,6 +821,10 @@ impl MapService {
                 MapEvent::MembershipReady(membership) => {
                     self.membership = Some(membership);
                     self.membership_pending = false;
+                    // Overrides authored against location maps re-home to
+                    // whichever map now holds their anchor uid — personal
+                    // ones persist; community ones remap in memory only.
+                    self.remap_overrides_to_membership();
                     self.revision += 1;
                     self.resolve_current_room(Default::default());
                 }
@@ -825,6 +847,92 @@ impl MapService {
             }
         }
     }
+}
+
+/// Move each override item stored under a non-map key to the map that now
+/// contains its anchor uid. Existing destination entries win on conflict
+/// (never clobber something the user authored against the new map). Returns
+/// true when anything moved.
+fn remap_overrides(store: &mut MapOverrides, db: &MapDb, membership: &Membership) -> bool {
+    let dest_of = |uid: i64| -> Option<String> {
+        let id = db.room_id_of_uid(uid)?;
+        membership.map_of_room(id).map(str::to_owned)
+    };
+    let legacy_keys: Vec<String> = store
+        .locations
+        .keys()
+        .filter(|key| membership.rooms_of_map(key).is_none())
+        .cloned()
+        .collect();
+    let mut moved = false;
+    for key in legacy_keys {
+        let Some(entry) = store.locations.remove(&key) else {
+            continue;
+        };
+        let mut keep = LocationOverrides::default();
+        for (anchor, cell) in entry.group_offsets {
+            match dest_of(anchor) {
+                Some(dest) if dest != key => {
+                    store.locations.entry(dest).or_default().group_offsets.entry(anchor).or_insert(cell);
+                    moved = true;
+                }
+                _ => {
+                    keep.group_offsets.insert(anchor, cell);
+                }
+            }
+        }
+        for (room, pin) in entry.room_pins {
+            match dest_of(room) {
+                Some(dest) if dest != key => {
+                    store.locations.entry(dest).or_default().room_pins.entry(room).or_insert(pin);
+                    moved = true;
+                }
+                _ => {
+                    keep.room_pins.insert(room, pin);
+                }
+            }
+        }
+        for (anchor, name) in entry.names {
+            match dest_of(anchor) {
+                Some(dest) if dest != key => {
+                    store.locations.entry(dest).or_default().names.entry(anchor).or_insert(name);
+                    moved = true;
+                }
+                _ => {
+                    keep.names.insert(anchor, name);
+                }
+            }
+        }
+        for (anchor, choice) in entry.sheets {
+            match dest_of(anchor) {
+                Some(dest) if dest != key => {
+                    store.locations.entry(dest).or_default().sheets.entry(anchor).or_insert(choice);
+                    moved = true;
+                }
+                _ => {
+                    keep.sheets.insert(anchor, choice);
+                }
+            }
+        }
+        for edge in entry.edges {
+            match dest_of(edge.a) {
+                Some(dest) if dest != key => {
+                    let dest_entry = store.locations.entry(dest).or_default();
+                    if !dest_entry.edges.iter().any(|e| (e.a, e.b) == (edge.a, edge.b)) {
+                        dest_entry.edges.push(edge);
+                    }
+                    moved = true;
+                }
+                _ => {
+                    keep.edges.push(edge);
+                }
+            }
+        }
+        if !keep.is_empty() {
+            store.locations.insert(key, keep);
+        }
+    }
+    moved
 }
 
 #[cfg(test)]
@@ -1083,6 +1191,51 @@ mod tests {
             "tiny closet holds the base map"
         );
         assert_eq!(svc.current_room_id, Some(20), "but the room itself is tracked");
+    }
+
+    /// Legacy location-keyed overrides re-home to the map now holding their
+    /// anchor uid; unresolvable anchors stay put under the old key.
+    #[test]
+    fn overrides_remap_to_membership_keys() {
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [100], "location": "Town",
+                 "title": ["[Town, Square]"], "wayto": {"10": "go well"},
+                 "timeto": {"10": 0.2}, "paths": ""},
+                {"id": 10, "uid": [200], "location": "Town",
+                 "title": ["[Town, Well Top]"], "wayto": {"1": "out", "11": "down"},
+                 "timeto": {"1": 0.2, "11": 0.2}, "paths": ""},
+                {"id": 11, "uid": [201], "location": "Town",
+                 "title": ["[Town, Well Bottom]"], "wayto": {"10": "up"},
+                 "timeto": {"10": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let curated = crate::core::curated_maps::CuratedMaps::from_saga_layouts_json(
+            r#"{"layoutVersion": 1, "layouts": {"town||i:1": {"pos": [[100, 0, 0]]}}}"#,
+        )
+        .unwrap();
+        let membership = crate::core::membership::Membership::build(&db, &curated);
+
+        let mut store = MapOverrides::default();
+        let entry = store.locations.entry("Town".to_string()).or_default();
+        entry.group_offsets.insert(100, Cell { x: 1, y: 0 }); // → curated "town"
+        entry.group_offsets.insert(200, Cell { x: 0, y: 2 }); // → sat-200
+        entry.names.insert(999_999, "Nowhere".into()); // unresolvable: stays
+
+        assert!(remap_overrides(&mut store, &db, &membership));
+        assert_eq!(
+            store.locations["town"].group_offsets[&100],
+            Cell { x: 1, y: 0 }
+        );
+        assert_eq!(
+            store.locations["sat-200"].group_offsets[&200],
+            Cell { x: 0, y: 2 }
+        );
+        assert_eq!(store.locations["Town"].names[&999_999], "Nowhere");
+        assert!(store.locations["Town"].group_offsets.is_empty());
+        // Second pass is a no-op: everything resolvable already moved.
+        assert!(!remap_overrides(&mut store, &db, &membership));
     }
 
     /// Rooms that arrive with no uid and no Lich id (interfaces that never
