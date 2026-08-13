@@ -191,6 +191,22 @@ enum Commands {
         verbose: bool,
     },
 
+    /// Extract curated base-map membership (uid rosters only, no
+    /// coordinates) from a local Saga install into curated_maps.toml
+    ExtractCuratedMaps {
+        /// Saga resources directory (default: auto-detect the stock install)
+        #[arg(long, value_name = "DIR")]
+        saga_dir: Option<PathBuf>,
+
+        /// Output TOML file (default: ~/.vellum-fe/global/data/curated_maps.toml)
+        #[arg(long, value_name = "FILE")]
+        out: Option<PathBuf>,
+
+        /// Show what would be extracted without writing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Import highlights from a Wrayth/StormFront settings XML file
     ImportHighlights {
         /// Wrayth settings XML file (e.g. 70682.xml)
@@ -342,6 +358,61 @@ fn main() -> Result<()> {
                     }
                 }
 
+                return Ok(());
+            }
+
+            Commands::ExtractCuratedMaps { saga_dir, out, dry_run } => {
+                use crate::core::curated_maps;
+
+                println!("Curated Map Membership Extraction");
+                println!("=================================");
+                let layouts_json = curated_maps::find_saga_layouts(saga_dir.as_deref())
+                    .context(
+                        "No Saga install found. Pass --saga-dir <resources dir> \
+                         or set SAGA_RESOURCES_DIR",
+                    )?;
+                println!("Source: {}", layouts_json.display());
+
+                let extracted = curated_maps::extract_from_saga(&layouts_json)?;
+                println!(
+                    "Extracted {} maps covering {} rooms (Saga layoutVersion {})",
+                    extracted.maps.len(),
+                    extracted.coverage_len(),
+                    extracted
+                        .source_layout_version
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "?".into()),
+                );
+
+                let out_path = match out {
+                    Some(path) => path,
+                    None => config::Config::global_data_dir()?.join("curated_maps.toml"),
+                };
+
+                // Merge over any existing snapshot so maps Saga has since
+                // retired aren't dropped.
+                let mut snapshot = match std::fs::read_to_string(&out_path) {
+                    Ok(text) => {
+                        let existing = curated_maps::CuratedMaps::from_toml(&text)
+                            .with_context(|| format!("existing {} is corrupt; move it aside or pass --out", out_path.display()))?;
+                        println!("Merging over existing snapshot ({} maps)", existing.maps.len());
+                        existing
+                    }
+                    Err(_) => curated_maps::CuratedMaps::default(),
+                };
+                snapshot.merge_from(extracted);
+                snapshot.version = curated_maps::SNAPSHOT_VERSION;
+
+                if dry_run {
+                    println!("DRY RUN — would write {} maps to {}", snapshot.maps.len(), out_path.display());
+                    for (slug, map) in &snapshot.maps {
+                        println!("  {:<44} {:>5} rooms  ({})", slug, map.uids.len(), map.name);
+                    }
+                } else {
+                    config::write_atomic(&out_path, snapshot.to_toml()?)
+                        .with_context(|| format!("Failed to write {}", out_path.display()))?;
+                    println!("Wrote {} maps to {}", snapshot.maps.len(), out_path.display());
+                }
                 return Ok(());
             }
 

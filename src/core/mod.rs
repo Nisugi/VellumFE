@@ -10,6 +10,7 @@ pub mod character_state;
 pub mod day_pass;
 pub mod conditions;
 pub mod doll_rules;
+pub mod curated_maps;
 pub mod custom_emoji;
 pub mod elanthian_time;
 pub mod game_art;
