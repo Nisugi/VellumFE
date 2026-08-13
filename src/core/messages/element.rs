@@ -1929,6 +1929,19 @@ impl MessageProcessor {
                 self.chunk_has_silent_updates = true;
                 if kind != "container" {
                     ui_state.pending_exposes.push((kind.clone(), id.clone()));
+                } else {
+                    // `<exposeContainer>` is the wire's own "a container just
+                    // opened" - authoritative where prose isn't: flavored
+                    // containers answer `open` with custom verbiage ("You
+                    // carefully lift the rune-covered flap...") that no
+                    // "You open" pattern matches, and the day-pass preamble
+                    // sat out its full 12s response timeout on one (live
+                    // Loci Workshop stall). Feed the typed event directly.
+                    self.game_line_no += 1;
+                    game_state.move_feedback.push_back((
+                        self.game_line_no,
+                        crate::core::move_feedback::MoveFeedback::ContainerOpened,
+                    ));
                 }
             }
             ParsedElement::Pulse { mana } => {
