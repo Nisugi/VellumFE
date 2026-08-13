@@ -882,11 +882,16 @@ pub mod format {
             for spawn in &e.spawns {
                 if let Some(map) = &spawn.map {
                     let rooms: u64 = spawn.uids.iter().map(|(lo, hi)| hi - lo + 1).sum();
-                    out.push(boxed(vec![
+                    let mut segs = vec![
                         seg("  "),
                         link(map.clone(), format!(".bestiary area {map}")),
-                        seg(format!(" ({rooms} rooms)")),
-                    ]));
+                        seg(format!(" ({rooms} rooms)  ")),
+                    ];
+                    if let Some((lo, _)) = spawn.uids.first() {
+                        // Native pathing straight to the hunting ground.
+                        segs.push(link("[go2]", format!(".go2 u{lo}")));
+                    }
+                    out.push(boxed(segs));
                 }
             }
             for area in &e.areas {
@@ -1308,8 +1313,12 @@ mod tests {
         assert!(links.iter().any(|c| c == ".bestiary level 29"));
         assert!(links.iter().any(|c| c == ".bestiary family Chimeric"));
         assert!(links.iter().any(|c| c == ".bestiary area Frozen Battlefield"));
+        assert!(
+            links.iter().any(|c| c == ".go2 u100"),
+            "spawn location carries a go2 link to its first uid"
+        );
         for link in &links {
-            assert!(link.starts_with(".bestiary "), "non-dot link {link}");
+            assert!(link.starts_with('.'), "non-dot link {link}");
         }
         // The spawn line shows the room count from the uid range.
         let all_text: String = lines
