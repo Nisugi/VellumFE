@@ -163,6 +163,11 @@ pub struct AppCore {
     /// Token of the last managed-inventory snapshot announced to the user
     /// (keyed by token, not generation, so probe flag updates stay quiet).
     last_announced_inv_token: String,
+    /// User-invoked hands stow/retrieve (`.emptyhands`/`.fillhands`) - the
+    /// same StashTask the travel executor uses, run standalone.
+    pub(crate) hand_stash: Option<crate::core::travel::stash::StashTask>,
+    /// What the last `.emptyhands` stowed (LIFO), replayed by `.fillhands`.
+    pub(crate) hand_stash_stack: Vec<crate::core::travel::stash::Stowed>,
     /// Cache for the wire-format map scene sent to web clients, keyed by
     /// (scene Arc pointer, sheet, building cluster) so a rebuild only
     /// happens when the drawn view actually changes.
@@ -427,6 +432,8 @@ impl AppCore {
             timed_commands: Vec::new(),
             item_mover: crate::core::item_mover::ItemMover::new(),
             last_announced_inv_token: String::new(),
+            hand_stash: None,
+            hand_stash_stack: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
             pending_map_views: Vec::new(),
@@ -623,6 +630,8 @@ impl AppCore {
             timed_commands: Vec::new(),
             item_mover: crate::core::item_mover::ItemMover::new(),
             last_announced_inv_token: String::new(),
+            hand_stash: None,
+            hand_stash_stack: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
             pending_map_views: Vec::new(),
@@ -900,6 +909,7 @@ impl AppCore {
         self.tick_day_pass_scan();
         self.tick_travel();
         self.tick_foreach();
+        self.tick_hand_stash();
         self.poll_jinx();
         // Auto-clear expired highlight-set custom statuses.
         self.tick_custom_statuses();

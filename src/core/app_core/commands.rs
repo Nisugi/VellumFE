@@ -2468,6 +2468,40 @@ impl AppCore {
             "find" => {
                 self.handle_find(&parts);
             }
+            "emptyhands" | "eh" => {
+                // Lich's empty_hands as a native command: stow both hands
+                // (Lich's per-hand cascade), remember the stack for
+                // .fillhands. Same StashTask travel uses.
+                if self.hand_stash.is_some() {
+                    self.add_system_message("[hands] a stow/retrieve is already running.");
+                } else if let Some(owner) = self.automation_blocked_by("hands") {
+                    self.add_system_message(&format!(
+                        "[hands] {} is driving - .stop it first.",
+                        owner.desc
+                    ));
+                } else {
+                    self.hand_stash =
+                        Some(crate::core::travel::stash::StashTask::empty());
+                }
+            }
+            "fillhands" | "fh" => {
+                if self.hand_stash.is_some() {
+                    self.add_system_message("[hands] a stow/retrieve is already running.");
+                } else if let Some(owner) = self.automation_blocked_by("hands") {
+                    self.add_system_message(&format!(
+                        "[hands] {} is driving - .stop it first.",
+                        owner.desc
+                    ));
+                } else if self.hand_stash_stack.is_empty() {
+                    self.add_system_message(
+                        "[hands] nothing remembered - .emptyhands stows and remembers first.",
+                    );
+                } else {
+                    let stack = std::mem::take(&mut self.hand_stash_stack);
+                    self.hand_stash =
+                        Some(crate::core::travel::stash::StashTask::fill(stack));
+                }
+            }
             "drag" => {
                 // Verified item moves over the extended feed's _drag verb:
                 //   .drag <exist> left|right|drop|wear|feet
@@ -4359,6 +4393,47 @@ mod foreach_tests {
         let _ = core.handle_dot_command(".foreach marked gem in bandolier; get item");
         assert!(core.foreach.is_running());
         assert_eq!(core.take_outbound(), vec!["get #101".to_string()]);
+    }
+
+    #[test]
+    fn emptyhands_stows_then_fillhands_replays() {
+        use crate::core::game_objects::{GameItem, Hand};
+        let mut core = core_with_bandolier();
+        core.game_state
+            .objects
+            .set_hand(Hand::Right, Some(GameItem::new("777", "sword", "a short sword")));
+
+        let _ = core.handle_dot_command(".emptyhands");
+        assert!(core.hand_stash.is_some());
+        core.tick_hand_stash();
+        let sent = core.take_outbound();
+        assert_eq!(sent.len(), 1, "one stow command for the held item");
+        assert!(sent[0].contains("#777"), "targets the held item: {}", sent[0]);
+
+        // The hand clearing confirms the stow; the task finishes and the
+        // stack remembers the item for .fillhands.
+        core.game_state.objects.set_hand(Hand::Right, None);
+        core.tick_hand_stash();
+        assert!(core.hand_stash.is_none(), "empty finished");
+        assert_eq!(core.hand_stash_stack.len(), 1);
+
+        let _ = core.handle_dot_command(".fillhands");
+        assert!(core.hand_stash.is_some());
+        core.tick_hand_stash();
+        let sent = core.take_outbound();
+        assert_eq!(sent, vec!["get #777".to_string()]);
+
+        // Item back in hand completes the fill and clears the memory.
+        core.game_state
+            .objects
+            .set_hand(Hand::Right, Some(GameItem::new("777", "sword", "a short sword")));
+        core.tick_hand_stash();
+        assert!(core.hand_stash.is_none(), "fill finished");
+        assert!(core.hand_stash_stack.is_empty());
+
+        // Nothing remembered now: .fillhands refuses without starting.
+        let _ = core.handle_dot_command(".fillhands");
+        assert!(core.hand_stash.is_none());
     }
 
     #[test]

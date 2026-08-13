@@ -172,6 +172,18 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                   ".spellwatch add all snapshots everything currently active."]
             ),
             entry!(
+                &["emptyhands", "eh"],
+                "",
+                "Stow both hands (Lich empty_hands cascade), remembered for .fillhands",
+                &["Worn gear wears, tattoos/bandoliers rub, weapons follow ready/stow rules",
+                  "then weaponsack/lootsack/any container. Each stow confirmed by hand state."]
+            ),
+            entry!(
+                &["fillhands", "fh"],
+                "",
+                "Retrieve exactly what .emptyhands stowed, in reverse order"
+            ),
+            entry!(
                 &["find"],
                 "<name fragment>",
                 "Find items in the .invsync snapshot and show where they live",

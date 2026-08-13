@@ -468,6 +468,96 @@ impl AppCore {
         }
     }
 
+    /// Drive a user-invoked `.emptyhands`/`.fillhands` StashTask - the same
+    /// state machine travel uses for its stow/retrieve phases, assembled
+    /// from the live registry each tick and confirmed by hand changes.
+    pub fn tick_hand_stash(&mut self) {
+        if self.hand_stash.is_none() {
+            return;
+        }
+        use crate::core::game_objects::Hand;
+        use crate::core::travel::stash::{StashContext, StashEvent, StashOp};
+        let gameobj_data = self.gameobj_data();
+        let objects = &self.game_state.objects;
+        let resolve_bag = |name: &str| -> Option<String> {
+            if name.trim().is_empty() {
+                return None;
+            }
+            objects.find_container(name).map(|c| c.command_target())
+        };
+        let weaponsack = resolve_bag(&self.config.go2.weaponsack);
+        let lootsack = resolve_bag(&self.config.go2.lootsack);
+        let reserved: std::collections::HashSet<&str> = weaponsack
+            .as_deref()
+            .into_iter()
+            .chain(lootsack.as_deref())
+            .collect();
+        let other_containers: Vec<String> = objects
+            .containers()
+            .map(|c| c.command_target())
+            .filter(|id| !reserved.contains(id.as_str()))
+            .collect();
+        let left_hand = objects.hand(Hand::Left).cloned();
+        let right_hand = objects.hand(Hand::Right).cloned();
+        let is_weapon = |item: Option<&crate::core::game_objects::GameItem>| -> bool {
+            item.is_some_and(|i| gameobj_data.is_type(&i.name, &i.noun, "weapon"))
+        };
+        let left_is_weapon = is_weapon(left_hand.as_ref());
+        let right_is_weapon = is_weapon(right_hand.as_ref());
+        let ready_stow = self.game_state.objects.ready_stow().clone();
+        let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        let ctx = StashContext {
+            left_hand: left_hand.as_ref(),
+            right_hand: right_hand.as_ref(),
+            ready_stow: &ready_stow,
+            weaponsack: weaponsack.as_deref(),
+            lootsack: lootsack.as_deref(),
+            other_containers: &other_containers,
+            // Bandolier-bag live lookup is a travel follow-up too; ethereal
+            // items need no resolution.
+            left_bandolier: None,
+            right_bandolier: None,
+            left_is_weapon,
+            right_is_weapon,
+            now_ms,
+        };
+        let Some(task) = self.hand_stash.as_mut() else {
+            return;
+        };
+        let events = task.tick(ctx);
+        for event in events {
+            match event {
+                StashEvent::Send(cmd) => {
+                    self.queue_timed_command(std::time::Duration::ZERO, cmd);
+                }
+                StashEvent::Done => {
+                    let mut task = self.hand_stash.take().expect("task present");
+                    match task.op() {
+                        StashOp::Empty => {
+                            let stack = task.take_stack();
+                            let n = stack.len();
+                            self.hand_stash_stack = stack;
+                            self.add_system_message(&format!(
+                                "[hands] emptied - {n} item{} stowed (.fillhands to restore).",
+                                if n == 1 { "" } else { "s" }
+                            ));
+                        }
+                        StashOp::Fill => {
+                            self.hand_stash_stack.clear();
+                            self.add_system_message("[hands] refilled.");
+                        }
+                    }
+                    return;
+                }
+                StashEvent::Failed(reason) => {
+                    self.hand_stash = None;
+                    self.add_system_message(&format!("[hands] FAILED: {reason}"));
+                    return;
+                }
+            }
+        }
+    }
+
     /// Commands automation wants sent to the game; frontends drain this
     /// through the same path as typed commands. Includes macro sleep
     /// segments whose pause has elapsed.
