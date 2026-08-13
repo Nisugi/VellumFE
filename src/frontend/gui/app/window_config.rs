@@ -34,6 +34,9 @@ pub(super) struct FeedConfig {
     pub(super) current_only: bool,
     /// Countdown only: stay visible at rest showing "label: 0".
     pub(super) show_when_zero: bool,
+    /// Countdown only: keep counting negative after expiry (window timers
+    /// like the pulse clock).
+    pub(super) count_past_zero: bool,
 }
 
 /// Room window section toggles (shared with the TUI via RoomWidgetData).
@@ -352,6 +355,7 @@ impl VellumGuiApp {
                 numbers_only: false,
                 current_only: false,
                 show_when_zero: countdown.show_when_zero,
+                count_past_zero: countdown.count_past_zero,
             }),
             WindowContent::Progress(progress) => Some(FeedConfig {
                 kind: FeedKind::Progress,
@@ -361,6 +365,7 @@ impl VellumGuiApp {
                 numbers_only: progress.numbers_only,
                 current_only: progress.current_only,
                 show_when_zero: false,
+                count_past_zero: false,
             }),
             _ => None,
         };
@@ -608,6 +613,7 @@ impl VellumGuiApp {
                         countdown.color =
                             Some(color.clone()).filter(|value| !value.is_empty());
                         countdown.show_when_zero = feed.show_when_zero;
+                        countdown.count_past_zero = feed.count_past_zero;
                     }
                     (WindowContent::Progress(progress), FeedKind::Progress) => {
                         progress.progress_id = id.clone();
@@ -636,6 +642,7 @@ impl VellumGuiApp {
                             data.label = opt(&label);
                             data.color = opt(&color);
                             data.show_when_zero = Some(feed.show_when_zero);
+                            data.count_past_zero = Some(feed.count_past_zero);
                         }
                         (
                             crate::config::WindowDef::Progress { data, .. },
@@ -1040,6 +1047,21 @@ impl VellumGuiApp {
                 {
                     let mut next = feed.clone();
                     next.show_when_zero = show_when_zero;
+                    command = Some(GuiWindowMenuCommand::SetFeed(next));
+                }
+                let mut count_past_zero = feed.count_past_zero;
+                if ui
+                    .checkbox(&mut count_past_zero, "Count past zero")
+                    .on_hover_text(
+                        "Keep counting negative after expiry (-1, -2, ...) - \
+                         for window timers like the pulse clock, where 0 is \
+                         the earliest arrival and the negative depth shows how \
+                         far into the window you are.",
+                    )
+                    .changed()
+                {
+                    let mut next = feed.clone();
+                    next.count_past_zero = count_past_zero;
                     command = Some(GuiWindowMenuCommand::SetFeed(next));
                 }
             }

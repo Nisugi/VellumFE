@@ -492,6 +492,18 @@ impl AppCore {
                 .hand(crate::core::game_objects::Hand::Right)
                 .map(|i| i.id.clone()),
         };
+        // Announce a freshly completed managed-inventory snapshot once
+        // (token-keyed: probe flag updates bump generation, not token).
+        if let Some(snap) = self.game_state.managed_inventory.as_ref() {
+            if snap.complete && snap.token != self.last_announced_inv_token {
+                let (token, count, room) =
+                    (snap.token.clone(), snap.items.len(), snap.room.clone());
+                self.last_announced_inv_token = token;
+                self.add_system_message(&format!(
+                    "[invsync] snapshot complete: {count} items (room {room})."
+                ));
+            }
+        }
         let (mover_cmds, outcome) = self.item_mover.tick(&hands, now_ms);
         commands.extend(mover_cmds);
         match outcome {

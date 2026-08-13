@@ -985,6 +985,7 @@ impl Config {
                     color: None,
                     countdown_background_color: None,
                     show_when_zero: None,
+                    count_past_zero: None,
                 },
             }),
 
@@ -1007,6 +1008,7 @@ impl Config {
                     color: None,
                     countdown_background_color: None,
                     show_when_zero: None,
+                    count_past_zero: None,
                 },
             }),
 
@@ -1033,6 +1035,9 @@ impl Config {
                     color: None,
                     countdown_background_color: None,
                     show_when_zero: Some(true),
+                    // 0 = earliest possible arrival; negative = seconds deep
+                    // into the min..max window (bottoms out ~-29).
+                    count_past_zero: Some(true),
                 },
             }),
 
@@ -1055,6 +1060,7 @@ impl Config {
                     color: None,
                     countdown_background_color: None,
                     show_when_zero: None,
+                    count_past_zero: None,
                 },
             }),
 
@@ -1076,6 +1082,7 @@ impl Config {
                     color: None,
                     countdown_background_color: None,
                     show_when_zero: None,
+                    count_past_zero: None,
                 },
             }),
 

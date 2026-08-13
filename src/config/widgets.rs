@@ -561,6 +561,12 @@ pub struct CountdownWidgetData {
     /// instead of hiding when it reaches zero. Default false (hide on zero).
     #[serde(default)]
     pub show_when_zero: Option<bool>,
+    /// Keep counting below zero (-1, -2, ...) after expiry instead of
+    /// clamping at 0. For timers whose expiry is a window, not a moment -
+    /// the pulse clock reads 0 at the earliest possible arrival and runs
+    /// negative through the min..max window (up to ~-29). Default false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count_past_zero: Option<bool>,
 }
 
 /// Compass widget specific data

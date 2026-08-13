@@ -393,6 +393,7 @@ impl WindowDef {
                     color: None,
                     countdown_background_color: None,
                     show_when_zero: None,
+                    count_past_zero: None,
                 },
             },
             "compass" => WindowDef::Compass {
@@ -854,6 +855,7 @@ mod blank_tests {
                     color: None,
                     countdown_background_color: Some("#444444".to_string()),
                     show_when_zero: None,
+                    count_past_zero: None,
                 },
             },
         ];

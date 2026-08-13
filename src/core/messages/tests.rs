@@ -2076,6 +2076,7 @@ fn test_event_pattern_feeds_stun_countdown() {
         countdown_id: "stuntime".to_string(),
         color: None,
         show_when_zero: false,
+        count_past_zero: false,
     });
     ui_state.windows.insert("stuntime".to_string(), ws);
 
@@ -2151,6 +2152,7 @@ fn test_pulse_feeds_state_and_countdown() {
         countdown_id: "pulse".to_string(),
         color: None,
         show_when_zero: true,
+        count_past_zero: false,
     });
     ui_state.windows.insert("pulse".to_string(), ws);
 
@@ -2203,6 +2205,7 @@ fn test_vellum_timer_feeds_countdown_by_id() {
         countdown_id: "dark-cataclyst".to_string(),
         color: None,
         show_when_zero: false,
+        count_past_zero: false,
     });
     ui_state.windows.insert("cataclysm".to_string(), ws);
 

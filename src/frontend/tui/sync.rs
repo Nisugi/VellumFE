@@ -762,6 +762,8 @@ impl TuiFrontend {
                             }
                             countdown_widget
                                 .set_show_when_zero(data.show_when_zero.unwrap_or(false));
+                            countdown_widget
+                                .set_count_past_zero(data.count_past_zero.unwrap_or(false));
                             let text_color = data.color.clone().or_else(|| colors.text.clone());
                             countdown_widget.set_text_color(text_color);
                             let bg_color = data
