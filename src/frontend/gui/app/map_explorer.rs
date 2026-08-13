@@ -157,7 +157,11 @@ impl VellumGuiApp {
         egui::Panel::top("map_explorer_toolbar").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 // Location picker with a filter box inside the popup.
-                let selected_text = ex.location.as_deref().unwrap_or("(no location)");
+                let selected_text = ex
+                    .location
+                    .as_deref()
+                    .map(|key| map.display_name(key))
+                    .unwrap_or("(no location)");
                 egui::ComboBox::from_id_salt("map_explorer_location")
                     .selected_text(selected_text)
                     .width(240.0)
@@ -171,31 +175,66 @@ impl VellumGuiApp {
                         );
                         ui.separator();
                         let filter = ex.filter.to_lowercase();
-                        if let Some(db) = map.mapdb() {
-                            egui::ScrollArea::vertical()
-                                .max_height(320.0)
-                                .show(ui, |ui| {
-                                    for location in db.locations() {
-                                        if !filter.is_empty()
-                                            && !location.to_lowercase().contains(&filter)
-                                        {
-                                            continue;
-                                        }
-                                        let is_current = ex.location.as_deref() == Some(location);
-                                        if ui.selectable_label(is_current, location).clicked() {
-                                            if !is_current {
-                                                ex.location = Some(location.to_owned());
-                                                ex.follow = false;
-                                                ex.selected = None;
-                                                ex.centered = false;
-                                                ex.sheet = Sheet::Outdoor;
-                                                out.request_location = Some(location.to_owned());
-                                            }
-                                            ui.close();
+                        // With curated membership: curated maps first, then
+                        // satellites (auto components — the set the filter
+                        // box exists for). Fallback mode lists locations.
+                        let entries: Vec<(String, String)> =
+                            if let Some(membership) = map.membership() {
+                                membership
+                                    .list_maps()
+                                    .into_iter()
+                                    .map(|(key, name, size, curated)| {
+                                        let label = if curated {
+                                            name
+                                        } else {
+                                            format!("{name} ({size})")
+                                        };
+                                        (key, label)
+                                    })
+                                    .collect()
+                            } else if let Some(db) = map.mapdb() {
+                                db.locations()
+                                    .map(|l| (l.to_owned(), l.to_owned()))
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
+                        let curated_count = map
+                            .membership()
+                            .map(|m| entries.iter().filter(|(k, _)| m.is_curated(k)).count())
+                            .unwrap_or(0);
+                        egui::ScrollArea::vertical()
+                            .max_height(320.0)
+                            .show(ui, |ui| {
+                                for (index, (key, label)) in entries.iter().enumerate() {
+                                    if !filter.is_empty()
+                                        && !label.to_lowercase().contains(&filter)
+                                        && !key.to_lowercase().contains(&filter)
+                                    {
+                                        continue;
+                                    }
+                                    if curated_count > 0 && filter.is_empty() {
+                                        if index == 0 {
+                                            ui.weak("Curated maps");
+                                        } else if index == curated_count {
+                                            ui.separator();
+                                            ui.weak("Satellites");
                                         }
                                     }
-                                });
-                        }
+                                    let is_current = ex.location.as_deref() == Some(key.as_str());
+                                    if ui.selectable_label(is_current, label).clicked() {
+                                        if !is_current {
+                                            ex.location = Some(key.clone());
+                                            ex.follow = false;
+                                            ex.selected = None;
+                                            ex.centered = false;
+                                            ex.sheet = Sheet::Outdoor;
+                                            out.request_location = Some(key.clone());
+                                        }
+                                        ui.close();
+                                    }
+                                }
+                            });
                     });
 
                 ui.separator();

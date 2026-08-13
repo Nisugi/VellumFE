@@ -857,6 +857,7 @@ impl AppCore {
     /// changes. Called at startup, after the settings editor saves, and when
     /// the updater installs a fresh download.
     pub fn refresh_map_source(&mut self) {
+        self.refresh_curated_maps();
         let base = Config::base_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let source = crate::core::map_service::resolve_source(
             self.config.map.mapdb_path.as_deref(),
@@ -865,6 +866,36 @@ impl AppCore {
             &crate::core::mapdb_update::download_dir(&base),
         );
         self.map.ensure_db(source);
+    }
+
+    /// Load curated base-map membership: the snapshot TOML first, then a
+    /// local Saga install layered over it (fresh rosters win per map).
+    /// Neither present = fallback mode, maps stay location-bucketed.
+    /// `set_curated` no-ops on identical data, so calling this on every
+    /// source refresh is cheap in steady state.
+    fn refresh_curated_maps(&mut self) {
+        use crate::core::curated_maps;
+        let mut curated = Config::global_data_dir()
+            .ok()
+            .map(|dir| dir.join("curated_maps.toml"))
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| match curated_maps::CuratedMaps::from_toml(&text) {
+                Ok(snapshot) => Some(snapshot),
+                Err(e) => {
+                    tracing::warn!("curated_maps.toml unreadable, ignoring: {e}");
+                    None
+                }
+            })
+            .unwrap_or_default();
+        if let Some(layouts) = curated_maps::find_saga_layouts(None) {
+            match curated_maps::extract_from_saga(&layouts) {
+                Ok(fresh) => curated.merge_from(fresh),
+                Err(e) => tracing::warn!("Saga layouts extract failed: {e}"),
+            }
+        }
+        if !curated.is_empty() {
+            self.map.set_curated(curated);
+        }
     }
 
     /// Drain the map worker and the mapdb updater; a freshly installed

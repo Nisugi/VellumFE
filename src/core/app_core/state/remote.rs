@@ -388,7 +388,10 @@ impl AppCore {
             .and_then(|uid| overlay.as_ref()?.cell_of(uid));
 
         state.available = true;
-        state.location = map.current_location.clone();
+        state.location = map
+            .current_location
+            .as_deref()
+            .map(|key| map.display_name(key).to_owned());
         state.room = current;
         state.cell = ghost_cell.or(center).map(|c| [c.x, c.y]);
         state.in_ghost = ghost_cell.is_some();
@@ -445,11 +448,21 @@ impl AppCore {
 
     /// Location list for a phone's map picker.
     pub fn handle_remote_map_locations(&mut self, client_id: u64, request_id: u64) {
-        let locations: Vec<String> = self
-            .map
-            .mapdb()
-            .map(|db| db.locations().map(str::to_owned).collect())
-            .unwrap_or_default();
+        // With curated membership: map keys, curated first (the phone shows
+        // them verbatim; satellite keys are functional placeholders until
+        // the satellite set gets curated down). Fallback: locations.
+        let locations: Vec<String> = match self.map.membership() {
+            Some(membership) => membership
+                .list_maps()
+                .into_iter()
+                .map(|(key, _, _, _)| key)
+                .collect(),
+            None => self
+                .map
+                .mapdb()
+                .map(|db| db.locations().map(str::to_owned).collect())
+                .unwrap_or_default(),
+        };
         if let Some(remote) = self.message_processor.remote.as_mut() {
             remote.push_map_locations(client_id, request_id, locations);
         }
@@ -461,9 +474,13 @@ impl AppCore {
     pub fn handle_remote_map_view(&mut self, client_id: u64, request_id: u64, location: String) {
         let known = self
             .map
-            .mapdb()
-            .map(|db| db.rooms(&location).is_some())
-            .unwrap_or(false);
+            .membership()
+            .is_some_and(|m| m.rooms_of_map(&location).is_some())
+            || self
+                .map
+                .mapdb()
+                .map(|db| db.rooms(&location).is_some())
+                .unwrap_or(false);
         if !known {
             if let Some(remote) = self.message_processor.remote.as_mut() {
                 remote.push_map_browse(

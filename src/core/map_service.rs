@@ -16,7 +16,9 @@ use crate::core::layout_engine::positioner::Cell;
 use crate::core::layout_engine::{
     build_scene, overrides, Layout, LayoutCache, LocationOverrides, MapOverrides, MapScene,
 };
-use crate::core::mapdb::{find_latest_mapdb, MapDb, RoomTable};
+use crate::core::curated_maps::CuratedMaps;
+use crate::core::mapdb::{find_latest_mapdb, MapDb, Room, RoomTable};
+use crate::core::membership::Membership;
 
 /// Lich's per-game data subdirectory for a VellumFE game code
 /// (`--game prime` → `data/GSIV`).
@@ -64,15 +66,25 @@ pub fn resolve_source(
 
 enum MapJob {
     LoadDb(PathBuf),
-    Generate {
-        location: String,
+    /// Decompose curated coverage + satellites off the UI thread.
+    BuildMembership {
         db: Arc<MapDb>,
+        curated: CuratedMaps,
+    },
+    Generate {
+        /// Map key: a curated slug, a satellite key, or (fallback mode) a
+        /// mapdb location. Opaque to generation, cache, and overrides.
+        location: String,
+        /// The map's rooms, resolved by the caller through membership (or
+        /// `db.rooms(location)` in fallback mode).
+        rooms: Vec<Room>,
         overrides: LocationOverrides,
     },
 }
 
 enum MapEvent {
     DbLoaded(Result<Arc<MapDb>, String>),
+    MembershipReady(Arc<Membership>),
     LayoutReady {
         location: String,
         layout: Arc<Layout>,
@@ -149,6 +161,15 @@ pub struct MapService {
     mapdb: Option<Arc<MapDb>>,
     pub db_error: Option<String>,
 
+    /// Curated base-map rosters, when available (Saga snapshot). Set once
+    /// by the app at startup; None = pure location fallback, today's world.
+    curated: Option<CuratedMaps>,
+    /// Built on the worker after each db load when `curated` is set.
+    membership: Option<Arc<Membership>>,
+    /// True between db load and MembershipReady: room resolution is
+    /// deferred so the first layout generated is the right one.
+    membership_pending: bool,
+
     /// Generated layouts by location (backed by the disk cache on the worker).
     layouts: HashMap<String, Arc<Layout>>,
     /// Drawable scenes matching `layouts`.
@@ -203,14 +224,15 @@ impl MapService {
                                 Err(e) => Err(format!("{}: {e}", path.display())),
                             })
                         }
+                        MapJob::BuildMembership { db, curated } => {
+                            MapEvent::MembershipReady(Membership::build(&db, &curated))
+                        }
                         MapJob::Generate {
                             location,
-                            db,
+                            rooms,
                             overrides: location_overrides,
                         } => {
-                            let Some(rooms) = db.rooms(&location) else {
-                                continue;
-                            };
+                            let rooms: &[Room] = &rooms;
                             // Curated maze rooms never lay out: their edges
                             // are movement-scramble junk that draws as a
                             // spiderweb. Filtering here changes the content
@@ -267,6 +289,9 @@ impl MapService {
             db_state: DbState::NotLoaded,
             mapdb: None,
             db_error: None,
+            curated: None,
+            membership: None,
+            membership_pending: false,
             layouts: HashMap::new(),
             scenes: HashMap::new(),
             pending: Default::default(),
@@ -290,6 +315,50 @@ impl MapService {
 
     pub fn mapdb(&self) -> Option<&Arc<MapDb>> {
         self.mapdb.as_ref()
+    }
+
+    /// The curated/satellite membership, once built. None in fallback mode
+    /// (no curated data) or while the build is still in flight.
+    pub fn membership(&self) -> Option<&Arc<Membership>> {
+        self.membership.as_ref()
+    }
+
+    /// Provide curated base-map rosters. Call once at startup (and again if
+    /// the snapshot is refreshed); kicks the membership build if the db is
+    /// already loaded.
+    pub fn set_curated(&mut self, curated: CuratedMaps) {
+        if curated.is_empty() || self.curated.as_ref() == Some(&curated) {
+            return;
+        }
+        self.curated = Some(curated);
+        self.membership = None;
+        if let Some(db) = self.mapdb.clone() {
+            self.membership_pending = true;
+            let _ = self.job_tx.send(MapJob::BuildMembership {
+                db,
+                curated: self.curated.clone().expect("just set"),
+            });
+        }
+    }
+
+    /// Map key for a mappable room: membership when built, else the mapdb
+    /// location — one resolution rule for switching and generation alike.
+    fn map_key_of_room(&self, db: &MapDb, room_id: u32) -> Option<String> {
+        if let Some(membership) = &self.membership {
+            if let Some(key) = membership.map_of_room(room_id) {
+                return Some(key.to_string());
+            }
+        }
+        db.location_of_room_id(room_id).map(str::to_owned)
+    }
+
+    /// Display name for a map key ("Wehnimers Landing Town" for a curated
+    /// slug, the auto satellite name, or the location string itself).
+    pub fn display_name<'a>(&'a self, key: &'a str) -> &'a str {
+        match &self.membership {
+            Some(membership) => membership.display_name(key),
+            None => key,
+        }
     }
 
     /// Inject a mapdb directly (tests only — the live path loads from disk).
@@ -339,6 +408,8 @@ impl MapService {
         };
         self.db_state = DbState::Loading;
         self.mapdb = None;
+        self.membership = None;
+        self.membership_pending = false;
         self.layouts.clear();
         self.scenes.clear();
         self.pending.clear();
@@ -395,6 +466,12 @@ impl MapService {
         let Some(db) = self.mapdb.clone() else {
             return;
         };
+        // Membership is being built: hold. MembershipReady re-resolves the
+        // remembered identifiers, so nothing is lost — this only prevents a
+        // throwaway location layout in the gap.
+        if self.membership_pending {
+            return;
+        }
         // Lich reports id 0 for rooms missing from its mapdb, but 0 is also a
         // real room id — the fallback must never trust it. A uid miss plus id
         // 0 means "somewhere unmapped".
@@ -444,7 +521,7 @@ impl MapService {
     /// Commit a resolved room id: update current room/location and kick off
     /// the location's layout if it isn't built yet.
     fn apply_resolved_room(&mut self, db: &crate::core::mapdb::MapDb, room_id: u32) {
-        let location = db.location_of_room_id(room_id).map(str::to_owned);
+        let location = self.map_key_of_room(db, room_id);
 
         if Some(room_id) != self.current_room_id || location != self.current_location {
             self.current_room_id = Some(room_id);
@@ -560,7 +637,20 @@ impl MapService {
         let Some(db) = self.mapdb.clone() else {
             return;
         };
-        if db.rooms(location).is_none() {
+        // Resolve the map's rooms here (worker jobs carry them): membership
+        // key first, mapdb location as the fallback namespace.
+        let rooms: Vec<Room> = match self
+            .membership
+            .as_ref()
+            .and_then(|m| m.rooms_of_map(location))
+        {
+            Some(ids) => ids.iter().filter_map(|&id| db.room(id).cloned()).collect(),
+            None => match db.rooms(location) {
+                Some(rooms) => rooms.to_vec(),
+                None => return,
+            },
+        };
+        if rooms.is_empty() {
             return;
         }
         self.pending.insert(location.to_owned());
@@ -571,7 +661,7 @@ impl MapService {
         );
         let _ = self.job_tx.send(MapJob::Generate {
             location: location.to_owned(),
-            db,
+            rooms,
             overrides: location_overrides,
         });
     }
@@ -683,7 +773,9 @@ impl MapService {
     /// Work is in flight (db load or generation); callers should keep
     /// repainting until it drains.
     pub fn has_pending(&self) -> bool {
-        !self.pending.is_empty() || matches!(self.db_state, DbState::Loading)
+        !self.pending.is_empty()
+            || self.membership_pending
+            || matches!(self.db_state, DbState::Loading)
     }
 
     /// Drain worker results. Call once per frame/tick.
@@ -691,12 +783,27 @@ impl MapService {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 MapEvent::DbLoaded(Ok(db)) => {
-                    self.mapdb = Some(db);
+                    self.mapdb = Some(db.clone());
                     self.db_state = DbState::Loaded;
                     self.revision += 1;
-                    // Room identifiers may have arrived while loading.
-                    // No stream snapshot here; if this resolves into a ghost,
-                    // the next same-room report backfills title/exits.
+                    if let Some(curated) = self.curated.clone() {
+                        // Defer room resolution until membership lands so the
+                        // first layout generated is the curated one, not a
+                        // throwaway location layout.
+                        self.membership_pending = true;
+                        let _ = self.job_tx.send(MapJob::BuildMembership { db, curated });
+                    } else {
+                        // Room identifiers may have arrived while loading.
+                        // No stream snapshot here; if this resolves into a
+                        // ghost, the next same-room report backfills
+                        // title/exits.
+                        self.resolve_current_room(Default::default());
+                    }
+                }
+                MapEvent::MembershipReady(membership) => {
+                    self.membership = Some(membership);
+                    self.membership_pending = false;
+                    self.revision += 1;
                     self.resolve_current_room(Default::default());
                 }
                 MapEvent::DbLoaded(Err(e)) => {
@@ -911,6 +1018,71 @@ mod tests {
         assert_eq!(svc.current_ghost, None);
         assert_eq!(svc.current_room_id, Some(369));
         assert_eq!(svc.ghosts().len(), 2);
+    }
+
+    /// Curated membership rewires switching: covered rooms resolve to the
+    /// curated slug, un-covered clusters to their satellite key, and tiny
+    /// one-room closets hold the base map they portal from. Without curated
+    /// data everything stays location-bucketed (the other tests).
+    #[test]
+    fn curated_membership_drives_room_to_map_switching() {
+        let tmp = std::env::temp_dir();
+        let db_path = tmp.join("vellum-map-svc-membership-test.json");
+        std::fs::write(
+            &db_path,
+            r#"[
+                {"id": 1, "uid": [100], "location": "Town",
+                 "title": ["[Town, Square]"],
+                 "wayto": {"10": "go well", "20": "go closet"},
+                 "timeto": {"10": 0.2, "20": 0.2}, "paths": ""},
+                {"id": 10, "uid": [200], "location": "Town",
+                 "title": ["[Town, Well Top]"], "wayto": {"1": "out", "11": "down"},
+                 "timeto": {"1": 0.2, "11": 0.2}, "paths": ""},
+                {"id": 11, "uid": [201], "location": "Town",
+                 "title": ["[Town, Well Bottom]"], "wayto": {"10": "up"},
+                 "timeto": {"10": 0.2}, "paths": ""},
+                {"id": 20, "uid": [300], "location": "Town",
+                 "title": ["[Town, Closet]"], "wayto": {"1": "out"},
+                 "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut svc = MapService::new(
+            tmp.join("vellum-map-svc-membership-cache"),
+            tmp.join("vellum-map-svc-membership-overrides.json"),
+        );
+        svc.mapdb = Some(Arc::new(MapDb::load(&db_path).unwrap()));
+        svc.set_curated(
+            crate::core::curated_maps::CuratedMaps::from_saga_layouts_json(
+                r#"{"layoutVersion": 1, "layouts": {"town||i:1": {"pos": [[100, 0, 0]]}}}"#,
+            )
+            .unwrap(),
+        );
+        // Membership builds on the worker; wait for it to land.
+        for _ in 0..500 {
+            svc.poll();
+            if svc.membership().is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(svc.membership().is_some(), "membership build timed out");
+
+        // While the build was pending, resolution held (nothing generated).
+        svc.note_room(Some(100), Some(1), Default::default());
+        assert_eq!(svc.current_location.as_deref(), Some("town"), "covered → curated slug");
+        assert_eq!(svc.display_name("town"), "Town");
+
+        svc.note_room(Some(200), Some(10), Default::default());
+        assert_eq!(svc.current_location.as_deref(), Some("sat-200"), "well → satellite");
+
+        svc.note_room(Some(300), Some(20), Default::default());
+        assert_eq!(
+            svc.current_location.as_deref(),
+            Some("town"),
+            "tiny closet holds the base map"
+        );
+        assert_eq!(svc.current_room_id, Some(20), "but the room itself is tracked");
     }
 
     /// Rooms that arrive with no uid and no Lich id (interfaces that never

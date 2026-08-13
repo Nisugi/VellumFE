@@ -500,7 +500,12 @@ impl AppCore {
             self.add_system_message("No mapdb room resolved yet.");
             return;
         };
-        let location = self.map.current_location.clone().unwrap_or_else(|| "?".into());
+        let location = self
+            .map
+            .current_location
+            .as_deref()
+            .map(|key| self.map.display_name(key).to_owned())
+            .unwrap_or_else(|| "?".into());
         let mut summary = format!("Resolved: room {room_id} in {location}");
         if let Some(db) = self.map.mapdb() {
             if let Some(room) = db.room(room_id) {

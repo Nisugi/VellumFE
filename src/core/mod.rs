@@ -37,6 +37,7 @@ pub mod move_feedback;
 pub mod multiaccount;
 pub mod session_registry;
 pub mod mapdb_update;
+pub mod membership;
 pub mod menu_actions;
 pub mod known_windows;
 pub mod local_catalog;
