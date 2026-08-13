@@ -375,6 +375,7 @@ impl MessageProcessor {
                 }
                 if let Some(silver) = self.pending_silver.take() {
                     game_state.silver = Some(silver);
+                    game_state.silver_line_no = self.game_line_no;
                 }
 
                 // Group events apply in order: a `group` reply stages its

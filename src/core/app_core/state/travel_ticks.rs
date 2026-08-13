@@ -356,6 +356,7 @@ impl AppCore {
             lich_fallback: self.config.go2.lich_fallback && self.lich_connected(),
             funding: Some(crate::core::travel::executor::FundingInputs {
                 silver: self.game_state.silver,
+                silver_line_no: self.game_state.silver_line_no,
                 get_silvers: self.config.go2.get_silvers,
                 get_return_trip: self.config.go2.get_return_trip_silvers,
             }),

@@ -220,6 +220,11 @@ pub struct GameState {
     /// Silver on hand, parsed from `wealth`/`wealth quiet` output. `None`
     /// until first seen. Drives go2's silver-funding for paid travel.
     pub silver: Option<u64>,
+    /// Flushed-line number of the last wealth reading. The funding phases
+    /// only trust a reading NEWER than their `wealth quiet` probe - deciding
+    /// on the cached value walked a broke character into a paid crossing
+    /// (the live 'you have 2000 - funded' on a freshly emptied purse).
+    pub silver_line_no: u64,
 
     /// Chronomage day-pass expiry cache, learned by `look`ing at passes (Lich's
     /// `$mapdb_day_passes` + `mapdb_day_pass_monitor`). Gates day-pass travel.
@@ -1311,6 +1316,7 @@ impl GameState {
             objects: crate::core::game_objects::GameObjects::default(),
             move_feedback: std::collections::VecDeque::new(),
             game_line_no: 0,
+            silver_line_no: 0,
             recent_lines: std::collections::VecDeque::new(),
             line_seq: 0,
             spell_names_seen: std::collections::HashMap::new(),

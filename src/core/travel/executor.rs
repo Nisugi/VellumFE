@@ -146,6 +146,10 @@ pub struct DayPassInputs<'a> {
 pub struct FundingInputs {
     /// Silver on hand (`game_state.silver`); None until a wealth line is seen.
     pub silver: Option<u64>,
+    /// Flushed-line number of that reading. Funding phases only trust a
+    /// reading newer than their own `wealth quiet` probe - the cached value
+    /// can be arbitrarily stale (deposits since it was read).
+    pub silver_line_no: u64,
     /// Permission to withdraw from the bank when short (`go2.get_silvers`).
     pub get_silvers: bool,
     /// Also pre-fund the return trip (`go2.get_return_trip_silvers`).
@@ -602,6 +606,9 @@ pub struct TravelTask {
     /// SUPERSEDED move - acting on it double-sends the current one (the live
     /// creek bank/creek toggle loop).
     sent_line_no: u64,
+    /// The flushed-line count when the funding phase sent its `wealth quiet`
+    /// probe. A reading is FRESH only if silver_line_no > this.
+    wealth_probe_line: u64,
     /// Blocked-but-transient retries on the current edge (Lich retries these
     /// in place with sleep 1; only exhaustion re-paths, and NEVER bans).
     keep_retries: u32,
@@ -682,6 +689,7 @@ impl TravelTask {
             mounted: false,
             stand_waived: false,
             sent_line_no: 0,
+            wealth_probe_line: 0,
             keep_retries: 0,
             hold_until_ms: 0,
             funding_bank: None,
@@ -2810,21 +2818,41 @@ impl TravelTask {
                 // (sent_ms == started: first entry — fire the check.)
                 if sent_ms == self.started_ms {
                     events.push(TravelEvent::Send("wealth quiet".into()));
+                    self.wealth_probe_line = ctx.game_line_no;
                     // Move sent_ms forward so we don't re-send every tick.
                     self.step = Step::Funding(FundingPhase::AwaitWealth {
                         sent_ms: ctx.now_ms.max(self.started_ms + 1),
                     });
                     return;
                 }
-                let Some(silver) = funding.and_then(|f| f.silver) else {
+                // Only trust a reading NEWER than our probe: game_state's
+                // cached silver can be stale (the live bug - a deposit after
+                // the last wealth line left the cache at 2000, the preflight
+                // read it before the probe answered, and a broke character
+                // marched into a paid crossing "funded").
+                let fresh = funding
+                    .filter(|f| f.silver.is_some() && f.silver_line_no > self.wealth_probe_line);
+                let Some(silver) = fresh.and_then(|f| f.silver) else {
                     // Still waiting for the wealth line (or no funding inputs).
                     if ctx.now_ms.saturating_sub(sent_ms) > STEP_TIMEOUT_MS {
-                        // No wealth response — proceed and hope for the best
-                        // (Lich's routine only runs under GS; we don't block).
+                        if funding.is_some() && self.keep_retries < MAX_EDGE_RETRIES {
+                            // Re-probe a dropped line before giving up.
+                            self.keep_retries += 1;
+                            events.push(TravelEvent::Send("wealth quiet".into()));
+                            self.wealth_probe_line = ctx.game_line_no;
+                            self.step = Step::Funding(FundingPhase::AwaitWealth {
+                                sent_ms: ctx.now_ms,
+                            });
+                            return;
+                        }
+                        // No wealth response at all — proceed and hope for the
+                        // best (Lich's routine only runs under GS; we don't
+                        // block).
                         self.begin_walk(current, ctx, events);
                     }
                     return;
                 };
+                self.keep_retries = 0;
                 // Return-trip pre-funding (go2.lic:2210-2218): with the
                 // setting on, the way HOME counts too - go2 runs a second
                 // dijkstra dest->start and adds its fares, so the character
@@ -2959,6 +2987,7 @@ impl TravelTask {
                     // the same — it calls go2_check_silver() (wealth quiet)
                     // again right after the withdraw (go2.lic:2278-2280).
                     events.push(TravelEvent::Send("wealth quiet".into()));
+                    self.wealth_probe_line = ctx.game_line_no;
                     self.funding_bank = None;
                     self.silver_at_withdraw = funding.and_then(|f| f.silver);
                     self.step = Step::Funding(FundingPhase::AwaitWithdraw {
@@ -2991,11 +3020,11 @@ impl TravelTask {
                     return;
                 }
                 let reading = funding.and_then(|f| f.silver);
-                // The post-withdraw `wealth quiet` hasn't reflected yet if the
-                // reading still equals what we had when we sent the withdraw
-                // (and we DID have a pre-withdraw reading). Wait for it to move.
-                let refreshed = reading != self.silver_at_withdraw
-                    || (self.silver_at_withdraw.is_none() && reading.is_some());
+                // Fresh only when the reading's line postdates our probe -
+                // the value-diff heuristic missed a withdraw that left the
+                // total unchanged and trusted stale caches.
+                let refreshed = reading.is_some()
+                    && funding.map(|f| f.silver_line_no).unwrap_or(0) > self.wealth_probe_line;
                 let have = reading.unwrap_or(0);
                 if refreshed && have >= need {
                     // Funded — re-plan to the real destination and walk.
@@ -3023,6 +3052,7 @@ impl TravelTask {
                     }
                     self.keep_retries += 1;
                     events.push(TravelEvent::Send("wealth quiet".into()));
+                    self.wealth_probe_line = ctx.game_line_no;
                     self.step = Step::Funding(FundingPhase::AwaitWithdraw {
                         real_dest,
                         need,
@@ -5078,7 +5108,9 @@ mod tests {
     }
 
     fn fund(silver: Option<u64>, get_silvers: bool) -> FundingInputs {
-        FundingInputs { silver, get_silvers, get_return_trip: false }
+        // Tests default to a FRESH reading (stamped after any probe); the
+        // staleness test builds its own with an old line number.
+        FundingInputs { silver, silver_line_no: u64::MAX, get_silvers, get_return_trip: false }
     }
 
     #[test]
@@ -5095,6 +5127,51 @@ mod tests {
         // Next tick: funded → the trip walks (sends the board move).
         let events = task.tick(sim.ctx(&db));
         assert_eq!(sent(&events), ["board"], "funded → walks the trip");
+    }
+
+    #[test]
+    fn stale_wealth_reading_is_not_trusted_by_the_preflight() {
+        // The live 2026-08-12 failure: the last wealth line said 2,000, then
+        // the user deposited EVERYTHING; the preflight sent `wealth quiet`
+        // but read the cached 2,000 on the next tick - before the game
+        // answered - said "funded", and a broke character walked 40 minutes
+        // into a ticket refusal. A reading is only valid if its line number
+        // postdates the probe.
+        let db = funding_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.game_line = 100; // lines seen before the trip
+        // Stale cache: reads 2000, stamped from long before the probe.
+        sim.funding = Some(FundingInputs {
+            silver: Some(2000),
+            silver_line_no: 50,
+            get_silvers: true,
+            get_return_trip: false,
+        });
+        // Tick 1: probe goes out (recorded at line 100).
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["wealth quiet"]);
+        // Tick 2: the stale 2000 must NOT fund the trip.
+        sim.now += 100;
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            !events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("funded"))),
+            "a pre-probe reading must not fund: {events:?}"
+        );
+        assert_eq!(sent(&events), Vec::<String>::new());
+        // The FRESH answer arrives: broke. The walker banks BEFORE leaving.
+        sim.game_line = 101;
+        sim.funding = Some(FundingInputs {
+            silver: Some(0),
+            silver_line_no: 101,
+            get_silvers: true,
+            get_return_trip: false,
+        });
+        sim.now += 100;
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("bank"))),
+            "fresh broke reading routes to the bank first: {events:?}"
+        );
     }
 
     #[test]
