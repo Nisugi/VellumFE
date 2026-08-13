@@ -3256,6 +3256,11 @@ impl TravelTask {
             .room(from)
             .and_then(|r| r.wayto.get(&expected).cloned())
             .unwrap_or_default();
+        // A scripted edge's wayto is RUBY, not a game command - re-sending it
+        // raw asks the game to "Please rephrase that command" (live icy-trail
+        // bug). Retries of proc edges must go back through Prepare, which
+        // re-transpiles and re-runs the action script.
+        let is_proc = crate::core::mapdb::is_proc_command(&command);
 
         // Mounted → urchin travel is incompatible. Drop urchins for the rest
         // of the trip and re-path on foot (Lich go2:2336-2346). Only acts when
@@ -3292,11 +3297,16 @@ impl TravelTask {
                 self.repath(ctx.db, from, ctx.lich_fallback, events);
             } else {
                 self.edge_retries += 1;
-                if !command.is_empty() && ctx.rt_remaining <= 0.0 {
-                    self.note_send(&ctx);
-                    events.push(TravelEvent::Send(command));
+                if is_proc {
+                    // Re-run the transpiled script, never the raw Ruby.
+                    self.step = Step::Prepare;
+                } else {
+                    if !command.is_empty() && ctx.rt_remaining <= 0.0 {
+                        self.note_send(&ctx);
+                        events.push(TravelEvent::Send(command));
+                    }
+                    self.reset_arrival_timer(from, expected, ctx.now_ms);
                 }
-                self.reset_arrival_timer(from, expected, ctx.now_ms);
             }
             return true;
         }
@@ -3323,10 +3333,15 @@ impl TravelTask {
         if ctx.saw_since(self.sent_line_no, &F::MustUnhide) {
             self.note_send(&ctx);
             events.push(TravelEvent::Send("unhide".into()));
-            if !command.is_empty() {
-                events.push(TravelEvent::Send(command));
+            if is_proc {
+                // Re-run the transpiled script, never the raw Ruby.
+                self.step = Step::Prepare;
+            } else {
+                if !command.is_empty() {
+                    events.push(TravelEvent::Send(command));
+                }
+                self.reset_arrival_timer(from, expected, ctx.now_ms);
             }
-            self.reset_arrival_timer(from, expected, ctx.now_ms);
             return true;
         }
         // Postural rejection: back through Prepare, whose stand machinery is
@@ -3407,6 +3422,13 @@ impl TravelTask {
                 return true;
             }
             self.tried_open = true;
+            if is_proc {
+                // The proc's own command hit the closed door; `open` has no
+                // sensible noun to derive from Ruby - just re-run the script,
+                // whose move will report the door again if it's really shut.
+                self.step = Step::Prepare;
+                return true;
+            }
             let open = command.replacen("go", "open", 1).replacen("climb", "open", 1);
             events.push(TravelEvent::Send(open));
             events.push(TravelEvent::Send(command));
@@ -3424,20 +3446,32 @@ impl TravelTask {
         }
         // Verb swaps: go <-> climb.
         if ctx.saw_since(self.sent_line_no, &F::NeedClimb) {
-            events.push(TravelEvent::Send(command.replacen("go", "climb", 1)));
-            self.reset_arrival_timer(from, expected, ctx.now_ms);
+            if is_proc {
+                self.step = Step::Prepare;
+            } else {
+                events.push(TravelEvent::Send(command.replacen("go", "climb", 1)));
+                self.reset_arrival_timer(from, expected, ctx.now_ms);
+            }
             return true;
         }
         if ctx.saw_since(self.sent_line_no, &F::CantClimb) {
-            events.push(TravelEvent::Send(command.replacen("climb", "go", 1)));
-            self.reset_arrival_timer(from, expected, ctx.now_ms);
+            if is_proc {
+                self.step = Step::Prepare;
+            } else {
+                events.push(TravelEvent::Send(command.replacen("climb", "go", 1)));
+                self.reset_arrival_timer(from, expected, ctx.now_ms);
+            }
             return true;
         }
         // Item at feet → stow it, then retry.
         if ctx.saw_since(self.sent_line_no, &F::ItemAtFeet) {
             events.push(TravelEvent::Send("stow feet".into()));
-            events.push(TravelEvent::Send(command));
-            self.reset_arrival_timer(from, expected, ctx.now_ms);
+            if is_proc {
+                self.step = Step::Prepare;
+            } else {
+                events.push(TravelEvent::Send(command));
+                self.reset_arrival_timer(from, expected, ctx.now_ms);
+            }
             return true;
         }
         false
@@ -4443,6 +4477,43 @@ mod tests {
         sim.feedback = vec![(11u64, F::MoveFailedRemovable)];
         let ev = task.tick(sim.ctx(&db));
         assert_eq!(sent(&ev), ["north"], "a fresh failure retries: {ev:?}");
+    }
+
+    #[test]
+    fn proc_edge_retries_rerun_the_script_never_the_raw_ruby() {
+        // Live icy-trail bug: a failure retry on a scripted edge re-sent the
+        // edge's wayto VERBATIM - `;e empty_hands; move 'climb trail'; ...`
+        // went to the game as a command ("Please rephrase that command").
+        // Proc-edge retries must re-enter Prepare and re-run the transpiled
+        // script.
+        use crate::core::move_feedback::MoveFeedback as F;
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Cavern]"],
+                 "wayto": {"2": ";e fput 'open door'; move 'go door'"},
+                 "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Inside]"],
+                 "wayto": {"1": "out"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["open door", "go door"]);
+        // A fresh hard failure arrives while awaiting the room.
+        sim.now += 100;
+        sim.feel(F::MoveFailedRemovable);
+        let ev = task.tick(sim.ctx(&db));
+        assert!(
+            !sent(&ev).iter().any(|c| c.starts_with(";e")),
+            "raw Ruby must never go to the game: {ev:?}"
+        );
+        // The retry re-runs the SCRIPT (immediately or on the next tick).
+        sim.now += 100;
+        let ev2 = task.tick(sim.ctx(&db));
+        let mut cmds = sent(&ev);
+        cmds.extend(sent(&ev2));
+        assert_eq!(cmds, ["open door", "go door"], "the script re-runs: {cmds:?}");
     }
 
     #[test]
