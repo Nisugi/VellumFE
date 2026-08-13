@@ -334,6 +334,11 @@ impl MessageProcessor {
                 // Finish current stream before prompt
                 self.flush_current_stream_with_tts(ui_state, tts_manager.as_deref_mut());
 
+                // At most one background viewitem probe dispatches per
+                // prompt (Saga's pacing); commands ride take_outbound.
+                self.inv_service
+                    .on_prompt(chrono::Utc::now().timestamp_millis().max(0) as u64);
+
                 // An INVENTORY FULL scan ends at the prompt: write the
                 // collected mark/register statuses into the registry.
                 if self.inv_scan.is_capturing() {
@@ -2004,6 +2009,9 @@ impl MessageProcessor {
                             snapshot.room,
                             snapshot.items.len()
                         );
+                        // Background-enrich container open/closed state with
+                        // paced viewitem probes (one per prompt).
+                        self.inv_service.queue_container_probes(&snapshot);
                         game_state.managed_inventory = Some(snapshot);
                     }
                     ResponseOutcome::Absorbed | ResponseOutcome::Failed => {
@@ -2027,6 +2035,33 @@ impl MessageProcessor {
                                 complete: cursors.is_empty(),
                                 generation,
                             });
+                    }
+                }
+            }
+            ParsedElement::InventoryViewItem(resp) => {
+                self.chunk_has_silent_updates = true;
+                if let Some(verdict) = self.inv_service.on_viewitem(
+                    &resp.token,
+                    &resp.exist,
+                    resp.state.as_deref(),
+                    resp.closed_attr,
+                ) {
+                    // Probe answer: the envelope's closed attribute is the
+                    // authoritative container state - update the snapshot.
+                    if let Some(snapshot) = game_state.managed_inventory.as_mut() {
+                        if let Some(item) =
+                            snapshot.items.iter_mut().find(|i| i.id == verdict.exist)
+                        {
+                            let was_closed = item.is_closed();
+                            if verdict.closed && !was_closed {
+                                item.flags.push("closed".to_string());
+                            } else if !verdict.closed && was_closed {
+                                item.flags.retain(|f| f != "closed");
+                            }
+                            if was_closed != verdict.closed {
+                                snapshot.generation += 1;
+                            }
+                        }
                     }
                 }
             }

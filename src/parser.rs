@@ -402,6 +402,42 @@ pub enum ParsedElement {
         items: Vec<Vec<(String, String)>>,
         continuations: Vec<Vec<(String, String)>>,
     },
+    /// `<inventoryViewItem>` response (extended feed); see
+    /// [`InventoryViewItemResponse`].
+    InventoryViewItem(InventoryViewItemResponse),
+}
+
+/// `<inventoryViewItem id exist [state]>` ... `</inventoryViewItem>` —
+/// per-item detail response to `_inventory viewitem <token> <exist>`
+/// (extended feed). Each `<result command="look|read|...">` section's text
+/// is captured with inline markup flattened (`<br/>` = newline); the body
+/// never reaches the text stream. The envelope's bare `closed` attribute
+/// (when the item is a container) is the authoritative open/closed signal —
+/// Saga probes containers with viewitem precisely to read it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InventoryViewItemResponse {
+    pub token: String,
+    pub exist: String,
+    /// Non-empty = failure ("malformed" is synthesized for prompt-torn
+    /// captures, mirroring Saga)
+    pub state: Option<String>,
+    /// The envelope carried a `closed` attribute (container closed);
+    /// absence on a container response means open.
+    pub closed_attr: bool,
+    /// (command, flattened text) per `<result>` section, in feed order
+    pub results: Vec<(String, String)>,
+}
+
+/// In-flight `<inventoryViewItem>` capture.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct InvViewItemBuilder {
+    pub(crate) token: String,
+    pub(crate) exist: String,
+    pub(crate) state: Option<String>,
+    pub(crate) closed_attr: bool,
+    pub(crate) results: Vec<(String, String)>,
+    /// Some while inside a `<result>` section: (command, text so far)
+    pub(crate) current: Option<(String, String)>,
 }
 
 /// In-flight `<inventoryManager>` block: children accumulate here between
@@ -495,6 +531,7 @@ pub struct XmlParser {
     current_menu_coords: Vec<(String, Option<String>)>, // (coord, optional noun) pairs for current menu
     /// In-flight `<inventoryManager>` block (None outside one)
     pub(crate) inv_manager: Option<InvManagerBuilder>,
+    pub(crate) inv_viewitem: Option<InvViewItemBuilder>,
 
     // Event pattern matching
     event_matchers: Vec<(Regex, crate::config::EventPattern)>, // Compiled regexes + patterns
@@ -559,6 +596,7 @@ impl XmlParser {
             current_menu_id: None,
             current_menu_coords: Vec::new(),
             inv_manager: None,
+            inv_viewitem: None,
             event_matchers,
         }
     }
@@ -599,6 +637,14 @@ impl XmlParser {
         // would collapse.
         if line.is_empty() {
             return vec![self.create_text_element(String::new())];
+        }
+
+        // An inventoryViewItem capture (active or opening on this line) owns
+        // the whole line: its styled body must never leak into the text
+        // stream. The dedicated walker hands back any post-close remainder
+        // (e.g. a trailing prompt) for normal parsing.
+        if self.inv_viewitem.is_some() || line.contains("<inventoryViewItem") {
+            return self.parse_viewitem_line(&line);
         }
 
         let mut elements = Vec::new();

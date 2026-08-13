@@ -2510,6 +2510,79 @@ fn test_managed_inventory_item_from_attrs() {
     assert!(item.is_container());
 }
 
+#[test]
+fn test_inventory_view_item_block() {
+    let mut parser = XmlParser::new();
+    let elements = parser.parse_line(
+        r#"<inventoryViewItem id='im5' exist='148848453' closed><result command="look">You see a <a exist="148848453" noun="backpack">patchwork backpack</a>.<br/>It is fairly full.</result><result command="read"/></inventoryViewItem>"#,
+    );
+    let ParsedElement::InventoryViewItem(resp) = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::InventoryViewItem(_)))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(resp.token, "im5");
+    assert_eq!(resp.exist, "148848453");
+    assert!(resp.closed_attr, "bare closed attribute detected");
+    assert_eq!(resp.state, None);
+    assert_eq!(resp.results.len(), 2);
+    assert_eq!(resp.results[0].0, "look");
+    assert_eq!(
+        resp.results[0].1,
+        "You see a patchwork backpack.\nIt is fairly full.",
+        "inline markup flattened, br = newline"
+    );
+    assert_eq!(resp.results[1], ("read".to_string(), String::new()));
+
+    // Nothing from the block leaks into the text stream.
+    assert!(!elements
+        .iter()
+        .any(|e| matches!(e, ParsedElement::Text { content, .. } if !content.trim().is_empty())));
+}
+
+#[test]
+fn test_inventory_view_item_open_container_and_prompt_tear() {
+    let mut parser = XmlParser::new();
+    // No closed attribute = open container.
+    let elements = parser
+        .parse_line(r#"<inventoryViewItem id='im6' exist='42'><result command="look">Open.</result></inventoryViewItem>"#);
+    let ParsedElement::InventoryViewItem(resp) = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::InventoryViewItem(_)))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert!(!resp.closed_attr);
+
+    // A prompt tearing the capture synthesizes state="malformed" and the
+    // prompt still parses.
+    let elements = parser.parse_line(
+        r#"<inventoryViewItem id='im7' exist='43'><result command="look">Half a<prompt time="1755000000">&gt;</prompt>"#,
+    );
+    let ParsedElement::InventoryViewItem(resp) = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::InventoryViewItem(_)))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(resp.state.as_deref(), Some("malformed"));
+    assert!(
+        elements.iter().any(|e| matches!(e, ParsedElement::Prompt { .. })),
+        "prompt parsed normally after the tear"
+    );
+
+    // Trailing content after the close re-enters the normal parser.
+    let elements = parser.parse_line(
+        r#"<inventoryViewItem id='im8' exist='44'/><pulse mana="1"/>"#,
+    );
+    assert!(elements.iter().any(|e| matches!(e, ParsedElement::InventoryViewItem(_))));
+    assert!(elements.iter().any(|e| matches!(e, ParsedElement::Pulse { .. })));
+}
+
 // ==================== roommeta / mindState exp Parsing ====================
 
 #[test]

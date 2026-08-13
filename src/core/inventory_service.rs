@@ -26,6 +26,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 const MAX_IN_FLIGHT: usize = 4;
 /// How long a single request may stay unanswered before the load fails.
 const REQUEST_TIMEOUT_MS: u64 = 10_000;
+/// Viewitem probe timeout (Saga uses 5s); a timed-out probe is skipped,
+/// never retried - it was only ever a background enrichment.
+const PROBE_TIMEOUT_MS: u64 = 5_000;
+/// Upper bound on containers queued for probing per snapshot.
+const MAX_PROBES_PER_SNAPSHOT: usize = 40;
 /// How many times a stale/failed load may restart before giving up until
 /// the next explicit refresh.
 const MAX_RESTARTS: u32 = 2;
@@ -68,6 +73,22 @@ pub enum ResponseOutcome {
     Failed,
 }
 
+/// A queued container probe: `_inventory viewitem` fired silently to read
+/// the envelope's `closed` attribute (authoritative open/closed state).
+#[derive(Debug, Clone)]
+struct Probe {
+    exist: String,
+    /// `via` selector from the nearest ancestor with an `in_selector`
+    via: Option<String>,
+}
+
+/// A confirmed probe answer for the caller to apply to the snapshot.
+#[derive(Debug, PartialEq)]
+pub struct ProbeResult {
+    pub exist: String,
+    pub closed: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct InventoryService {
     active: Option<ActiveLoad>,
@@ -78,6 +99,10 @@ pub struct InventoryService {
     /// Restarts consumed by the current refresh attempt.
     restarts: u32,
     generation: u64,
+    /// Container probes awaiting a free prompt slot.
+    probe_queue: VecDeque<Probe>,
+    /// The single outstanding probe: (token, exist, deadline).
+    probe_in_flight: Option<(String, String, u64)>,
 }
 
 impl InventoryService {
@@ -251,7 +276,102 @@ impl InventoryService {
                 self.fail_load(now_ms);
             }
         }
+        // A probe that never answered is dropped, not retried - probing is
+        // background enrichment, never load-bearing.
+        if let Some((_, exist, deadline)) = self.probe_in_flight.as_ref() {
+            if now_ms >= *deadline {
+                tracing::debug!("viewitem probe for {exist} timed out; skipping");
+                self.probe_in_flight = None;
+            }
+        }
         std::mem::take(&mut self.outbox)
+    }
+
+    /// Queue open/closed probes for a published snapshot's containers.
+    /// `via` is Saga's rule: the nearest strict ancestor with an
+    /// `in_selector` addresses the subtree by noun phrase, not `#id`.
+    pub fn queue_container_probes(&mut self, snapshot: &ManagedInventoryState) {
+        self.probe_queue.clear();
+        let by_id: HashMap<&str, &ManagedInventoryItem> = snapshot
+            .items
+            .iter()
+            .map(|i| (i.id.as_str(), i))
+            .collect();
+        for item in &snapshot.items {
+            if !item.is_container() {
+                continue;
+            }
+            if self.probe_queue.len() >= MAX_PROBES_PER_SNAPSHOT {
+                tracing::debug!(
+                    "viewitem probe queue capped at {MAX_PROBES_PER_SNAPSHOT}; \
+                     remaining containers unprobed"
+                );
+                break;
+            }
+            // Walk strict ancestors for the nearest in_selector.
+            let mut via = None;
+            let mut parent = item.parent.as_str();
+            while let Some(p) = by_id.get(parent) {
+                if let Some(sel) = p.in_selector.as_deref() {
+                    via = Some(sel.to_string());
+                    break;
+                }
+                parent = p.parent.as_str();
+            }
+            self.probe_queue.push_back(Probe {
+                exist: item.id.clone(),
+                via,
+            });
+        }
+    }
+
+    /// Prompt hook: at most one probe goes out per `<prompt>` (Saga's
+    /// pacing), and only while no probe is outstanding and no load is
+    /// mid-flight (the load's chunks would race the probe's answer).
+    pub fn on_prompt(&mut self, now_ms: u64) {
+        if self.probe_in_flight.is_some() || self.active.is_some() {
+            return;
+        }
+        let Some(probe) = self.probe_queue.pop_front() else {
+            return;
+        };
+        let token = self.next_token(now_ms);
+        let cmd = match &probe.via {
+            Some(via) => format!("_inventory viewitem {token} {} via {via}", probe.exist),
+            None => format!("_inventory viewitem {token} {}", probe.exist),
+        };
+        self.probe_in_flight = Some((token, probe.exist, now_ms + PROBE_TIMEOUT_MS));
+        self.outbox.push(cmd);
+    }
+
+    /// Feed an `<inventoryViewItem>` response. Returns the open/closed
+    /// verdict when it answers our outstanding probe; None for foreign
+    /// tokens (e.g. a future detail-view request path) or failed states.
+    pub fn on_viewitem(
+        &mut self,
+        token: &str,
+        exist: &str,
+        state: Option<&str>,
+        closed_attr: bool,
+    ) -> Option<ProbeResult> {
+        let (probe_token, probe_exist, _) = self.probe_in_flight.as_ref()?;
+        if probe_token != token {
+            return None;
+        }
+        let expected = probe_exist.clone();
+        self.probe_in_flight = None;
+        if state.is_some_and(|s| !s.is_empty()) {
+            tracing::debug!("viewitem probe for {expected} failed (state={state:?})");
+            return None;
+        }
+        if expected != exist {
+            tracing::debug!("viewitem probe answered with wrong exist ({exist}, wanted {expected})");
+            return None;
+        }
+        Some(ProbeResult {
+            exist: exist.to_string(),
+            closed: closed_attr,
+        })
     }
 }
 
@@ -444,6 +564,131 @@ mod tests {
         assert_eq!(svc.tick(0).len(), 1);
         svc.request_refresh(1);
         assert!(svc.tick(1).is_empty(), "no second initial request");
+    }
+
+    fn container(id: &str, parent: &str, selector: Option<&str>) -> ManagedInventoryItem {
+        ManagedInventoryItem {
+            id: id.to_string(),
+            relation: "in".to_string(),
+            parent: parent.to_string(),
+            noun: format!("box{id}"),
+            in_max: Some(100),
+            in_selector: selector.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    fn snapshot(items: Vec<ManagedInventoryItem>) -> ManagedInventoryState {
+        ManagedInventoryState {
+            token: "t".to_string(),
+            room: "1".to_string(),
+            items,
+            complete: true,
+            generation: 1,
+        }
+    }
+
+    #[test]
+    fn probes_pace_one_per_prompt_and_apply_verdicts() {
+        let mut svc = InventoryService::new();
+        svc.queue_container_probes(&snapshot(vec![
+            container("10", "player", None),
+            container("11", "player", None),
+            item("plain"), // not a container - never probed
+        ]));
+
+        // Nothing goes out before a prompt.
+        assert!(svc.tick(0).is_empty());
+        svc.on_prompt(0);
+        let sent = svc.tick(0);
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].starts_with("_inventory viewitem im"));
+        assert!(sent[0].ends_with(" 10"));
+
+        // Second prompt while one is outstanding: no new probe.
+        svc.on_prompt(1);
+        assert!(svc.tick(1).is_empty());
+
+        // Answer: closed attr present = closed verdict; slot frees.
+        let token = token_of(&sent[0]);
+        let verdict = svc.on_viewitem(&token, "10", None, true).unwrap();
+        assert_eq!(verdict, ProbeResult { exist: "10".to_string(), closed: true });
+        svc.on_prompt(2);
+        let sent = svc.tick(2);
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].ends_with(" 11"));
+
+        // Absent closed attr = open verdict.
+        let token = token_of(&sent[0]);
+        let verdict = svc.on_viewitem(&token, "11", None, false).unwrap();
+        assert!(!verdict.closed);
+        // Queue drained: further prompts send nothing.
+        svc.on_prompt(3);
+        assert!(svc.tick(3).is_empty());
+    }
+
+    #[test]
+    fn probe_via_uses_nearest_ancestor_selector() {
+        let mut svc = InventoryService::new();
+        // locker (selector) > pouch (container, no selector) - probing the
+        // pouch must go via the locker's noun phrase.
+        let mut locker = container("1", "room", Some("locker"));
+        locker.relation = "in".to_string();
+        svc.queue_container_probes(&snapshot(vec![
+            locker,
+            container("2", "1", None),
+        ]));
+        svc.on_prompt(0);
+        let sent = svc.tick(0);
+        // First probe is the locker itself: no strict ancestor, no via.
+        assert!(sent[0].ends_with(" 1"), "{}", sent[0]);
+        let t = token_of(&sent[0]);
+        svc.on_viewitem(&t, "1", None, false);
+        svc.on_prompt(1);
+        let sent = svc.tick(1);
+        assert!(
+            sent[0].ends_with(" 2 via locker"),
+            "nested probe rides the ancestor selector: {}",
+            sent[0]
+        );
+    }
+
+    #[test]
+    fn probe_timeout_skips_and_moves_on() {
+        let mut svc = InventoryService::new();
+        svc.queue_container_probes(&snapshot(vec![
+            container("10", "player", None),
+            container("11", "player", None),
+        ]));
+        svc.on_prompt(0);
+        let sent = svc.tick(0);
+        let stale_token = token_of(&sent[0]);
+        // 5s pass unanswered: probe dropped, next prompt probes the next id.
+        let _ = svc.tick(PROBE_TIMEOUT_MS + 1);
+        svc.on_prompt(PROBE_TIMEOUT_MS + 2);
+        let sent = svc.tick(PROBE_TIMEOUT_MS + 2);
+        assert!(sent[0].ends_with(" 11"));
+        // The stale answer arriving late no longer matches anything.
+        assert!(svc.on_viewitem(&stale_token, "10", None, true).is_none());
+    }
+
+    #[test]
+    fn probe_failed_state_yields_no_verdict() {
+        let mut svc = InventoryService::new();
+        svc.queue_container_probes(&snapshot(vec![container("10", "player", None)]));
+        svc.on_prompt(0);
+        let t = token_of(&svc.tick(0)[0]);
+        assert!(svc.on_viewitem(&t, "10", Some("malformed"), true).is_none());
+    }
+
+    #[test]
+    fn probes_defer_while_a_load_is_active() {
+        let mut svc = InventoryService::new();
+        svc.queue_container_probes(&snapshot(vec![container("10", "player", None)]));
+        svc.request_refresh(0);
+        let _ = svc.tick(0);
+        svc.on_prompt(1);
+        assert!(svc.tick(1).is_empty(), "no probe while a load is in flight");
     }
 
     #[test]
