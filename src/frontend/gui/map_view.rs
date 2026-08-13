@@ -133,6 +133,19 @@ fn terrain_fill(terrain: Option<&str>, base: Color32) -> Color32 {
 /// longer renders as paired dots unless the edge carries a Dash override.
 const CONNECTOR_DASH_MAX_CELLS: f32 = 2.5;
 
+/// Stable per-category color for service-tag markers, same recipe as the
+/// connector pair colors: hash the tag name onto a golden-ratio hue wheel,
+/// darker/steadier than the pair dots so markers read as chrome, not links.
+fn service_tag_color(tag: &str) -> Color32 {
+    let mut h: u32 = 0x811c9dc5;
+    for byte in tag.bytes() {
+        h ^= byte as u32;
+        h = h.wrapping_mul(0x01000193);
+    }
+    let hue = (h as f32 / u32::MAX as f32 * 0.618_034).fract();
+    egui::ecolor::Hsva::new(hue, 0.65, 0.62, 1.0).into()
+}
+
 /// Stable per-pair color for long-connector dots: the same two rooms get
 /// the same hue every session, and different pairs spread across a wheel of
 /// well-separated hues. Saturation/value sit high enough to read on both
@@ -206,6 +219,9 @@ pub fn paint_sheet(
     // building — cluster of groups — the character is in on the interiors
     // sheet); None = the whole sheet.
     group_filter: Option<&std::collections::HashSet<usize>>,
+    // Service-tag categories drawn as room markers (config pinned_tags);
+    // empty = no markers.
+    pinned_tags: &[String],
     style: &MapStyle,
 ) -> MapViewResult {
     let painter = ui.painter().with_clip_rect(rect);
@@ -419,6 +435,30 @@ pub fn paint_sheet(
             style.room_stroke,
             egui::StrokeKind::Middle,
         );
+        if !pinned_tags.is_empty() {
+            if let Some(tag) = room
+                .service_tags
+                .iter()
+                .find(|t| pinned_tags.iter().any(|p| p == *t))
+            {
+                // Service marker: a category-colored disc on the room's
+                // top-right corner, with the category's initial when
+                // zoomed in enough to read it.
+                let color = service_tag_color(tag);
+                let r = (room_size * 0.32).clamp(2.5, 7.0);
+                let center = room_rect.right_top();
+                painter.circle(center, r, color, Stroke::new(1.0, style.label_bg));
+                if ppc >= 14.0 {
+                    painter.text(
+                        center,
+                        Align2::CENTER_CENTER,
+                        tag.chars().next().unwrap_or('?').to_uppercase().to_string(),
+                        FontId::proportional((r * 1.4).clamp(7.0, 11.0)),
+                        Color32::WHITE,
+                    );
+                }
+            }
+        }
         if room.entrance {
             // Door marker: a small warm dot on the room's top edge.
             painter.circle_filled(

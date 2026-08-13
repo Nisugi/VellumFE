@@ -69,6 +69,8 @@ struct ExplorerOutput {
     walk_to: Option<u32>,
     request_location: Option<String>,
     override_edit: Option<OverrideEdit>,
+    /// Service-tag category to pin/unpin in config.map.pinned_tags.
+    toggle_pinned_tag: Option<String>,
 }
 
 impl VellumGuiApp {
@@ -144,6 +146,18 @@ impl VellumGuiApp {
         }
         if let Some(edit) = out.override_edit {
             self.app_core.map.apply_override_edit(edit);
+        }
+        if let Some(tag) = out.toggle_pinned_tag {
+            let pinned = &mut self.app_core.config.map.pinned_tags;
+            match pinned.iter().position(|t| *t == tag) {
+                Some(i) => {
+                    pinned.remove(i);
+                }
+                None => pinned.push(tag),
+            }
+            if let Err(e) = self.app_core.save_config() {
+                tracing::warn!("pinned-tags config save failed: {e}");
+            }
         }
     }
 
@@ -258,6 +272,23 @@ impl VellumGuiApp {
                         ex.centered = false;
                     }
                 });
+
+                ui.separator();
+                ui.menu_button("Markers", |ui| {
+                    ui.label("Service markers on rooms");
+                    ui.separator();
+                    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                        for &tag in crate::core::mapdb::SERVICE_TAGS {
+                            let mut pinned =
+                                app_core.config.map.pinned_tags.iter().any(|t| t == tag);
+                            if ui.checkbox(&mut pinned, tag).changed() {
+                                out.toggle_pinned_tag = Some(tag.to_string());
+                            }
+                        }
+                    });
+                })
+                .response
+                .on_hover_text("Pick which service tags get room markers (bank, inn, ...)");
 
                 ui.separator();
                 if ui
@@ -903,8 +934,18 @@ impl VellumGuiApp {
                 None
             };
             let exits = (current.is_some()).then(|| app_core.game_state.compass_dirs.as_slice());
-            let result =
-                map_view::paint_sheet(ui, rect, sheet, camera, current, exits, true, None, &style);
+            let result = map_view::paint_sheet(
+                ui,
+                rect,
+                sheet,
+                camera,
+                current,
+                exits,
+                true,
+                None,
+                &app_core.config.map.pinned_tags,
+                &style,
+            );
             if let Some(overlay) = ghost_overlay.as_ref().filter(|o| !o.is_empty()) {
                 map_view::paint_ghosts(
                     ui,

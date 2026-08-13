@@ -1084,6 +1084,16 @@ pub struct MapConfig {
     /// evidence feeds future mapdb submissions); this only gates rendering.
     #[serde(default)]
     pub mapping_mode: bool,
+    /// Service-tag categories drawn as room markers on the map (Saga-style
+    /// pinned tags). Edited from the map explorer's Markers picker.
+    #[serde(default = "default_pinned_tags")]
+    pub pinned_tags: Vec<String>,
+}
+
+fn default_pinned_tags() -> Vec<String> {
+    ["town", "bank", "inn", "mail", "forge"]
+        .map(String::from)
+        .to_vec()
 }
 
 impl Default for MapConfig {
@@ -1093,6 +1103,7 @@ impl Default for MapConfig {
             mapdb_path: None,
             mapdb_repo: default_mapdb_repo(),
             mapping_mode: false,
+            pinned_tags: default_pinned_tags(),
         }
     }
 }

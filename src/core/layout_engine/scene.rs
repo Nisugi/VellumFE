@@ -48,6 +48,10 @@ pub struct SceneRoom {
     /// terrain-tinted room fills. None/empty = theme fill.
     #[serde(default)]
     pub terrain: Option<String>,
+    /// Service tags this room carries (intersection of the room's mapdb
+    /// tags with [`crate::core::mapdb::SERVICE_TAGS`]) — marker material.
+    #[serde(default)]
+    pub service_tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,6 +254,15 @@ pub fn build_scene(
                     .cloned()
                     .unwrap_or_default(),
                 terrain: room.and_then(|r| r.terrain.clone()),
+                service_tags: room
+                    .map(|r| {
+                        r.tags
+                            .iter()
+                            .filter(|t| crate::core::mapdb::SERVICE_TAGS.contains(&t.as_str()))
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             };
             let target = match sheet {
                 Sheet::Outdoor => &mut scene.outdoor,
