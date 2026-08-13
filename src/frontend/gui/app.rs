@@ -2063,6 +2063,13 @@ impl VellumGuiApp {
 impl eframe::App for VellumGuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // Widget forensics: VELLUM_DEBUG_HOVER=1 turns on egui's
+        // debug-on-hover with the callstack feature — hovering ANY widget
+        // shows the source location that created it. For "what is drawing
+        // this?" mysteries; costs nothing when the env var is absent.
+        if std::env::var_os("VELLUM_DEBUG_HOVER").is_some() {
+            ctx.set_debug_on_hover(true);
+        }
         self.app_core.perf_stats.record_frame();
         // "Render" in the GUI is last frame's CPU cost as reported by
         // eframe (App::ui + painting); the first frame has none yet.
