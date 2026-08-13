@@ -201,7 +201,14 @@ impl RemoteWheels {
                 .iter()
                 .map(|slice| RemoteWheelSlice {
                     label: slice.label.clone(),
-                    client: slice.client.clone(),
+                    // A None-type dead zone is inert on the phone too: no
+                    // client action ships (game commands are already guarded
+                    // host-side in wheel_pick_command).
+                    client: if slice.is_none_type() {
+                        None
+                    } else {
+                        slice.client.clone()
+                    },
                     color: slice
                         .color
                         .as_deref()

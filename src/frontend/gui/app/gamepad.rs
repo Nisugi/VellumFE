@@ -82,6 +82,19 @@ impl FireMode {
     }
 }
 
+/// A slice's effective fire mode: its own `fire_type` when set, else the
+/// global default (F3a migration — old configs behave exactly as before).
+/// `None` = a dead-zone slice (`fire_type = "none"`), which can never fire.
+/// The mixed-sweep rule (F3b) follows from calling this per event for the
+/// slice under the aim at that moment.
+fn effective_fire_mode(slice: &WheelSlice, default: FireMode) -> Option<FireMode> {
+    match slice.fire_type.as_deref() {
+        Some("none") => None,
+        Some(s) => Some(FireMode::from_str(s)),
+        None => Some(default),
+    }
+}
+
 /// Edge mode: a leaf under the stick fires the instant deflection reaches
 /// `threshold` (both 0.0–1.0). No dwell.
 fn edge_should_fire(magnitude: f32, threshold: f32) -> bool {
@@ -390,7 +403,11 @@ impl VellumGuiApp {
         }
         let aim_owned_by_wheel =
             self.gp_wheel.is_some() || self.gp_wheel_fired || self.gp_aim_recenter_needed;
-        if aim_owned_by_wheel {
+        // F16: the opposing stick's idle (non-wheel) actions — story scroll
+        // and interact-focus cycling — can be disabled outright so a stray
+        // nudge does nothing. Wheel aiming is unaffected.
+        let idle_disabled = self.app_core.config.controller_tuning.opposing_stick == "none";
+        if aim_owned_by_wheel || idle_disabled {
             // Keep the interact hysteresis in sync with the deflected stick
             // so resuming doesn't fire a stale cycle step.
             self.gp_right_dir = four_way(aim_x, aim_y, self.gp_right_dir);
@@ -1186,13 +1203,18 @@ pub(super) fn paint_wheel_ring(
         }
         let pos = center + egui::vec2(center_angle.cos(), center_angle.sin()) * label_radius;
         let is_selected = selected == Some(i);
-        let (color, size) = if is_selected {
+        let (color, size) = if slice.is_none_type() && !is_selected {
+            // Dead-zone slice: reads as deliberate empty space.
+            (visuals.weak_text_color(), normal_size)
+        } else if is_selected {
             (visuals.strong_text_color(), selected_size)
         } else {
             (visuals.text_color(), normal_size)
         };
         let label = if slice.is_folder() {
             format!("{} ▸", slice.label)
+        } else if slice.is_none_type() && slice.label.is_empty() {
+            "·".to_string()
         } else {
             slice.label.clone()
         };
@@ -1418,9 +1440,13 @@ fn seat_at_with_inner(
     deadzone: f32,
 ) -> Option<usize> {
     let seat = seat_index_at_angle(x, y_up, &view.layout)?;
-    let floor = view
-        .slices
-        .get(seat)
+    let slice = view.slices.get(seat);
+    // A dead-zone slice (`fire_type = none`) is never a candidate: aiming
+    // into it reads as centered, exactly like resting below the floor.
+    if slice.is_some_and(|s| s.is_none_type()) {
+        return None;
+    }
+    let floor = slice
         .and_then(|s| s.inner)
         .map(|pct| pct as f32 / 100.0)
         .unwrap_or(deadzone);
@@ -1507,7 +1533,11 @@ fn leaf_command_at(view: &WheelView, display: usize) -> Option<String> {
         _ => return None,
     }
     let slice = view.slices.get(display)?;
-    if slice.is_folder() || is_back_slice(slice) || slice.command.is_empty() {
+    if slice.is_folder()
+        || is_back_slice(slice)
+        || slice.is_none_type()
+        || slice.command.is_empty()
+    {
         return None;
     }
     Some(slice.command.clone())
@@ -1621,9 +1651,18 @@ fn wheel_aim_step(
                 return WheelStepOutcome { fire: None, render };
             }
 
-            // Leaf, by fire mode.
-            match timing.fire_mode {
-                FireMode::Edge => {
+            // Leaf, by its own fire type (F3b: evaluated per event for the
+            // slice under the aim — a sweep through an edge slice below
+            // threshold, or a crossing while aimed elsewhere, fires
+            // nothing). None-type slices never reach here — they read as
+            // no-candidate in seat_at_with_inner.
+            let mode = view
+                .slices
+                .get(display)
+                .and_then(|s| effective_fire_mode(s, timing.fire_mode));
+            match mode {
+                None => {}
+                Some(FireMode::Edge) => {
                     // Fire the moment deflection crosses the threshold —
                     // no dwell. `may_dwell` gated us here, so the rearm
                     // latch already blocks a still-deflected stick from
@@ -1635,7 +1674,7 @@ fn wheel_aim_step(
                         };
                     }
                 }
-                FireMode::Retract => {
+                Some(FireMode::Retract) => {
                     // Dwell to commit, then track the deflection peak and
                     // fire once it falls retract_delta below that peak.
                     if dwelt >= timing.aim_ms {
@@ -1654,7 +1693,7 @@ fn wheel_aim_step(
                         }
                     }
                 }
-                FireMode::Release => {
+                Some(FireMode::Release) => {
                     // Commit (arm release-fire); the release arm in
                     // poll_gamepad does the firing.
                     if dwelt >= timing.aim_ms && ui.aimed != Some(display) {
@@ -1711,7 +1750,7 @@ fn wheel_south_step(ui: &mut WheelUi, view: &WheelView) -> WheelStepOutcome {
                     fire: None,
                     render: true,
                 }
-            } else if !slice.command.is_empty() {
+            } else if !slice.is_none_type() && !slice.command.is_empty() {
                 WheelStepOutcome {
                     fire: Some(display),
                     render: false,
@@ -2147,6 +2186,64 @@ mod wheel_tests {
         assert_eq!(out.fire, None, "Back never fires");
         assert!(ui.path.is_empty(), "nav dwell on explicit Back ascends");
         assert!(ui.rearm_until_center, "ascend arms the recenter latch");
+    }
+
+    fn typed(label: &str, fire_type: &str) -> WheelSlice {
+        WheelSlice {
+            fire_type: Some(fire_type.to_string()),
+            ..leaf(label)
+        }
+    }
+
+    #[test]
+    fn none_type_slice_is_never_a_candidate() {
+        // Even 3-ring, seat 0 centered up; seat 0 is a dead zone.
+        let real = vec![typed("dead", "none"), leaf("b"), leaf("c")];
+        let view = WheelView::build(&real, false, "down", 0.0);
+        // Full deflection straight up lands in seat 0 — but a none-type
+        // slice reads as centered.
+        assert_eq!(seat_at_with_inner(0.0, 1.0, &view, 0.5), None);
+        // Its neighbours still aim fine.
+        assert_eq!(seat_at_with_inner(1.0, -0.4, &view, 0.5), Some(1));
+        // And every fire guard skips it, command or not.
+        assert_eq!(leaf_command_at(&view, 0), None);
+
+        // South on a none-type seat does nothing.
+        let mut ui = fresh_ui();
+        ui.candidate = Some(0);
+        let out = wheel_south_step(&mut ui, &view);
+        assert_eq!(out, WheelStepOutcome::default());
+    }
+
+    #[test]
+    fn per_slice_fire_type_overrides_the_global_mode() {
+        // Global mode release; seat 0 is a per-slice edge leaf. Full
+        // deflection into it must fire immediately, no dwell.
+        let real = vec![typed("quick", "edge"), leaf("b"), leaf("c")];
+        let view = WheelView::build(&real, false, "down", 0.0);
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.95, Instant::now());
+        assert_eq!(out.fire, Some(0), "edge fire_type fires without dwell");
+    }
+
+    #[test]
+    fn slice_without_fire_type_follows_the_global_mode() {
+        // F3a migration: an untyped slice under a global edge mode edge-fires.
+        let real = vec![leaf("a"), leaf("b"), leaf("c")];
+        let view = WheelView::build(&real, false, "down", 0.0);
+        let t = feel(FireMode::Edge);
+        let mut ui = fresh_ui();
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.95, Instant::now());
+        assert_eq!(out.fire, Some(0), "untyped slice inherits global edge");
+
+        // And the reverse: global edge, but this slice is explicitly
+        // release — crossing the threshold must NOT fire it.
+        let real = vec![typed("slow", "release"), leaf("b"), leaf("c")];
+        let view = WheelView::build(&real, false, "down", 0.0);
+        let mut ui = fresh_ui();
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.95, Instant::now());
+        assert_eq!(out.fire, None, "release fire_type ignores the edge crossing");
     }
 
     #[test]
