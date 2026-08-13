@@ -2083,6 +2083,41 @@ impl AppCore {
                 self.handle_mapdb(&args);
             }
 
+            // Promote personal map edits into the staging export that gets
+            // committed as defaults/map_overrides.json — the path from "I
+            // dragged this map into shape" to "everyone's map looks like
+            // this". Whole-map: promoted maps move out of the personal file.
+            "mappromote" => {
+                let arg = parts.get(1).map(|s| s.to_string());
+                let key = match arg.as_deref() {
+                    None => match self.map.current_location.clone() {
+                        Some(key) => Some(key),
+                        None => {
+                            self.add_system_message(
+                                "No current map; .mappromote <map-key> or .mappromote all",
+                            );
+                            return Ok(CommandOutcome::Handled);
+                        }
+                    },
+                    Some("all") => None,
+                    Some(key) => Some(key.to_owned()),
+                };
+                match self.map.promote_overrides(key.as_deref()) {
+                    Ok((promoted, path)) => {
+                        self.add_system_message(&format!(
+                            "Promoted {} map(s) to {}: {}",
+                            promoted.len(),
+                            path.display(),
+                            promoted.join(", ")
+                        ));
+                        self.add_system_message(
+                            "Ship it: merge that file into defaults/map_overrides.json and commit.",
+                        );
+                    }
+                    Err(e) => self.add_system_message(&format!("mappromote: {e}")),
+                }
+            }
+
             // Asset manager (the native jinx client): download and update
             // skins, icon maps, layouts, and game data from federated repos.
             // Network work runs off-thread (see jinx_worker); repo edits are

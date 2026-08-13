@@ -297,7 +297,7 @@ impl MapService {
             pending: Default::default(),
             overrides: loaded_overrides,
             overrides_path,
-            community_overrides: MapOverrides::default(),
+            community_overrides: overrides::embedded_community(),
             ghosts: Default::default(),
             current_ghost: None,
             last_command: None,
@@ -414,12 +414,15 @@ impl MapService {
         self.scenes.clear();
         self.pending.clear();
         self.revision += 1;
-        // Community overrides travel with the db they were curated against.
-        self.community_overrides =
+        // Community layers: the curation shipped with the app, overlaid by
+        // any overrides traveling with the db they were curated against.
+        self.community_overrides = overrides::overlay(
+            overrides::embedded_community(),
             match crate::core::mapdb_update::community_overrides_for(&path) {
                 Some(p) => overrides::load(&p),
                 None => MapOverrides::default(),
-            };
+            },
+        );
         let _ = self.job_tx.send(MapJob::LoadDb(path));
     }
 
@@ -768,6 +771,62 @@ impl MapService {
         self.scenes.remove(&location);
         self.revision += 1;
         self.request_location(&location);
+    }
+
+    /// Promote personal map edits into the staging export that feeds the
+    /// shipped community layer (defaults/map_overrides.json).
+    ///
+    /// Whole-map semantics: each promoted map's staging entry is REPLACED
+    /// by the current personal state, and the personal entry is cleared —
+    /// the promoted data now reaches the user through the community layer
+    /// instead (leaving it personal too would double-apply group-offset
+    /// deltas, which ADD across layers). `key = None` promotes every map
+    /// with personal edits. Returns the promoted keys and the staging path.
+    pub fn promote_overrides(
+        &mut self,
+        key: Option<&str>,
+    ) -> Result<(Vec<String>, PathBuf), String> {
+        let staging_path = self
+            .overrides_path
+            .with_file_name("map_overrides_promoted.json");
+        let keys: Vec<String> = match key {
+            Some(key) => {
+                if !self.overrides.locations.contains_key(key) {
+                    return Err(format!("no personal edits for '{key}'"));
+                }
+                vec![key.to_owned()]
+            }
+            None => self.overrides.locations.keys().cloned().collect(),
+        };
+        if keys.is_empty() {
+            return Err("no personal map edits to promote".into());
+        }
+        let mut staging = overrides::load(&staging_path);
+        for key in &keys {
+            if let Some(entry) = self.overrides.locations.remove(key) {
+                staging.locations.insert(key.clone(), entry);
+            }
+        }
+        overrides::save(&staging_path, &staging)
+            .map_err(|e| format!("staging save failed: {e}"))?;
+        if let Err(e) = overrides::save(&self.overrides_path, &self.overrides) {
+            return Err(format!("personal overrides save failed: {e}"));
+        }
+        // Promoted maps render from the community layer now — but this
+        // session's community store predates the promotion, so overlay the
+        // promoted entries in memory and regenerate.
+        for key in &keys {
+            if let Some(entry) = staging.locations.get(key) {
+                self.community_overrides
+                    .locations
+                    .insert(key.clone(), entry.clone());
+            }
+            self.layouts.remove(key);
+            self.scenes.remove(key);
+            self.request_location(key);
+        }
+        self.revision += 1;
+        Ok((keys, staging_path))
     }
 
     /// Re-home overrides stored under keys that are no longer maps (legacy
@@ -1191,6 +1250,62 @@ mod tests {
             "tiny closet holds the base map"
         );
         assert_eq!(svc.current_room_id, Some(20), "but the room itself is tracked");
+    }
+
+    /// Promote moves a map's personal edits into the staging export, clears
+    /// them from the personal store (group offsets would double-apply
+    /// across layers otherwise), and the community layer serves them for
+    /// the rest of the session.
+    #[test]
+    fn promote_moves_personal_edits_to_staging_and_community() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut svc = MapService::new(
+            dir.path().join("cache"),
+            dir.path().join("map_overrides.json"),
+        );
+        svc.apply_override_edit(OverrideEdit::GroupOffset {
+            location: "town".into(),
+            anchor: 100,
+            delta: Cell { x: 2, y: 1 },
+        });
+        svc.apply_override_edit(OverrideEdit::GroupName {
+            location: "sat-200".into(),
+            anchor: 200,
+            name: Some("The Well".into()),
+        });
+
+        let (promoted, staging_path) = svc.promote_overrides(Some("town")).unwrap();
+        assert_eq!(promoted, vec!["town".to_string()]);
+        assert!(svc.overrides_for("town").is_none(), "personal entry cleared");
+        assert!(svc.overrides_for("sat-200").is_some(), "other maps untouched");
+        assert_eq!(
+            svc.community_overrides.locations["town"].group_offsets[&100],
+            Cell { x: 2, y: 1 },
+            "community layer serves the promoted edits immediately"
+        );
+        let staged = overrides::load(&staging_path);
+        assert_eq!(staged.locations["town"].group_offsets[&100], Cell { x: 2, y: 1 });
+
+        // `all` sweeps the rest; nothing left to promote errors cleanly.
+        let (rest, _) = svc.promote_overrides(None).unwrap();
+        assert_eq!(rest, vec!["sat-200".to_string()]);
+        assert!(svc.promote_overrides(None).is_err());
+        let staged = overrides::load(&staging_path);
+        assert_eq!(staged.locations.len(), 2, "staging accumulates across promotes");
+    }
+
+    /// Community layering: shipped defaults under a mapdb release's
+    /// overrides (whole-location replace), personal merged on top at use.
+    #[test]
+    fn community_overlay_replaces_per_location() {
+        let mut base = MapOverrides::default();
+        base.locations.entry("town".into()).or_default().names.insert(1, "Old".into());
+        base.locations.entry("keep".into()).or_default().names.insert(2, "Kept".into());
+        let mut top = MapOverrides::default();
+        top.locations.entry("town".into()).or_default().names.insert(1, "New".into());
+        let merged = overrides::overlay(base, top);
+        assert_eq!(merged.locations["town"].names[&1], "New");
+        assert_eq!(merged.locations["keep"].names[&2], "Kept");
     }
 
     /// Legacy location-keyed overrides re-home to the map now holding their

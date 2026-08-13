@@ -57,6 +57,35 @@ pub struct MapOverrides {
     pub locations: HashMap<String, LocationOverrides>,
 }
 
+/// Community overrides shipped with the app (defaults/map_overrides.json):
+/// the owner's promoted map curation, the base community layer every user
+/// gets. A mapdb release's `overrides-<tag>.json` overlays it per location;
+/// personal edits merge on top of both at use time.
+pub fn embedded_community() -> MapOverrides {
+    let text = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/defaults/map_overrides.json"
+    ));
+    match serde_json::from_str(text) {
+        Ok(overrides) => overrides,
+        Err(e) => {
+            tracing::error!("embedded map_overrides.json unreadable: {e}");
+            MapOverrides::default()
+        }
+    }
+}
+
+/// Overlay one community store on another: `top`'s location entries replace
+/// `base`'s wholesale. Used only between community layers (shipped defaults
+/// under a mapdb release's overrides) — replacement, not the delta-adding
+/// personal merge, because both layers are absolute curation.
+pub fn overlay(mut base: MapOverrides, top: MapOverrides) -> MapOverrides {
+    for (location, entry) in top.locations {
+        base.locations.insert(location, entry);
+    }
+    base
+}
+
 /// Layer a personal overrides section on top of a community base, at use
 /// time — the personal file on disk never absorbs community data. Personal
 /// wins per key, except group offsets which ADD: both layers are deltas
