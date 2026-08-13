@@ -773,6 +773,30 @@ pub mod format {
         }
     }
 
+    /// Box chrome: borders, rules, padding — recedes behind the content.
+    fn dim(text: impl Into<String>) -> TextSegment {
+        TextSegment {
+            fg: Some("#6b6250".to_string()),
+            ..seg(text)
+        }
+    }
+
+    /// Section headers — sage, matching the design note's palette.
+    fn sage(text: impl Into<String>) -> TextSegment {
+        TextSegment {
+            fg: Some("#8fa872".to_string()),
+            ..seg(text)
+        }
+    }
+
+    /// Field labels ("Family:", "ASG:") — parchment-dim.
+    fn label(text: impl Into<String>) -> TextSegment {
+        TextSegment {
+            fg: Some("#a79878".to_string()),
+            ..seg(text)
+        }
+    }
+
     fn link(text: impl Into<String>, cmd: impl Into<String>) -> TextSegment {
         let text = text.into();
         TextSegment {
@@ -803,22 +827,21 @@ pub mod format {
     fn boxed(mut segments: Vec<TextSegment>) -> StyledLine {
         let used = visual_len(&segments);
         let pad = WIDTH.saturating_sub(used + 2);
-        let mut all = vec![seg("| ")];
+        let mut all = vec![dim("| ")];
         all.append(&mut segments);
-        all.push(seg(format!("{} |", " ".repeat(pad))));
+        all.push(dim(format!("{} |", " ".repeat(pad))));
         line(all)
     }
 
     fn rule(ch: char) -> StyledLine {
-        line(vec![seg(format!("+{}+", ch.to_string().repeat(WIDTH)))])
+        line(vec![dim(format!("+{}+", ch.to_string().repeat(WIDTH)))])
     }
 
     fn section(title: &str) -> StyledLine {
-        let mut text = format!("--- {title} ");
-        while text.chars().count() < WIDTH - 2 {
-            text.push('-');
-        }
-        boxed(vec![bold_seg(text)])
+        let mut segs = vec![sage(format!("--- {title} "))];
+        let used = 4 + title.chars().count() + 1;
+        segs.push(dim("-".repeat(WIDTH.saturating_sub(used + 2))));
+        boxed(segs)
     }
 
     fn wrap(text: &str, width: usize) -> Vec<String> {
@@ -853,24 +876,26 @@ pub mod format {
 
         if let Some(desc) = &e.description {
             for l in wrap(desc, WIDTH - 6) {
-                out.push(boxed(vec![seg(format!("  {l}"))]));
+                out.push(boxed(vec![label(format!("  {l}"))]));
             }
             out.push(boxed(vec![]));
         }
 
         let mut info: Vec<TextSegment> = Vec::new();
         if let Some(f) = &e.family {
-            info.push(seg("  Family: "));
+            info.push(label("  Family: "));
             info.push(link(f.clone(), format!(".bestiary family {f}")));
         }
         if let Some(t) = &e.creature_type {
-            info.push(seg(format!("  Type: {t}")));
+            info.push(label("  Type: "));
+            info.push(seg(t.clone()));
         }
         if e.undead {
             info.push(bold_seg("  Undead"));
         }
         if let Some(hp) = e.max_hp {
-            info.push(seg(format!("  HP: {hp}")));
+            info.push(label("  HP: "));
+            info.push(seg(hp.to_string()));
         }
         if !info.is_empty() {
             out.push(boxed(info));
@@ -913,21 +938,21 @@ pub mod format {
             out.push(section("Offense"));
             for a in &e.offense.physical {
                 let val = a.value.map(|v| format!(" (AS: {})", v.display())).unwrap_or_default();
-                out.push(boxed(vec![seg(format!("  Physical: {}{val}", a.name))]));
+                out.push(boxed(vec![label("  Physical: "), seg(format!("{}{val}", a.name))]));
             }
             for a in &e.offense.bolt {
                 let val = a.value.map(|v| format!(" (AS: {})", v.display())).unwrap_or_default();
-                out.push(boxed(vec![seg(format!("  Bolt: {}{val}", a.name))]));
+                out.push(boxed(vec![label("  Bolt: "), seg(format!("{}{val}", a.name))]));
             }
             for a in &e.offense.warding {
                 let val = a.value.map(|v| format!(" (CS: {})", v.display())).unwrap_or_default();
-                out.push(boxed(vec![seg(format!("  Warding: {}{val}", a.name))]));
+                out.push(boxed(vec![label("  Warding: "), seg(format!("{}{val}", a.name))]));
             }
             for s in &e.offense.spells {
-                out.push(boxed(vec![seg(format!("  Spell: {s}"))]));
+                out.push(boxed(vec![label("  Spell: "), seg(s.clone())]));
             }
             for m in &e.offense.maneuvers {
-                out.push(boxed(vec![seg(format!("  Maneuver: {m}"))]));
+                out.push(boxed(vec![label("  Maneuver: "), seg(m.clone())]));
             }
             for s in &e.offense.specials {
                 let note = s.note.as_deref().map(|n| format!(" - {n}")).unwrap_or_default();
@@ -1018,7 +1043,20 @@ pub mod format {
         }
 
         if let Some(url) = &e.url {
-            out.push(boxed(vec![seg(format!("Wiki: {url}"))]));
+            // Web link: opens in the browser via the URL sentinel.
+            out.push(boxed(vec![
+                label("Wiki: "),
+                TextSegment {
+                    span_type: SpanType::Link,
+                    link_data: Some(LinkData {
+                        exist_id: crate::data::URL_LINK_SENTINEL.to_string(),
+                        noun: url.clone(),
+                        text: url.clone(),
+                        coord: None,
+                    }),
+                    ..seg(url.clone())
+                },
+            ]));
         }
         out.push(rule('='));
         out
@@ -1318,7 +1356,10 @@ mod tests {
             "spawn location carries a go2 link to its first uid"
         );
         for link in &links {
-            assert!(link.starts_with('.'), "non-dot link {link}");
+            assert!(
+                link.starts_with('.') || link.starts_with("https://"),
+                "unexpected link target {link}"
+            );
         }
         // The spawn line shows the room count from the uid range.
         let all_text: String = lines
