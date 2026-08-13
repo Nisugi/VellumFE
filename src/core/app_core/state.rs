@@ -1836,9 +1836,37 @@ impl AppCore {
                 }
             }
             if !delivered {
+                // Fall back to wherever "main" text lands — including a
+                // tabbed main window (GUI default layouts), which a plain
+                // named lookup misses.
                 if let Some(main) = self.ui_state.get_window_mut("main") {
                     if let WindowContent::Text(content) = &mut main.content {
                         content.add_line(line);
+                        continue;
+                    }
+                }
+                'fallback: for window in self.ui_state.windows.values_mut() {
+                    match &mut window.content {
+                        WindowContent::Text(content)
+                            if content.streams.iter().any(|s| s.eq_ignore_ascii_case("main")) =>
+                        {
+                            content.add_line(line.clone());
+                            break 'fallback;
+                        }
+                        WindowContent::TabbedText(content) => {
+                            for tab in content.tabs.iter_mut() {
+                                if tab
+                                    .definition
+                                    .streams
+                                    .iter()
+                                    .any(|s| s.eq_ignore_ascii_case("main"))
+                                {
+                                    tab.content.add_line(line.clone());
+                                    break 'fallback;
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }

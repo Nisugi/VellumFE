@@ -154,6 +154,7 @@ pub const CATALOG: &[(&str, Option<GameType>)] = &[
     ("main", None),
     ("thoughts", None),
     ("speech", None),
+    ("bestiary", None),
     ("announcements", None),
     ("loot", None),
     ("death", None),
@@ -1314,6 +1315,28 @@ impl Config {
                     streams: vec!["speech".to_string()],
                     buffer_size: 10000,
                     wordwrap: true,
+                    show_timestamps: false,
+                    timestamp_position: None,
+                    compact: false,
+                },
+            }),
+
+            "bestiary" => Some(WindowDef::Text {
+                base: WindowBase {
+                    name: "bestiary".to_string(),
+                    title: Some("Bestiary".to_string()),
+                    rows: Height::new(24),
+                    cols: Width::new(69),
+                    show_border: true,
+                    ..base_defaults.clone()
+                },
+                data: TextWidgetData {
+                    // .bestiary output; wordwrap off keeps the 65-col boxes
+                    // and tables aligned (the window scrolls horizontally
+                    // when narrower).
+                    streams: vec!["bestiary".to_string()],
+                    buffer_size: 10000,
+                    wordwrap: false,
                     show_timestamps: false,
                     timestamp_position: None,
                     compact: false,
