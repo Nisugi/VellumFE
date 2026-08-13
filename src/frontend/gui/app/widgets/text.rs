@@ -1379,6 +1379,7 @@ impl VellumGuiApp {
         font_id: &egui::FontId,
         wrap: bool,
         content_align: Option<&str>,
+        force_follow: bool,
     ) -> Option<GuiLinkClick> {
         // content_align (shared layout def, long honored by the TUI): the
         // horizontal component offsets each line's galley; the vertical
@@ -1484,6 +1485,19 @@ impl VellumGuiApp {
         } else {
             egui::ScrollArea::both()
         };
+        // A force-followed pane (the live half of the split view) is not a
+        // scrolling surface: wheel input over it must not budge it — it
+        // would only jiggle and snap back on the next line. Links and
+        // selection stay interactive; only scroll input is ignored.
+        if force_follow {
+            scroll_area = scroll_area
+                .scroll_source(egui::scroll_area::ScrollSource {
+                    scroll_bar: false,
+                    drag: egui::scroll_area::DragScroll::Never,
+                    mouse_wheel: false,
+                })
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
+        }
 
         // Scroll position has exactly ONE authority: `follow_bottom`.
         //
@@ -1511,9 +1525,12 @@ impl VellumGuiApp {
             value
         });
         // Default to following: a fresh window shows the newest text.
-        let mut follow_bottom: bool = outer_ctx
-            .data_mut(|data| data.get_temp(follow_key))
-            .unwrap_or(true);
+        // A force-followed pane (the live half of the auto-split view) is
+        // pinned to the tail unconditionally — user input never detaches it.
+        let mut follow_bottom: bool = force_follow
+            || outer_ctx
+                .data_mut(|data| data.get_temp(follow_key))
+                .unwrap_or(true);
         // An explicit offset to apply this frame (a programmatic jump).
         // None means "leave the offset alone" — either we are following (and
         // pin to the end below) or the user owns it.
@@ -1572,7 +1589,9 @@ impl VellumGuiApp {
                 was_following = follow_bottom,
                 "user_scrolled: follow detached"
             );
-            follow_bottom = false;
+            if !force_follow {
+                follow_bottom = false;
+            }
         }
 
         if let Some((kind, value)) = pending {
@@ -2296,7 +2315,176 @@ impl VellumGuiApp {
                 follow_bottom = true;
             }
         }
+        if force_follow {
+            follow_bottom = true;
+        }
         outer_ctx.data_mut(|data| data.insert_temp(follow_key, follow_bottom));
+
+        clicked_link
+    }
+
+    /// Auto split-screen scrollback: while the window follows the tail this
+    /// is a plain `render_text_content` call. The moment the reader scrolls
+    /// back (`follow_bottom` false), the window splits: the top pane is the
+    /// normal scroll view frozen where the reader left it, and a live pane
+    /// pinned to the newest text opens underneath, separated by a draggable
+    /// divider. Scrolling the top pane back to the bottom re-arms follow and
+    /// the panes merge again — no mode, no command.
+    ///
+    /// The live pane runs under a derived scroll id (`{id}~live`) so its
+    /// scroll state, row-height cache, and selection are independent of the
+    /// top pane's; both render the same buffer. The split fraction is
+    /// persisted per window.
+    pub(super) fn render_text_content_auto_split(
+        ui: &mut egui::Ui,
+        content: &TextContent,
+        scroll_id: &str,
+        search_query: Option<&str>,
+        font_id: &egui::FontId,
+        wrap: bool,
+        content_align: Option<&str>,
+    ) -> Option<GuiLinkClick> {
+        const DIVIDER_H: f32 = 9.0;
+        let ctx = ui.ctx().clone();
+        let following: bool = ctx
+            .data_mut(|data| {
+                data.get_temp(egui::Id::new(("text_scroll_follow", scroll_id)))
+            })
+            .unwrap_or(true);
+        let row_h = ctx.fonts_mut(|fonts| fonts.row_height(font_id)).max(1.0);
+        let avail = ui.available_size();
+        // Each pane needs room for at least a couple of rows; tiny windows
+        // keep the classic single-view scrollback.
+        let min_pane = (row_h * 2.0).max(16.0);
+        // The history pane's ScrollArea id derives from its parent Ui, so
+        // BOTH modes must host it inside the same salted child ui — else
+        // opening the split would hand the pane a fresh scroll state and
+        // throw the reader's place away.
+        let pane_salt = ("split_history_pane", scroll_id);
+        if following || avail.y < min_pane * 2.0 + DIVIDER_H {
+            return ui
+                .scope_builder(egui::UiBuilder::new().id_salt(pane_salt), |ui| {
+                    Self::render_text_content(
+                        ui,
+                        content,
+                        scroll_id,
+                        search_query,
+                        font_id,
+                        wrap,
+                        content_align,
+                        false,
+                    )
+                })
+                .inner;
+        }
+
+        let frac_key = egui::Id::new(("text_split_frac", scroll_id));
+        let frac: f32 = ctx
+            .data_mut(|data| data.get_persisted(frac_key))
+            .unwrap_or(0.65);
+        let usable = avail.y - DIVIDER_H;
+        let top_h = (usable * frac).clamp(min_pane, usable - min_pane);
+        let split_top = ui.cursor().top();
+
+        // Frozen pane: the window's normal scroll view, untouched — same
+        // salted host as the unsplit branch, so scroll position, selection,
+        // search highlighting, and keyboard paging all carry across the
+        // split opening and closing.
+        let top_rect = egui::Rect::from_min_size(
+            ui.available_rect_before_wrap().min,
+            Vec2::new(avail.x, top_h),
+        );
+        let mut clicked_link = ui
+            .scope_builder(
+                egui::UiBuilder::new().id_salt(pane_salt).max_rect(top_rect),
+                |ui| {
+                    ui.set_min_size(Vec2::new(avail.x, top_h));
+                    Self::render_text_content(
+                        ui,
+                        content,
+                        scroll_id,
+                        search_query,
+                        font_id,
+                        wrap,
+                        content_align,
+                        false,
+                    )
+                },
+            )
+            .inner;
+
+        // Divider: a slim draggable bar. Dragging rebalances the panes; the
+        // fraction persists per window.
+        let (divider_rect, divider_resp) = ui
+            .allocate_exact_size(Vec2::new(avail.x, DIVIDER_H), egui::Sense::drag());
+        if divider_resp.hovered() || divider_resp.dragged() {
+            ctx.set_cursor_icon(egui::CursorIcon::ResizeVertical);
+        }
+        if divider_resp.dragged() {
+            if let Some(pointer) = ctx.pointer_interact_pos() {
+                let new_frac = ((pointer.y - split_top) / usable)
+                    .clamp(min_pane / usable, (usable - min_pane) / usable);
+                ctx.data_mut(|data| data.insert_persisted(frac_key, new_frac));
+            }
+        }
+        let visuals = ui.style().visuals.clone();
+        let line_color = if divider_resp.hovered() || divider_resp.dragged() {
+            visuals.widgets.hovered.fg_stroke.color
+        } else {
+            visuals.widgets.noninteractive.bg_stroke.color
+        };
+        let center_y = divider_rect.center().y;
+        ui.painter().line_segment(
+            [
+                egui::pos2(divider_rect.left(), center_y),
+                egui::pos2(divider_rect.right(), center_y),
+            ],
+            egui::Stroke::new(1.0, line_color),
+        );
+        // Grip dots in the middle so the bar reads as draggable.
+        let cx = divider_rect.center().x;
+        for offset in [-8.0f32, 0.0, 8.0] {
+            ui.painter().circle_filled(
+                egui::pos2(cx + offset, center_y),
+                1.5,
+                line_color,
+            );
+        }
+
+        // Live pane: same buffer under a derived id, permanently pinned to
+        // the tail. Wheel input over it is absorbed (force_follow re-pins
+        // next frame); links stay clickable.
+        let live_id = format!("{scroll_id}~live");
+        if let Some(link) = Self::render_text_content(
+            ui,
+            content,
+            &live_id,
+            search_query,
+            font_id,
+            wrap,
+            content_align,
+            true,
+        ) {
+            clicked_link.get_or_insert(link);
+        }
+
+        // One scroll surface: the live pane ignores wheel input, so wheel
+        // motion over it (or the divider) drives the HISTORY pane instead —
+        // forwarded through the same pending channel keyboard paging uses,
+        // consumed by the top pane next frame.
+        let bottom_rect = egui::Rect::from_x_y_ranges(
+            divider_rect.x_range(),
+            divider_rect.top()..=(split_top + avail.y),
+        );
+        let wheel_y = ui.input(|input| input.smooth_scroll_delta.y);
+        if wheel_y != 0.0 && ui.rect_contains_pointer(bottom_rect) {
+            ctx.data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new(("text_scroll_pending", scroll_id)),
+                    (0u8, -wheel_y),
+                );
+            });
+        }
 
         clicked_link
     }

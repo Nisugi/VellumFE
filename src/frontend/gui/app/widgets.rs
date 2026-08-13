@@ -121,7 +121,7 @@ impl VellumGuiApp {
             | WindowContent::Reserve(content)
             | WindowContent::Spells(content) => {
                 let query = Self::active_search_query(app_core);
-                Self::render_text_content(
+                Self::render_text_content_auto_split(
                     ui,
                     content,
                     &tab.window_name,
@@ -217,7 +217,7 @@ impl VellumGuiApp {
                     // buffers and generations).
                     let scroll_id =
                         format!("{}::tab{}", tab.window_name, tabbed.active_tab_index);
-                    if let Some(link) = Self::render_text_content(
+                    if let Some(link) = Self::render_text_content_auto_split(
                         ui,
                         &active.content,
                         &scroll_id,

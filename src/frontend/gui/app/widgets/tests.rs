@@ -1084,7 +1084,7 @@ impl ScrollHarness {
         let mut output = self.ctx.run_ui(input, |ui| {
 
             VellumGuiApp::render_text_content(
-                ui, &content, &scroll_id, None, &font_id, true, None,
+                ui, &content, &scroll_id, None, &font_id, true, None, false,
             );
         });
         output.textures_delta.clear();
@@ -1092,6 +1092,53 @@ impl ScrollHarness {
 
     fn frame(&mut self) {
         self.frame_with(Vec::new());
+    }
+
+    /// Same as `frame_with` but through the auto-split entry point, the one
+    /// the real GUI window path uses.
+    fn frame_split_with(&mut self, events: Vec<eframe::egui::Event>) {
+        let mut input = self.raw_input();
+        input.events = events;
+        let content = self.content.clone();
+        let scroll_id = self.scroll_id.clone();
+        let font_id = self.font_id.clone();
+        let mut output = self.ctx.run_ui(input, |ui| {
+            VellumGuiApp::render_text_content_auto_split(
+                ui, &content, &scroll_id, None, &font_id, true, None,
+            );
+        });
+        output.textures_delta.clear();
+    }
+
+    fn frame_split(&mut self) {
+        self.frame_split_with(Vec::new());
+    }
+
+    /// Did the live (bottom) pane render this session? Its scroll area
+    /// stashes an id under the derived `~live` scroll id when it does.
+    fn live_pane_rendered(&self) -> bool {
+        let live_id = format!("{}~live", self.scroll_id);
+        self.ctx
+            .data_mut(|d| {
+                d.get_temp::<eframe::egui::Id>(eframe::egui::Id::new((
+                    "text_scroll_area_id",
+                    live_id.as_str(),
+                )))
+            })
+            .is_some()
+    }
+
+    /// The live pane's follow flag — must always be true (force-followed).
+    fn live_following(&self) -> bool {
+        let live_id = format!("{}~live", self.scroll_id);
+        self.ctx
+            .data_mut(|d| {
+                d.get_temp(eframe::egui::Id::new((
+                    "text_scroll_follow",
+                    live_id.as_str(),
+                )))
+            })
+            .unwrap_or(true)
     }
 
     /// egui's own persisted offset — the post-layout truth.
@@ -2136,4 +2183,162 @@ fn picture_height_follows_the_text_block_beside_it() {
     );
 
     crate::core::inline_image::set_for_test(CustomEmojiRegistry::default());
+}
+
+// ==================== Auto split-screen scrollback ====================
+//
+// Scrolling back splits the window: frozen history on top, a live pane
+// pinned to the tail below. Returning to the bottom merges the panes.
+
+/// While following the tail there is no split — the live pane never renders.
+#[test]
+fn no_split_while_following() {
+    let mut h = ScrollHarness::new("split_none", 300.0);
+    h.push_lines(100);
+    h.frame_split();
+    h.frame_split();
+    assert!(h.following(), "fresh window follows the tail");
+    assert!(!h.live_pane_rendered(), "no live pane while following");
+}
+
+/// Scrolling back opens the split; the live pane exists and is pinned to
+/// the tail even as new lines arrive.
+#[test]
+fn scrollback_opens_split_with_pinned_live_pane() {
+    let mut h = ScrollHarness::new("split_open", 300.0);
+    h.push_lines(200);
+    h.frame_split();
+    h.frame_split();
+    // Wheel up over the window: detach follow.
+    let hover = h.hover_center();
+    h.frame_split_with(vec![hover.clone(), ScrollHarness::wheel(600.0)]);
+    for _ in 0..5 {
+        h.frame_split();
+    }
+    assert!(!h.following(), "wheel-up must detach the top pane");
+    assert!(h.live_pane_rendered(), "scrolled back => live pane renders");
+    assert!(h.live_following(), "live pane is pinned to the tail");
+
+    // New text arrives; the live pane must stay pinned.
+    h.push_lines(50);
+    for _ in 0..3 {
+        h.frame_split();
+    }
+    assert!(h.live_following(), "live pane still pinned after new lines");
+    assert!(!h.following(), "top pane stays frozen after new lines");
+}
+
+/// The End action re-arms follow and the panes merge again.
+#[test]
+fn end_action_merges_split() {
+    let mut h = ScrollHarness::new("split_merge", 300.0);
+    h.push_lines(200);
+    h.frame_split();
+    let hover = h.hover_center();
+    h.frame_split_with(vec![hover, ScrollHarness::wheel(600.0)]);
+    // Let egui's wheel smoothing decay fully — residual smoothed delta
+    // counts as user input and would re-detach follow right after End.
+    for _ in 0..30 {
+        h.frame_split();
+    }
+    assert!(!h.following());
+    // End: resume following (kind 2 pending action, same as the End key).
+    h.request(2, 0.0);
+    h.frame_split();
+    h.frame_split();
+    assert!(h.following(), "End re-arms follow and merges the panes");
+}
+
+/// A window too short for two readable panes keeps single-view scrollback.
+#[test]
+fn tiny_window_never_splits() {
+    let mut h = ScrollHarness::new("split_tiny", 60.0);
+    h.push_lines(100);
+    h.frame_split();
+    let hover = h.hover_center();
+    h.frame_split_with(vec![hover, ScrollHarness::wheel(200.0)]);
+    for _ in 0..3 {
+        h.frame_split();
+    }
+    assert!(!h.following(), "still scrolled back");
+    assert!(!h.live_pane_rendered(), "too short to split");
+}
+
+/// The live pane is not a scrolling surface: a wheel over the bottom half
+/// must leave its offset exactly where the tail pin put it.
+#[test]
+fn wheel_over_live_pane_does_not_scroll_it() {
+    let mut h = ScrollHarness::new("split_live_wheel", 300.0);
+    h.push_lines(200);
+    h.frame_split();
+    let hover_top = h.hover_center();
+    h.frame_split_with(vec![hover_top, ScrollHarness::wheel(600.0)]);
+    for _ in 0..30 {
+        h.frame_split();
+    }
+    assert!(h.live_pane_rendered());
+
+    let live_offset = |h: &ScrollHarness| -> f32 {
+        let live_id = format!("{}~live", h.scroll_id);
+        let area_id: Option<eframe::egui::Id> = h.ctx.data_mut(|d| {
+            d.get_temp(eframe::egui::Id::new((
+                "text_scroll_area_id",
+                live_id.as_str(),
+            )))
+        });
+        area_id
+            .and_then(|id| eframe::egui::scroll_area::State::load(&h.ctx, id))
+            .map(|s| s.offset.y)
+            .unwrap_or(0.0)
+    };
+    let before = live_offset(&h);
+    assert!(before > 0.0, "live pane starts pinned to the tail");
+
+    // Wheel up with the pointer in the BOTTOM section (the live pane).
+    let hover_bottom = eframe::egui::Event::PointerMoved(eframe::egui::pos2(
+        h.view.x * 0.5,
+        h.view.y * 0.9,
+    ));
+    h.frame_split_with(vec![hover_bottom, ScrollHarness::wheel(600.0)]);
+    for _ in 0..30 {
+        h.frame_split();
+    }
+    let after = live_offset(&h);
+    assert!(
+        (after - before).abs() < 0.5,
+        "wheel over the live pane must not move it: {before} -> {after}"
+    );
+}
+
+/// Wheel over the bottom (live) section scrolls the HISTORY pane — the
+/// whole split window acts as one scroll surface.
+#[test]
+fn wheel_over_live_pane_scrolls_the_history_pane() {
+    let mut h = ScrollHarness::new("split_forward_wheel", 300.0);
+    h.push_lines(300);
+    h.frame_split();
+    let hover_top = h.hover_center();
+    h.frame_split_with(vec![hover_top, ScrollHarness::wheel(600.0)]);
+    for _ in 0..30 {
+        h.frame_split();
+    }
+    assert!(h.live_pane_rendered());
+    let before = h.offset();
+    assert!(before > 0.0, "top pane is scrolled somewhere above the tail");
+
+    // Wheel up with the pointer over the live pane.
+    let hover_bottom = eframe::egui::Event::PointerMoved(eframe::egui::pos2(
+        h.view.x * 0.5,
+        h.view.y * 0.9,
+    ));
+    h.frame_split_with(vec![hover_bottom, ScrollHarness::wheel(600.0)]);
+    for _ in 0..30 {
+        h.frame_split();
+    }
+    let after = h.offset();
+    assert!(
+        after < before - 1.0,
+        "wheel over the live pane must scroll history up: {before} -> {after}"
+    );
+    assert!(!h.following(), "still detached while scrolled back");
 }
