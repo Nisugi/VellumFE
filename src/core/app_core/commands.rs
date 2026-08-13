@@ -243,8 +243,13 @@ impl AppCore {
             // Fall through to send command to server
         }
 
-        // Echo command to windows subscribed to "main" stream
-        self.echo_command_to_main(&command);
+        // Echo command to windows subscribed to "main" stream. Hidden
+        // extended-feed requests (`_inventory manager/viewitem ...`) go out
+        // silently, like Saga - a sync fires up to ten of them and probe
+        // traffic would otherwise spam H> lines through combat.
+        if !command.starts_with("_inventory ") {
+            self.echo_command_to_main(&command);
+        }
 
         // Command history is now managed by the CommandInput widget
 
