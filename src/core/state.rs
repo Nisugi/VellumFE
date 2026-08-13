@@ -1104,6 +1104,80 @@ pub struct ManagedInventoryState {
     pub generation: u64,
 }
 
+impl ManagedInventoryState {
+    /// Human-readable location of an item: the container chain walked up
+    /// to its root ("worn", a hand, at feet, or the room floor), innermost
+    /// last, closed containers flagged. E.g.
+    /// "in your quilled iron boar hide bandolier > coal black purse (closed)".
+    pub fn location_of(&self, item: &ManagedInventoryItem) -> String {
+        // Article-free form ("leather bandolier", not "a leather bandolier")
+        // so the possessive path reads naturally after "your".
+        let display = |i: &ManagedInventoryItem| -> String {
+            let mut name = [i.adjective.as_str(), i.noun.as_str()]
+                .iter()
+                .filter(|s| !s.is_empty())
+                .copied()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if name.is_empty() {
+                name = i.name.clone();
+            }
+            if i.is_closed() {
+                name.push_str(" (closed)");
+            }
+            name
+        };
+        // Root relations need no walking.
+        let root_label = |relation: &str| -> Option<&'static str> {
+            match relation {
+                "worn" => Some("worn"),
+                "righthand" => Some("in your right hand"),
+                "lefthand" => Some("in your left hand"),
+                "atfeet" => Some("at your feet"),
+                "reserved" => Some("reserved"),
+                "room" => Some("on the floor"),
+                _ => None,
+            }
+        };
+        if item.parent == "player" || item.parent == "room" {
+            return root_label(&item.relation).unwrap_or("carried").to_string();
+        }
+        // Walk the container chain outward, then print outermost-first.
+        let by_id: std::collections::HashMap<&str, &ManagedInventoryItem> =
+            self.items.iter().map(|i| (i.id.as_str(), i)).collect();
+        let mut chain: Vec<&ManagedInventoryItem> = Vec::new();
+        let mut cursor = item;
+        let mut root = "carried";
+        // Bounded by item count to survive a (malformed) parent cycle.
+        for _ in 0..=self.items.len() {
+            let Some(parent) = by_id.get(cursor.parent.as_str()) else {
+                break;
+            };
+            chain.push(parent);
+            if parent.parent == "player" || parent.parent == "room" {
+                root = match root_label(&parent.relation) {
+                    Some("worn") | None => "your",
+                    Some("on the floor") => "the floor's",
+                    Some(other) => {
+                        // Hand/feet-held containers read naturally enough
+                        // with the plain chain; keep "your".
+                        let _ = other;
+                        "your"
+                    }
+                };
+                break;
+            }
+            cursor = parent;
+        }
+        if chain.is_empty() {
+            return "carried".to_string();
+        }
+        chain.reverse();
+        let path: Vec<String> = chain.iter().map(|c| display(c)).collect();
+        format!("in {} {}", root, path.join(" > "))
+    }
+}
+
 /// GS4 Experience dialog state (from `<openDialog id='expr'>`)
 /// Composite of: yourLvl label + mindState progress + nextLvlPB progress
 #[derive(Clone, Debug, Default)]

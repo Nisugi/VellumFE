@@ -2584,6 +2584,62 @@ fn test_inventory_view_item_open_container_and_prompt_tear() {
 }
 
 #[test]
+fn test_managed_inventory_location_of() {
+    use crate::core::state::{ManagedInventoryItem, ManagedInventoryState};
+    let item = |id: &str, relation: &str, parent: &str, name: &str, closed: bool| {
+        // name = "article,adjective,noun" like the wire
+        let mut parts = name.splitn(3, ',');
+        let (article, adjective, noun) = (
+            parts.next().unwrap_or("").to_string(),
+            parts.next().unwrap_or("").to_string(),
+            parts.next().unwrap_or("").to_string(),
+        );
+        let display = [article.as_str(), adjective.as_str(), noun.as_str()]
+            .iter()
+            .filter(|s| !s.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" ");
+        ManagedInventoryItem {
+            id: id.to_string(),
+            relation: relation.to_string(),
+            parent: parent.to_string(),
+            name: display,
+            article,
+            adjective,
+            noun,
+            flags: if closed {
+                vec!["closed".to_string()]
+            } else {
+                vec![]
+            },
+            ..Default::default()
+        }
+    };
+    let snap = ManagedInventoryState {
+        items: vec![
+            item("1", "worn", "player", "a,leather,bandolier", false),
+            item("2", "in", "1", "a,coal black,purse", true),
+            item("3", "in", "2", "a,silver,coin", false),
+            item("4", "righthand", "player", "a,short,sword", false),
+            item("5", "room", "room", "a,wooden,table", false),
+            item("6", "on", "5", "a,dusty,tome", false),
+        ],
+        complete: true,
+        ..Default::default()
+    };
+    let by_id = |id: &str| snap.items.iter().find(|i| i.id == id).unwrap();
+    assert_eq!(snap.location_of(by_id("1")), "worn");
+    assert_eq!(
+        snap.location_of(by_id("3")),
+        "in your leather bandolier > coal black purse (closed)"
+    );
+    assert_eq!(snap.location_of(by_id("4")), "in your right hand");
+    assert_eq!(snap.location_of(by_id("5")), "on the floor");
+    assert_eq!(snap.location_of(by_id("6")), "in the floor's wooden table");
+}
+
+#[test]
 fn test_world_event_tag() {
     let mut parser = XmlParser::new();
     let elements = parser.parse_line(

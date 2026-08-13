@@ -1849,6 +1849,60 @@ impl AppCore {
     ///   .spellwatch add 606          one spell
     ///   .spellwatch add [101,103]    several
     ///   .spellwatch add all          everything currently active
+    /// `.find <query>` - search the managed inventory snapshot (extended
+    /// feed) by name and print where each match lives, closed containers
+    /// flagged. Snapshot comes from `.invsync`; results are as fresh as the
+    /// last sync.
+    fn handle_find(&mut self, parts: &[&str]) {
+        let query = parts[1..].join(" ").trim().to_ascii_lowercase();
+        if query.is_empty() {
+            self.add_system_message("Usage: .find <name fragment> - searches the .invsync snapshot.");
+            return;
+        }
+        let Some(snapshot) = self.game_state.managed_inventory.as_ref() else {
+            self.add_system_message("[find] no inventory snapshot yet - run .invsync first.");
+            return;
+        };
+        let mut lines: Vec<String> = Vec::new();
+        for item in &snapshot.items {
+            let hay = item.name.to_ascii_lowercase();
+            let hay_long = item
+                .long
+                .as_deref()
+                .map(str::to_ascii_lowercase)
+                .unwrap_or_default();
+            if hay.contains(&query) || hay_long.contains(&query) {
+                lines.push(format!(
+                    "  {} - {}  (#{})",
+                    item.name,
+                    snapshot.location_of(item),
+                    item.id
+                ));
+            }
+        }
+        let total = snapshot.items.len();
+        let incomplete = !snapshot.complete;
+        if lines.is_empty() {
+            self.add_system_message(&format!(
+                "[find] no '{query}' in the snapshot ({total} items{}).",
+                if incomplete { ", INCOMPLETE" } else { "" }
+            ));
+            return;
+        }
+        let header = format!(
+            "[find] {} match{}:",
+            lines.len(),
+            if lines.len() == 1 { "" } else { "es" }
+        );
+        self.add_system_message(&header);
+        for line in lines {
+            self.add_system_message(&line);
+        }
+        if incomplete {
+            self.add_system_message("  (snapshot INCOMPLETE - rerun .invsync)");
+        }
+    }
+
     /// `.drag` - verified item moves (extended feed's `_drag` verb, each
     /// confirmed against `<left>/<right>` hand events within 8s).
     fn handle_drag(&mut self, parts: &[&str]) {
@@ -2405,6 +2459,9 @@ impl AppCore {
             }
             "spellwatch" => {
                 self.handle_spellwatch(&parts);
+            }
+            "find" => {
+                self.handle_find(&parts);
             }
             "drag" => {
                 // Verified item moves over the extended feed's _drag verb:

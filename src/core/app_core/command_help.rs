@@ -172,6 +172,13 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                   ".spellwatch add all snapshots everything currently active."]
             ),
             entry!(
+                &["find"],
+                "<name fragment>",
+                "Find items in the .invsync snapshot and show where they live",
+                &["Searches names and long descriptions; each match prints its container",
+                  "path with closed containers flagged. Run .invsync first."]
+            ),
+            entry!(
                 &["drag"],
                 "<exist> left|right|drop|wear|feet | in|on|behind|underneath <dest>",
                 "Verified item move (extended feed _drag verb)",
