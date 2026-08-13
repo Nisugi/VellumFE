@@ -735,6 +735,366 @@ pub fn extract_from_lich(dir: &std::path::Path) -> Result<(Vec<CreatureEntry>, V
     Ok((entries, failed))
 }
 
+// ---------------------------------------------------------------------
+// Formatting: entries and result tables as styled lines
+// ---------------------------------------------------------------------
+
+/// Renders bestiary output as [`crate::data::StyledLine`]s for the
+/// `bestiary` stream — the ebestiary presentation (sectioned box,
+/// level-separated tables, everything clickable) in native segments.
+/// Clickable pieces are `_direct_` links carrying `.bestiary ...`
+/// commands, which the frontends route back through dot-command dispatch.
+pub mod format {
+    use super::{BestiaryDb, CreatureEntry};
+    use crate::data::{LinkData, SpanType, StyledLine, TextSegment};
+
+    pub const STREAM: &str = "bestiary";
+    const WIDTH: usize = 65;
+
+    fn seg(text: impl Into<String>) -> TextSegment {
+        TextSegment {
+            text: text.into(),
+            fg: None,
+            bg: None,
+            bold: false,
+            mono: true,
+            span_type: SpanType::System,
+            link_data: None,
+            custom_emoji: None,
+            inline_image: None,
+        }
+    }
+
+    fn bold_seg(text: impl Into<String>) -> TextSegment {
+        TextSegment {
+            bold: true,
+            span_type: SpanType::Monsterbold,
+            ..seg(text)
+        }
+    }
+
+    fn link(text: impl Into<String>, cmd: impl Into<String>) -> TextSegment {
+        let text = text.into();
+        TextSegment {
+            span_type: SpanType::Link,
+            link_data: Some(LinkData {
+                exist_id: crate::data::DIRECT_LINK_SENTINEL.to_string(),
+                noun: cmd.into(),
+                text: text.clone(),
+                coord: None,
+            }),
+            ..seg(text)
+        }
+    }
+
+    fn line(segments: Vec<TextSegment>) -> StyledLine {
+        StyledLine {
+            segments,
+            stream: STREAM.to_string(),
+            timestamp: None,
+        }
+    }
+
+    fn visual_len(segments: &[TextSegment]) -> usize {
+        segments.iter().map(|s| s.text.chars().count()).sum()
+    }
+
+    /// `| <content><pad> |`
+    fn boxed(mut segments: Vec<TextSegment>) -> StyledLine {
+        let used = visual_len(&segments);
+        let pad = WIDTH.saturating_sub(used + 2);
+        let mut all = vec![seg("| ")];
+        all.append(&mut segments);
+        all.push(seg(format!("{} |", " ".repeat(pad))));
+        line(all)
+    }
+
+    fn rule(ch: char) -> StyledLine {
+        line(vec![seg(format!("+{}+", ch.to_string().repeat(WIDTH)))])
+    }
+
+    fn section(title: &str) -> StyledLine {
+        let mut text = format!("--- {title} ");
+        while text.chars().count() < WIDTH - 2 {
+            text.push('-');
+        }
+        boxed(vec![bold_seg(text)])
+    }
+
+    fn wrap(text: &str, width: usize) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut cur = String::new();
+        for word in text.split_whitespace() {
+            if !cur.is_empty() && cur.chars().count() + 1 + word.chars().count() > width {
+                lines.push(std::mem::take(&mut cur));
+            }
+            if !cur.is_empty() {
+                cur.push(' ');
+            }
+            cur.push_str(word);
+        }
+        if !cur.is_empty() {
+            lines.push(cur);
+        }
+        lines
+    }
+
+    /// The full entry box.
+    pub fn entry_lines(e: &CreatureEntry) -> Vec<StyledLine> {
+        let mut out = vec![rule('=')];
+        let mut header = vec![bold_seg(e.name.to_uppercase())];
+        if let Some(level) = e.level {
+            header.push(seg(" ("));
+            header.push(link(format!("Level {level}"), format!(".bestiary level {level}")));
+            header.push(seg(")"));
+        }
+        out.push(boxed(header));
+        out.push(rule('-'));
+
+        if let Some(desc) = &e.description {
+            for l in wrap(desc, WIDTH - 6) {
+                out.push(boxed(vec![seg(format!("  {l}"))]));
+            }
+            out.push(boxed(vec![]));
+        }
+
+        let mut info: Vec<TextSegment> = Vec::new();
+        if let Some(f) = &e.family {
+            info.push(seg("  Family: "));
+            info.push(link(f.clone(), format!(".bestiary family {f}")));
+        }
+        if let Some(t) = &e.creature_type {
+            info.push(seg(format!("  Type: {t}")));
+        }
+        if e.undead {
+            info.push(bold_seg("  Undead"));
+        }
+        if let Some(hp) = e.max_hp {
+            info.push(seg(format!("  HP: {hp}")));
+        }
+        if !info.is_empty() {
+            out.push(boxed(info));
+        }
+
+        let has_location = !e.spawns.is_empty() || !e.areas.is_empty();
+        if has_location {
+            out.push(section("Locations"));
+            for spawn in &e.spawns {
+                if let Some(map) = &spawn.map {
+                    let rooms: u64 = spawn.uids.iter().map(|(lo, hi)| hi - lo + 1).sum();
+                    out.push(boxed(vec![
+                        seg("  "),
+                        link(map.clone(), format!(".bestiary area {map}")),
+                        seg(format!(" ({rooms} rooms)")),
+                    ]));
+                }
+            }
+            for area in &e.areas {
+                // Authored names not already covered by a resolved spawn map.
+                if !e
+                    .spawns
+                    .iter()
+                    .any(|s| s.map.as_deref() == Some(area.as_str()))
+                {
+                    out.push(boxed(vec![
+                        seg("  "),
+                        link(area.clone(), format!(".bestiary area {area}")),
+                    ]));
+                }
+            }
+        }
+
+        if !e.offense.is_empty() {
+            out.push(section("Offense"));
+            for a in &e.offense.physical {
+                let val = a.value.map(|v| format!(" (AS: {})", v.display())).unwrap_or_default();
+                out.push(boxed(vec![seg(format!("  Physical: {}{val}", a.name))]));
+            }
+            for a in &e.offense.bolt {
+                let val = a.value.map(|v| format!(" (AS: {})", v.display())).unwrap_or_default();
+                out.push(boxed(vec![seg(format!("  Bolt: {}{val}", a.name))]));
+            }
+            for a in &e.offense.warding {
+                let val = a.value.map(|v| format!(" (CS: {})", v.display())).unwrap_or_default();
+                out.push(boxed(vec![seg(format!("  Warding: {}{val}", a.name))]));
+            }
+            for s in &e.offense.spells {
+                out.push(boxed(vec![seg(format!("  Spell: {s}"))]));
+            }
+            for m in &e.offense.maneuvers {
+                out.push(boxed(vec![seg(format!("  Maneuver: {m}"))]));
+            }
+            for s in &e.offense.specials {
+                let note = s.note.as_deref().map(|n| format!(" - {n}")).unwrap_or_default();
+                out.push(boxed(vec![bold_seg("  Special"), seg(format!(": {}{note}", s.name))]));
+            }
+        }
+
+        if let Some(d) = &e.defense {
+            out.push(section("Defense"));
+            let mut ds: Vec<String> = Vec::new();
+            if let Some(asg) = &d.asg {
+                ds.push(format!("ASG: {asg}"));
+            }
+            if let Some(v) = d.melee {
+                ds.push(format!("Melee DS: {}", v.display()));
+            }
+            if let Some(v) = d.ranged {
+                ds.push(format!("Ranged DS: {}", v.display()));
+            }
+            if let Some(v) = d.bolt {
+                ds.push(format!("Bolt DS: {}", v.display()));
+            }
+            if let Some(v) = d.udf {
+                ds.push(format!("UDF: {}", v.display()));
+            }
+            for chunk in ds.chunks(3) {
+                out.push(boxed(vec![seg(format!("  {}", chunk.join("    ")))]));
+            }
+            if !d.td.is_empty() {
+                let tds: Vec<String> = d
+                    .td
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", capitalize(k), v.display()))
+                    .collect();
+                for l in wrap(&format!("TD: {}", tds.join(", ")), WIDTH - 6) {
+                    out.push(boxed(vec![seg(format!("  {l}"))]));
+                }
+            }
+            if !d.immunities.is_empty() {
+                out.push(boxed(vec![seg(format!("  Immunities: {}", d.immunities.join(", ")))]));
+            }
+            if !d.spells.is_empty() {
+                for l in wrap(&format!("Spells: {}", d.spells.join(", ")), WIDTH - 6) {
+                    out.push(boxed(vec![seg(format!("  {l}"))]));
+                }
+            }
+            for a in &d.abilities {
+                out.push(boxed(vec![seg(format!("  Ability: {a}"))]));
+            }
+            for s in &d.specials {
+                out.push(boxed(vec![bold_seg("  Special"), seg(format!(": {s}"))]));
+            }
+        }
+
+        if !e.treasure.is_empty() {
+            out.push(section("Treasure"));
+            let mut items: Vec<String> = Vec::new();
+            if e.treasure.coins {
+                items.push("coins".into());
+            }
+            if e.treasure.gems {
+                items.push("gems".into());
+            }
+            if e.treasure.boxes {
+                items.push("boxes".into());
+            }
+            if e.treasure.magic {
+                items.push("magic items".into());
+            }
+            if let Some(skin) = &e.treasure.skin {
+                items.push(skin.clone());
+            }
+            for l in wrap(&items.join(", "), WIDTH - 6) {
+                out.push(boxed(vec![seg(format!("  {l}"))]));
+            }
+            if let Some(other) = &e.treasure.other {
+                for l in wrap(other, WIDTH - 6) {
+                    out.push(boxed(vec![seg(format!("  {l}"))]));
+                }
+            }
+        }
+
+        if let Some(notes) = &e.notes {
+            out.push(section("Notes"));
+            for l in wrap(notes, WIDTH - 6) {
+                out.push(boxed(vec![seg(format!("  {l}"))]));
+            }
+        }
+
+        if let Some(url) = &e.url {
+            out.push(boxed(vec![seg(format!("Wiki: {url}"))]));
+        }
+        out.push(rule('='));
+        out
+    }
+
+    fn capitalize(s: &str) -> String {
+        let mut c = s.chars();
+        match c.next() {
+            Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+            None => String::new(),
+        }
+    }
+
+    /// Level-separated result table, every cell linked.
+    pub fn table_lines(rows: &[&CreatureEntry], title: &str) -> Vec<StyledLine> {
+        if rows.is_empty() {
+            return vec![line(vec![seg("No matching creatures.")])];
+        }
+        let mut out = vec![line(vec![seg(format!("{title} ({} found):", rows.len()))])];
+        let name_w = rows.iter().map(|e| e.name.chars().count()).max().unwrap_or(4).max(4);
+        let fam_w = rows
+            .iter()
+            .map(|e| e.family.as_deref().unwrap_or("").chars().count())
+            .max()
+            .unwrap_or(6)
+            .max(6);
+        let sep = format!("+-----+-{}-+-{}-+", "-".repeat(name_w), "-".repeat(fam_w));
+        out.push(line(vec![seg(sep.clone())]));
+        let mut last_level: Option<i64> = None;
+        for e in rows {
+            if last_level.is_some() && last_level != e.level {
+                out.push(line(vec![seg(sep.clone())]));
+            }
+            last_level = e.level;
+            let lvl = e.level.map(|l| l.to_string()).unwrap_or_else(|| "?".into());
+            let fam = e.family.clone().unwrap_or_default();
+            let mut segs = vec![seg("| ")];
+            segs.push(link(format!("{lvl:>3}"), format!(".bestiary level {lvl}")));
+            segs.push(seg(" | "));
+            segs.push(link(format!("{:<name_w$}", e.name), format!(".bestiary {}", e.name)));
+            segs.push(seg(" | "));
+            if fam.is_empty() {
+                segs.push(seg(format!("{fam:<fam_w$}")));
+            } else {
+                segs.push(link(format!("{fam:<fam_w$}"), format!(".bestiary family {fam}")));
+            }
+            segs.push(seg(" |"));
+            out.push(line(segs));
+        }
+        out.push(line(vec![seg(sep)]));
+        out
+    }
+
+    pub fn help_lines() -> Vec<StyledLine> {
+        [
+            "Bestiary - creature lookup (bundled codex)",
+            "  .bestiary <name>        look up one creature",
+            "  .bestiary here          creatures spawning around this room",
+            "  .bestiary level <n|a-b> list by level or range",
+            "  .bestiary area <name>   list by area/map",
+            "  .bestiary family <name> list by family",
+            "  .bestiary undead        list undead",
+            "  .bestiary search <text> search names",
+        ]
+        .iter()
+        .map(|s| line(vec![seg(*s)]))
+        .collect()
+    }
+
+    /// Shared database instance, loaded from the bundled file on first use.
+    pub fn shared() -> &'static BestiaryDb {
+        static DB: std::sync::OnceLock<BestiaryDb> = std::sync::OnceLock::new();
+        DB.get_or_init(|| {
+            BestiaryDb::embedded().unwrap_or_else(|e| {
+                tracing::error!("bundled bestiary failed to load: {e}");
+                BestiaryDb::default()
+            })
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -920,6 +1280,67 @@ mod tests {
             located >= 500,
             "spawn join should locate most creatures, got {located}"
         );
+    }
+
+    #[test]
+    fn entry_lines_box_up_consistently() {
+        let mut e = manticore_entry();
+        e.spawns.push(Spawn {
+            map: Some("Frozen Battlefield".into()),
+            level: Some(29),
+            uids: vec![(100, 187)],
+        });
+        let lines = format::entry_lines(&e);
+        assert!(lines.len() > 8);
+        // Every boxed line renders at the same width.
+        let widths: std::collections::HashSet<usize> = lines
+            .iter()
+            .map(|l| l.segments.iter().map(|s| s.text.chars().count()).sum())
+            .collect();
+        assert_eq!(widths.len(), 1, "ragged box: {widths:?}");
+        // Links are direct dot-commands.
+        let links: Vec<String> = lines
+            .iter()
+            .flat_map(|l| &l.segments)
+            .filter_map(|s| s.link_data.as_ref())
+            .map(|l| l.noun.clone())
+            .collect();
+        assert!(links.iter().any(|c| c == ".bestiary level 29"));
+        assert!(links.iter().any(|c| c == ".bestiary family Chimeric"));
+        assert!(links.iter().any(|c| c == ".bestiary area Frozen Battlefield"));
+        for link in &links {
+            assert!(link.starts_with(".bestiary "), "non-dot link {link}");
+        }
+        // The spawn line shows the room count from the uid range.
+        let all_text: String = lines
+            .iter()
+            .flat_map(|l| &l.segments)
+            .map(|s| s.text.as_str())
+            .collect();
+        assert!(all_text.contains("(88 rooms)"));
+    }
+
+    #[test]
+    fn table_lines_separate_levels_and_link_names() {
+        let mut a = manticore_entry();
+        a.level = Some(28);
+        a.name = "arctic puma".into();
+        let b = manticore_entry();
+        let rows_owned = [a, b];
+        let rows: Vec<&CreatureEntry> = rows_owned.iter().collect();
+        let lines = format::table_lines(&rows, "Test");
+        let seps = lines
+            .iter()
+            .filter(|l| l.segments.len() == 1 && l.segments[0].text.starts_with("+--"))
+            .count();
+        assert_eq!(seps, 3, "top, level-change, bottom separators");
+        let links: Vec<String> = lines
+            .iter()
+            .flat_map(|l| &l.segments)
+            .filter_map(|s| s.link_data.as_ref())
+            .map(|l| l.noun.clone())
+            .collect();
+        assert!(links.iter().any(|c| c == ".bestiary arctic puma"));
     }
 
     #[test]

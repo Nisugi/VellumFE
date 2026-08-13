@@ -2026,7 +2026,18 @@ impl VellumGuiApp {
         };
 
         let outbound = match dispatch {
-            GuiLinkDispatch::NetworkCommand(command) => command,
+            GuiLinkDispatch::NetworkCommand(command) => {
+                if command.trim_start().starts_with('.') {
+                    // Synthetic client links (bestiary tables, etc.) carry
+                    // dot-commands; route through dot dispatch, not the game.
+                    self.app_core
+                        .message_processor
+                        .pending_client_commands
+                        .push(command.trim().to_string());
+                    return;
+                }
+                command
+            }
             GuiLinkDispatch::MenuRequest { exist_id, noun } => {
                 self.popup_menu_host = origin;
                 self.app_core.request_menu(exist_id, noun, click.click_pos)

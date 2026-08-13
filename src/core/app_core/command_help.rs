@@ -217,6 +217,13 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                   "snapshot is complete. Needs the extended feed: the WRAYTH banner, sent in direct mode or by Lich."]
             ),
             entry!(
+                &["bestiary"],
+                "[<name> | here | level <n|a-b> | area <x> | family <x> | undead | search <q>]",
+                "Creature codex: stats, spawns, treasure from the bundled bestiary",
+                &["Output goes to the 'bestiary' stream (subscribe a text window to keep it",
+                  "out of main). Everything in the tables and entries is clickable."]
+            ),
+            entry!(
                 &["addwindow"],
                 "",
                 "Open widget type picker",
