@@ -225,6 +225,10 @@ pub struct GameState {
     /// on the cached value walked a broke character into a paid crossing
     /// (the live 'you have 2000 - funded' on a freshly emptied purse).
     pub silver_line_no: u64,
+    /// Count of `<nav>` tags seen - Lich's `$room_count`. The command gate
+    /// records it at each send; "a nav arrived since my send" is the
+    /// movement test, independent of how fast the room id resolves.
+    pub nav_count: u64,
 
     /// Chronomage day-pass expiry cache, learned by `look`ing at passes (Lich's
     /// `$mapdb_day_passes` + `mapdb_day_pass_monitor`). Gates day-pass travel.
@@ -1317,6 +1321,7 @@ impl GameState {
             move_feedback: std::collections::VecDeque::new(),
             game_line_no: 0,
             silver_line_no: 0,
+            nav_count: 0,
             recent_lines: std::collections::VecDeque::new(),
             line_seq: 0,
             spell_names_seen: std::collections::HashMap::new(),

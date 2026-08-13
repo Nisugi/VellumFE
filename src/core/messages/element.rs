@@ -132,6 +132,7 @@ impl MessageProcessor {
                 // if the room can't be resolved to a mapdb id — arrival
                 // detection then never hangs on an unmapped room (§12).
                 self.game_line_no += 1;
+                game_state.nav_count += 1;
                 game_state
                     .move_feedback
                     .push_back((self.game_line_no, crate::core::move_feedback::MoveFeedback::NavArrived));

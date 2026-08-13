@@ -62,6 +62,9 @@ pub struct TravelContext<'a> {
     /// live creek loop: a stale "You can't go there" from a superseded move
     /// re-triggered the current move, double-sending it).
     pub game_line_no: u64,
+    /// `<nav>` count at this tick (Lich's $room_count). The gate records it
+    /// at each send; nav_count > sent_nav means we moved since the send.
+    pub game_nav_count: u64,
     /// Recent raw game lines (seq, text), newest last — what `Await` steps
     /// match against. A bounded ring, NOT drained per tick like `feedback`:
     /// an await arms mid-tick and must see lines that landed before it
@@ -606,6 +609,15 @@ pub struct TravelTask {
     /// SUPERSEDED move - acting on it double-sends the current one (the live
     /// creek bank/creek toggle loop).
     sent_line_no: u64,
+    /// `<nav>` count at the last move send (Lich's room_count-at-put_dir).
+    /// nav_count moving past this means we moved since the send.
+    sent_nav: u64,
+    /// THE COMMAND GATE - what the last response-bearing send actually said.
+    /// Every retry re-emits THIS, never the wayto text: for a scripted edge
+    /// the wayto is Ruby, and resending it raw asked the game to "Please
+    /// rephrase" (live icy-trail bug). The gate's text is by construction a
+    /// real game command, so that class of bug cannot be written.
+    pending_cmd: Option<String>,
     /// The flushed-line count when the funding phase sent its `wealth quiet`
     /// probe. A reading is FRESH only if silver_line_no > this.
     wealth_probe_line: u64,
@@ -689,6 +701,8 @@ impl TravelTask {
             mounted: false,
             stand_waived: false,
             sent_line_no: 0,
+            sent_nav: 0,
+            pending_cmd: None,
             wealth_probe_line: 0,
             keep_retries: 0,
             hold_until_ms: 0,
@@ -1704,8 +1718,7 @@ impl TravelTask {
                         self.handle_uncrossable_edge(from, expected, ctx, events);
                         return;
                     };
-                    self.note_send(&ctx);
-                    events.push(TravelEvent::Send(cmd));
+                    self.gate_send(&ctx, events, cmd);
                     sent_anything = true;
                     pc += 1;
                 }
@@ -1716,8 +1729,7 @@ impl TravelTask {
                     if ctx.rt_remaining > 0.0 || ctx.now_ms < self.hold_until_ms {
                         break; // wait out RT (or an RtWait hold); resume next tick
                     }
-                    self.note_send(&ctx);
-                    events.push(TravelEvent::Send(cmd));
+                    self.gate_send(&ctx, events, cmd);
                     self.step = Step::ScriptWalk {
                         actions,
                         pc: pc + 1,
@@ -1751,8 +1763,7 @@ impl TravelTask {
                         self.handle_uncrossable_edge(from, expected, ctx, events);
                         return;
                     };
-                    self.note_send(&ctx);
-                    events.push(TravelEvent::Send(dir));
+                    self.gate_send(&ctx, events, dir);
                     self.step = Step::ScriptWalk {
                         actions,
                         pc: pc + 1,
@@ -1778,8 +1789,7 @@ impl TravelTask {
                         self.handle_uncrossable_edge(from, expected, ctx, events);
                         return;
                     };
-                    self.note_send(&ctx);
-                    events.push(TravelEvent::Send(dir));
+                    self.gate_send(&ctx, events, dir);
                     self.step = Step::ScriptWalk {
                         actions,
                         pc: pc + 1,
@@ -3206,8 +3216,7 @@ impl TravelTask {
             }
             return;
         }
-        self.note_send(&ctx);
-        events.push(TravelEvent::Send(command));
+        self.gate_send(&ctx, events, command);
         self.step = Step::AwaitArrival {
             expected: next,
             from: current,
@@ -3240,7 +3249,10 @@ impl TravelTask {
         // landed). Reset the arrival window and wait for the room to resolve.
         // Without this, a failure racing the room change bans a good edge and
         // strands the trip (the live Trollfang 1280->1281 abort).
-        if ctx.saw(&F::NavArrived) {
+        if ctx.saw(&F::NavArrived) || ctx.game_nav_count > self.sent_nav {
+            // Lich's actual guard is `room_count > room_count-at-send`, not
+            // "a nav this tick" - a nav consumed in an EARLIER tick still
+            // means we moved since the send and the failure line is stale.
             self.edge_retries = 0;
             self.step = Step::AwaitArrival {
                 expected,
@@ -3251,16 +3263,10 @@ impl TravelTask {
             return true;
         }
         let _ = (sent_ms, slow);
-        let command = ctx
-            .db
-            .room(from)
-            .and_then(|r| r.wayto.get(&expected).cloned())
-            .unwrap_or_default();
-        // A scripted edge's wayto is RUBY, not a game command - re-sending it
-        // raw asks the game to "Please rephrase that command" (live icy-trail
-        // bug). Retries of proc edges must go back through Prepare, which
-        // re-transpiles and re-runs the action script.
-        let is_proc = crate::core::mapdb::is_proc_command(&command);
+        // Retries below re-emit the GATE's pending command - what was
+        // actually sent, by construction a real game command. The wayto is
+        // never consulted here: for scripted edges it's Ruby, and resending
+        // it raw was the live icy-trail "Please rephrase" bug.
 
         // Mounted → urchin travel is incompatible. Drop urchins for the rest
         // of the trip and re-path on foot (Lich go2:2336-2346). Only acts when
@@ -3297,16 +3303,10 @@ impl TravelTask {
                 self.repath(ctx.db, from, ctx.lich_fallback, events);
             } else {
                 self.edge_retries += 1;
-                if is_proc {
-                    // Re-run the transpiled script, never the raw Ruby.
-                    self.step = Step::Prepare;
-                } else {
-                    if !command.is_empty() && ctx.rt_remaining <= 0.0 {
-                        self.note_send(&ctx);
-                        events.push(TravelEvent::Send(command));
-                    }
-                    self.reset_arrival_timer(from, expected, ctx.now_ms);
+                if ctx.rt_remaining <= 0.0 {
+                    self.gate_resend(&ctx, events);
                 }
+                self.reset_arrival_timer(from, expected, ctx.now_ms);
             }
             return true;
         }
@@ -3331,17 +3331,9 @@ impl TravelTask {
         // (global_defs.rb:615-617). Without this the edge times out and gets
         // banned - the most common wrongful ban for stealthy characters.
         if ctx.saw_since(self.sent_line_no, &F::MustUnhide) {
-            self.note_send(&ctx);
             events.push(TravelEvent::Send("unhide".into()));
-            if is_proc {
-                // Re-run the transpiled script, never the raw Ruby.
-                self.step = Step::Prepare;
-            } else {
-                if !command.is_empty() {
-                    events.push(TravelEvent::Send(command));
-                }
-                self.reset_arrival_timer(from, expected, ctx.now_ms);
-            }
+            self.gate_resend(&ctx, events);
+            self.reset_arrival_timer(from, expected, ctx.now_ms);
             return true;
         }
         // Postural rejection: back through Prepare, whose stand machinery is
@@ -3422,16 +3414,14 @@ impl TravelTask {
                 return true;
             }
             self.tried_open = true;
-            if is_proc {
-                // The proc's own command hit the closed door; `open` has no
-                // sensible noun to derive from Ruby - just re-run the script,
-                // whose move will report the door again if it's really shut.
-                self.step = Step::Prepare;
-                return true;
+            // Derive `open <door>` from what was ACTUALLY sent ("go door" /
+            // "climb gate"), then retry it - works identically for plain and
+            // scripted edges, since the gate only ever holds real commands.
+            if let Some(cmd) = self.pending_cmd.clone() {
+                let open = cmd.replacen("go", "open", 1).replacen("climb", "open", 1);
+                events.push(TravelEvent::Send(open));
+                self.gate_resend(&ctx, events);
             }
-            let open = command.replacen("go", "open", 1).replacen("climb", "open", 1);
-            events.push(TravelEvent::Send(open));
-            events.push(TravelEvent::Send(command));
             self.reset_arrival_timer(from, expected, ctx.now_ms);
             return true;
         }
@@ -3445,33 +3435,27 @@ impl TravelTask {
             return true;
         }
         // Verb swaps: go <-> climb.
+        // Verb swaps on what was actually sent (a swapped retry then BECOMES
+        // the pending command, so a later opposite line swaps back cleanly).
         if ctx.saw_since(self.sent_line_no, &F::NeedClimb) {
-            if is_proc {
-                self.step = Step::Prepare;
-            } else {
-                events.push(TravelEvent::Send(command.replacen("go", "climb", 1)));
-                self.reset_arrival_timer(from, expected, ctx.now_ms);
+            if let Some(cmd) = self.pending_cmd.clone() {
+                self.gate_send(&ctx, events, cmd.replacen("go", "climb", 1));
             }
+            self.reset_arrival_timer(from, expected, ctx.now_ms);
             return true;
         }
         if ctx.saw_since(self.sent_line_no, &F::CantClimb) {
-            if is_proc {
-                self.step = Step::Prepare;
-            } else {
-                events.push(TravelEvent::Send(command.replacen("climb", "go", 1)));
-                self.reset_arrival_timer(from, expected, ctx.now_ms);
+            if let Some(cmd) = self.pending_cmd.clone() {
+                self.gate_send(&ctx, events, cmd.replacen("climb", "go", 1));
             }
+            self.reset_arrival_timer(from, expected, ctx.now_ms);
             return true;
         }
         // Item at feet → stow it, then retry.
         if ctx.saw_since(self.sent_line_no, &F::ItemAtFeet) {
             events.push(TravelEvent::Send("stow feet".into()));
-            if is_proc {
-                self.step = Step::Prepare;
-            } else {
-                events.push(TravelEvent::Send(command));
-                self.reset_arrival_timer(from, expected, ctx.now_ms);
-            }
+            self.gate_resend(&ctx, events);
+            self.reset_arrival_timer(from, expected, ctx.now_ms);
             return true;
         }
         false
@@ -3488,10 +3472,24 @@ impl TravelTask {
         };
     }
 
-    /// Record the flushed-line count at a move send. Reactive feedback from
-    /// lines at or before this is stale (a superseded move's response).
-    fn note_send(&mut self, ctx: &TravelContext) {
+    /// THE COMMAND GATE. Every response-bearing send goes through here: it
+    /// stamps the send with the flushed-line and nav counts (so stale lines
+    /// and pre-send navs can never be attributed to it) and remembers the
+    /// text (so retries re-emit what was ACTUALLY sent - always a real game
+    /// command, never wayto Ruby). Lich's move() discipline, made structural.
+    fn gate_send(&mut self, ctx: &TravelContext, events: &mut Vec<TravelEvent>, text: String) {
         self.sent_line_no = ctx.game_line_no;
+        self.sent_nav = ctx.game_nav_count;
+        self.pending_cmd = Some(text.clone());
+        events.push(TravelEvent::Send(text));
+    }
+
+    /// Re-emit the gate's pending command (a retry). No-op if nothing was
+    /// ever sent. Re-stamps the send.
+    fn gate_resend(&mut self, ctx: &TravelContext, events: &mut Vec<TravelEvent>) {
+        if let Some(cmd) = self.pending_cmd.clone() {
+            self.gate_send(ctx, events, cmd);
+        }
     }
 
     /// An edge the router planned (it has a `timeto`) but we can't cross
@@ -3812,6 +3810,8 @@ mod tests {
         /// The flushed-line counter fed to ctx.game_line_no; `feel` stamps
         /// events after it so they read as fresh.
         game_line: u64,
+        /// The nav counter fed to ctx.game_nav_count.
+        nav_count: u64,
         lich_fallback: bool,
         funding: Option<FundingInputs>,
         pinefar: bool,
@@ -3841,6 +3841,7 @@ mod tests {
                 pathcodes: Default::default(),
                 feedback: Vec::new(),
                 game_line: 0,
+                nav_count: 0,
                 lich_fallback: false,
                 funding: None,
                 pinefar: false,
@@ -3884,6 +3885,7 @@ mod tests {
                 hands: None,
                 feedback: &self.feedback,
                 game_line_no: self.game_line,
+                game_nav_count: self.nav_count,
                 recent_lines: &self.recent_lines,
                 line_seq: self.line_seq,
                 lich_fallback: self.lich_fallback,
@@ -4183,6 +4185,7 @@ mod tests {
                 recent_lines: &[],
                 line_seq: 0,
                 game_line_no: 0,
+                game_nav_count: 0,
                 lich_fallback: false,
                 funding: None,
                 at_pinefar_depository: false,
@@ -4283,6 +4286,7 @@ mod tests {
                     recent_lines: &[],
                     line_seq: 0,
                     game_line_no: 0,
+                    game_nav_count: 0,
                     lich_fallback: false,
                     funding: None,
                     at_pinefar_depository: false,
@@ -4508,12 +4512,9 @@ mod tests {
             !sent(&ev).iter().any(|c| c.starts_with(";e")),
             "raw Ruby must never go to the game: {ev:?}"
         );
-        // The retry re-runs the SCRIPT (immediately or on the next tick).
-        sim.now += 100;
-        let ev2 = task.tick(sim.ctx(&db));
-        let mut cmds = sent(&ev);
-        cmds.extend(sent(&ev2));
-        assert_eq!(cmds, ["open door", "go door"], "the script re-runs: {cmds:?}");
+        // The retry re-emits the LAST SENT command (Lich's put_dir.call
+        // resends just the move, not the whole proc) - never the Ruby.
+        assert_eq!(sent(&ev), ["go door"], "the sent move retries: {ev:?}");
     }
 
     #[test]
@@ -5710,7 +5711,7 @@ mod tests {
                     hidden: false, citizenship: None, profession: None, society: None,
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
-                    recent_lines: &[], line_seq: 0, game_line_no: 0,
+                    recent_lines: &[], line_seq: 0, game_line_no: 0, game_nav_count: 0,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
                     fwi_trinket: None,
                     day_pass: Some(dp),
@@ -5806,7 +5807,7 @@ mod tests {
                     hidden: false, citizenship: None, profession: None, society: None,
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
-                    recent_lines: &[], line_seq: 0, game_line_no: 0,
+                    recent_lines: &[], line_seq: 0, game_line_no: 0, game_nav_count: 0,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
                     fwi_trinket: None,
                     day_pass: Some(dp),
@@ -5886,7 +5887,7 @@ mod tests {
                     hidden: false, citizenship: None, profession: None, society: None,
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
-                    recent_lines: &[], line_seq: 0, game_line_no: 0,
+                    recent_lines: &[], line_seq: 0, game_line_no: 0, game_nav_count: 0,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
                     fwi_trinket: None,
                     day_pass: Some(dp),

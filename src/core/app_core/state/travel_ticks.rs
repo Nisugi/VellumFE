@@ -348,6 +348,7 @@ impl AppCore {
             recent_lines: &recent_lines,
             line_seq: self.game_state.line_seq,
             game_line_no: self.game_state.game_line_no,
+            game_nav_count: self.game_state.nav_count,
             // The fallback is a Lich-only bandaid: gated on the setting AND a
             // Lich connection (a direct connection has no Lich to hand off to).
             // Gate on the connection itself, NOT on WebUI reachability — WebUI

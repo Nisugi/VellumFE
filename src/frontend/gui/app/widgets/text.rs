@@ -1547,6 +1547,31 @@ impl VellumGuiApp {
         // is idempotent, so a producer repeating every frame can no longer
         // out-race it (the 82c2a8d5 failure: "the mouse lost every round").
         if user_scrolled {
+            // SCROLLDBG: temporary instrumentation for the click-shift bug.
+            let (wheel, press, smooth) = ui.input(|input| {
+                (
+                    input
+                        .raw
+                        .events
+                        .iter()
+                        .any(|e| matches!(e, egui::Event::MouseWheel { .. })),
+                    input
+                        .raw
+                        .events
+                        .iter()
+                        .any(|e| matches!(e, egui::Event::PointerButton { pressed: true, .. })),
+                    input.smooth_scroll_delta.y,
+                )
+            });
+            tracing::info!(
+                target: "scroll_debug",
+                scroll_id,
+                wheel,
+                press,
+                smooth,
+                was_following = follow_bottom,
+                "user_scrolled: follow detached"
+            );
             follow_bottom = false;
         }
 
@@ -1626,6 +1651,18 @@ impl VellumGuiApp {
                 .and_then(|area_id| egui::scroll_area::State::load(&outer_ctx, area_id))
                 .map(|state| state.offset.y);
             if stored.is_none_or(|current| target - current > 0.5) {
+                // SCROLLDBG: pin target comes from the height cache, not the
+                // real layout — log how far it moves the stored offset.
+                tracing::info!(
+                    target: "scroll_debug",
+                    scroll_id,
+                    cache_target = target,
+                    stored_offset = stored,
+                    content_h,
+                    max_height,
+                    delta = stored.map(|s| target - s),
+                    "pre-pass pin: applying cache-derived offset"
+                );
                 goto = Some(target);
             }
         }
@@ -2210,6 +2247,18 @@ impl VellumGuiApp {
             // never leave the tail slightly off-screen. Not on a user-input
             // frame: that would undo the gesture egui just applied.
             if (output.state.offset.y - max_offset).abs() > 0.5 {
+                // SCROLLDBG: the real layout disagrees with the offset the
+                // pre-pass applied — this correction is a visible shift.
+                tracing::info!(
+                    target: "scroll_debug",
+                    scroll_id,
+                    applied_offset = output.state.offset.y,
+                    real_max_offset = max_offset,
+                    content_size_y = output.content_size.y,
+                    inner_rect_h = output.inner_rect.height(),
+                    delta = output.state.offset.y - max_offset,
+                    "post-pass: correcting to real layout offset"
+                );
                 if let Some(mut state) = egui::scroll_area::State::load(&outer_ctx, output.id) {
                     state.offset.y = max_offset;
                     state.store(&outer_ctx, output.id);
@@ -2221,6 +2270,16 @@ impl VellumGuiApp {
                 outer_ctx.fonts_mut(|fonts| fonts.row_height(font_id)) + outer_spacing_y;
             let at_rest = !outer_ctx.input(|i| i.pointer.any_down());
             if at_rest && max_offset - output.state.offset.y <= tolerance {
+                // SCROLLDBG: follow re-arms; next frame's pre-pass may pin to
+                // the cache estimate, which is where the click-shift shows up.
+                tracing::info!(
+                    target: "scroll_debug",
+                    scroll_id,
+                    offset = output.state.offset.y,
+                    real_max_offset = max_offset,
+                    gap = max_offset - output.state.offset.y,
+                    "re-arm: resuming follow_bottom"
+                );
                 follow_bottom = true;
             }
         }
