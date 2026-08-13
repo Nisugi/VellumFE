@@ -51,6 +51,11 @@ impl HandsView {
 enum Expect {
     AppearIn { left: bool },
     LeaveHands,
+    /// Item wasn't in a hand when the move fired (`_drag` handles
+    /// container-direct moves server-side in one motion). Hand events can
+    /// only confirm if the item transits a hand; otherwise the move
+    /// completes as "sent" when the timeout window closes quietly.
+    Unverifiable,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +70,9 @@ struct Active {
 #[derive(Debug, PartialEq)]
 pub enum MoveOutcome {
     Succeeded { desc: String },
+    /// The command went out but nothing observable can confirm it
+    /// (container-direct move that never transited a hand).
+    Sent { desc: String },
     Failed { desc: String, reason: String },
 }
 
@@ -117,33 +125,43 @@ impl ItemMover {
                     format!("retrieve #{item} to right hand"),
                 )
             }
+            // Shedding moves work from a container too - the server's _drag
+            // retrieves and completes in one motion (Lich behavior). Held
+            // items verify by the hand clearing; container-direct moves
+            // can only be watched for a transient hand appearance.
             MoveKind::Drop => {
-                if !hands.holds(item) {
-                    return Err("item is not in hand".to_string());
-                }
+                let expect = if hands.holds(item) {
+                    Expect::LeaveHands
+                } else {
+                    Expect::Unverifiable
+                };
                 (
                     format!("_drag #{item} DROP"),
-                    Expect::LeaveHands,
+                    expect,
                     format!("drop #{item}"),
                 )
             }
             MoveKind::Wear => {
-                if !hands.holds(item) {
-                    return Err("item is not in hand".to_string());
-                }
+                let expect = if hands.holds(item) {
+                    Expect::LeaveHands
+                } else {
+                    Expect::Unverifiable
+                };
                 (
                     format!("WEAR #{item}"),
-                    Expect::LeaveHands,
+                    expect,
                     format!("wear #{item}"),
                 )
             }
             MoveKind::PlaceFeet => {
-                if !hands.holds(item) {
-                    return Err("item is not in hand".to_string());
-                }
+                let expect = if hands.holds(item) {
+                    Expect::LeaveHands
+                } else {
+                    Expect::Unverifiable
+                };
                 (
                     format!("PLACE FEET #{item}"),
-                    Expect::LeaveHands,
+                    expect,
                     format!("place #{item} at feet"),
                 )
             }
@@ -152,24 +170,33 @@ impl ItemMover {
                 relation,
                 selector,
             } => {
-                if !hands.holds(item) {
-                    return Err("item is not in hand".to_string());
-                }
+                let expect = if hands.holds(item) {
+                    Expect::LeaveHands
+                } else {
+                    Expect::Unverifiable
+                };
                 let target = match selector {
                     Some(s) => s.clone(),
                     None => format!("#{dest}"),
                 };
                 (
                     format!("put #{item} {relation} {target}"),
-                    Expect::LeaveHands,
+                    expect,
                     format!("put #{item} {relation} {target}"),
                 )
             }
         };
+        // Unverifiable moves only wait long enough to catch a transient
+        // hand appearance before reporting "sent".
+        let window = if expect == Expect::Unverifiable {
+            2_000
+        } else {
+            MOVE_TIMEOUT_MS
+        };
         self.active = Some(Active {
             item: item.to_string(),
             expect,
-            deadline_ms: now_ms + MOVE_TIMEOUT_MS,
+            deadline_ms: now_ms + window,
             desc,
         });
         self.outbox.push(cmd);
@@ -179,6 +206,14 @@ impl ItemMover {
     /// Check the current hand state against the active move's expectation
     /// and drain due commands. Returns an outcome exactly once per move.
     pub fn tick(&mut self, hands: &HandsView, now_ms: u64) -> (Vec<String>, Option<MoveOutcome>) {
+        // A container-direct move that transits a hand upgrades to real
+        // hand-clearing verification.
+        if let Some(active) = self.active.as_mut() {
+            if active.expect == Expect::Unverifiable && hands.holds(&active.item) {
+                active.expect = Expect::LeaveHands;
+                active.deadline_ms = now_ms + MOVE_TIMEOUT_MS;
+            }
+        }
         let outcome = match self.active.as_ref() {
             None => None,
             Some(active) => {
@@ -190,16 +225,21 @@ impl ItemMover {
                         hands.right.as_deref() == Some(active.item.as_str())
                     }
                     Expect::LeaveHands => !hands.holds(&active.item),
+                    Expect::Unverifiable => false,
                 };
                 if confirmed {
                     let active = self.active.take().expect("checked above");
                     Some(MoveOutcome::Succeeded { desc: active.desc })
                 } else if now_ms >= active.deadline_ms {
                     let active = self.active.take().expect("checked above");
-                    Some(MoveOutcome::Failed {
-                        desc: active.desc,
-                        reason: "no confirming hand update within 8s".to_string(),
-                    })
+                    if active.expect == Expect::Unverifiable {
+                        Some(MoveOutcome::Sent { desc: active.desc })
+                    } else {
+                        Some(MoveOutcome::Failed {
+                            desc: active.desc,
+                            reason: "no confirming hand update within 8s".to_string(),
+                        })
+                    }
                 } else {
                     None
                 }
@@ -274,8 +314,6 @@ mod tests {
         assert!(m
             .start("42", MoveKind::ToLeftHand, &hands(Some("7"), None), 0)
             .is_err());
-        // Shedding an item that is not held.
-        assert!(m.start("42", MoveKind::Wear, &hands(None, None), 0).is_err());
         // Second move while one runs.
         m.start("42", MoveKind::ToRightHand, &hands(None, None), 0)
             .unwrap();
@@ -284,6 +322,34 @@ mod tests {
             .is_err());
         let (cmds, _) = m.tick(&hands(None, None), 1);
         assert_eq!(cmds.len(), 1, "only the accepted move sent");
+    }
+
+    #[test]
+    fn container_direct_drop_is_allowed_and_reports_sent() {
+        // The server's _drag handles container->drop in one motion (Lich
+        // behavior); no hand ever changes, so the move reports Sent after
+        // the transient window.
+        let mut m = ItemMover::new();
+        let empty = hands(None, None);
+        m.start("42", MoveKind::Drop, &empty, 0).unwrap();
+        let (cmds, _) = m.tick(&empty, 1);
+        assert_eq!(cmds, vec!["_drag #42 DROP".to_string()]);
+        let (_, out) = m.tick(&empty, 2_100);
+        assert!(matches!(out, Some(MoveOutcome::Sent { .. })), "{out:?}");
+    }
+
+    #[test]
+    fn container_direct_move_transiting_a_hand_upgrades_to_verified() {
+        let mut m = ItemMover::new();
+        let empty = hands(None, None);
+        m.start("42", MoveKind::Drop, &empty, 0).unwrap();
+        let _ = m.tick(&empty, 1);
+        // Item flashes through the right hand mid-motion...
+        let (_, out) = m.tick(&hands(None, Some("42")), 500);
+        assert_eq!(out, None, "transit upgrades, not completes");
+        // ...and leaves: fully verified.
+        let (_, out) = m.tick(&empty, 900);
+        assert!(matches!(out, Some(MoveOutcome::Succeeded { .. })), "{out:?}");
     }
 
     #[test]

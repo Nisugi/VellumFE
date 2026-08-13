@@ -1416,7 +1416,10 @@ impl TuiFrontend {
                         .unwrap_or_else(|| "Containers".to_string());
                     containers_window::ContainersWindow::new(&title)
                 });
-            widget.update_from_state(app_core.game_state.managed_inventory.as_ref());
+            widget.update_from_state(
+                app_core.game_state.managed_inventory.as_ref(),
+                app_core.message_processor.current_room_uid(),
+            );
         }
     }
 

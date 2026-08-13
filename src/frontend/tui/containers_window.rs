@@ -10,8 +10,9 @@ use ratatui::{buffer::Buffer, layout::Rect};
 pub struct ContainersWindow {
     widget: super::list_widget::ListWidget,
     base_title: String,
-    /// (token, generation) of the rendered snapshot, for change detection.
-    cache: Option<(String, u64)>,
+    /// (token, generation, room_stale) of the rendered snapshot, for
+    /// change detection.
+    cache: Option<(String, u64, bool)>,
 }
 
 const CONTAINER_COLOR: &str = "#87afd7";
@@ -27,9 +28,18 @@ impl ContainersWindow {
         }
     }
 
-    /// Rebuild from the snapshot. Returns true when the display changed.
-    pub fn update_from_state(&mut self, snapshot: Option<&ManagedInventoryState>) -> bool {
-        let key = snapshot.map(|s| (s.token.clone(), s.generation));
+    /// Rebuild from the snapshot. `current_room_uid` gates the room-relation
+    /// sections: items synced in another room are stale scenery, not your
+    /// surroundings. Returns true when the display changed.
+    pub fn update_from_state(
+        &mut self,
+        snapshot: Option<&ManagedInventoryState>,
+        current_room_uid: Option<u64>,
+    ) -> bool {
+        let room_stale = snapshot.is_some_and(|s| {
+            current_room_uid.is_some_and(|uid| uid.to_string() != s.room)
+        });
+        let key = snapshot.map(|s| (s.token.clone(), s.generation, room_stale));
         if self.cache == key {
             return false;
         }
@@ -81,18 +91,30 @@ impl ContainersWindow {
                 roots[group_of(item)].push(item);
             }
         }
+        let mut room_items_hidden = false;
         for (gi, group) in roots.iter().enumerate() {
             if group.is_empty() {
                 continue;
             }
+            if gi >= 5 && room_stale {
+                room_items_hidden = true;
+                continue;
+            }
             self.widget.add_simple_line(
-                format!("- {} -", GROUPS[gi]),
-                Some(GROUP_COLOR.to_string()),
+                format!("═ {} ═", GROUPS[gi].to_uppercase()),
+                Some(CONTAINER_COLOR.to_string()),
                 None,
             );
             for item in group {
                 self.add_node(item, &children, 0);
             }
+        }
+        if room_items_hidden {
+            self.widget.add_simple_line(
+                "room items omitted (synced elsewhere - .invsync)".to_string(),
+                Some(GROUP_COLOR.to_string()),
+                None,
+            );
         }
         let title = if snap.complete {
             format!("{} ({})", self.base_title, snap.items.len())

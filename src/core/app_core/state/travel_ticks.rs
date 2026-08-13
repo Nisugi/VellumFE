@@ -600,6 +600,11 @@ impl AppCore {
             Some(crate::core::item_mover::MoveOutcome::Succeeded { desc }) => {
                 self.add_system_message(&format!("[drag] {desc} - confirmed."));
             }
+            Some(crate::core::item_mover::MoveOutcome::Sent { desc }) => {
+                self.add_system_message(&format!(
+                    "[drag] {desc} - sent (container-direct; no hand event to confirm)."
+                ));
+            }
             Some(crate::core::item_mover::MoveOutcome::Failed { desc, reason }) => {
                 self.add_system_message(&format!("[drag] {desc} FAILED: {reason}"));
             }

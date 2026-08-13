@@ -91,19 +91,42 @@ impl VellumGuiApp {
             }
         }
 
+        // Room-relation items belong to the room the snapshot was taken in;
+        // after walking away they're stale scenery, not your surroundings.
+        let room_stale = app_core
+            .message_processor
+            .current_room_uid()
+            .is_some_and(|uid| uid.to_string() != snap.room);
+        let heading_color = widget_accent(ui.ctx(), ui.visuals());
+
         egui::ScrollArea::vertical()
             .id_salt("containers_scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                let mut room_items_hidden = false;
                 for (gi, group) in roots.iter().enumerate() {
                     if group.is_empty() {
                         continue;
                     }
-                    ui.small(GROUPS[gi]);
+                    // Groups 5/6 are room-relation: suppress when stale.
+                    if gi >= 5 && room_stale {
+                        room_items_hidden = true;
+                        continue;
+                    }
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new(GROUPS[gi])
+                            .strong()
+                            .color(heading_color),
+                    );
+                    ui.separator();
                     for item in group {
                         Self::containers_node(ui, item, &children, 0, &mut clicked, &mut click);
                     }
-                    ui.add_space(4.0);
+                }
+                if room_items_hidden {
+                    ui.add_space(6.0);
+                    ui.weak("Room items omitted - snapshot is from another room (Refresh).");
                 }
             });
         clicked
