@@ -104,8 +104,9 @@ impl MessageProcessor {
         // executor. Buffered here (no game_state); drained at the prompt into
         // game_state.move_feedback so each event fires exactly once. The
         // aho-corasick matcher is cheap on non-matching lines.
+        self.game_line_no += 1;
         if let Some(fb) = crate::core::move_feedback::classify_line(&full_text) {
-            self.pending_move_feedback.push(fb);
+            self.pending_move_feedback.push((self.game_line_no, fb));
         }
 
         // Raw line for scripted-edge `Await` steps. Unlike the typed feedback

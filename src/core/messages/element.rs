@@ -131,9 +131,10 @@ impl MessageProcessor {
                 // room_count increment). Push it for the walk executor even
                 // if the room can't be resolved to a mapdb id — arrival
                 // detection then never hangs on an unmapped room (§12).
+                self.game_line_no += 1;
                 game_state
                     .move_feedback
-                    .push_back(crate::core::move_feedback::MoveFeedback::NavArrived);
+                    .push_back((self.game_line_no, crate::core::move_feedback::MoveFeedback::NavArrived));
                 tracing::debug!("Room ID updated: {}", id);
             }
             ParsedElement::RoomMeta { attrs } => {
@@ -351,6 +352,7 @@ impl MessageProcessor {
                 game_state
                     .move_feedback
                     .extend(self.pending_move_feedback.drain(..));
+                game_state.game_line_no = self.game_line_no;
 
                 // Raw lines for scripted-edge awaits. A bounded ring, not a
                 // queue: an await must see lines that arrived before it armed,
@@ -1926,6 +1928,55 @@ impl MessageProcessor {
                 if kind != "container" {
                     ui_state.pending_exposes.push((kind.clone(), id.clone()));
                 }
+            }
+            ParsedElement::Pulse { mana } => {
+                self.chunk_has_silent_updates = true;
+                game_state.pulse_count += 1;
+                game_state.last_pulse_mana = *mana;
+            }
+            ParsedElement::InventoryManager {
+                token,
+                room,
+                items,
+                continuations,
+            } => {
+                self.chunk_has_silent_updates = true;
+                let parsed: Vec<_> = items
+                    .iter()
+                    .filter_map(|attrs| {
+                        let item = crate::core::state::ManagedInventoryItem::from_attrs(attrs);
+                        if item.is_none() {
+                            tracing::warn!("inventoryManager item missing id/loc, dropped: {:?}", attrs);
+                        }
+                        item
+                    })
+                    .collect();
+                if !continuations.is_empty() {
+                    tracing::warn!(
+                        "inventoryManager response is paginated ({} continuation cursors); \
+                         continuation-following not implemented, snapshot marked incomplete",
+                        continuations.len()
+                    );
+                }
+                let generation = game_state
+                    .managed_inventory
+                    .as_ref()
+                    .map(|s| s.generation + 1)
+                    .unwrap_or(1);
+                tracing::debug!(
+                    "inventoryManager snapshot: token={} room={} items={} complete={}",
+                    token,
+                    room,
+                    parsed.len(),
+                    continuations.is_empty()
+                );
+                game_state.managed_inventory = Some(crate::core::state::ManagedInventoryState {
+                    token: token.clone(),
+                    room: room.clone(),
+                    items: parsed,
+                    complete: continuations.is_empty(),
+                    generation,
+                });
             }
             _ => {
                 // Other elements handled elsewhere or not yet implemented

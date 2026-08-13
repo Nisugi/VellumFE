@@ -55,7 +55,13 @@ pub struct TravelContext<'a> {
     pub hands: Option<StashInputs<'a>>,
     /// Move-feedback events since the last tick (drained from GameState) —
     /// nav arrivals + recovery signals. Empty when idle (§09/§12).
-    pub feedback: &'a [crate::core::move_feedback::MoveFeedback],
+    pub feedback: &'a [(u64, crate::core::move_feedback::MoveFeedback)],
+    /// The flushed-line count at this tick (stamps match `feedback` entries).
+    /// The task records it at every send; `saw_since` uses it to ignore
+    /// reactive lines that predate the send (Lich's room_count guard - the
+    /// live creek loop: a stale "You can't go there" from a superseded move
+    /// re-triggered the current move, double-sending it).
+    pub game_line_no: u64,
     /// Recent raw game lines (seq, text), newest last — what `Await` steps
     /// match against. A bounded ring, NOT drained per tick like `feedback`:
     /// an await arms mid-tick and must see lines that landed before it
@@ -228,7 +234,14 @@ impl TravelContext<'_> {
     }
 
     fn saw(&self, event: &crate::core::move_feedback::MoveFeedback) -> bool {
-        self.feedback.contains(event)
+        self.feedback.iter().any(|(_, f)| f == event)
+    }
+
+    /// Like `saw`, but only counts events from lines AFTER `since` - the
+    /// guard for reactive recovery: a failure line older than our last send
+    /// belongs to a superseded move and must not trigger a resend.
+    fn saw_since(&self, since: u64, event: &crate::core::move_feedback::MoveFeedback) -> bool {
+        self.feedback.iter().any(|(no, f)| *no > since && f == event)
     }
 }
 
@@ -584,6 +597,11 @@ pub struct TravelTask {
     /// boat", overburdened) - go2 proceeds with the move anyway. Cleared the
     /// moment we're observed standing again.
     stand_waived: bool,
+    /// The flushed-line count at the last move send (Lich's room_count-at-
+    /// put_dir). Reactive feedback from lines at or before this belongs to a
+    /// SUPERSEDED move - acting on it double-sends the current one (the live
+    /// creek bank/creek toggle loop).
+    sent_line_no: u64,
     /// Blocked-but-transient retries on the current edge (Lich retries these
     /// in place with sleep 1; only exhaustion re-paths, and NEVER bans).
     keep_retries: u32,
@@ -663,6 +681,7 @@ impl TravelTask {
             tried_open: false,
             mounted: false,
             stand_waived: false,
+            sent_line_no: 0,
             keep_retries: 0,
             hold_until_ms: 0,
             funding_bank: None,
@@ -869,7 +888,7 @@ impl TravelTask {
                 // The command landed during roundtime: nothing failed, re-run
                 // the SAME action (RT-gated) instead of skipping ahead or
                 // waiting out a timeout.
-                if ctx.saw(&F::RtWait) {
+                if ctx.saw_since(self.sent_line_no, &F::RtWait) {
                     // Hold for the game's own "...wait N seconds" number so
                     // the resend can't hot-loop if the RT feed reads zero.
                     if let Some(secs) = rt_wait_secs(&ctx) {
@@ -890,12 +909,12 @@ impl TravelTask {
                 // stays as the backstop for silent responses.
                 let moved = current != sent_from
                     || ctx.saw(&F::NavArrived);
-                let failed = ctx.saw(&F::MoveFailedRemovable)
-                    || ctx.saw(&F::MoveFailedKeep)
-                    || ctx.saw(&F::DoorClosed)
-                    || ctx.saw(&F::Fell)
-                    || ctx.saw(&F::NeedClimb)
-                    || ctx.saw(&F::CantClimb);
+                let failed = ctx.saw_since(self.sent_line_no, &F::MoveFailedRemovable)
+                    || ctx.saw_since(self.sent_line_no, &F::MoveFailedKeep)
+                    || ctx.saw_since(self.sent_line_no, &F::DoorClosed)
+                    || ctx.saw_since(self.sent_line_no, &F::Fell)
+                    || ctx.saw_since(self.sent_line_no, &F::NeedClimb)
+                    || ctx.saw_since(self.sent_line_no, &F::CantClimb);
                 if moved
                     || failed
                     || ctx.now_ms.saturating_sub(sent_ms) > SLOW_ARRIVAL_TIMEOUT_MS
@@ -1020,7 +1039,7 @@ impl TravelTask {
                 // Prepare, which gates on rt_remaining — rather than waiting
                 // out the 8s step timeout. Not counted as a retry: the edge
                 // did not fail.
-                if ctx.saw(&MoveFeedback::RtWait) {
+                if ctx.saw_since(self.sent_line_no, &MoveFeedback::RtWait) {
                     if let Some(secs) = rt_wait_secs(&ctx) {
                         self.hold_until_ms =
                             self.hold_until_ms.max(ctx.now_ms + secs * 1000 + 200);
@@ -1518,7 +1537,7 @@ impl TravelTask {
             if current == p.from {
                 // Move failed hard (aho-corasick MoveFailed) → random compass
                 // exit, per the Ruby `if r == false` fallback.
-                if ctx.feedback.iter().any(|f| {
+                if ctx.feedback.iter().any(|(_, f)| {
                     matches!(
                         f,
                         crate::core::move_feedback::MoveFeedback::MoveFailedRemovable
@@ -1677,6 +1696,7 @@ impl TravelTask {
                         self.handle_uncrossable_edge(from, expected, ctx, events);
                         return;
                     };
+                    self.note_send(&ctx);
                     events.push(TravelEvent::Send(cmd));
                     sent_anything = true;
                     pc += 1;
@@ -1688,6 +1708,7 @@ impl TravelTask {
                     if ctx.rt_remaining > 0.0 || ctx.now_ms < self.hold_until_ms {
                         break; // wait out RT (or an RtWait hold); resume next tick
                     }
+                    self.note_send(&ctx);
                     events.push(TravelEvent::Send(cmd));
                     self.step = Step::ScriptWalk {
                         actions,
@@ -1722,6 +1743,7 @@ impl TravelTask {
                         self.handle_uncrossable_edge(from, expected, ctx, events);
                         return;
                     };
+                    self.note_send(&ctx);
                     events.push(TravelEvent::Send(dir));
                     self.step = Step::ScriptWalk {
                         actions,
@@ -1748,6 +1770,7 @@ impl TravelTask {
                         self.handle_uncrossable_edge(from, expected, ctx, events);
                         return;
                     };
+                    self.note_send(&ctx);
                     events.push(TravelEvent::Send(dir));
                     self.step = Step::ScriptWalk {
                         actions,
@@ -3131,6 +3154,7 @@ impl TravelTask {
             }
             return;
         }
+        self.note_send(&ctx);
         events.push(TravelEvent::Send(command));
         self.step = Step::AwaitArrival {
             expected: next,
@@ -3184,12 +3208,12 @@ impl TravelTask {
         // Mounted → urchin travel is incompatible. Drop urchins for the rest
         // of the trip and re-path on foot (Lich go2:2336-2346). Only acts when
         // urchins were actually in play.
-        if ctx.saw(&F::Mounted) {
+        if ctx.saw_since(self.sent_line_no, &F::Mounted) {
             // Persistent for the trip (Lich's Go2.mounted): a mounted
             // character can't stand, and the stand check must stop firing.
             self.mounted = true;
         }
-        if ctx.saw(&F::Mounted) && crate::core::pathing::transpile::urchins_valid() {
+        if ctx.saw_since(self.sent_line_no, &F::Mounted) && crate::core::pathing::transpile::urchins_valid() {
             crate::core::pathing::transpile::set_urchins_valid(false);
             events.push(TravelEvent::Status(
                 "you're mounted - urchin guides don't work mounted; re-routing on foot".into(),
@@ -3207,7 +3231,7 @@ impl TravelTask {
         // check wins and the edge is never touched. Only after the retries are
         // exhausted (a genuinely dead edge) do we ban it and re-path — matching
         // Lich's `return false` but after its retry loop, not before it.
-        if ctx.saw(&F::MoveFailedRemovable) {
+        if ctx.saw_since(self.sent_line_no, &F::MoveFailedRemovable) {
             if self.edge_retries >= MAX_EDGE_RETRIES {
                 events.push(TravelEvent::Status(format!(
                     "move {from} -> {expected} keeps failing - disabling that edge and re-pathing"
@@ -3217,6 +3241,7 @@ impl TravelTask {
             } else {
                 self.edge_retries += 1;
                 if !command.is_empty() && ctx.rt_remaining <= 0.0 {
+                    self.note_send(&ctx);
                     events.push(TravelEvent::Send(command));
                 }
                 self.reset_arrival_timer(from, expected, ctx.now_ms);
@@ -3227,7 +3252,7 @@ impl TravelTask {
         // re-send - global_defs.rb:639-642) and only gives up at its own
         // timeout, returning nil ("don't delete the edge"). Retry with a
         // short backoff; exhaustion re-paths WITHOUT banning.
-        if ctx.saw(&F::MoveFailedKeep) || ctx.saw(&F::TransientRetry) {
+        if ctx.saw_since(self.sent_line_no, &F::MoveFailedKeep) || ctx.saw_since(self.sent_line_no, &F::TransientRetry) {
             if self.keep_retries >= MAX_EDGE_RETRIES + 2 {
                 events.push(TravelEvent::Status(format!(
                     "move {from} -> {expected} is blocked right now - re-pathing (edge kept)"
@@ -3243,7 +3268,8 @@ impl TravelTask {
         // Gated entrance vs a hidden/invisible character: unhide, retry
         // (global_defs.rb:615-617). Without this the edge times out and gets
         // banned - the most common wrongful ban for stealthy characters.
-        if ctx.saw(&F::MustUnhide) {
+        if ctx.saw_since(self.sent_line_no, &F::MustUnhide) {
+            self.note_send(&ctx);
             events.push(TravelEvent::Send("unhide".into()));
             if !command.is_empty() {
                 events.push(TravelEvent::Send(command));
@@ -3253,30 +3279,30 @@ impl TravelTask {
         }
         // Postural rejection: back through Prepare, whose stand machinery is
         // RT-gated (global_defs.rb:714-717).
-        if ctx.saw(&F::MustStand) {
+        if ctx.saw_since(self.sent_line_no, &F::MustStand) {
             self.step = Step::Prepare;
             return true;
         }
         // Throttles and short-lived incapacities: back off, then re-send via
         // Prepare (RT + muckled gated). None of these consume an edge retry.
-        if ctx.saw(&F::TypeAhead) || ctx.saw(&F::NoControl) {
+        if ctx.saw_since(self.sent_line_no, &F::TypeAhead) || ctx.saw_since(self.sent_line_no, &F::NoControl) {
             self.hold_until_ms = ctx.now_ms + 1_200;
             self.step = Step::Prepare;
             return true;
         }
-        if ctx.saw(&F::StillRecovering) {
+        if ctx.saw_since(self.sent_line_no, &F::StillRecovering) {
             self.hold_until_ms = ctx.now_ms + 2_000;
             self.step = Step::Prepare;
             return true;
         }
-        if ctx.saw(&F::StillStunned) {
+        if ctx.saw_since(self.sent_line_no, &F::StillStunned) {
             // Prepare's muckled gate waits the stun out.
             self.step = Step::Prepare;
             return true;
         }
         // Too injured to climb: Lich casts Resolve if known, else keeps the
         // edge. We can't cast - re-path keeping the edge.
-        if ctx.saw(&F::TooInjured) {
+        if ctx.saw_since(self.sent_line_no, &F::TooInjured) {
             events.push(TravelEvent::Status(format!(
                 "too injured to climb {from} -> {expected} - re-pathing (edge kept)"
             )));
@@ -3285,7 +3311,7 @@ impl TravelTask {
         }
         // Pitch dark: needs a light source. Surface it and re-path (Lich
         // tells the user and carries on).
-        if ctx.saw(&F::PitchDark) {
+        if ctx.saw_since(self.sent_line_no, &F::PitchDark) {
             events.push(TravelEvent::Status(
                 "it's pitch dark - you need a light source for this way; re-pathing".into(),
             ));
@@ -3293,7 +3319,7 @@ impl TravelTask {
             return true;
         }
         // Hands full → run the stash cascade, then retry the move.
-        if ctx.saw(&F::HandsFull) {
+        if ctx.saw_since(self.sent_line_no, &F::HandsFull) {
             if let Some(inputs) = ctx.hands {
                 let mut task = super::stash::StashTask::empty();
                 for ev in task.tick(inputs.to_stash_context(ctx.now_ms)) {
@@ -3319,7 +3345,7 @@ impl TravelTask {
         // locked (Lich's tried_open one-shot, global_defs.rb:697-706). The
         // old uncapped loop reset its own timer each pass - the only outright
         // hang in the walker.
-        if ctx.saw(&F::DoorClosed) {
+        if ctx.saw_since(self.sent_line_no, &F::DoorClosed) {
             if self.tried_open {
                 events.push(TravelEvent::Status(format!(
                     "the way {from} -> {expected} is locked - disabling that edge and re-pathing"
@@ -3339,24 +3365,24 @@ impl TravelTask {
         // RT-gated, where a blind stand+move pair here landed inside the
         // fall's roundtime (Lich waitrt?s around the stand,
         // global_defs.rb:643-648).
-        if ctx.saw(&F::Fell) {
+        if ctx.saw_since(self.sent_line_no, &F::Fell) {
             self.hold_until_ms = ctx.now_ms + 800;
             self.step = Step::Prepare;
             return true;
         }
         // Verb swaps: go <-> climb.
-        if ctx.saw(&F::NeedClimb) {
+        if ctx.saw_since(self.sent_line_no, &F::NeedClimb) {
             events.push(TravelEvent::Send(command.replacen("go", "climb", 1)));
             self.reset_arrival_timer(from, expected, ctx.now_ms);
             return true;
         }
-        if ctx.saw(&F::CantClimb) {
+        if ctx.saw_since(self.sent_line_no, &F::CantClimb) {
             events.push(TravelEvent::Send(command.replacen("climb", "go", 1)));
             self.reset_arrival_timer(from, expected, ctx.now_ms);
             return true;
         }
         // Item at feet → stow it, then retry.
-        if ctx.saw(&F::ItemAtFeet) {
+        if ctx.saw_since(self.sent_line_no, &F::ItemAtFeet) {
             events.push(TravelEvent::Send("stow feet".into()));
             events.push(TravelEvent::Send(command));
             self.reset_arrival_timer(from, expected, ctx.now_ms);
@@ -3366,12 +3392,20 @@ impl TravelTask {
     }
 
     fn reset_arrival_timer(&mut self, from: u32, expected: u32, now_ms: u64) {
+        // Callers re-send the move alongside this - stamp the send so older
+        // failure lines can't retrigger it. (line stamp set by note_send.)
         self.step = Step::AwaitArrival {
             expected,
             from,
             sent_ms: now_ms,
             slow: false,
         };
+    }
+
+    /// Record the flushed-line count at a move send. Reactive feedback from
+    /// lines at or before this is stale (a superseded move's response).
+    fn note_send(&mut self, ctx: &TravelContext) {
+        self.sent_line_no = ctx.game_line_no;
     }
 
     /// An edge the router planned (it has a `timeto`) but we can't cross
@@ -3688,7 +3722,10 @@ mod tests {
         rt: f64,
         now: u64,
         pathcodes: std::collections::BTreeMap<String, Vec<String>>,
-        feedback: Vec<crate::core::move_feedback::MoveFeedback>,
+        feedback: Vec<(u64, crate::core::move_feedback::MoveFeedback)>,
+        /// The flushed-line counter fed to ctx.game_line_no; `feel` stamps
+        /// events after it so they read as fresh.
+        game_line: u64,
         lich_fallback: bool,
         funding: Option<FundingInputs>,
         pinefar: bool,
@@ -3717,6 +3754,7 @@ mod tests {
                 now: 0,
                 pathcodes: Default::default(),
                 feedback: Vec::new(),
+                game_line: 0,
                 lich_fallback: false,
                 funding: None,
                 pinefar: false,
@@ -3725,6 +3763,13 @@ mod tests {
                 recent_lines: Vec::new(),
                 line_seq: 0,
             }
+        }
+
+        /// Feed a FRESH move-feedback event (stamped after the last send),
+        /// replacing whatever was queued - the shape tests want by default.
+        fn feel(&mut self, f: crate::core::move_feedback::MoveFeedback) {
+            self.game_line += 1;
+            self.feedback = vec![(self.game_line, f)];
         }
 
         /// Feed a game line an `Await` can match, as the parser would.
@@ -3752,6 +3797,7 @@ mod tests {
                 pathcodes: &self.pathcodes,
                 hands: None,
                 feedback: &self.feedback,
+                game_line_no: self.game_line,
                 recent_lines: &self.recent_lines,
                 line_seq: self.line_seq,
                 lich_fallback: self.lich_fallback,
@@ -4050,6 +4096,7 @@ mod tests {
                 feedback: &[],
                 recent_lines: &[],
                 line_seq: 0,
+                game_line_no: 0,
                 lich_fallback: false,
                 funding: None,
                 at_pinefar_depository: false,
@@ -4149,6 +4196,7 @@ mod tests {
                     feedback: &[],
                     recent_lines: &[],
                     line_seq: 0,
+                    game_line_no: 0,
                     lich_fallback: false,
                     funding: None,
                     at_pinefar_depository: false,
@@ -4214,7 +4262,7 @@ mod tests {
         assert_eq!(sent(&task.tick(sim.ctx(&db))), ["go door"]);
         // The door is closed: feedback fires while we're still in room 1.
         sim.now += 100;
-        sim.feedback = vec![MoveFeedback::DoorClosed];
+        sim.feel(MoveFeedback::DoorClosed);
         let events = task.tick(sim.ctx(&db));
         assert_eq!(
             sent(&events),
@@ -4247,7 +4295,7 @@ mod tests {
         // edge on the first hit. The retries re-send `north`.
         for _ in 0..MAX_EDGE_RETRIES {
             sim.now += 100;
-            sim.feedback = vec![MoveFeedback::MoveFailedRemovable];
+            sim.feel(MoveFeedback::MoveFailedRemovable);
             assert_eq!(
                 sent(&task.tick(sim.ctx(&db))),
                 ["north"],
@@ -4256,7 +4304,7 @@ mod tests {
         }
         // Now the retries are exhausted: ban 1->2 and re-path via 3.
         sim.now += 100;
-        sim.feedback = vec![MoveFeedback::MoveFailedRemovable];
+        sim.feel(MoveFeedback::MoveFailedRemovable);
         let events = task.tick(sim.ctx(&db));
         assert!(
             events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("keeps failing"))),
@@ -4291,9 +4339,10 @@ mod tests {
         // A failure line AND a nav (room changed) arrive the same tick, but the
         // resolver hasn't updated current_room to 2 yet (still reads 1).
         sim.now += 100;
+        sim.game_line += 1;
         sim.feedback = vec![
-            MoveFeedback::MoveFailedRemovable,
-            MoveFeedback::NavArrived,
+            (sim.game_line, MoveFeedback::MoveFailedRemovable),
+            (sim.game_line, MoveFeedback::NavArrived),
         ];
         let ev = task.tick(sim.ctx(&db));
         assert!(
@@ -4313,6 +4362,35 @@ mod tests {
             matches!(ev.last(), Some(TravelEvent::Arrived { destination: 2, .. })),
             "arrives normally: {ev:?}"
         );
+    }
+
+    #[test]
+    fn stale_failure_lines_do_not_retrigger_the_current_move() {
+        // The live creek loop: a "You can't go there" belonging to an
+        // already-superseded move arrived after the next move was sent and
+        // triggered a resend of it - two moves in the server queue toggled
+        // bank<->creek to the restart cap. Lich guards with room_count-at-
+        // send; ours is the flushed-line stamp.
+        use crate::core::move_feedback::MoveFeedback as F;
+        let db = db();
+        let mut task = TravelTask::start(&db, 1, 3, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.game_line = 10; // lines flushed before the send
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["north"]);
+        // A STALE failure line (flushed before our send): ignored.
+        sim.now += 100;
+        sim.feedback = vec![(9u64, F::MoveFailedRemovable)];
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(
+            sent(&ev),
+            Vec::<String>::new(),
+            "a pre-send failure line must not double-send: {ev:?}"
+        );
+        // A FRESH failure line (flushed after the send): retries as before.
+        sim.now += 100;
+        sim.feedback = vec![(11u64, F::MoveFailedRemovable)];
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev), ["north"], "a fresh failure retries: {ev:?}");
     }
 
     #[test]
@@ -4338,7 +4416,7 @@ mod tests {
         let events = {
             let mut ctx = sim.ctx(&db);
             ctx.current_room = None;
-            let fb = vec![MoveFeedback::NavArrived];
+            let fb = vec![(1u64, MoveFeedback::NavArrived)];
             ctx.feedback = &fb;
             task.tick(ctx)
         };
@@ -5462,7 +5540,7 @@ mod tests {
                     hidden: false, citizenship: None, profession: None, society: None,
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
-                    recent_lines: &[], line_seq: 0,
+                    recent_lines: &[], line_seq: 0, game_line_no: 0,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
                     fwi_trinket: None,
                     day_pass: Some(dp),
@@ -5477,17 +5555,17 @@ mod tests {
         let ev = task.tick(dpctx!(0, 8635));
         assert_eq!(sent(&ev), ["open #99"], "opens the sack, ONE command: {ev:?}");
         // Tick 2: the open confirmed → get the held pass. Still one command.
-        let ev = task.tick(dpctx!(1_000, 8635, &[F::ContainerOpened]));
+        let ev = task.tick(dpctx!(1_000, 8635, &[(1u64, F::ContainerOpened)]));
         assert_eq!(sent(&ev), ["get #77"], "open answered -> get: {ev:?}");
         // Tick 3: the get landed → raise it.
-        let ev = task.tick(dpctx!(2_000, 8635, &[F::ItemGot]));
+        let ev = task.tick(dpctx!(2_000, 8635, &[(1u64, F::ItemGot)]));
         assert_eq!(sent(&ev), ["raise #77"], "get answered -> raise: {ev:?}");
         // Tick 4: the whirlwind fired and we're at 8916 → the put-back is
         // response-gated too: ONLY the _drag goes out (no close flood).
-        let ev = task.tick(dpctx!(3_000, 8916, &[F::RaiseTraveled]));
+        let ev = task.tick(dpctx!(3_000, 8916, &[(1u64, F::RaiseTraveled)]));
         assert_eq!(sent(&ev), ["_drag #77 #99"], "drag alone, gated: {ev:?}");
         // Tick 5: the stow confirmed → the owed close settles and we conclude.
-        let ev = task.tick(dpctx!(4_000, 8916, &[F::ItemStowed]));
+        let ev = task.tick(dpctx!(4_000, 8916, &[(1u64, F::ItemStowed)]));
         assert!(sent(&ev).contains(&"close #99"), "closes the sack we opened: {ev:?}");
         assert!(!sent(&ev).iter().any(|c| c.contains("ask ") || c.contains("withdraw")));
         // Tick 6: trip complete.
@@ -5502,13 +5580,13 @@ mod tests {
         let mut task = TravelTask::start(&db, 8635, 8916, 0).unwrap();
         let ev = task.tick(dpctx!(0, 8635));
         assert_eq!(sent(&ev), ["open #99"]);
-        let ev = task.tick(dpctx!(1_000, 8635, &[F::ContainerAlreadyOpen]));
+        let ev = task.tick(dpctx!(1_000, 8635, &[(1u64, F::ContainerAlreadyOpen)]));
         assert_eq!(sent(&ev), ["get #77"], "already-open also advances: {ev:?}");
-        let ev = task.tick(dpctx!(2_000, 8635, &[F::ItemGot]));
+        let ev = task.tick(dpctx!(2_000, 8635, &[(1u64, F::ItemGot)]));
         assert_eq!(sent(&ev), ["raise #77"]);
-        let ev = task.tick(dpctx!(3_000, 8916, &[F::RaiseTraveled]));
+        let ev = task.tick(dpctx!(3_000, 8916, &[(1u64, F::RaiseTraveled)]));
         assert_eq!(sent(&ev), ["_drag #77 #99"], "still puts the pass back");
-        let ev = task.tick(dpctx!(4_000, 8916, &[F::ItemStowed]));
+        let ev = task.tick(dpctx!(4_000, 8916, &[(1u64, F::ItemStowed)]));
         assert!(
             !sent(&ev).contains(&"close #99"),
             "already-open sack is left open: {ev:?}"
@@ -5558,7 +5636,7 @@ mod tests {
                     hidden: false, citizenship: None, profession: None, society: None,
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
-                    recent_lines: &[], line_seq: 0,
+                    recent_lines: &[], line_seq: 0, game_line_no: 0,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
                     fwi_trinket: None,
                     day_pass: Some(dp),
@@ -5568,21 +5646,21 @@ mod tests {
 
         // Walk the machine to the raise.
         task.tick(dpctx!(0, 8635, &[]));
-        task.tick(dpctx!(1_000, 8635, &[F::ContainerAlreadyOpen]));
-        let ev = task.tick(dpctx!(2_000, 8635, &[F::ItemGot]));
+        task.tick(dpctx!(1_000, 8635, &[(1u64, F::ContainerAlreadyOpen)]));
+        let ev = task.tick(dpctx!(2_000, 8635, &[(1u64, F::ItemGot)]));
         assert_eq!(sent(&ev), ["raise #77"]);
         // A stray nav with the room STILL the departure room: must NOT
         // conclude (no cleanup sends, no phantom crossing).
-        let ev = task.tick(dpctx!(3_000, 8635, &[F::NavArrived]));
+        let ev = task.tick(dpctx!(3_000, 8635, &[(1u64, F::NavArrived)]));
         assert!(ev.is_empty(), "stale-room nav must not conclude the raise: {ev:?}");
         // The whirlwind line arrives while the room is STILL stale: the
         // response-gated put-back runs — and nothing re-plans from the stale
         // departure room (no ask/open phantom).
-        let ev = task.tick(dpctx!(4_000, 8635, &[F::RaiseTraveled]));
+        let ev = task.tick(dpctx!(4_000, 8635, &[(1u64, F::RaiseTraveled)]));
         assert_eq!(sent(&ev), ["_drag #77 #99"], "gated cleanup runs: {ev:?}");
         // Stow confirms (room STILL stale) → conclude must arrival-watch the
         // KNOWN landing room instead of re-planning.
-        let ev = task.tick(dpctx!(5_000, 8635, &[F::ItemStowed]));
+        let ev = task.tick(dpctx!(5_000, 8635, &[(1u64, F::ItemStowed)]));
         assert!(
             !sent(&ev)
                 .iter()
@@ -5638,7 +5716,7 @@ mod tests {
                     hidden: false, citizenship: None, profession: None, society: None,
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
-                    recent_lines: &[], line_seq: 0,
+                    recent_lines: &[], line_seq: 0, game_line_no: 0,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
                     fwi_trinket: None,
                     day_pass: Some(dp),
@@ -5693,6 +5771,7 @@ mod tests {
             };
             room += 1;
             let cur = if last == "raise pass" { 8916 } else { room };
+            let fb: Vec<(u64, F)> = fb.into_iter().map(|f| (1u64, f)).collect();
             let ev = task.tick(buyctx!(now, cur, &fb));
             now += 1_000;
             for c in sent(&ev) {

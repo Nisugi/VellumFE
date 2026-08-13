@@ -72,7 +72,7 @@ enum Phase {
 /// items in each hand (to capture the bought pass's exist-id — `_drag`/`raise`
 /// need the id, not the `pass` noun).
 pub struct BuyTick<'a> {
-    pub feedback: &'a [F],
+    pub feedback: &'a [(u64, F)],
     pub current_room: Option<u32>,
     pub get_silvers: bool,
     pub now_ms: u64,
@@ -131,8 +131,8 @@ impl Preamble {
                             return false;
                         }
                         Some(sent) => {
-                            let answered = ctx.feedback.contains(&F::ContainerOpened)
-                                || ctx.feedback.contains(&F::ContainerAlreadyOpen);
+                            let answered = ctx.feedback.iter().any(|(_, f)| f == &F::ContainerOpened)
+                                || ctx.feedback.iter().any(|(_, f)| f == &F::ContainerAlreadyOpen);
                             if answered || ctx.now_ms.saturating_sub(sent) > RESP_TIMEOUT_MS {
                                 self.stage = PreStage::Drop { i: 0, sent_ms: None };
                                 continue;
@@ -156,7 +156,7 @@ impl Preamble {
                             return false;
                         }
                         Some(sent) => {
-                            if ctx.feedback.contains(&F::ItemDropped)
+                            if ctx.feedback.iter().any(|(_, f)| f == &F::ItemDropped)
                                 || ctx.now_ms.saturating_sub(sent) > DROP_TIMEOUT_MS
                             {
                                 *i += 1;
@@ -206,7 +206,7 @@ impl PutBack {
                 false
             }
             Some(sent) => {
-                ctx.feedback.contains(&F::ItemStowed)
+                ctx.feedback.iter().any(|(_, f)| f == &F::ItemStowed)
                     || ctx.now_ms.saturating_sub(sent) > RESP_TIMEOUT_MS
             }
         }
@@ -256,7 +256,7 @@ impl UseState {
         if !self.pre.tick(&ctx, &mut out) {
             return out;
         }
-        let saw = |e: &F| ctx.feedback.contains(e);
+        let saw = |e: &F| ctx.feedback.iter().any(|(_, f)| f == e);
         match &mut self.phase {
             UsePhase::GetPass { sent_ms } => match *sent_ms {
                 None => {
@@ -384,7 +384,7 @@ impl BuyState {
         }
         // RT gate: don't send while in roundtime (except pure waits).
         let rt_clear = ctx.rt_remaining <= 0.0;
-        let saw = |e: &F| ctx.feedback.contains(e);
+        let saw = |e: &F| ctx.feedback.iter().any(|(_, f)| f == e);
         let timed_out = |sent_ms: u64| ctx.now_ms.saturating_sub(sent_ms) > RESP_TIMEOUT_MS;
 
         match &mut self.phase {

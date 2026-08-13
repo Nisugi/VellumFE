@@ -614,8 +614,11 @@ async fn send_direct_handshake(
     stream.write_all(key.as_bytes()).await?;
     stream.write_all(b"\n").await?;
 
+    // Saga's banner (from the reconstructed saga-archive source): the server
+    // keys the extended feed (inventoryManager, pulse, cmdlist/cmdtimestamp)
+    // off this FE name/version pair.
     let fe_string = format!(
-        "/FE:WIZARD /VERSION:1.0.1.22 /P:{} /XML",
+        "/FE:WRAYTH /VERSION:1.0.1.28 /P:{} /XML",
         std::env::consts::OS
     );
     stream.write_all(fe_string.as_bytes()).await?;

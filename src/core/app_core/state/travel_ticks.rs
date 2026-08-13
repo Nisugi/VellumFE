@@ -119,7 +119,7 @@ impl AppCore {
             .game_state
             .move_feedback
             .iter()
-            .any(|f| matches!(f, crate::core::move_feedback::MoveFeedback::ContainerAlreadyOpen))
+            .any(|(_, f)| matches!(f, crate::core::move_feedback::MoveFeedback::ContainerAlreadyOpen))
         {
             if let Some(open) = self.day_pass_scan_open.as_mut() {
                 open.1 = true;
@@ -179,7 +179,7 @@ impl AppCore {
         };
         // Drain the move-feedback queue for this tick (edge-triggered events,
         // each consumed exactly once — §09).
-        let feedback: Vec<crate::core::move_feedback::MoveFeedback> =
+        let feedback: Vec<(u64, crate::core::move_feedback::MoveFeedback)> =
             self.game_state.move_feedback.drain(..).collect();
         // Raw lines for `Await` steps. Copied (not drained): the ring must
         // outlive this tick so an await arming now still sees earlier lines.
@@ -347,6 +347,7 @@ impl AppCore {
             // GameState::recent_lines.
             recent_lines: &recent_lines,
             line_seq: self.game_state.line_seq,
+            game_line_no: self.game_state.game_line_no,
             // The fallback is a Lich-only bandaid: gated on the setting AND a
             // Lich connection (a direct connection has no Lich to hand off to).
             // Gate on the connection itself, NOT on WebUI reachability — WebUI
