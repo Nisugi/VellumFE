@@ -2315,6 +2315,9 @@ fn test_inventory_manager_block() {
     let ParsedElement::InventoryManager {
         token,
         room,
+        root,
+        after,
+        state,
         items,
         continuations,
     } = managers[0]
@@ -2323,6 +2326,9 @@ fn test_inventory_manager_block() {
     };
     assert_eq!(token, "imtest1");
     assert_eq!(room, "2005");
+    assert_eq!(root, &None, "initial response carries no envelope echo");
+    assert_eq!(after, &None);
+    assert_eq!(state, &None);
     assert_eq!(items.len(), 3);
     assert!(continuations.is_empty());
     let attr = |i: usize, k: &str| {
@@ -2369,6 +2375,39 @@ fn test_inventory_manager_continuation() {
             ("last".to_string(), "148848460".to_string()),
         ]
     );
+}
+
+#[test]
+fn test_inventory_manager_continuation_envelope_and_stale() {
+    let mut parser = XmlParser::new();
+    // Continuation response: envelope echoes the requested cursor.
+    let elements = parser.parse_line(
+        r#"<inventoryManager id='im3' room='2005' root='148848453' after='148848460'><i id='9' loc='in,148848453' name="a,silk,pouch" weight='1'/></inventoryManager>"#,
+    );
+    let ParsedElement::InventoryManager { root, after, state, .. } = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::InventoryManager { .. }))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(root.as_deref(), Some("148848453"));
+    assert_eq!(after.as_deref(), Some("148848460"));
+    assert_eq!(state, &None);
+
+    // Stale marker: dead cursor, empty self-closing response.
+    let elements =
+        parser.parse_line(r#"<inventoryManager id='im4' room='2005' state='stale'/>"#);
+    let ParsedElement::InventoryManager { state, items, continuations, .. } = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::InventoryManager { .. }))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(state.as_deref(), Some("stale"));
+    assert!(items.is_empty());
+    assert!(continuations.is_empty());
 }
 
 #[test]

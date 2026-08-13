@@ -474,6 +474,10 @@ impl AppCore {
     pub fn take_outbound(&mut self) -> Vec<String> {
         let mut commands = self.travel.take_outbound();
         commands.extend(self.foreach.take_outbound());
+        // Inventory continuation-following: timeouts advance and due
+        // `_inventory manager ...` requests go out with everything else.
+        let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        commands.extend(self.message_processor.inv_service.tick(now_ms));
         let now = std::time::Instant::now();
         let mut i = 0;
         while i < self.timed_commands.len() {

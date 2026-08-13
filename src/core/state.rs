@@ -947,7 +947,7 @@ impl ManagedInventoryItem {
 
 /// Latest `<inventoryManager>` snapshot (the structured inventory tree the
 /// extended feed serves in response to `_inventory manager <token>`).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ManagedInventoryState {
     /// Correlation token from the request
     pub token: String,

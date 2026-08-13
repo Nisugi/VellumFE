@@ -172,6 +172,13 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                   ".spellwatch add all snapshots everything currently active."]
             ),
             entry!(
+                &["invsync"],
+                "",
+                "Refresh the structured inventory snapshot (extended feed)",
+                &["Sends _inventory manager and follows continuation cursors until the",
+                  "snapshot is complete. Requires direct mode (WRAYTH banner)."]
+            ),
+            entry!(
                 &["addwindow"],
                 "",
                 "Open widget type picker",

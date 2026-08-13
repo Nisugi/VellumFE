@@ -577,6 +577,11 @@ impl XmlParser {
         self.inv_manager = Some(crate::parser::InvManagerBuilder {
             token: Self::extract_attribute(tag, "id").unwrap_or_default(),
             room: Self::extract_attribute(tag, "room").unwrap_or_default(),
+            // Continuation-envelope echoes (root+after) and the error/stale
+            // marker; absent on a normal initial response.
+            root: Self::extract_attribute(tag, "root"),
+            after: Self::extract_attribute(tag, "after"),
+            state: Self::extract_attribute(tag, "state"),
             items: Vec::new(),
             continuations: Vec::new(),
         });
@@ -603,6 +608,9 @@ impl XmlParser {
             elements.push(ParsedElement::InventoryManager {
                 token: builder.token,
                 room: builder.room,
+                root: builder.root,
+                after: builder.after,
+                state: builder.state,
                 items: builder.items,
                 continuations: builder.continuations,
             });

@@ -390,6 +390,15 @@ pub enum ParsedElement {
     InventoryManager {
         token: String,
         room: String,
+        /// Continuation-envelope echo: the requested subtree root exist id.
+        /// Present only on responses to a `... continue ...` request.
+        root: Option<String>,
+        /// Continuation-envelope echo: the last item already delivered.
+        after: Option<String>,
+        /// Error/status marker. `"stale"` = the continuation cursor is no
+        /// longer valid (response must be empty; reload from scratch). Any
+        /// other non-empty value is a failure.
+        state: Option<String>,
         items: Vec<Vec<(String, String)>>,
         continuations: Vec<Vec<(String, String)>>,
     },
@@ -402,6 +411,9 @@ pub enum ParsedElement {
 pub(crate) struct InvManagerBuilder {
     pub(crate) token: String,
     pub(crate) room: String,
+    pub(crate) root: Option<String>,
+    pub(crate) after: Option<String>,
+    pub(crate) state: Option<String>,
     pub(crate) items: Vec<Vec<(String, String)>>,
     pub(crate) continuations: Vec<Vec<(String, String)>>,
 }

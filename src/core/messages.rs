@@ -205,6 +205,11 @@ pub struct MessageProcessor {
     /// Previous inventory buffer for comparison (avoid unnecessary updates)
     previous_inventory: Vec<Vec<TextSegment>>,
 
+    /// Continuation-following for `<inventoryManager>` (extended feed):
+    /// owns request tokens, merges paginated chunks, publishes complete
+    /// snapshots. Outbound commands are drained by AppCore's tick.
+    pub inv_service: crate::core::inventory_service::InventoryService,
+
     /// Buffer for accumulating spells stream lines (double-buffer system)
     spells_buffer: Vec<Vec<TextSegment>>,
 
@@ -369,6 +374,7 @@ impl MessageProcessor {
             server_time_offset: 0,
             inventory_buffer: Vec::new(),
             previous_inventory: Vec::new(),
+            inv_service: crate::core::inventory_service::InventoryService::new(),
             reserve_buffer: Vec::new(),
             previous_reserve: Vec::new(),
             spells_buffer: Vec::new(),

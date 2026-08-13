@@ -2345,6 +2345,18 @@ impl AppCore {
             "spellwatch" => {
                 self.handle_spellwatch(&parts);
             }
+            "invsync" => {
+                // Refresh the extended feed's structured inventory snapshot
+                // (`_inventory manager` + continuation-following). Direct-mode
+                // WRAYTH banner required for the server to answer.
+                if self.message_processor.inv_service.loading() {
+                    self.add_system_message("[invsync] refresh already in progress.");
+                } else {
+                    let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+                    self.message_processor.inv_service.request_refresh(now_ms);
+                    self.add_system_message("[invsync] requesting inventory snapshot...");
+                }
+            }
             "rename" => {
                 if parts.len() >= 3 {
                     let name = parts[1];

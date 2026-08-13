@@ -1959,6 +1959,9 @@ impl MessageProcessor {
             ParsedElement::InventoryManager {
                 token,
                 room,
+                root: _,
+                after: _,
+                state,
                 items,
                 continuations,
             } => {
@@ -1973,32 +1976,59 @@ impl MessageProcessor {
                         item
                     })
                     .collect();
-                if !continuations.is_empty() {
-                    tracing::warn!(
-                        "inventoryManager response is paginated ({} continuation cursors); \
-                         continuation-following not implemented, snapshot marked incomplete",
-                        continuations.len()
-                    );
-                }
-                let generation = game_state
-                    .managed_inventory
-                    .as_ref()
-                    .map(|s| s.generation + 1)
-                    .unwrap_or(1);
-                tracing::debug!(
-                    "inventoryManager snapshot: token={} room={} items={} complete={}",
+                let cursors: Vec<(String, String)> = continuations
+                    .iter()
+                    .filter_map(|attrs| {
+                        let get = |name: &str| {
+                            attrs
+                                .iter()
+                                .find(|(k, _)| k == name)
+                                .map(|(_, v)| v.clone())
+                        };
+                        Some((get("root")?, get("last")?))
+                    })
+                    .collect();
+                let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+                use crate::core::inventory_service::ResponseOutcome;
+                match self.inv_service.on_response(
                     token,
                     room,
-                    parsed.len(),
-                    continuations.is_empty()
-                );
-                game_state.managed_inventory = Some(crate::core::state::ManagedInventoryState {
-                    token: token.clone(),
-                    room: room.clone(),
-                    items: parsed,
-                    complete: continuations.is_empty(),
-                    generation,
-                });
+                    state.as_deref(),
+                    parsed.clone(),
+                    &cursors,
+                    now_ms,
+                ) {
+                    ResponseOutcome::Publish(snapshot) => {
+                        tracing::debug!(
+                            "inventoryManager snapshot complete: room={} items={}",
+                            snapshot.room,
+                            snapshot.items.len()
+                        );
+                        game_state.managed_inventory = Some(snapshot);
+                    }
+                    ResponseOutcome::Absorbed | ResponseOutcome::Failed => {
+                        // Chunk merged into the in-progress load (or the load
+                        // restarted); nothing published yet.
+                    }
+                    ResponseOutcome::Foreign => {
+                        // Not a token we issued (e.g. a manual test request).
+                        // Preserve the pre-service behavior: publish what
+                        // arrived, incomplete when paginated.
+                        let generation = game_state
+                            .managed_inventory
+                            .as_ref()
+                            .map(|s| s.generation + 1)
+                            .unwrap_or(1);
+                        game_state.managed_inventory =
+                            Some(crate::core::state::ManagedInventoryState {
+                                token: token.clone(),
+                                room: room.clone(),
+                                items: parsed,
+                                complete: cursors.is_empty(),
+                                generation,
+                            });
+                    }
+                }
             }
             _ => {
                 // Other elements handled elsewhere or not yet implemented
