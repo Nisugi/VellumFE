@@ -511,9 +511,8 @@ impl AppCore {
             self.add_system_message(&format!("Failed to save alert pack settings: {err}"));
             return;
         }
-        // Refresh the in-memory cache first so the reload below (and the next
-        // per-room re-arm) both see the new enable/approval state.
-        self.refresh_alert_packs();
+        // reload_highlights refreshes the pack cache itself (the one seam
+        // every pack-affecting path goes through), so no extra refresh here.
         self.reload_highlights();
     }
 }
@@ -976,5 +975,39 @@ mod alert_condition_tests {
         core.game_state.vitals.health = 5;
         core.tick_alert_conditions();
         assert!(core.alerts.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod pack_cache_tests {
+    use crate::core::AppCore;
+
+    #[test]
+    fn reload_highlights_refreshes_the_pack_cache_and_forces_a_rearm() {
+        // The GUI approve button, jinx installs, and `.reload hl` all funnel
+        // through reload_highlights. If it leaves the pack cache stale, the
+        // next room-scope re-arm rebuilds from OLD approvals and silently
+        // re-strips a just-approved pack — the bug the 2026-08-12 review
+        // found in the panel path.
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+
+        let mut core = AppCore::new_for_test();
+        // Simulate a session mid-flight: cache loaded, scope recorded.
+        core.alert_packs_loaded = true;
+        core.rearm_alert_packs();
+        assert!(core.last_pack_scope.is_some());
+
+        core.reload_highlights();
+        assert!(
+            core.last_pack_scope.is_none(),
+            "reload must invalidate the armed scope so the next frame \
+             re-arms from the fresh cache"
+        );
+
+        std::env::remove_var("VELLUM_FE_DIR");
     }
 }

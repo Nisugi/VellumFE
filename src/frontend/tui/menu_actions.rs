@@ -723,7 +723,9 @@ pub fn handle_ui_action(
             // panel does, so a TUI user is never asked to approve
             // something they cannot read.
             app_core.add_system_message(
-                "The alert-pack browser is GUI-only. Use .alertpacks to list,                  .alertpacks show <name> to review what a pack can change, and                  .alertpacks on|off|approve|revoke <name>.",
+                "The alert-pack browser is GUI-only. Use .alertpacks to list, \
+                 .alertpacks show <name> to review what a pack can change, and \
+                 .alertpacks on|off|approve|revoke <name>.",
             );
             app_core.needs_render = true;
         }

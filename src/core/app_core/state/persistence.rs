@@ -474,6 +474,13 @@ impl AppCore {
                 // reality silently, so saving an edit while its condition
                 // already holds does not fire an alert for it.
                 self.alerts.reset_edges();
+                // The pack cache must follow the disk, or the next room-scope
+                // re-arm rebuilds the rule set from STALE approvals — silently
+                // re-stripping a just-approved pack (or resurrecting a just-
+                // disabled one). Refreshing here, at the one reload seam,
+                // covers every caller: the GUI panel, the dot-command, jinx
+                // pack installs, and .reload hl alike.
+                self.refresh_alert_packs();
                 self.add_system_message("Highlights reloaded");
                 tracing::debug!("reload_highlights: system message queued");
                 let has_perception_window = self.ui_state.windows.values().any(|window| {
