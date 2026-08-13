@@ -2070,6 +2070,11 @@ impl eframe::App for VellumGuiApp {
         if std::env::var_os("VELLUM_DEBUG_HOVER").is_some() {
             ctx.set_debug_on_hover(true);
         }
+        // egui's DebugOptions.show_unaligned defaults ON in debug builds and
+        // stamps an orange "Unaligned" warning under widgets with
+        // fractionally-sized rects — the phantom strip that haunted the
+        // containers and bestiary windows in dev builds. Never wanted.
+        ctx.style_mut(|style| style.debug.show_unaligned = false);
         self.app_core.perf_stats.record_frame();
         // "Render" in the GUI is last frame's CPU cost as reported by
         // eframe (App::ui + painting); the first frame has none yet.
