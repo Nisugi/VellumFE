@@ -618,6 +618,24 @@ pub struct TravelTask {
     /// rephrase" (live icy-trail bug). The gate's text is by construction a
     /// real game command, so that class of bug cannot be written.
     pending_cmd: Option<String>,
+    /// Failure lines before this instant are ORPHANS: an off-route repath
+    /// abandons its in-flight command WITHOUT consuming its outcome (Lich
+    /// never does - move() blocks until the outcome is read), and the
+    /// abandoned command's trailing "You can't go there" arrives AFTER the
+    /// replacement was sent - passing the line stamp legitimately and
+    /// double-sending the replacement (the live creek toggle, round two).
+    orphan_until_ms: u64,
+    /// FIFO outcome accounting (Lich: one command = one outcome, consumed in
+    /// order). Sends increment; each nav or move-failure line decrements.
+    /// A failure line with older sends still owed belongs to one of THEM -
+    /// reacting to it resends the current command and sustains a one-command
+    /// bubble in the server's type-ahead queue (the reject-once stutter down
+    /// the whole pass, and the creek toggle when the geometry loops).
+    owed: u32,
+    /// Set per tick by consume_outcomes: a failure event this tick was the
+    /// PENDING command's own outcome (owed <= 1 when it arrived). Reactive
+    /// recovery requires this - otherwise the line was an older send's.
+    failure_attributable: bool,
     /// The flushed-line count when the funding phase sent its `wealth quiet`
     /// probe. A reading is FRESH only if silver_line_no > this.
     wealth_probe_line: u64,
@@ -703,6 +721,9 @@ impl TravelTask {
             sent_line_no: 0,
             sent_nav: 0,
             pending_cmd: None,
+            orphan_until_ms: 0,
+            owed: 0,
+            failure_attributable: false,
             wealth_probe_line: 0,
             keep_retries: 0,
             hold_until_ms: 0,
@@ -787,6 +808,10 @@ impl TravelTask {
 
     fn tick_inner(&mut self, ctx: TravelContext) -> Vec<TravelEvent> {
         let mut events = Vec::new();
+        // FIFO outcome accounting first: retire owed sends against this
+        // tick's navs/failures so recovery only ever reacts to an outcome
+        // that is genuinely the pending command's own.
+        self.consume_outcomes(&ctx);
 
         if ctx.dead {
             events.push(TravelEvent::Failed("you're dead - travel aborted".into()));
@@ -931,12 +956,14 @@ impl TravelTask {
                 // stays as the backstop for silent responses.
                 let moved = current != sent_from
                     || ctx.saw(&F::NavArrived);
-                let failed = ctx.saw_since(self.sent_line_no, &F::MoveFailedRemovable)
+                let failed = ctx.now_ms >= self.orphan_until_ms
+                    && self.failure_attributable
+                    && (ctx.saw_since(self.sent_line_no, &F::MoveFailedRemovable)
                     || ctx.saw_since(self.sent_line_no, &F::MoveFailedKeep)
                     || ctx.saw_since(self.sent_line_no, &F::DoorClosed)
                     || ctx.saw_since(self.sent_line_no, &F::Fell)
                     || ctx.saw_since(self.sent_line_no, &F::NeedClimb)
-                    || ctx.saw_since(self.sent_line_no, &F::CantClimb);
+                    || ctx.saw_since(self.sent_line_no, &F::CantClimb));
                 if moved
                     || failed
                     || ctx.now_ms.saturating_sub(sent_ms) > SLOW_ARRIVAL_TIMEOUT_MS
@@ -1036,6 +1063,12 @@ impl TravelTask {
                     events.push(TravelEvent::Status(format!(
                         "off the planned route (room {current}) - re-pathing"
                     )));
+                    // The in-flight command is being ABANDONED unconsumed; its
+                    // trailing failure line is an orphan the replacement must
+                    // not react to (the creek double-send).
+                    self.pending_cmd = None;
+                    self.owed = 0;
+                    self.orphan_until_ms = ctx.now_ms + 1_500;
                     self.repath(ctx.db, current, ctx.lich_fallback, &mut events);
                     return events;
                 }
@@ -1072,6 +1105,10 @@ impl TravelTask {
                 }
                 let timeout = if slow { SLOW_ARRIVAL_TIMEOUT_MS } else { STEP_TIMEOUT_MS };
                 if ctx.now_ms.saturating_sub(sent_ms) > timeout {
+                    // The timed-out send's outcome is written off - without
+                    // this, every silent retry inflates `owed` and starves
+                    // real failures of attribution.
+                    self.owed = self.owed.saturating_sub(1);
                     if self.edge_retries >= MAX_EDGE_RETRIES {
                         // A SILENT giveup is Lich's `nil` - the edge is kept
                         // (global_defs.rb:772-783: "return nil ... to show the
@@ -1684,7 +1721,10 @@ impl TravelTask {
                 if sent_anything {
                     // Something was sent → a room change is expected. Scripted
                     // edges (portmaster escorts, timed jumps) can be slow, so
-                    // give them the longer arrival window.
+                    // give them the longer arrival window. Exactly ONE outcome
+                    // is owed: the final (arrival-watched) command's - the
+                    // burst's fputs answer with neither nav nor move-failure.
+                    self.owed = 1;
                     self.step = Step::AwaitArrival {
                         expected,
                         from,
@@ -1718,7 +1758,7 @@ impl TravelTask {
                         self.handle_uncrossable_edge(from, expected, ctx, events);
                         return;
                     };
-                    self.gate_send(&ctx, events, cmd);
+                    self.gate_fput(&ctx, events, cmd);
                     sent_anything = true;
                     pc += 1;
                 }
@@ -3270,6 +3310,23 @@ impl TravelTask {
             return true;
         }
         let _ = (sent_ms, slow);
+        // Orphan window: a just-abandoned command's late failure line must
+        // not be attributed to its replacement. Genuine failures of the NEW
+        // command repeat on its retry and are handled then.
+        if ctx.now_ms < self.orphan_until_ms {
+            return false;
+        }
+        // FIFO attribution: if this tick's failure line was an OLDER send's
+        // outcome (owed > 1 when it arrived), it is not ours to react to -
+        // reacting re-fed a one-command bubble that stuttered every room of
+        // Whistler's Pass and toggled the creek.
+        if !self.failure_attributable {
+            // Mounted is state, not a retry decision - capture it regardless.
+            if ctx.saw_since(self.sent_line_no, &F::Mounted) {
+                self.mounted = true;
+            }
+            return false;
+        }
         // Retries below re-emit the GATE's pending command - what was
         // actually sent, by construction a real game command. The wayto is
         // never consulted here: for scripted edges it's Ruby, and resending
@@ -3485,6 +3542,71 @@ impl TravelTask {
     /// text (so retries re-emit what was ACTUALLY sent - always a real game
     /// command, never wayto Ruby). Lich's move() discipline, made structural.
     fn gate_send(&mut self, ctx: &TravelContext, events: &mut Vec<TravelEvent>, text: String) {
+        self.sent_line_no = ctx.game_line_no;
+        self.sent_nav = ctx.game_nav_count;
+        self.pending_cmd = Some(text.clone());
+        self.owed = self.owed.saturating_add(1);
+        events.push(TravelEvent::Send(text));
+    }
+
+    /// FIFO outcome consumption, run once per tick before the step machine:
+    /// walk this tick's move-outcome events in arrival order, retiring owed
+    /// sends. A failure only counts as OURS (failure_attributable) when no
+    /// older send was still owed when it arrived.
+    fn consume_outcomes(&mut self, ctx: &TravelContext) {
+        use crate::core::move_feedback::MoveFeedback as F;
+        self.failure_attributable = false;
+        for (no, f) in ctx.feedback {
+            // A line that predates the pending send can never be ITS
+            // outcome (it physically arrived before the command went out).
+            let fresh = *no > self.sent_line_no;
+            match f {
+                F::NavArrived => {
+                    self.owed = self.owed.saturating_sub(1);
+                }
+                F::MoveFailedRemovable
+                | F::MoveFailedKeep
+                | F::TransientRetry
+                | F::RtWait
+                | F::MustStand
+                | F::MustUnhide
+                | F::StandBlocked
+                | F::Fell
+                | F::NeedClimb
+                | F::CantClimb
+                | F::DoorClosed
+                | F::HandsFull
+                | F::ItemAtFeet
+                | F::TypeAhead
+                | F::StillStunned
+                | F::StillRecovering
+                | F::NoControl
+                | F::PitchDark
+                | F::TooInjured
+                | F::Mounted => {
+                    if self.owed > 1 {
+                        // An OLDER send's outcome - retire it silently. This
+                        // is the bubble draining instead of being re-fed.
+                        self.owed -= 1;
+                    } else if self.owed == 1 && fresh {
+                        self.owed = 0;
+                        self.failure_attributable = true;
+                    }
+                    // owed == 0: nothing outstanding - a stale line (e.g.
+                    // trailing a nav that already resolved the send this
+                    // same tick, the per-room cycle of the live bubble).
+                    // Nobody's outcome; swallow.
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// A fire-and-forget script send (Lich's fput): stamps and remembers the
+    /// text but owes NO movement outcome - counting these inflated `owed`
+    /// (an 'open door' answers with neither nav nor move-failure) and
+    /// starved genuine failures of attribution.
+    fn gate_fput(&mut self, ctx: &TravelContext, events: &mut Vec<TravelEvent>, text: String) {
         self.sent_line_no = ctx.game_line_no;
         self.sent_nav = ctx.game_nav_count;
         self.pending_cmd = Some(text.clone());
@@ -4488,6 +4610,85 @@ mod tests {
         sim.feedback = vec![(11u64, F::MoveFailedRemovable)];
         let ev = task.tick(sim.ctx(&db));
         assert_eq!(sent(&ev), ["north"], "a fresh failure retries: {ev:?}");
+    }
+
+    #[test]
+    fn pipeline_bubble_drains_instead_of_being_refed() {
+        // The live eastbound Whistler's Pass trace (21:42 log): every room
+        // was [room arrives][You can't go there][next room] - a one-command
+        // bubble in the server queue, SUSTAINED because each rejection
+        // triggered a resend. With FIFO outcome accounting, the per-room
+        // tick sees [nav, can't]: the nav retires the pending send, the
+        // trailing can't finds nothing owed and is swallowed - exactly ONE
+        // command goes out per room, and the bubble dies.
+        use crate::core::move_feedback::MoveFeedback as F;
+        let db = db();
+        let mut task = TravelTask::start(&db, 1, 4, 0).unwrap();
+        let mut sim = Sim::new(1);
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["north"]);
+        // Room 2 arrives WITH a trailing rejection (the bubble surfacing).
+        sim.current = 2;
+        sim.now += 200;
+        sim.nav_count = 1;
+        sim.game_line += 2;
+        sim.feedback = vec![
+            (sim.game_line - 1, F::NavArrived),
+            (sim.game_line, F::MoveFailedRemovable),
+        ];
+        // Arrival tick consumes the nav; the trailing reject is swallowed.
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev), Vec::<String>::new(), "arrival tick: {ev:?}");
+        // Follow-up tick sends exactly ONE command - no reject-fed double.
+        sim.feedback.clear();
+        sim.now += 100;
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["north"]);
+        // Next room, same shape: still exactly one send.
+        sim.current = 3;
+        sim.now += 200;
+        sim.nav_count = 2;
+        sim.game_line += 2;
+        sim.feedback = vec![
+            (sim.game_line - 1, F::NavArrived),
+            (sim.game_line, F::MoveFailedRemovable),
+        ];
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev), Vec::<String>::new(), "{ev:?}");
+        sim.feedback.clear();
+        sim.now += 100;
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["swim river"]);
+    }
+
+    #[test]
+    fn orphaned_failure_after_off_route_repath_does_not_double_send() {
+        // Creek toggle round two: the off-route repath ABANDONS its in-flight
+        // command; that command's trailing "You can't go there" was already
+        // on the wire, arrives after the replacement was sent, passes the
+        // line stamp, and re-triggered the replacement - two moves queued,
+        // toggling rooms forever. Post-repath failure lines are orphans.
+        use crate::core::move_feedback::MoveFeedback as F;
+        let db = db();
+        let mut task = TravelTask::start(&db, 1, 4, 0).unwrap();
+        let mut sim = Sim::new(1);
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["north"]);
+        // We end up off-route (room 5): repath + the fresh route's first move.
+        sim.current = 5;
+        sim.now += 100;
+        sim.nav_count = 1;
+        let ev = task.tick(sim.ctx(&db));
+        assert!(matches!(&ev[0], TravelEvent::Status(s) if s.contains("re-pathing")), "{ev:?}");
+        sim.now += 100;
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev), ["north"], "the new route walks: {ev:?}");
+        // The ABANDONED command's late failure line lands now - fresh by
+        // line stamp, but an orphan. It must not re-send anything.
+        sim.now += 200;
+        sim.feel(F::MoveFailedRemovable);
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(
+            sent(&ev),
+            Vec::<String>::new(),
+            "an orphaned failure must not double-send: {ev:?}"
+        );
     }
 
     #[test]

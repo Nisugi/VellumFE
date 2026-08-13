@@ -1641,9 +1641,22 @@ impl VellumGuiApp {
         // behind the tail — i.e. new content arrived — and never on a frame
         // carrying user scroll input.
         if follow_bottom && !user_scrolled {
+            // stride_sum counts a spacing stride after the LAST row too, but
+            // the real layout has no trailing spacing — without subtracting
+            // it the target sits one spacing_y past egui's clamp point, the
+            // `> 0.5` settle test never passes, and the pin re-fires every
+            // frame. A frame that skips the pin (any click: press counts as
+            // user input) then renders at the clamped offset instead — the
+            // whole window jumps by spacing_y between press and release, so
+            // egui never completes a click and links go dead.
             let content_h: f32 = {
                 let cache = cache_handle.lock().expect("row height cache poisoned");
-                cache.stride_sum(0..cache.heights.len(), outer_spacing_y)
+                let sum = cache.stride_sum(0..cache.heights.len(), outer_spacing_y);
+                if cache.heights.is_empty() {
+                    sum
+                } else {
+                    sum - outer_spacing_y
+                }
             };
             let target = (content_h - max_height).max(0.0);
             let stored = outer_ctx
