@@ -562,6 +562,16 @@ impl AppCore {
     /// through the same path as typed commands. Includes macro sleep
     /// segments whose pause has elapsed.
     pub fn take_outbound(&mut self) -> Vec<String> {
+        fn hex_luminance(hex: &str) -> f32 {
+            let h = hex.trim_start_matches('#');
+            if h.len() < 6 {
+                return 0.0;
+            }
+            let c = |i: usize| {
+                u8::from_str_radix(&h[i..i + 2], 16).unwrap_or(0) as f32 / 255.0
+            };
+            0.2126 * c(0) + 0.7152 * c(2) + 0.0722 * c(4)
+        }
         let mut commands = self.travel.take_outbound();
         commands.extend(self.foreach.take_outbound());
         // Inventory continuation-following: timeouts advance and due
@@ -601,11 +611,12 @@ impl AppCore {
         if let Some(view) = self.game_state.viewed_item.as_ref() {
             if view.generation != self.last_announced_view_generation {
                 self.last_announced_view_generation = view.generation;
-                let (name, lines): (String, Vec<String>) = {
+                let (name, banner, lines): (String, String, Vec<String>) = {
                     let view = self.game_state.viewed_item.as_ref().expect("checked");
                     // ASCII banner: U+2500 box glyphs are tofu in some of
                     // the GUI font set (same gap as the arrow glyphs).
-                    let mut out = vec![format!("=== {} ===", view.name)];
+                    let banner = format!(" === {} === ", view.name);
+                    let mut out = Vec::new();
                     for (command, text) in &view.results {
                         if text.trim().is_empty() {
                             continue;
@@ -614,9 +625,23 @@ impl AppCore {
                         out.extend(text.lines().map(str::to_string));
                         out.push(String::new());
                     }
-                    (view.name.clone(), out)
+                    (view.name.clone(), banner, out)
                 };
-                let mut delivered = false;
+                // Banner rides the system color as a BACKGROUND band with
+                // luminance-picked text so it stands out from the body.
+                let band = self.config.colors.ui.system_message_color.clone();
+                let band_fg = if hex_luminance(&band) > 0.5 {
+                    "#000000"
+                } else {
+                    "#FFFFFF"
+                };
+                let mut delivered = self.add_stream_line(
+                    "inspect",
+                    &banner,
+                    Some(band_fg.to_string()),
+                    Some(band),
+                    true,
+                );
                 for line in lines {
                     delivered |= self.add_stream_message("inspect", &line);
                 }

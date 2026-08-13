@@ -101,7 +101,12 @@ impl VellumGuiApp {
             .message_processor
             .current_room_uid()
             .is_some_and(|uid| uid.to_string() != snap.room);
-        let heading_color = ui.visuals().strong_text_color();
+        let heading_band = widget_accent(ui.ctx(), ui.visuals());
+        let heading_color = if super::super::theme::relative_luminance(heading_band) > 0.5 {
+            Color32::BLACK
+        } else {
+            Color32::WHITE
+        };
 
         // Tab bar: Containers (the trees you dig through), Worn (flat
         // trinket list), Room, Item (full-height inspector). Clicking an
@@ -131,9 +136,10 @@ impl VellumGuiApp {
             match inspector {
                 Some(view) => {
                     ui.label(
-                        egui::RichText::new(&view.name)
+                        egui::RichText::new(format!(" {} ", view.name))
                             .strong()
-                            .color(heading_color),
+                            .color(heading_color)
+                            .background_color(heading_band),
                     );
                     ui.add_space(2.0);
                     egui::ScrollArea::vertical()
@@ -145,9 +151,10 @@ impl VellumGuiApp {
                                     continue;
                                 }
                                 ui.label(
-                                    egui::RichText::new(command.to_uppercase())
+                                    egui::RichText::new(format!(" {} ", command.to_uppercase()))
                                         .small()
-                                        .color(heading_color),
+                                        .color(heading_color)
+                                        .background_color(heading_band),
                                 );
                                 ui.label(text);
                                 ui.add_space(6.0);
@@ -174,7 +181,7 @@ impl VellumGuiApp {
                 if let Some(focused) = snap.items.iter().find(|i| i.id == fid) {
                     return Self::render_focused_container(
                         app_core, ui, snap, focused, &children, &weights, &counts, focus_key,
-                        heading_color, clicked, &mut click,
+                        heading_band, heading_color, clicked, &mut click,
                     );
                 }
                 // Focused container no longer in the snapshot: drop focus.
@@ -203,9 +210,10 @@ impl VellumGuiApp {
                     if tab_groups.len() > 1 {
                         ui.add_space(6.0);
                         ui.label(
-                            egui::RichText::new(GROUPS[gi])
+                            egui::RichText::new(format!(" {} ", GROUPS[gi]))
                                 .strong()
-                                .color(heading_color),
+                                .color(heading_color)
+                                .background_color(heading_band),
                         );
                         ui.separator();
                     }
@@ -247,6 +255,7 @@ impl VellumGuiApp {
         weights: &std::collections::HashMap<String, crate::core::state::WeightBreakdown>,
         counts: &std::collections::HashMap<String, usize>,
         focus_key: egui::Id,
+        heading_band: Color32,
         heading_color: Color32,
         mut clicked: Option<GuiLinkClick>,
         click: &mut impl FnMut(&egui::Ui, &egui::Response, String) -> Option<GuiLinkClick>,
@@ -265,7 +274,8 @@ impl VellumGuiApp {
                 Self::fmt_lbs(bd.total)
             ))
             .strong()
-            .color(heading_color),
+            .color(heading_color)
+            .background_color(heading_band),
         );
         ui.separator();
 

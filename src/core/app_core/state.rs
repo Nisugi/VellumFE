@@ -1837,13 +1837,27 @@ impl AppCore {
     /// is no fallback to main - a dedicated stream with no subscriber
     /// drops the line, matching game streams. Returns whether anyone got it.
     pub fn add_stream_message(&mut self, stream: &str, message: &str) -> bool {
+        let fg = Some(self.config.colors.ui.system_message_color.clone());
+        self.add_stream_line(stream, message, fg, None, false)
+    }
+
+    /// Like [`Self::add_stream_message`] with explicit styling (banner
+    /// lines with background bands, bold headers).
+    pub fn add_stream_line(
+        &mut self,
+        stream: &str,
+        message: &str,
+        fg: Option<String>,
+        bg: Option<String>,
+        bold: bool,
+    ) -> bool {
         use crate::data::{SpanType, StyledLine, TextSegment, WindowContent};
         let line = StyledLine {
             segments: vec![TextSegment {
                 text: message.to_string(),
-                fg: Some(self.config.colors.ui.system_message_color.clone()),
-                bg: None,
-                bold: false,
+                fg,
+                bg,
+                bold,
                 mono: false,
                 span_type: SpanType::System,
                 link_data: None,
