@@ -45,7 +45,7 @@ impl VellumGuiApp {
         let Some(snap) = snapshot else {
             ui.separator();
             ui.label("Refresh to load the structured inventory.");
-            ui.weak("Requires direct mode (WRAYTH banner).");
+            ui.weak("Needs the extended feed: the game must see the WRAYTH banner (direct mode sends it; Lich can too).");
             return clicked;
         };
         ui.separator();
