@@ -1959,7 +1959,7 @@ fn wire_map_scene(
                     y2: e.b.y,
                     k: match e.kind {
                         SceneEdgeKind::Directional => 0,
-                        SceneEdgeKind::Connector => 1,
+                        SceneEdgeKind::Connector | SceneEdgeKind::ForcedDash => 1,
                         SceneEdgeKind::Stub => 2,
                         SceneEdgeKind::DotPair => 3,
                     },

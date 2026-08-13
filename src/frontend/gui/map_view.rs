@@ -128,6 +128,11 @@ fn terrain_fill(terrain: Option<&str>, base: Color32) -> Color32 {
     )
 }
 
+/// Connectors at or under this cell length keep the dashed line (a local
+/// "go arch" between adjacent rooms reads better as a line); anything
+/// longer renders as paired dots unless the edge carries a Dash override.
+const CONNECTOR_DASH_MAX_CELLS: f32 = 2.5;
+
 /// Stable per-pair color for long-connector dots: the same two rooms get
 /// the same hue every session, and different pairs spread across a wheel of
 /// well-separated hues. Saturation/value sit high enough to read on both
@@ -243,62 +248,69 @@ pub fn paint_sheet(
             SceneEdgeKind::Directional => {
                 painter.line_segment([a, b], style.directional);
             }
-            SceneEdgeKind::Connector => {
-                painter.extend(egui::Shape::dashed_line(
-                    &[a, b],
-                    style.connector,
-                    ppc * 0.25,
-                    ppc * 0.18,
-                ));
-                // Labels whenever zoomed in enough to read them — short
-                // passages included ("go arch" between adjacent bank rooms);
-                // the deferred placement hunts for empty space around the
-                // line, so the old minimum-length gate is unnecessary.
-                if show_connector_labels {
-                    if let Some(label) = &edge.label {
-                        // Slide along the line, then perpendicular of the
-                        // midpoint, hunting for a room-free spot.
-                        let perp = {
-                            let d = (b - a).normalized();
-                            Vec2::new(-d.y, d.x) * ppc * 0.75
-                        };
-                        let mid = a.lerp(b, 0.5);
-                        deferred_labels.push(DeferredLabel {
-                            candidates: vec![
-                                mid,
-                                a.lerp(b, 0.35),
-                                a.lerp(b, 0.65),
-                                mid + perp,
-                                mid - perp,
-                            ],
-                            align: Align2::CENTER_CENTER,
-                            text: label.clone(),
-                            font_size: (ppc * 0.45).clamp(8.0, 13.0),
-                        });
+            SceneEdgeKind::Connector | SceneEdgeKind::DotPair | SceneEdgeKind::ForcedDash => {
+                // Auto rule: long connectors read as dot pairs (a dashed
+                // line that long just crosses the sheet as noise); short
+                // local hops keep the quiet dash. Per-edge overrides trump
+                // it in both directions: Dots forces dots at any length,
+                // Dash (ForcedDash) forces the line at any length.
+                let as_dots = match edge.kind {
+                    SceneEdgeKind::DotPair => true,
+                    SceneEdgeKind::ForcedDash => false,
+                    _ => (ax - bx).hypot(ay - by) > CONNECTOR_DASH_MAX_CELLS,
+                };
+                if as_dots {
+                    // No line at all: a matching-color dot on each linked
+                    // room's shoulder (toward its partner) says "these two
+                    // connect" without crossing the sheet.
+                    let color = connector_pair_color(edge.a_room, edge.b_room);
+                    let dot_r = (ppc * 0.14).clamp(2.0, 5.0);
+                    let dir = (b - a).normalized();
+                    for (from, toward) in [(a, dir), (b, -dir)] {
+                        let dot = from + toward * (room_size * 0.5 + dot_r + 1.5);
+                        deferred_dots.push((dot, dot_r, color));
+                        if show_connector_labels {
+                            if let Some(label) = &edge.label {
+                                deferred_labels.push(DeferredLabel {
+                                    candidates: vec![
+                                        dot + toward * (dot_r + ppc * 0.45),
+                                        dot + Vec2::new(0.0, -ppc * 0.55),
+                                        dot + Vec2::new(0.0, ppc * 0.55),
+                                    ],
+                                    align: Align2::CENTER_CENTER,
+                                    text: label.clone(),
+                                    font_size: (ppc * 0.4).clamp(7.0, 12.0),
+                                });
+                            }
+                        }
                     }
-                }
-            }
-            SceneEdgeKind::DotPair => {
-                // Curated: no line at all. A matching-color dot on each
-                // linked room's shoulder (toward its partner) says "these
-                // two connect" without crossing the sheet.
-                let color = connector_pair_color(edge.a_room, edge.b_room);
-                let dot_r = (ppc * 0.14).clamp(2.0, 5.0);
-                let dir = (b - a).normalized();
-                for (from, toward) in [(a, dir), (b, -dir)] {
-                    let dot = from + toward * (room_size * 0.5 + dot_r + 1.5);
-                    deferred_dots.push((dot, dot_r, color));
+                } else {
+                    painter.extend(egui::Shape::dashed_line(
+                        &[a, b],
+                        style.connector,
+                        ppc * 0.25,
+                        ppc * 0.18,
+                    ));
                     if show_connector_labels {
                         if let Some(label) = &edge.label {
+                            // Slide along the line, then perpendicular of
+                            // the midpoint, hunting for a room-free spot.
+                            let perp = {
+                                let d = (b - a).normalized();
+                                Vec2::new(-d.y, d.x) * ppc * 0.75
+                            };
+                            let mid = a.lerp(b, 0.5);
                             deferred_labels.push(DeferredLabel {
                                 candidates: vec![
-                                    dot + toward * (dot_r + ppc * 0.45),
-                                    dot + Vec2::new(0.0, -ppc * 0.55),
-                                    dot + Vec2::new(0.0, ppc * 0.55),
+                                    mid,
+                                    a.lerp(b, 0.35),
+                                    a.lerp(b, 0.65),
+                                    mid + perp,
+                                    mid - perp,
                                 ],
                                 align: Align2::CENTER_CENTER,
                                 text: label.clone(),
-                                font_size: (ppc * 0.4).clamp(7.0, 12.0),
+                                font_size: (ppc * 0.45).clamp(8.0, 13.0),
                             });
                         }
                     }

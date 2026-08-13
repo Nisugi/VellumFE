@@ -62,6 +62,9 @@ pub enum SceneEdgeKind {
     /// Owner-curated dot pair (EdgeAction::Dots): no line — a matching-
     /// color dot on each linked room instead.
     DotPair,
+    /// Owner-forced dashed line (EdgeAction::Dash): renders like Connector
+    /// but is exempt from the renderer's long-connector auto-dot rule.
+    ForcedDash,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +182,7 @@ pub fn build_scene(
     let mut hidden: HashSet<(u32, u32)> = HashSet::new();
     let mut demoted: HashSet<(u32, u32)> = HashSet::new();
     let mut dotted: HashSet<(u32, u32)> = HashSet::new();
+    let mut dash_forced: HashSet<(u32, u32)> = HashSet::new();
     for e in edge_overrides {
         let (Some(&a), Some(&b)) = (keys.get(&e.a), keys.get(&e.b)) else {
             continue;
@@ -190,9 +194,14 @@ pub fn build_scene(
             }
             // Dash joins the demoted-drawing set: same dashed rendering, but
             // (unlike Connector) it never touched the DirectionMap, so the
-            // rooms stay where the solver put them.
-            EdgeAction::Connector | EdgeAction::Dash => {
+            // rooms stay where the solver put them. Forced dashes are also
+            // exempt from the renderer's auto-dot rule, hence their own set.
+            EdgeAction::Connector => {
                 demoted.insert(pair);
+            }
+            EdgeAction::Dash => {
+                demoted.insert(pair);
+                dash_forced.insert(pair);
             }
             // Dots: same geometry story as Dash, but rendered as a dot pair
             // (demoted set so a solid intra-group edge loses its line too).
@@ -293,6 +302,8 @@ pub fn build_scene(
                             group: room_group,
                             kind: if dotted.contains(&key) {
                                 SceneEdgeKind::DotPair
+                            } else if dash_forced.contains(&key) {
+                                SceneEdgeKind::ForcedDash
                             } else {
                                 SceneEdgeKind::Connector
                             },
@@ -374,6 +385,8 @@ pub fn build_scene(
                         group: room_group,
                         kind: if is_dotted {
                             SceneEdgeKind::DotPair
+                        } else if dash_forced.contains(&key) {
+                            SceneEdgeKind::ForcedDash
                         } else {
                             SceneEdgeKind::Connector
                         },
@@ -535,7 +548,11 @@ mod tests {
         assert_eq!(plain.outdoor.edges.len(), 1);
         assert_eq!(plain.outdoor.edges[0].kind, SceneEdgeKind::Directional);
         assert_eq!(dashed.outdoor.edges.len(), 1);
-        assert_eq!(dashed.outdoor.edges[0].kind, SceneEdgeKind::Connector);
+        assert_eq!(
+            dashed.outdoor.edges[0].kind,
+            SceneEdgeKind::ForcedDash,
+            "a user-forced dash is distinct so the auto-dot rule can't restyle it"
+        );
         // Identical geometry: same cells for the edge and every room.
         assert_eq!(plain.outdoor.edges[0].a, dashed.outdoor.edges[0].a);
         assert_eq!(plain.outdoor.edges[0].b, dashed.outdoor.edges[0].b);
