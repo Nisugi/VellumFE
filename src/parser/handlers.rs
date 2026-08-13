@@ -620,6 +620,13 @@ impl XmlParser {
     /// `</inventoryViewItem>` re-enters the normal parser.
     pub(super) fn parse_viewitem_line(&mut self, line: &str) -> Vec<ParsedElement> {
         let mut elements = Vec::new();
+        // A physical line boundary inside an open capture is a newline in
+        // the section text: the wire formats analyze/inspect output with
+        // real lines (indented tables, blank separators), and flattening
+        // them produced run-on paragraphs.
+        if self.inv_viewitem.as_ref().is_some_and(|b| b.current.is_some()) {
+            self.viewitem_text("\n");
+        }
         let mut remaining = line;
         while !remaining.is_empty() {
             let Some(tag_start) = remaining.find('<') else {
@@ -679,8 +686,8 @@ impl XmlParser {
             } else if tag.starts_with("<result") {
                 let command = Self::extract_attribute(tag, "command").unwrap_or_default();
                 if let Some(b) = self.inv_viewitem.as_mut() {
-                    if let Some(section) = b.current.take() {
-                        b.results.push(section);
+                    if let Some((cmd, text)) = b.current.take() {
+                        b.results.push((cmd, text.trim_matches('\n').to_string()));
                     }
                     if tag.ends_with("/>") {
                         // Self-closing result = empty section.
@@ -691,8 +698,8 @@ impl XmlParser {
                 }
             } else if Self::is_close_tag(tag, "result") {
                 if let Some(b) = self.inv_viewitem.as_mut() {
-                    if let Some(section) = b.current.take() {
-                        b.results.push(section);
+                    if let Some((cmd, text)) = b.current.take() {
+                        b.results.push((cmd, text.trim_matches('\n').to_string()));
                     }
                 }
             } else if tag.starts_with("<br") {
@@ -714,8 +721,8 @@ impl XmlParser {
 
     fn finish_viewitem(&mut self, elements: &mut Vec<ParsedElement>, force_state: Option<&str>) {
         if let Some(mut b) = self.inv_viewitem.take() {
-            if let Some(section) = b.current.take() {
-                b.results.push(section);
+            if let Some((cmd, text)) = b.current.take() {
+                b.results.push((cmd, text.trim_matches('\n').to_string()));
             }
             elements.push(ParsedElement::InventoryViewItem(
                 crate::parser::InventoryViewItemResponse {

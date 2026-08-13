@@ -603,7 +603,9 @@ impl AppCore {
                 self.last_announced_view_generation = view.generation;
                 let (name, lines): (String, Vec<String>) = {
                     let view = self.game_state.viewed_item.as_ref().expect("checked");
-                    let mut out = vec![format!("── {} ──", view.name)];
+                    // ASCII banner: U+2500 box glyphs are tofu in some of
+                    // the GUI font set (same gap as the arrow glyphs).
+                    let mut out = vec![format!("=== {} ===", view.name)];
                     for (command, text) in &view.results {
                         if text.trim().is_empty() {
                             continue;

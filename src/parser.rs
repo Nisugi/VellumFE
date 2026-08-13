@@ -644,19 +644,21 @@ impl XmlParser {
 
         let line = Self::strip_gsl_tags(line);
 
+        // An inventoryViewItem capture (active or opening on this line) owns
+        // the whole line: its styled body must never leak into the text
+        // stream. Checked BEFORE the blank-line early-return so blank lines
+        // inside a capture become newlines in the section, not stream text.
+        // The dedicated walker hands back any post-close remainder (e.g. a
+        // trailing prompt) for normal parsing.
+        if self.inv_viewitem.is_some() || line.contains("<inventoryViewItem") {
+            return self.parse_viewitem_line(&line);
+        }
+
         // Preserve intentional blank lines from the server output.
         // Without this, empty lines would be dropped and formatting that relies on vertical spacing
         // would collapse.
         if line.is_empty() {
             return vec![self.create_text_element(String::new())];
-        }
-
-        // An inventoryViewItem capture (active or opening on this line) owns
-        // the whole line: its styled body must never leak into the text
-        // stream. The dedicated walker hands back any post-close remainder
-        // (e.g. a trailing prompt) for normal parsing.
-        if self.inv_viewitem.is_some() || line.contains("<inventoryViewItem") {
-            return self.parse_viewitem_line(&line);
         }
 
         let mut elements = Vec::new();

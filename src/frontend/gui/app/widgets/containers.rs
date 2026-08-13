@@ -101,7 +101,7 @@ impl VellumGuiApp {
             .message_processor
             .current_room_uid()
             .is_some_and(|uid| uid.to_string() != snap.room);
-        let heading_color = widget_accent(ui.ctx(), ui.visuals());
+        let heading_color = ui.visuals().strong_text_color();
 
         // Tab bar: Containers (the trees you dig through), Worn (flat
         // trinket list), Room, Item (full-height inspector). Clicking an
