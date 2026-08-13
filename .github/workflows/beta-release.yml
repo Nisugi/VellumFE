@@ -136,6 +136,18 @@ jobs:
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
 
+      # New windows-latest images ship pwsh without PSGallery registered;
+      # the signing action's Install-Module dies with "Unable to find
+      # repository 'PSGallery'" (beta.38's Windows job). Re-register it.
+      - name: Register PSGallery (runner image regression workaround)
+        if: runner.os == 'Windows' && steps.winsign.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+            Register-PSRepository -Default
+          }
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+
       - name: Sign Windows exe (Azure Artifact Signing)
         if: runner.os == 'Windows' && steps.winsign.outputs.enabled == 'true'
         uses: azure/trusted-signing-action@v0.5.1
