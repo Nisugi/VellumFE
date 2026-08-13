@@ -227,6 +227,14 @@ pub enum WindowDef {
         data: MissingSpellsWidgetData,
     },
 
+    #[serde(rename = "containers")]
+    Containers {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: ContainersWidgetData,
+    },
+
     #[serde(rename = "multiaccount")]
     MultiAccount {
         #[serde(flatten)]
@@ -530,6 +538,10 @@ impl WindowDef {
                 base,
                 data: MissingSpellsWidgetData {},
             },
+            "containers" => WindowDef::Containers {
+                base,
+                data: ContainersWidgetData {},
+            },
             "multiaccount" => WindowDef::MultiAccount {
                 base,
                 data: MultiAccountWidgetData::default(),
@@ -606,6 +618,7 @@ impl WindowDef {
             WindowDef::Hotkeybar { base, .. } => &base.name,
             WindowDef::Spells { base, .. } => &base.name,
             WindowDef::MissingSpells { base, .. } => &base.name,
+            WindowDef::Containers { base, .. } => &base.name,
             WindowDef::MultiAccount { base, .. } => &base.name,
             WindowDef::Perception { base, .. } => &base.name,
             WindowDef::Experience { base, .. } => &base.name,
@@ -646,6 +659,7 @@ impl WindowDef {
             WindowDef::Hotkeybar { .. } => "hotkeybar",
             WindowDef::Spells { .. } => "spells",
             WindowDef::MissingSpells { .. } => "missingspells",
+            WindowDef::Containers { .. } => "containers",
             WindowDef::MultiAccount { .. } => "multiaccount",
             WindowDef::Perception { .. } => "perception",
             WindowDef::Experience { .. } => "experience",
@@ -686,6 +700,7 @@ impl WindowDef {
             WindowDef::Hotkeybar { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
             WindowDef::MissingSpells { base, .. } => base,
+            WindowDef::Containers { base, .. } => base,
             WindowDef::MultiAccount { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
             WindowDef::Experience { base, .. } => base,
@@ -726,6 +741,7 @@ impl WindowDef {
             WindowDef::Hotkeybar { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
             WindowDef::MissingSpells { base, .. } => base,
+            WindowDef::Containers { base, .. } => base,
             WindowDef::MultiAccount { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
             WindowDef::Experience { base, .. } => base,

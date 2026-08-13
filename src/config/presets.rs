@@ -187,6 +187,7 @@ pub const CATALOG: &[(&str, Option<GameType>)] = &[
     ("room", None),
     ("spells", None),
     ("missingspells", None),
+    ("containers", Some(GameType::GS4)),
     ("compass", None),
     ("map", None),
     ("injuries", None),
@@ -1631,6 +1632,21 @@ impl Config {
                     ..base_defaults.clone()
                 },
                 data: MissingSpellsWidgetData {},
+            }),
+            // Managed-inventory container tree (extended feed, .invsync)
+            "containers" => Some(WindowDef::Containers {
+                base: WindowBase {
+                    name: "containers".to_string(),
+                    title: Some("Containers".to_string()),
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(20),
+                    cols: Width::new(40),
+                    min_rows: Some(5),
+                    min_cols: Some(20),
+                    ..base_defaults.clone()
+                },
+                data: ContainersWidgetData {},
             }),
             "perception" => Some(WindowDef::Perception {
                 base: WindowBase {

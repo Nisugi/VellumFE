@@ -116,6 +116,7 @@ impl Frontend for TuiFrontend {
         self.sync_targets_widgets(app_core, &theme);  // New component-based
         self.sync_players_widgets(app_core, &theme);
         self.sync_missing_spells_widgets(app_core);
+        self.sync_containers_widgets(app_core);
         self.sync_items_widgets(app_core, &theme);
         self.sync_container_widgets(app_core, &theme);
         self.sync_dashboard_widgets(app_core, &theme);
@@ -148,6 +149,7 @@ impl Frontend for TuiFrontend {
         let mut players_widgets = std::mem::take(&mut self.widget_manager.players_widgets);
         let mut missing_spells_widgets =
             std::mem::take(&mut self.widget_manager.missing_spells_widgets);
+        let mut containers_widgets = std::mem::take(&mut self.widget_manager.containers_widgets);
         let mut items_widgets = std::mem::take(&mut self.widget_manager.items_widgets);
         let mut container_widgets = std::mem::take(&mut self.widget_manager.container_widgets);
         let mut dashboard_widgets = std::mem::take(&mut self.widget_manager.dashboard_widgets);
@@ -413,6 +415,11 @@ impl Frontend for TuiFrontend {
                     }
                     WindowContent::MissingSpells => {
                         if let Some(widget) = missing_spells_widgets.get_mut(name) {
+                            widget.render(area, f.buffer_mut());
+                        }
+                    }
+                    WindowContent::Containers => {
+                        if let Some(widget) = containers_widgets.get_mut(name) {
                             widget.render(area, f.buffer_mut());
                         }
                     }
@@ -752,6 +759,7 @@ impl Frontend for TuiFrontend {
         self.widget_manager.targets_widgets = targets_widgets;
         self.widget_manager.players_widgets = players_widgets;
         self.widget_manager.missing_spells_widgets = missing_spells_widgets;
+        self.widget_manager.containers_widgets = containers_widgets;
         self.widget_manager.items_widgets = items_widgets;
         self.widget_manager.container_widgets = container_widgets;
         self.widget_manager.dashboard_widgets = dashboard_widgets;

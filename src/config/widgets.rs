@@ -990,6 +990,10 @@ pub struct SpellsWidgetData {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MissingSpellsWidgetData {}
 
+/// Containers tree widget (managed-inventory snapshot) - no options yet
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ContainersWidgetData {}
+
 /// Multi-account cards: which rows each character's card shows.
 ///
 /// Every element is opt-in per field rather than a fixed card template,

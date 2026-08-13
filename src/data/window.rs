@@ -64,6 +64,11 @@ pub enum WidgetType {
     /// clustered by group. Reads from the MultiAccountHub on the GUI app,
     /// not from GameState.
     MultiAccount,
+    /// Structured inventory tree from the extended feed's managed snapshot
+    /// (`.invsync`): containers with capacities and open/closed state,
+    /// items nested under their real parents. Reads
+    /// `GameState.managed_inventory`.
+    Containers,
 }
 
 impl WidgetType {
@@ -96,6 +101,7 @@ impl WidgetType {
             "targets" => Some(WidgetType::Targets), // Component-based (default)
             "players" => Some(WidgetType::Players),
             "missingspells" => Some(WidgetType::MissingSpells),
+            "containers" => Some(WidgetType::Containers),
             "multiaccount" => Some(WidgetType::MultiAccount),
             "items" => Some(WidgetType::Items),
             "spells" => Some(WidgetType::Spells),
@@ -137,6 +143,7 @@ impl WidgetType {
         "players",
         "spells",
         "missingspells",
+        "containers",
         "multiaccount",
         "perception",
         "performance",
@@ -200,6 +207,9 @@ pub enum WindowContent {
     /// Missing-spells watchlist (watched spells not currently active).
     /// Reads from GameState.character.watched_spells + effects.
     MissingSpells,
+    /// Managed-inventory container tree (extended feed snapshot).
+    /// Reads from GameState.managed_inventory (no data stored here).
+    Containers,
     Dashboard {
         indicators: Vec<(String, u8)>, // (id, value) pairs
     },

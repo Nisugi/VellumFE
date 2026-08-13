@@ -80,7 +80,7 @@ pub use widgets::{
     ExperienceWidgetData,
     GS4ExperienceWidgetData, HandIconState, HandWidgetData, HotkeybarWidgetData, IndicatorWidgetData,
     InjuryDollWidgetData, InventoryWidgetData, ItemsWidgetData, MapWidgetData,
-    CardRow, MiniVitalsWidgetData, MissingSpellsWidgetData, MultiAccountWidgetData,
+    CardRow, ContainersWidgetData, MiniVitalsWidgetData, MissingSpellsWidgetData, MultiAccountWidgetData,
     PerceptionWidgetData,
     PerformanceWidgetData, PlayersWidgetData, ProgressWidgetData, QuickbarDefinition,
     QuickbarEntryConfig, QuickbarWidgetData, QuickbarsConfig, RoomWidgetData, SortDirection,
@@ -194,8 +194,9 @@ impl WidgetCategory {
             "progress" | "minivitals" => Self::ProgressBar,
             "text" | "tabbedtext" => Self::TextWindow,
             "targets" | "players" | "items" => Self::Entity,
-            "inventory" | "spells" | "missingspells" | "injury_doll" | "experience"
-            | "gs4_experience" | "encum" | "reserve" | "perception" | "multiaccount" => {
+            "inventory" | "spells" | "missingspells" | "containers" | "injury_doll"
+            | "experience" | "gs4_experience" | "encum" | "reserve" | "perception"
+            | "multiaccount" => {
                 Self::Character
             }
             "room" | "compass" | "map" => Self::Navigation,

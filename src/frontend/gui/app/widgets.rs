@@ -7,6 +7,7 @@ use super::*;
 
 mod boards;
 mod command_widget;
+mod containers;
 mod injury;
 mod links_bars;
 mod map_compass;
@@ -149,6 +150,7 @@ impl VellumGuiApp {
                 Self::render_multiaccount_content(app_core, ui, &settings, &data);
                 None
             }
+            WindowContent::Containers => Self::render_containers_content(app_core, ui),
             WindowContent::MissingSpells => {
                 Self::render_missing_spells_content(app_core, ui);
                 None
