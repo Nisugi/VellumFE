@@ -2611,12 +2611,20 @@ fn render_wheel_designer(
         if ui
             .button("Even out")
             .on_hover_text(
-                "Give every unlocked slice an even share of the leftover. \
-                 Locked slices keep their exact width.",
+                "Equalise unlocked slices within each run between locks. \
+                 Locked slices keep their exact position and width; a \
+                 None-type gap keeps its width too.",
             )
             .clicked()
         {
-            even_out_unlocked(level);
+            let widths: Vec<f32> = build_view(level, meta)
+                .layout
+                .seats
+                .iter()
+                .take(level.len())
+                .map(|s| s.span_deg)
+                .collect();
+            even_out_runs(level, &widths);
         }
         if ui
             .button("Mirror")
@@ -2780,16 +2788,266 @@ fn materialize_spans(
     }
 }
 
-/// Even out the ring, honoring locks: every unlocked slice returns to the
-/// automatic even split of whatever the locked slices leave over. (The
-/// reference designer's rule — "evening out only respaces the gaps
-/// between locked slices" — expressed in span-list form.)
-fn even_out_unlocked(level: &mut [WheelSlice]) {
-    for s in level.iter_mut() {
-        if !s.locked {
+/// Even out the ring (wheel v2, run-based): locked slices are position
+/// anchors and None-type slices keep their width, so equalization happens
+/// within each maximal run of consecutive unlocked slices between locks —
+/// each run's total width is conserved, which is exactly what keeps every
+/// locked slice's angular position fixed. With no locks and no None
+/// slices this degrades to the legacy "everything back to auto" (all
+/// spans cleared), which keeps simple rings simple.
+///
+/// `widths` are the resolved spans of the real slices (materialized
+/// geometry) — required because run totals must be measured, not implied.
+fn even_out_runs(level: &mut [WheelSlice], widths: &[f32]) {
+    let n = level.len();
+    if n == 0 || widths.len() < n {
+        return;
+    }
+    let fixed = |s: &WheelSlice| s.locked || s.is_none_type();
+    if !level.iter().any(fixed) {
+        for s in level.iter_mut() {
             s.span = None;
         }
+        return;
     }
+    // Freeze everything to concrete widths, then equalize the free
+    // members of each run between locks.
+    for (s, w) in level.iter_mut().zip(widths) {
+        s.span = Some(*w);
+    }
+    // Runs are delimited by LOCKED slices (None-type slices belong to a
+    // run but keep their width — "a None-type gap is left untouched").
+    // Walk circularly from the first locked slice; with no locked slice at
+    // all, the whole ring is one run.
+    let first_lock = level.iter().position(|s| s.locked);
+    let order: Vec<usize> = match first_lock {
+        Some(f) => (0..n).map(|k| (f + k) % n).collect(),
+        None => (0..n).collect(),
+    };
+    let mut run: Vec<usize> = Vec::new();
+    let mut flush = |run: &mut Vec<usize>, level: &mut [WheelSlice]| {
+        let free: Vec<usize> = run
+            .iter()
+            .copied()
+            .filter(|&i| !level[i].is_none_type())
+            .collect();
+        if !free.is_empty() {
+            let total: f32 = run
+                .iter()
+                .filter(|&&i| !level[i].is_none_type())
+                .map(|&i| level[i].span.unwrap_or(0.0))
+                .sum();
+            let share = total / free.len() as f32;
+            for &i in &free {
+                level[i].span = Some(share);
+            }
+        }
+        run.clear();
+    };
+    for &i in &order {
+        if level[i].locked {
+            flush(&mut run, level);
+        } else {
+            run.push(i);
+        }
+    }
+    flush(&mut run, level);
+}
+
+/// Outcome of a lock-aware slice deletion.
+#[derive(Debug, PartialEq)]
+enum RingDelete {
+    /// The slice was removed; its width went to the unlocked neighbour.
+    Removed,
+    /// Both neighbours are locked: the seat became a None-type dead zone
+    /// holding the exact wedge (F5a) — no locked slice moved.
+    BecameNone,
+}
+
+/// Delete seat `i` from a fully-materialized ring, honoring locks: the
+/// freed width goes to an unlocked neighbour (counter-clockwise/previous
+/// preferred), or — with both neighbours locked — the seat converts to a
+/// None-type dead zone in place. Every boundary outside the affected
+/// wedge(s) is untouched, so locked positions hold by construction.
+/// Returns the ring's new `start` alongside what happened; `start` moves
+/// only when seat 0's leading edge or width changed (same rule as the
+/// divider drag).
+fn ring_delete(
+    level: &mut Vec<WheelSlice>,
+    start: f32,
+    i: usize,
+) -> Option<(f32, RingDelete)> {
+    let n = level.len();
+    if i >= n {
+        return None;
+    }
+    if n == 1 {
+        level.clear();
+        return Some((start, RingDelete::Removed));
+    }
+    let w = |s: &WheelSlice| s.span.unwrap_or(0.0);
+    // Absolute leading edges of every seat (aim convention; resolve_spans
+    // centers seat 0 at `start`).
+    let leading: Vec<f32> = {
+        let mut acc = start - w(&level[0]) / 2.0;
+        level
+            .iter()
+            .map(|s| {
+                let l = acc;
+                acc += w(s);
+                l
+            })
+            .collect()
+    };
+    let prev = (i + n - 1) % n;
+    let next = (i + 1) % n;
+    let freed = w(&level[i]);
+    if level[prev].locked && level[next].locked {
+        // F5a: both neighbours locked (with n == 2 that's the same slice on
+        // both sides) — the wedge becomes a None-type dead zone holding the
+        // exact seat; no locked slice moves.
+        let seat = &mut level[i];
+        *seat = WheelSlice {
+            span: seat.span,
+            inner: seat.inner,
+            fire_type: Some("none".to_string()),
+            ..Default::default()
+        };
+        return Some((start, RingDelete::BecameNone));
+    }
+    // The unlocked side extends — previous (counter-clockwise) preferred,
+    // matching the merge identity rule. prev == next (n == 2) collapses to
+    // that one neighbour either way.
+    let absorber = if !level[prev].locked { prev } else { next };
+    // Growth direction decides whose leading edge survives: prev grows
+    // clockwise (keeps its own leading edge), next grows counter-clockwise
+    // (its leading edge becomes the deleted seat's).
+    let absorber_new_leading = if absorber == prev {
+        leading[absorber]
+    } else {
+        leading[i]
+    };
+    level[absorber].span = Some(w(&level[absorber]) + freed);
+    level.remove(i);
+    // Every boundary outside the union is untouched; restore `start` so
+    // the NEW seat 0's center sits where its wedge actually is.
+    let new_first_leading = if i == 0 {
+        // New seat 0 is old slice 1: either it absorbed backwards (its
+        // leading edge is old seat 0's) or it kept its own edge.
+        if absorber == next { absorber_new_leading } else { leading[1] }
+    } else if absorber == 0 {
+        // Seat 0 grew (forwards into seat 1's old spot, or backwards
+        // around the wrap): its recorded new leading edge is authoritative.
+        absorber_new_leading
+    } else {
+        leading[0]
+    };
+    let new_start = (new_first_leading + w(&level[0]) / 2.0).rem_euclid(360.0);
+    Some((new_start, RingDelete::Removed))
+}
+
+/// Split seat `seat` of a fully-materialized ring at the absolute aim
+/// angle `at_deg`, inserting the new (empty) slice clockwise of the kept
+/// part. Both halves must clear `WHEEL_MIN_SPAN_DEG`; returns the new
+/// slice's index (always `seat + 1`) with the ring's `start` adjusted so
+/// nothing else moves. None when there's no room or the angle isn't
+/// inside the seat.
+fn ring_split(
+    level: &mut Vec<WheelSlice>,
+    start: f32,
+    seat: usize,
+    at_deg: f32,
+) -> Option<(f32, usize)> {
+    let n = level.len();
+    if seat >= n {
+        return None;
+    }
+    let w = |s: &WheelSlice| s.span.unwrap_or(0.0);
+    let leading0 = start - w(&level[0]) / 2.0;
+    let seat_leading =
+        leading0 + level[..seat].iter().map(w).sum::<f32>();
+    let width = w(&level[seat]);
+    let off = (at_deg - seat_leading).rem_euclid(360.0);
+    if off >= width {
+        return None;
+    }
+    if off < WHEEL_MIN_SPAN_DEG - 1e-3 || width - off < WHEEL_MIN_SPAN_DEG - 1e-3 {
+        return None;
+    }
+    level[seat].span = Some(off);
+    level.insert(
+        seat + 1,
+        WheelSlice {
+            span: Some(width - off),
+            ..Default::default()
+        },
+    );
+    // Seat 0's width may have changed (seat == 0); recenter start on the
+    // shrunk first wedge so every other boundary stays put.
+    let new_start = (leading0 + w(&level[0]) / 2.0).rem_euclid(360.0);
+    Some((new_start, seat + 1))
+}
+
+/// Merge the divider after seat `boundary` on a fully-materialized ring:
+/// the two adjacent seats become one wedge (their union). Identity — the
+/// counter-clockwise slice (the one listed above in the Numeric list)
+/// survives with its label/command/colour/type; the clockwise slice's
+/// settings are discarded. Exception: when the survivor-by-direction is
+/// locked and the other side isn't, the unlocked side survives instead
+/// (a lock's width must not grow as a side effect). Guards: a ring keeps
+/// at least 2 slices; both sides locked refuses. Returns (new_start,
+/// surviving index) or an error message for the status line.
+fn ring_merge(
+    level: &mut Vec<WheelSlice>,
+    start: f32,
+    boundary: usize,
+) -> Result<(f32, usize), &'static str> {
+    let n = level.len();
+    if boundary >= n {
+        return Err("no such divider");
+    }
+    if n <= 2 {
+        return Err("a wheel keeps at least 2 slices");
+    }
+    let a = boundary; // counter-clockwise side of the divider
+    let b = (boundary + 1) % n; // clockwise side
+    if level[a].locked && level[b].locked {
+        return Err("both slices are locked — unlock one to merge");
+    }
+    // Counter-clockwise survivor unless it's locked and the other isn't.
+    let (survivor, absorbed) = if level[a].locked { (b, a) } else { (a, b) };
+    let w = |s: &WheelSlice| s.span.unwrap_or(0.0);
+    let leading: Vec<f32> = {
+        let mut acc = start - w(&level[0]) / 2.0;
+        level
+            .iter()
+            .map(|s| {
+                let l = acc;
+                acc += w(s);
+                l
+            })
+            .collect()
+    };
+    // The union wedge always starts at seat a's leading edge.
+    let union_leading = leading[a];
+    let union_width = w(&level[a]) + w(&level[b]);
+    level[survivor].span = Some(union_width);
+    level.remove(absorbed);
+    let survivor_now = if absorbed < survivor { survivor - 1 } else { survivor };
+    // Restore start: find the new seat 0's leading edge.
+    let new_first_leading = if survivor_now == 0 {
+        // The union owns seat 0 (survivor is first): wrap-merges start at
+        // the union's leading edge, in-line merges at seat 0's own edge.
+        if a == n - 1 || a == 0 { union_leading } else { leading[0] }
+    } else if absorbed == 0 {
+        // Old seat 0 was absorbed into the tail (wrap merge, survivor at
+        // the end): the new first slice is old slice 1.
+        leading[1]
+    } else {
+        leading[0]
+    };
+    let new_start = (new_first_leading + w(&level[0]) / 2.0).rem_euclid(360.0);
+    Ok((new_start.rem_euclid(360.0), survivor_now))
 }
 
 /// Move the slice at `from` so it occupies the seat at `to`, shifting the
@@ -3082,20 +3340,275 @@ mod designer_tests {
         }
     }
 
+    /// Absolute (leading, width) pairs of every seat — the geometry two
+    /// rings are compared by. Positions are what the lock guarantees.
+    fn seat_geometry(level: &[WheelSlice], start: f32) -> Vec<(f32, f32)> {
+        let w0 = level[0].span.unwrap();
+        let mut acc = (start - w0 / 2.0).rem_euclid(360.0);
+        level
+            .iter()
+            .map(|s| {
+                let w = s.span.unwrap();
+                let l = acc;
+                acc = (acc + w).rem_euclid(360.0);
+                (l, w)
+            })
+            .collect()
+    }
+
+    fn locked_named(label: &str, span: f32) -> WheelSlice {
+        WheelSlice {
+            label: label.to_string(),
+            span: Some(span),
+            locked: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn ring_delete_gives_the_wedge_to_the_ccw_neighbour() {
+        // a(90) b(90) c(90) d(90), start 0. Delete c: b (counter-clockwise)
+        // absorbs; a and d must not move.
+        let mut level = vec![
+            named("a", Some(90.0)),
+            named("b", Some(90.0)),
+            named("c", Some(90.0)),
+            named("d", Some(90.0)),
+        ];
+        let before = seat_geometry(&level, 0.0);
+        let (start, out) = ring_delete(&mut level, 0.0, 2).unwrap();
+        assert_eq!(out, RingDelete::Removed);
+        let labels: Vec<&str> = level.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["a", "b", "d"]);
+        let after = seat_geometry(&level, start);
+        assert_eq!(after[0], before[0], "a untouched");
+        assert_eq!(after[1].0, before[1].0, "b's leading edge untouched");
+        assert!((after[1].1 - 180.0).abs() < 1e-3, "b holds the union");
+        assert_eq!(after[2], before[3], "d untouched");
+    }
+
+    #[test]
+    fn ring_delete_prefers_unlocked_side_and_start_survives_seat0_edits() {
+        // Delete seat 0 (start-centered): the ring must not rotate.
+        let mut level = vec![
+            named("a", Some(90.0)),
+            named("b", Some(90.0)),
+            named("c", Some(90.0)),
+            named("d", Some(90.0)),
+        ];
+        let before = seat_geometry(&level, 0.0);
+        // d (ccw of a) locked → b absorbs backwards instead.
+        level[3].locked = true;
+        let (start, _) = ring_delete(&mut level, 0.0, 0).unwrap();
+        let labels: Vec<&str> = level.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["b", "c", "d"]);
+        let after = seat_geometry(&level, start);
+        // b's wedge = union of old a+b, starting at a's old leading edge.
+        assert!((gamepad::angular_gap(after[0].0, before[0].0)) < 1e-3, "union starts at a's edge");
+        assert!((after[0].1 - 180.0).abs() < 1e-3);
+        assert_eq!(after[1], before[2], "c untouched");
+        assert_eq!(after[2], before[3], "locked d never moved");
+    }
+
+    #[test]
+    fn ring_delete_between_two_locks_becomes_a_dead_zone() {
+        let mut level = vec![
+            locked_named("a", 90.0),
+            named("b", Some(90.0)),
+            locked_named("c", 90.0),
+            named("d", Some(90.0)),
+        ];
+        let before = seat_geometry(&level, 0.0);
+        let (start, out) = ring_delete(&mut level, 0.0, 1).unwrap();
+        assert_eq!(out, RingDelete::BecameNone);
+        assert_eq!(start, 0.0, "nothing rotated");
+        assert_eq!(level.len(), 4, "seat survives as a dead zone");
+        assert!(level[1].is_none_type());
+        assert!(level[1].command.is_empty() && level[1].label.is_empty());
+        assert!(!level[1].locked, "the dead zone itself is unlocked");
+        assert_eq!(seat_geometry(&level, start), before, "geometry identical");
+    }
+
+    #[test]
+    fn ring_split_inserts_after_and_keeps_the_rest_pinned() {
+        let mut level = vec![
+            named("a", Some(120.0)),
+            named("b", Some(120.0)),
+            named("c", Some(120.0)),
+        ];
+        let before = seat_geometry(&level, 0.0);
+        // Seat 1 spans 60..180; split at 100°.
+        let (start, new_idx) = ring_split(&mut level, 0.0, 1, 100.0).unwrap();
+        assert_eq!(new_idx, 2);
+        let labels: Vec<&str> = level.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["a", "b", "", "c"]);
+        let after = seat_geometry(&level, start);
+        assert_eq!(after[0], before[0], "a untouched");
+        assert!((after[1].1 - 40.0).abs() < 1e-3, "b keeps the ccw part");
+        assert!((after[2].0 - 100.0).abs() < 1e-3, "new slice starts at the cut");
+        assert!((after[2].1 - 80.0).abs() < 1e-3);
+        assert_eq!(after[3], before[2], "c untouched");
+
+        // No room: a 40° slice can't be split; neither can a cut leaving
+        // a sub-30° half.
+        let mut tiny = vec![named("a", Some(40.0)), named("b", Some(320.0))];
+        assert!(ring_split(&mut tiny, 0.0, 0, 0.0).is_none());
+        let mut wide = vec![named("a", Some(320.0)), named("b", Some(40.0))];
+        // Seat 0 spans -160..160; a cut at -150 leaves 10° on the ccw side.
+        assert!(ring_split(&mut wide, 0.0, 0, 210.0).is_none());
+    }
+
+    #[test]
+    fn ring_split_seat0_recenters_start() {
+        let mut level = vec![named("a", Some(180.0)), named("b", Some(180.0))];
+        let before = seat_geometry(&level, 0.0);
+        // Seat 0 spans -90..90 (i.e. 270..90 wrapped); cut at 30°.
+        let (start, _) = ring_split(&mut level, 0.0, 0, 30.0).unwrap();
+        let after = seat_geometry(&level, start);
+        assert!((gamepad::angular_gap(after[0].0, before[0].0)) < 1e-3, "a's edge fixed");
+        assert!((after[0].1 - 120.0).abs() < 1e-3);
+        assert!((gamepad::angular_gap(after[2].0, before[1].0)) < 1e-3, "b untouched");
+    }
+
+    #[test]
+    fn ring_merge_keeps_the_ccw_slice_and_its_identity() {
+        let mut level = vec![
+            named("a", Some(90.0)),
+            named("b", Some(90.0)),
+            named("c", Some(90.0)),
+            named("d", Some(90.0)),
+        ];
+        level[1].command = "keep me".to_string();
+        level[2].command = "discard".to_string();
+        let before = seat_geometry(&level, 0.0);
+        // Divider after b merges b+c → b survives.
+        let (start, survivor) = ring_merge(&mut level, 0.0, 1).unwrap();
+        assert_eq!(survivor, 1);
+        let labels: Vec<&str> = level.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["a", "b", "d"]);
+        assert_eq!(level[1].command, "keep me");
+        let after = seat_geometry(&level, start);
+        assert_eq!(after[0], before[0]);
+        assert_eq!(after[1].0, before[1].0);
+        assert!((after[1].1 - 180.0).abs() < 1e-3);
+        assert_eq!(after[2], before[3]);
+    }
+
+    #[test]
+    fn ring_merge_unlocked_side_survives_a_locked_ccw() {
+        let mut level = vec![
+            named("a", Some(90.0)),
+            locked_named("b", 90.0),
+            named("c", Some(90.0)),
+            named("d", Some(90.0)),
+        ];
+        level[2].command = "the unlocked one".to_string();
+        let before = seat_geometry(&level, 0.0);
+        let (start, survivor) = ring_merge(&mut level, 0.0, 1).unwrap();
+        assert_eq!(level[survivor].command, "the unlocked one");
+        let after = seat_geometry(&level, start);
+        // The union still spans b+c's old wedge; a and d pinned.
+        assert_eq!(after[0], before[0]);
+        assert!((after[survivor].0 - before[1].0).abs() < 1e-3);
+        assert!((after[survivor].1 - 180.0).abs() < 1e-3);
+        assert_eq!(after[2], before[3]);
+    }
+
+    #[test]
+    fn ring_merge_guards() {
+        // Two slices: the last divider can't be removed.
+        let mut two = vec![named("a", Some(180.0)), named("b", Some(180.0))];
+        assert!(ring_merge(&mut two, 0.0, 0).is_err());
+        // Both locked: refused.
+        let mut level = vec![
+            locked_named("a", 90.0),
+            locked_named("b", 90.0),
+            named("c", Some(180.0)),
+        ];
+        assert!(ring_merge(&mut level, 0.0, 0).is_err());
+        assert_eq!(level.len(), 3, "refused merge changes nothing");
+    }
+
+    #[test]
+    fn ring_merge_across_the_wrap() {
+        let mut level = vec![
+            named("a", Some(90.0)),
+            named("b", Some(90.0)),
+            named("c", Some(90.0)),
+            named("d", Some(90.0)),
+        ];
+        let before = seat_geometry(&level, 0.0);
+        // Divider after d (the wrap divider) merges d+a → d survives.
+        let (start, survivor) = ring_merge(&mut level, 0.0, 3).unwrap();
+        let labels: Vec<&str> = level.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["b", "c", "d"]);
+        assert_eq!(survivor, 2);
+        let after = seat_geometry(&level, start);
+        assert_eq!(after[0], before[1], "b untouched");
+        assert_eq!(after[1], before[2], "c untouched");
+        assert!((gamepad::angular_gap(after[2].0, before[3].0)) < 1e-3, "union starts at d's edge");
+        assert!((after[2].1 - 180.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn even_out_runs_equalizes_between_locks_only() {
+        // lockA(60) b(50) c(130) lockD(60) e(60), start 0.
+        let mut level = vec![
+            locked_named("A", 60.0),
+            named("b", Some(50.0)),
+            named("c", Some(130.0)),
+            locked_named("D", 60.0),
+            named("e", Some(60.0)),
+        ];
+        let widths: Vec<f32> = level.iter().map(|s| s.span.unwrap()).collect();
+        let before = seat_geometry(&level, 0.0);
+        even_out_runs(&mut level, &widths);
+        let after = seat_geometry(&level, 0.0);
+        // Locks pinned exactly.
+        assert_eq!(after[0], before[0]);
+        assert_eq!(after[3], before[3]);
+        // b/c equalized within their run (180 total → 90 each).
+        assert!((level[1].span.unwrap() - 90.0).abs() < 1e-3);
+        assert!((level[2].span.unwrap() - 90.0).abs() < 1e-3);
+        // e's run is just e: unchanged.
+        assert!((level[4].span.unwrap() - 60.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn even_out_runs_leaves_none_gaps_and_falls_back_to_auto() {
+        // A None gap between two locks keeps its width.
+        let mut level = vec![
+            locked_named("A", 90.0),
+            named("", Some(60.0)),
+            locked_named("B", 90.0),
+            named("c", Some(70.0)),
+            named("d", Some(50.0)),
+        ];
+        level[1].fire_type = Some("none".to_string());
+        let widths: Vec<f32> = level.iter().map(|s| s.span.unwrap()).collect();
+        even_out_runs(&mut level, &widths);
+        assert!((level[1].span.unwrap() - 60.0).abs() < 1e-3, "gap untouched");
+        assert!((level[3].span.unwrap() - 60.0).abs() < 1e-3, "c/d equalized");
+        assert!((level[4].span.unwrap() - 60.0).abs() < 1e-3);
+
+        // No locks, no None slices: legacy behaviour — everything to auto.
+        let mut plain = vec![named("a", Some(100.0)), named("b", Some(260.0))];
+        let widths: Vec<f32> = plain.iter().map(|s| s.span.unwrap()).collect();
+        even_out_runs(&mut plain, &widths);
+        assert!(plain.iter().all(|s| s.span.is_none()));
+    }
+
     #[test]
     fn even_out_spares_locked_slices() {
         let mut level = vec![slice(Some(120.0)), slice(Some(90.0)), slice(Some(150.0))];
         level[0].locked = true;
-        even_out_unlocked(&mut level);
-        // The locked width survives; the rest go back to auto and split
-        // the leftover evenly when resolved.
+        let widths: Vec<f32> = level.iter().map(|s| s.span.unwrap()).collect();
+        even_out_runs(&mut level, &widths);
+        // The locked slice keeps position AND width; the run between the
+        // lock's two sides (90 + 150 = 240) equalizes to 120 each.
         assert_eq!(level[0].span, Some(120.0));
-        assert_eq!(level[1].span, None);
-        assert_eq!(level[2].span, None);
-        let spans: Vec<Option<f32>> = level.iter().map(|s| s.span).collect();
-        let layout = gamepad::resolve_spans(&spans, 0.0);
-        assert_eq!(layout.seats[1].span_deg, 120.0);
-        assert_eq!(layout.seats[2].span_deg, 120.0);
+        assert_eq!(level[1].span, Some(120.0));
+        assert_eq!(level[2].span, Some(120.0));
     }
 
     #[test]
