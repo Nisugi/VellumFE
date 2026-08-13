@@ -72,6 +72,37 @@ impl AppCore {
         (Some(target), unknown, any_pass)
     }
 
+    /// Drop cached day passes whose id is no longer in the sack (given away,
+    /// sold, lost): Lich's sweep prunes `\$mapdb_day_passes` the same way.
+    /// Without this a vanished pass keeps routing a pass edge that then
+    /// fails at `raise` every trip.
+    pub(super) fn prune_missing_day_passes(&mut self) {
+        let name = self.config.go2.day_pass_sack.trim();
+        if name.is_empty() {
+            return;
+        }
+        let Some(sack) = self.game_state.objects.find_container(name) else {
+            return;
+        };
+        let present: std::collections::HashSet<&str> = self
+            .game_state
+            .objects
+            .items_in(&sack.id)
+            .into_iter()
+            .map(|i| i.id.as_str())
+            .collect();
+        let gone: Vec<String> = self
+            .game_state
+            .day_passes
+            .ids()
+            .filter(|id| !present.contains(id.as_str()))
+            .cloned()
+            .collect();
+        for id in gone {
+            self.game_state.day_passes.forget(&id);
+        }
+    }
+
     /// Resolve a deferred `.go2` waiting on the day-pass sack scan (see
     /// start_travel). Done when every looked-at pass has parsed into the cache
     /// (or, for the contents probe, a pass is now visible in the sack), or the
@@ -88,14 +119,13 @@ impl AppCore {
             .game_state
             .move_feedback
             .iter()
-            .any(|f| matches!(f, crate::core::move_feedback::MoveFeedback::ContainerAlreadyOpen))
+            .any(|(_, f)| matches!(f, crate::core::move_feedback::MoveFeedback::ContainerAlreadyOpen))
         {
-            if let Some(pending) = self.pending_day_pass_scan.as_mut() {
-                pending.3 = true;
+            if let Some(open) = self.day_pass_scan_open.as_mut() {
+                open.1 = true;
             }
         }
-        let Some((destination, deadline, ids, was_open)) = self.pending_day_pass_scan.clone()
-        else {
+        let Some((destination, deadline, ids)) = self.pending_day_pass_scan.clone() else {
             return;
         };
         let learned = !ids.is_empty()
@@ -105,23 +135,25 @@ impl AppCore {
         // known ones proceed straight to planning (don't sit out the
         // deadline). An empty sack still waits the deadline (we can't tell
         // "no passes" from "contents not seen yet").
-        let (target, _, probe_any) = self.day_pass_scan_targets();
+        let (_, _, probe_any) = self.day_pass_scan_targets();
         let probe_done = ids.is_empty() && probe_any;
         let expired = std::time::Instant::now() >= deadline;
         if learned || probe_done || expired {
             // Clear FIRST so the re-invoked start_travel plans (or queues the
             // next scan round) instead of re-deferring.
             self.pending_day_pass_scan = None;
-            // Restore the sack to how we found it: close only if OUR open
-            // actually opened it. (On a probe→look transition this closes and
-            // the look round re-opens — once per session, and each round
-            // re-decides its own close, so the user's state is preserved.)
-            if !was_open {
-                if let Some(target) = target {
-                    self.travel.queue_command(format!("close #{target}"));
+            self.start_travel(destination);
+            // Only when start_travel queued NO further round is the scan
+            // truly over — then restore the sack to how we found it (close
+            // only if OUR open opened it). Closing between rounds churned
+            // the sack: every round closed it and the next reopened it.
+            if self.pending_day_pass_scan.is_none() {
+                if let Some((sack, was_open)) = self.day_pass_scan_open.take() {
+                    if !was_open {
+                        self.travel.queue_command(format!("close #{sack}"));
+                    }
                 }
             }
-            self.start_travel(destination);
         }
     }
 
@@ -129,15 +161,32 @@ impl AppCore {
         if !self.travel.is_traveling() {
             // Not walking: don't let feedback accumulate unboundedly.
             self.game_state.move_feedback.clear();
+            // Awaits are the only consumer of raw lines; stop copying every
+            // game line into the ring once travel ends, and drop what's left.
+            if self.message_processor.capture_recent_lines {
+                self.message_processor.capture_recent_lines = false;
+                self.game_state.recent_lines.clear();
+            }
             return;
         }
+        // Travelling: a scripted edge may arm an `Await` at any point, and an
+        // await must be able to see lines that landed before it armed, so the
+        // capture has to be running for the whole trip rather than switched on
+        // when a step needs it.
+        self.message_processor.capture_recent_lines = true;
         let Some(db) = self.map.mapdb().cloned() else {
             return;
         };
         // Drain the move-feedback queue for this tick (edge-triggered events,
         // each consumed exactly once — §09).
-        let feedback: Vec<crate::core::move_feedback::MoveFeedback> =
+        let feedback: Vec<(u64, crate::core::move_feedback::MoveFeedback)> =
             self.game_state.move_feedback.drain(..).collect();
+        // Raw lines for `Await` steps. Copied (not drained): the ring must
+        // outlive this tick so an await arming now still sees earlier lines.
+        // A VecDeque isn't contiguous, and `as_slices().0` would silently drop
+        // the wrapped half, so flatten it into an owned Vec.
+        let recent_lines: Vec<(u64, String)> =
+            self.game_state.recent_lines.iter().cloned().collect();
         // Active spell numbers for scripted-edge checkspell branches.
         let active_spells: Vec<u16> = self
             .game_state
@@ -168,6 +217,56 @@ impl AppCore {
             }
             objects.find_container(name).map(|c| c.command_target())
         };
+        // Four Winds trinket: resolve the configured name to a live exist id
+        // and the container to put it back in. Done here (not in the
+        // executor) so the executor stays a state machine over plain values.
+        // The registry already tracks containment, so the crossing never has
+        // to scrape `<a exist=...>` links the way the mapdb proc does.
+        // Rogue Guild password + platinum flag feed the transpiler's
+        // UserVars store, so the guild-door recognizer sees them the same
+        // way Lich's proc saw `UserVars.rogue_password` / `$platinum`.
+        {
+            use crate::core::pathing::transpile::set_mapdb_var;
+            let pw = self.config.go2.rogue_password.trim();
+            set_mapdb_var("rogue_password", (!pw.is_empty()).then(|| pw.to_string()));
+            let plat = self
+                .config
+                .connection
+                .game
+                .as_deref()
+                .is_some_and(|g| g.contains("plat"));
+            set_mapdb_var("platinum", plat.then(|| "true".into()));
+        }
+        // go2 treats the literal "off" the same as unset (go2.lic:448-449) —
+        // its UI's documented way to disable the trinket without clearing it.
+        let fwi_setting = self.config.go2.fwi_trinket.trim();
+        let fwi = (!fwi_setting.is_empty() && !fwi_setting.eq_ignore_ascii_case("off"))
+            .then(|| objects.find_item(fwi_setting))
+            .flatten()
+            .map(|(item, loc)| {
+                use crate::core::game_objects::Location;
+                let in_hand = matches!(loc, Location::Hand(_));
+                let return_to = match &loc {
+                    Location::Container(id) => objects
+                        .container(id)
+                        .map(|c| c.command_target()),
+                    // Worn / at-feet / held: nothing to return it to.
+                    _ => None,
+                };
+                (item.id.clone(), return_to, in_hand)
+            });
+        // Every item name we can reach, for `Cond::HasItem` (keyed doors).
+        // Carried plus container contents — a key in your bag still opens it.
+        let carried_names: Vec<String> = objects
+            .carried()
+            .into_iter()
+            .map(|i| i.name.clone())
+            .chain(
+                objects
+                    .containers()
+                    .flat_map(|c| c.items.iter().map(|i| i.name.clone())),
+            )
+            .collect();
         let weaponsack = resolve_bag(&self.config.go2.weaponsack);
         let lootsack = resolve_bag(&self.config.go2.lootsack);
         let day_pass_sack = resolve_bag(&self.config.go2.day_pass_sack);
@@ -225,22 +324,39 @@ impl AppCore {
             db: &db,
             current_room: self.map.current_room_id,
             dead: self.game_state.status.dead(),
-            muckled: self.game_state.status.stunned() || self.game_state.status.webbed(),
+            // Lich's Status.muckled?: stunned/webbed indicators plus the
+            // Bind (214) and Sleep (501) debuff-board entries (status.rb:46).
+            muckled: self.game_state.status.stunned()
+                || self.game_state.status.webbed()
+                || self.game_state.debuff_active("Bind")
+                || self.game_state.debuff_active("Sleep"),
             standing: self.game_state.status.standing(),
             sitting: self.game_state.status.sitting(),
             kneeling: self.game_state.status.kneeling(),
+            hidden: self.game_state.status.hidden() || self.game_state.status.invisible(),
+            citizenship: self.game_state.character.citizenship.as_deref(),
+            profession: self.game_state.character.profession.as_deref(),
+            society: self.game_state.character.society.as_deref(),
             active_spells: &active_spells,
             rt_remaining: self.game_state.roundtime_remaining() as f64,
             now_ms: self.travel.now_ms(),
             pathcodes: &self.config.go2.pathcodes,
             hands: Some(hands),
             feedback: &feedback,
+            // Raw lines for `Await` steps. A ring, not a drained queue — see
+            // GameState::recent_lines.
+            recent_lines: &recent_lines,
+            line_seq: self.game_state.line_seq,
+            game_line_no: self.game_state.game_line_no,
             // The fallback is a Lich-only bandaid: gated on the setting AND a
-            // non-direct connection (a direct connection has no Lich to hand
-            // off to). webui_available() is our "connected via Lich" proxy.
-            lich_fallback: self.config.go2.lich_fallback && self.webui_available(),
+            // Lich connection (a direct connection has no Lich to hand off to).
+            // Gate on the connection itself, NOT on WebUI reachability — WebUI
+            // is an optional Lich feature, and conflating the two left the
+            // fallback permanently dead on GUI/TUI.
+            lich_fallback: self.config.go2.lich_fallback && self.lich_connected(),
             funding: Some(crate::core::travel::executor::FundingInputs {
                 silver: self.game_state.silver,
+                silver_line_no: self.game_state.silver_line_no,
                 get_silvers: self.config.go2.get_silvers,
                 get_return_trip: self.config.go2.get_return_trip_silvers,
             }),
@@ -253,13 +369,27 @@ impl AppCore {
             // current room's compass exits and ground-loot nouns (the
             // tranquility point / pit landmarks live in ground + room_desc).
             compass_dirs: &compass_dirs,
+            carried_names: &carried_names,
             loot_nouns: &loot_nouns,
             // Day-pass crossing inputs: the resolved sack container, buy config,
             // and the live pass cache (begin_day_pass computes the per-edge
             // held-pass / buy-permission from the town pair).
+            fwi_trinket: fwi.as_ref().map(|(id, return_to, in_hand)| {
+                crate::core::travel::executor::TrinketInputs {
+                    id,
+                    return_to: return_to.as_deref(),
+                    in_hand: *in_hand,
+                }
+            }),
             day_pass: Some(crate::core::travel::executor::DayPassInputs {
                 sack_id: day_pass_sack.as_deref(),
-                buy_day_pass: &self.config.go2.buy_day_pass,
+                // A too-poor buy this session flipped the setting off in
+                // memory (Lich parity); held passes still route.
+                buy_day_pass: if self.game_state.day_passes.buy_disabled() {
+                    ""
+                } else {
+                    &self.config.go2.buy_day_pass
+                },
                 get_silvers: self.config.go2.get_silvers,
                 cache: &self.game_state.day_passes,
                 now_epoch: chrono::Utc::now().timestamp(),
@@ -293,6 +423,11 @@ impl AppCore {
                         std::time::Duration::ZERO,
                         format!(";go2 {destination}"),
                     );
+                }
+                crate::core::travel::TravelEvent::DisableDayPassBuy => {
+                    // Lich parity: a too-poor buy turns the setting off for
+                    // the session (config on disk stays untouched).
+                    self.game_state.day_passes.disable_buy();
                 }
                 crate::core::travel::TravelEvent::Send(_) => unreachable!("queued by the service"),
             }
@@ -412,21 +547,32 @@ impl AppCore {
             && self.pending_day_pass_scan.is_none()
             && !self.day_pass_scan_blocked_by_bounty()
         {
+            self.prune_missing_day_passes();
             let (target, unknown, any_pass) = self.day_pass_scan_targets();
             if let Some(target) = target {
                 if !unknown.is_empty() {
                     self.add_system_message("[go2] checking your Chronomage day passes...");
-                    self.travel.queue_command(format!("open #{target}"));
-                    for id in &unknown {
-                        self.travel.queue_command(format!("look #{id}"));
+                    // One `open` for the WHOLE scan (all rounds); the close
+                    // is queued once by tick_day_pass_scan at the true end.
+                    if self.day_pass_scan_open.is_none() {
+                        self.travel.queue_command(format!("open #{target}"));
+                        self.day_pass_scan_open = Some((target.clone(), false));
                     }
-                    // The close (if the sack wasn't already open) is queued at
-                    // scan completion by tick_day_pass_scan.
+                    // Pace the looks: a burst trips the game's type-ahead
+                    // limit ("Sorry, you may only type ahead 1 command") and
+                    // the dropped look forces a whole re-scan round.
+                    for (i, id) in unknown.iter().enumerate() {
+                        self.queue_timed_command(
+                            std::time::Duration::from_millis(700 * (i as u64 + 1)),
+                            format!("look #{id}"),
+                        );
+                    }
                     self.pending_day_pass_scan = Some((
                         destination,
-                        std::time::Instant::now() + std::time::Duration::from_secs(5),
+                        std::time::Instant::now()
+                            + std::time::Duration::from_secs(5)
+                            + std::time::Duration::from_millis(700 * unknown.len() as u64),
                         unknown,
-                        false,
                     ));
                     return;
                 }
@@ -435,13 +581,15 @@ impl AppCore {
                     // re-plan (a discovered pass triggers the look round).
                     self.day_pass_sack_probed = true;
                     self.add_system_message("[go2] checking the day-pass sack...");
-                    self.travel.queue_command(format!("open #{target}"));
+                    if self.day_pass_scan_open.is_none() {
+                        self.travel.queue_command(format!("open #{target}"));
+                        self.day_pass_scan_open = Some((target.clone(), false));
+                    }
                     self.travel.queue_command(format!("look in #{target}"));
                     self.pending_day_pass_scan = Some((
                         destination,
                         std::time::Instant::now() + std::time::Duration::from_secs(4),
                         Vec::new(),
-                        false,
                     ));
                     return;
                 }

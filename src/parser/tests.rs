@@ -2265,6 +2265,158 @@ fn test_extract_all_attributes_mixed_quotes() {
     );
 }
 
+// ==================== extended feed (pulse / inventoryManager) ====================
+
+#[test]
+fn test_pulse_tag() {
+    let mut parser = XmlParser::new();
+    let elements = parser.parse_line(r#"<pulse mana="1"/>"#);
+    assert!(matches!(
+        elements.as_slice(),
+        [ParsedElement::Pulse { mana: true }]
+    ));
+
+    let elements = parser.parse_line(r#"<pulse mana="0"/>"#);
+    assert!(matches!(
+        elements.as_slice(),
+        [ParsedElement::Pulse { mana: false }]
+    ));
+}
+
+#[test]
+fn test_inventory_manager_block() {
+    let mut parser = XmlParser::new();
+    // Verbatim shape from the wire (2026-08-12 session log), trimmed to three
+    // items covering worn, nested-in-container, and room cases.
+    let elements = parser.parse_line(
+        r#"<inventoryManager id='imtest1' room='2005'><i id='148848453' loc='worn,player' name="a patchwork,dwarf skin,backpack" long="a $_patchwork dwarf skin backpack$_ bound by interwoven briar vines" weight='5' in_max='2000'/><i id='148848479' loc='in,148848453' name="an,aquamarine,wand" weight='1'/><i id='52051' loc='room' name="a sturdy,wooden,table" weight='-1' on_max='1'/></inventoryManager>"#,
+    );
+
+    let managers: Vec<_> = elements
+        .iter()
+        .filter(|e| matches!(e, ParsedElement::InventoryManager { .. }))
+        .collect();
+    assert_eq!(managers.len(), 1);
+    let ParsedElement::InventoryManager {
+        token,
+        room,
+        items,
+        continuations,
+    } = managers[0]
+    else {
+        unreachable!()
+    };
+    assert_eq!(token, "imtest1");
+    assert_eq!(room, "2005");
+    assert_eq!(items.len(), 3);
+    assert!(continuations.is_empty());
+    let attr = |i: usize, k: &str| {
+        items[i]
+            .iter()
+            .find(|(name, _)| name == k)
+            .map(|(_, v)| v.as_str())
+    };
+    assert_eq!(attr(0, "loc"), Some("worn,player"));
+    assert_eq!(attr(0, "in_max"), Some("2000"));
+    assert_eq!(attr(1, "loc"), Some("in,148848453"));
+    assert_eq!(attr(2, "loc"), Some("room"));
+    assert_eq!(attr(2, "weight"), Some("-1"));
+
+    // Nothing from the block leaks into the text stream
+    assert!(!elements
+        .iter()
+        .any(|e| matches!(e, ParsedElement::Text { content, .. } if !content.trim().is_empty())));
+}
+
+#[test]
+fn test_inventory_manager_continuation() {
+    let mut parser = XmlParser::new();
+    let elements = parser.parse_line(
+        r#"<inventoryManager id='im2' room='2005'><i id='1' loc='worn,player' name="a,cloth,necklace" weight='1'/><continuation root='148848453' last='148848460'/></inventoryManager>"#,
+    );
+    let ParsedElement::InventoryManager {
+        items,
+        continuations,
+        ..
+    } = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::InventoryManager { .. }))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(continuations.len(), 1);
+    assert_eq!(
+        continuations[0],
+        vec![
+            ("root".to_string(), "148848453".to_string()),
+            ("last".to_string(), "148848460".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn test_managed_inventory_item_from_attrs() {
+    use crate::core::state::ManagedInventoryItem;
+    let to_attrs = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+
+    let item = ManagedInventoryItem::from_attrs(&to_attrs(&[
+        ("id", "148848453"),
+        ("loc", "worn,player"),
+        ("name", "a patchwork,dwarf skin,backpack"),
+        ("long", "a $_patchwork dwarf skin backpack$_ bound by interwoven briar vines"),
+        ("weight", "5"),
+        ("in_max", "2000"),
+    ]))
+    .unwrap();
+    assert_eq!(item.relation, "worn");
+    assert_eq!(item.parent, "player");
+    assert_eq!(item.name, "a patchwork dwarf skin backpack");
+    assert_eq!(item.noun, "backpack");
+    assert_eq!(
+        item.long.as_deref(),
+        Some("a patchwork dwarf skin backpack bound by interwoven briar vines")
+    );
+    assert_eq!(item.weight, 5);
+    assert_eq!(item.in_max, Some(2000));
+
+    // Room item: -1 weight sentinel, empty-article name still parses
+    let item = ManagedInventoryItem::from_attrs(&to_attrs(&[
+        ("id", "52051"),
+        ("loc", "room"),
+        ("name", "a sturdy,wooden,table"),
+        ("weight", "-1"),
+        ("on_max", "1"),
+    ]))
+    .unwrap();
+    assert_eq!(item.relation, "room");
+    assert_eq!(item.parent, "room");
+    assert_eq!(item.weight, -1);
+    assert_eq!(item.on_max, Some(1));
+
+    // closed-container flag
+    let item = ManagedInventoryItem::from_attrs(&to_attrs(&[
+        ("id", "148848497"),
+        ("loc", "in,148848480"),
+        ("name", "a,coal black,purse"),
+        ("weight", "3"),
+        ("flags", "closed"),
+        ("in_max", "50"),
+    ]))
+    .unwrap();
+    assert_eq!(item.parent, "148848480");
+    assert_eq!(item.flags, vec!["closed".to_string()]);
+
+    // Missing loc = unanchorable = dropped
+    assert!(ManagedInventoryItem::from_attrs(&to_attrs(&[("id", "1"), ("name", "a,b,c")])).is_none());
+}
+
 // ==================== roommeta / mindState exp Parsing ====================
 
 #[test]

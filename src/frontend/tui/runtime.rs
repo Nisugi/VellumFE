@@ -345,6 +345,10 @@ async fn async_run(
     let (width, height) = frontend.size();
     app_core.init_windows(width, height);
 
+    // Connection mode for anything that sends `;` commands (travel's `;go2`
+    // fallback). A direct eAccess session has no Lich to hand off to.
+    app_core.set_lich_connected(direct.is_none());
+
     // Initial render to create widgets (needed before loading history)
     frontend.render(&mut app_core)?;
 

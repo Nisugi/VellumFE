@@ -48,6 +48,22 @@ impl AppCore {
         }
     }
 
+    /// Whether this session is proxied through Lich. Set false for direct
+    /// eAccess. Frontends call this once the connection mode is known.
+    ///
+    /// Deliberately separate from `set_webui_available`: WebUI is an optional
+    /// Lich feature that may be absent or torn down (`.webui off`), while a
+    /// Lich *connection* is what makes `;` commands deliverable at all.
+    /// Anything that sends a `;` command must gate on this, not on WebUI.
+    pub fn set_lich_connected(&mut self, connected: bool) {
+        self.lich_connected = connected;
+    }
+
+    /// Whether `;` commands can reach a Lich this session.
+    pub fn lich_connected(&self) -> bool {
+        self.lich_connected
+    }
+
     /// Trigger the WebUI handshake (`;ui handshake`) once per session. The
     /// reply arrives on the game stream and is captured into the message
     /// processor; `take_webui_handshake` + `start_webui` complete the setup.

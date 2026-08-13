@@ -3,8 +3,8 @@
 //!
 //! Releases come from the Cartographer pipeline: each carries a `mapdb.json`
 //! asset in the same Lich format `MapDb::load` already parses. Files land in
-//! `<base>/mapdb/` as `mapdb-<tag>.json`, versioned side-by-side; the
-//! previous version is kept for rollback, older ones are pruned.
+//! `<base>/mapdb/` as `mapdb-<tag>.json`, versioned by tag; only the
+//! repo's current release is kept, so upstream rollbacks take effect.
 //!
 //! Follows the `MapService` pattern: an explicit user action spawns a worker
 //! thread, the frontend polls `status` each frame. Nothing downloads
@@ -28,9 +28,6 @@ const OVERRIDES_ASSET_NAME: &str = "overrides.json";
 /// lives in this tarball. Extracted next to the mapdb so a direct-connect
 /// (no-Lich) client can resolve every proc edge natively.
 const STRINGPROCS_ASSET_NAME: &str = "stringprocs.tar.gz";
-/// Newest plus one rollback version.
-const KEEP_VERSIONS: usize = 2;
-
 /// Where downloaded mapdbs live under the config base dir.
 pub fn download_dir(base: &Path) -> PathBuf {
     base.join("mapdb")
@@ -233,6 +230,7 @@ impl MapDbUpdater {
         }
         for (tag, path) in downloaded_versions(&self.dir) {
             let _ = std::fs::remove_file(path.with_file_name(format!("overrides-{tag}.json")));
+            let _ = std::fs::remove_dir_all(stringprocs_dir(&self.dir, &tag));
             let _ = std::fs::remove_file(path);
         }
         self.installed = None;
@@ -308,7 +306,7 @@ fn check_and_download(
         .iter()
         .find(|a| a.name == ASSET_NAME)
         .ok_or_else(|| format!("release {} has no {ASSET_NAME} asset", release.tag_name))?;
-    download_asset(&agent, asset, &tag, dir, notify)?;
+    let mapdb_path = download_asset(&agent, asset, &tag, dir, notify)?;
     // Community overrides are optional and small; a release without them (or
     // a failed fetch) never fails the mapdb install.
     if let Some(overrides_asset) = release
@@ -321,23 +319,38 @@ fn check_and_download(
             tracing::warn!("community overrides download failed for {tag}: {e}");
         }
     }
-    // StringProc bodies: download + extract the tarball to `stringprocs-<tag>/`
-    // beside the mapdb. Optional — a release without it (or a failed fetch)
-    // just means proc edges stay uncrossable, never fails the mapdb install.
+    // StringProc bodies. When the release SHIPS the tarball, its mapdb is in
+    // Cartographer stub form — every scripted wayto is an
+    // `evaluate_script('wayto/…')` reference with no body in the json — so a
+    // failed fetch is a BROKEN install, not a degraded one: every proc edge
+    // would dangle and travel refuses them all. Fail the install and keep
+    // whatever was in use. (A release without the asset carries its bodies
+    // inline and needs nothing here.)
     if let Some(sp_asset) = release
         .assets
         .iter()
         .find(|a| a.name == STRINGPROCS_ASSET_NAME)
     {
+        let sp_dir = stringprocs_dir(dir, &tag);
         if let Err(e) = download_and_extract_stringprocs(
             &agent,
             &sp_asset.browser_download_url,
-            &stringprocs_dir(dir, &tag),
+            &sp_dir,
         ) {
-            tracing::warn!("stringprocs download/extract failed for {tag}: {e}");
+            let _ = std::fs::remove_file(&mapdb_path);
+            let _ = std::fs::remove_file(dir.join(format!("overrides-{tag}.json")));
+            let _ = std::fs::remove_dir_all(&sp_dir);
+            return Err(format!(
+                "stringprocs download failed for {tag} (its mapdb is unusable without them): {e}"
+            ));
         }
     }
-    prune(dir);
+    // The repo's latest release is now the ONLY version. Removing the others
+    // (not keeping the N newest) is what makes an upstream ROLLBACK take
+    // effect: with newest-tag-wins retention, a cached v0.4.0 shadowed the
+    // repo's v0.3.0 forever and travel kept loading a mapdb the repo had
+    // withdrawn.
+    prune_all_but(dir, &tag);
     Ok(UpdateStatus::Updated { tag })
 }
 
@@ -527,13 +540,17 @@ fn download_asset(
     Ok(final_path)
 }
 
-fn prune(dir: &Path) {
-    let versions = downloaded_versions(dir);
-    if versions.len() > KEEP_VERSIONS {
-        for (tag, path) in &versions[..versions.len() - KEEP_VERSIONS] {
-            let _ = std::fs::remove_file(path);
-            let _ = std::fs::remove_file(path.with_file_name(format!("overrides-{tag}.json")));
+/// Remove every downloaded version except `keep` — json, overrides, and the
+/// stringprocs sidecar alike. The installed set tracks the repo's latest
+/// release exactly, in both directions.
+fn prune_all_but(dir: &Path, keep: &str) {
+    for (tag, path) in downloaded_versions(dir) {
+        if tag == keep {
+            continue;
         }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_file_name(format!("overrides-{tag}.json")));
+        let _ = std::fs::remove_dir_all(stringprocs_dir(dir, &tag));
     }
 }
 
@@ -576,11 +593,11 @@ mod tests {
         std::fs::write(&plain, "{}").unwrap();
         assert_eq!(community_overrides_for(&lich_db), Some(plain));
 
-        // Pruning an old mapdb takes its overrides with it.
+        // Pruning to the active tag takes the losers' overrides with it.
         for tag in ["v0.9.0", "v0.10.0"] {
             std::fs::write(dir.path().join(format!("mapdb-{tag}.json")), "[]").unwrap();
         }
-        prune(dir.path());
+        prune_all_but(dir.path(), "v0.10.0");
         assert!(!dir.path().join("mapdb-v0.3.0.json").exists());
         assert!(!dir.path().join("overrides-v0.3.0.json").exists());
         assert!(dir.path().join("mapdb-v0.10.0.json").exists());
@@ -603,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn version_store_finds_newest_and_prunes_to_two() {
+    fn version_store_finds_newest_and_prunes_to_the_active_tag() {
         let dir = tempfile::tempdir().unwrap();
         for tag in ["v0.2.0", "v0.10.0", "v0.9.0"] {
             std::fs::write(dir.path().join(format!("mapdb-{tag}.json")), "[]").unwrap();
@@ -616,12 +633,15 @@ mod tests {
         assert_eq!(tag, "v0.10.0");
         assert!(path.ends_with("mapdb-v0.10.0.json"));
 
-        prune(dir.path());
+        // Track-the-repo retention: only the tag the repo named survives —
+        // including when that tag ORDERS BELOW a cached one (an upstream
+        // rollback, which newest-tag retention shadowed forever).
+        prune_all_but(dir.path(), "v0.9.0");
         let left: Vec<String> = downloaded_versions(dir.path())
             .into_iter()
             .map(|(t, _)| t)
             .collect();
-        assert_eq!(left, ["v0.9.0", "v0.10.0"]);
+        assert_eq!(left, ["v0.9.0"]);
     }
 
     /// Minimal HTTP stub: serves a release JSON (pointing back at its own
@@ -700,16 +720,32 @@ mod tests {
             }
         );
 
-        // Rounds 3-4: newer tags install and pruning keeps two.
-        for tag in ["v0.5.0", "v0.6.0"] {
-            let base = spawn_stub_with_release(tag, &mapdb);
-            check_and_download("x/y", dir.path(), &base, &mut |_| {}).unwrap();
-        }
+        // Round 3: a newer tag installs and replaces the old one.
+        let base = spawn_stub_with_release("v0.5.0", &mapdb);
+        check_and_download("x/y", dir.path(), &base, &mut |_| {}).unwrap();
         let left: Vec<String> = downloaded_versions(dir.path())
             .into_iter()
             .map(|(t, _)| t)
             .collect();
-        assert_eq!(left, ["v0.5.0", "v0.6.0"]);
+        assert_eq!(left, ["v0.5.0"]);
+
+        // Round 4: the repo ROLLS BACK to an older tag. Track-the-repo
+        // retention must install it and drop the newer cached one - this is
+        // the v0.4.0-shadowing bug that kept a withdrawn stub-form mapdb
+        // live on a client after upstream reverted to v0.3.0.
+        let base = spawn_stub_with_release("v0.4.9", &mapdb);
+        let outcome = check_and_download("x/y", dir.path(), &base, &mut |_| {}).unwrap();
+        assert_eq!(
+            outcome,
+            UpdateStatus::Updated {
+                tag: "v0.4.9".into()
+            }
+        );
+        let left: Vec<String> = downloaded_versions(dir.path())
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        assert_eq!(left, ["v0.4.9"]);
     }
 
     #[test]

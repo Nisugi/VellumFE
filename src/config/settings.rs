@@ -1016,6 +1016,19 @@ pub struct Go2Config {
     /// inventory. Day-pass travel is skipped if unset or unresolvable.
     #[serde(default)]
     pub day_pass_sack: String,
+    /// Your Isle of Four Winds trinket, by name (Lich's
+    /// `UserVars.mapdb_fwi_trinket`) — the item `turn` warps you with. A name
+    /// fragment resolved against inventory; the words are matched in order so
+    /// "silver trinket" finds "a silver filigreed trinket". Empty = the
+    /// trinket portal isn't used (its edges fall back).
+    #[serde(default)]
+    pub fwi_trinket: String,
+    /// Your Rogue Guild door password (Lich's `UserVars.rogue_password`):
+    /// the comma-separated verb sequence performed on the guild door, e.g.
+    /// "kick, slap, turn, scratch, kick, slap". Empty = guild shortcuts
+    /// aren't used (their edges fall back).
+    #[serde(default)]
+    pub rogue_password: String,
 }
 
 impl Default for Go2Config {
@@ -1035,6 +1048,8 @@ impl Default for Go2Config {
             use_day_pass: false,
             buy_day_pass: String::new(),
             day_pass_sack: String::new(),
+            fwi_trinket: String::new(),
+            rogue_password: String::new(),
         }
     }
 }

@@ -32,8 +32,12 @@ pub enum BuyEvent {
     /// sack (the `pass` noun doesn't work for `_drag`). `None` if we never
     /// captured an id (shouldn't happen once in-hand).
     Traveled { pass_id: Option<String> },
-    /// Give up (too poor with no funding, or a timeout). Carries a reason.
+    /// Give up (a timeout or unexpected response). Carries a reason.
     Failed(String),
+    /// Give up because silver ran out (no funding, or the bank couldn't
+    /// cover it). The executor disables day-pass buying for the session
+    /// (Lich: "Turning off buy_day_pass setting.", map_strategies.rb:740).
+    FailedTooPoor(String),
 }
 
 /// The buy conversation's phases.
@@ -68,7 +72,7 @@ enum Phase {
 /// items in each hand (to capture the bought pass's exist-id — `_drag`/`raise`
 /// need the id, not the `pass` noun).
 pub struct BuyTick<'a> {
-    pub feedback: &'a [F],
+    pub feedback: &'a [(u64, F)],
     pub current_room: Option<u32>,
     pub get_silvers: bool,
     pub now_ms: u64,
@@ -127,8 +131,8 @@ impl Preamble {
                             return false;
                         }
                         Some(sent) => {
-                            let answered = ctx.feedback.contains(&F::ContainerOpened)
-                                || ctx.feedback.contains(&F::ContainerAlreadyOpen);
+                            let answered = ctx.feedback.iter().any(|(_, f)| f == &F::ContainerOpened)
+                                || ctx.feedback.iter().any(|(_, f)| f == &F::ContainerAlreadyOpen);
                             if answered || ctx.now_ms.saturating_sub(sent) > RESP_TIMEOUT_MS {
                                 self.stage = PreStage::Drop { i: 0, sent_ms: None };
                                 continue;
@@ -152,7 +156,7 @@ impl Preamble {
                             return false;
                         }
                         Some(sent) => {
-                            if ctx.feedback.contains(&F::ItemDropped)
+                            if ctx.feedback.iter().any(|(_, f)| f == &F::ItemDropped)
                                 || ctx.now_ms.saturating_sub(sent) > DROP_TIMEOUT_MS
                             {
                                 *i += 1;
@@ -202,7 +206,7 @@ impl PutBack {
                 false
             }
             Some(sent) => {
-                ctx.feedback.contains(&F::ItemStowed)
+                ctx.feedback.iter().any(|(_, f)| f == &F::ItemStowed)
                     || ctx.now_ms.saturating_sub(sent) > RESP_TIMEOUT_MS
             }
         }
@@ -252,7 +256,7 @@ impl UseState {
         if !self.pre.tick(&ctx, &mut out) {
             return out;
         }
-        let saw = |e: &F| ctx.feedback.contains(e);
+        let saw = |e: &F| ctx.feedback.iter().any(|(_, f)| f == e);
         match &mut self.phase {
             UsePhase::GetPass { sent_ms } => match *sent_ms {
                 None => {
@@ -380,7 +384,7 @@ impl BuyState {
         }
         // RT gate: don't send while in roundtime (except pure waits).
         let rt_clear = ctx.rt_remaining <= 0.0;
-        let saw = |e: &F| ctx.feedback.contains(e);
+        let saw = |e: &F| ctx.feedback.iter().any(|(_, f)| f == e);
         let timed_out = |sent_ms: u64| ctx.now_ms.saturating_sub(sent_ms) > RESP_TIMEOUT_MS;
 
         match &mut self.phase {
@@ -407,7 +411,19 @@ impl BuyState {
                 out
             }
             Phase::AwaitOffer { sent_ms } => {
-                if saw(&F::DayPassOffered) {
+                if saw(&F::DayPassInHand) {
+                    // The clerk skipped the offer and handed the pass over -
+                    // the post-bank re-ask does this (Lich's proc accepts
+                    // both shapes). Waiting for an offer that never comes
+                    // timed the whole trip out after a full bank round-trip.
+                    self.capture_pass(&ctx);
+                    self.phase = Phase::ToWaitingRoom { sent_ms: None, sent_from: None };
+                    self.tick_to_waiting_room(&ctx, &mut out);
+                } else if saw(&F::DayPassTooPoor) {
+                    out.push(BuyEvent::FailedTooPoor(
+                        "still too poor for the pass at the offer".into(),
+                    ));
+                } else if saw(&F::DayPassOffered) {
                     // Confirm the purchase.
                     out.push(BuyEvent::Send(self.ask()));
                     self.phase = Phase::AwaitPass { sent_ms: ctx.now_ms };
@@ -426,7 +442,7 @@ impl BuyState {
                     if self.funded {
                         // Already withdrew once and it's STILL not enough —
                         // don't loop bank trips (Lich bails here too).
-                        out.push(BuyEvent::Failed(
+                        out.push(BuyEvent::FailedTooPoor(
                             "still too poor after withdrawing - the bank can't cover the pass".into(),
                         ));
                     } else if ctx.get_silvers {
@@ -434,7 +450,7 @@ impl BuyState {
                         self.phase = Phase::ToBank { i: 0, sent_from: None, sent_ms: ctx.now_ms };
                         self.tick_to_bank(&ctx, &mut out);
                     } else {
-                        out.push(BuyEvent::Failed(
+                        out.push(BuyEvent::FailedTooPoor(
                             "not enough silver for the pass and Get Silvers is off".into(),
                         ));
                     }
@@ -448,7 +464,11 @@ impl BuyState {
                 out
             }
             Phase::AwaitWithdraw { sent_ms } => {
-                if saw(&F::WithdrawOk) {
+                if saw(&F::WithdrawFailed) {
+                    out.push(BuyEvent::FailedTooPoor(
+                        "this area's bank account can't cover the pass".into(),
+                    ));
+                } else if saw(&F::WithdrawOk) {
                     self.phase = Phase::FromBank { i: 0, sent_from: None, sent_ms: ctx.now_ms };
                     self.tick_from_bank(&ctx, &mut out);
                 } else if timed_out(*sent_ms) {

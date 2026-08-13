@@ -16,6 +16,10 @@
 #             "noop"             nothing (edge exists, no command needed)
 #   cost:     optional seconds for pathfinding when the mapdb's timeto is a
 #             gated proc (defaults to the mapdb cost, then 0.2)
+#   require_item: optional item that must be on the character (hands, worn,
+#             or inside a container) or the walker abandons with `missing`
+#             as the explanation instead of sending doomed commands
+#   missing:  what to tell the user when require_item isn't carried
 #
 # Example — a lever-gate:
 #
@@ -24,3 +28,30 @@
 # to = 3671
 # cost = 12.0
 # actions = ["put:pull lever", "waitrt", "move:go gate"]
+
+# River's Rest, both directions through the giant's boot (mapdb rooms 6274 /
+# 11032). The mapdb script is a ~100-line errand — find an amulet in your
+# containers, else withdraw silvers, buy one at the alchemist, deposit, walk
+# back — that no transpiler reasonably interprets. The crossing itself, once
+# an amulet is on you, is two commands. The buy-errand stays manual; the
+# message says what to do. ("put my crystal amulet" reaches into open
+# containers, so a bagged amulet works.)
+#
+# Citizens of River's Rest can use a reusable piece of sun-washed driftwood
+# instead; carrying either works — the amulet form is what we gate on, so
+# driftwood users should keep an amulet or edit this entry in
+# ~/.vellum-fe/travel_overrides.toml to swap the item and command.
+
+[[edge]]
+from = 6274
+to = 11032
+require_item = "crystal amulet"
+missing = "crossing to River's Rest needs a crystal amulet (the River's Rest alchemist sells them; keep one in an open container)"
+actions = ["put:put my crystal amulet in giant's boot", "move:go giant's boot"]
+
+[[edge]]
+from = 11032
+to = 6274
+require_item = "crystal amulet"
+missing = "crossing from River's Rest needs a crystal amulet (the alchemist in town sells them; keep one in an open container)"
+actions = ["put:put my crystal amulet in giant's boot", "move:go giant's boot"]

@@ -144,7 +144,12 @@ pub struct AppCore {
     /// routes at 0.8. Empty ids = the one-time contents probe (open + look in).
     /// The bool records whether the sack was ALREADY open ("That is already
     /// open" seen) — then the scan doesn't close it (the user keeps it open).
-    pending_day_pass_scan: Option<(u32, std::time::Instant, Vec<String>, bool)>,
+    pending_day_pass_scan: Option<(u32, std::time::Instant, Vec<String>)>,
+    /// The scan is holding the sack open across its rounds: (sack id, was it
+    /// ALREADY open - "That is already open" seen). One `open` for the whole
+    /// scan, one `close` at the true end (skipped when the user keeps the
+    /// sack open) - the old round-by-round close/open churned the sack live.
+    day_pass_scan_open: Option<(String, bool)>,
     /// The day-pass sack contents probe has run this session (the container
     /// stream keeps contents fresh after the first open).
     day_pass_sack_probed: bool,
@@ -314,6 +319,11 @@ pub struct AppCore {
     /// a direct eAccess connection has no Lich, so no WebUI). Advertised to
     /// the phone so it shows the WebUI affordance only when usable.
     pub(crate) webui_available: bool,
+    /// Whether this session is proxied through Lich (vs. a direct eAccess
+    /// connection). Distinct from `webui_available`: WebUI is an optional Lich
+    /// feature, while this is purely "is there a Lich to send `;` commands to".
+    /// Travel's `;go2` fallback gates on THIS, not on WebUI reachability.
+    pub(crate) lich_connected: bool,
     /// GUI re-emit channel: `pump_webui` forwards every bridge event here so
     /// the GUI can do its GUI-side handling (image textures, window kinds)
     /// while core owns the socket. None in headless/TUI (no local renderer).
@@ -406,6 +416,7 @@ impl AppCore {
             travel: Default::default(),
             pending_urchin_refresh: None,
             pending_day_pass_scan: None,
+            day_pass_scan_open: None,
             day_pass_sack_probed: false,
             timed_commands: Vec::new(),
             remote_map_cache: None,
@@ -470,6 +481,7 @@ impl AppCore {
             webui_handshake_sent: false,
             webui_pages: Vec::new(),
             webui_available: false,
+            lich_connected: false,
             webui_gui_tx: None,
             webui_pending_raw: Vec::new(),
             webui_subscribed: std::collections::HashSet::new(),
@@ -598,6 +610,7 @@ impl AppCore {
             travel: Default::default(),
             pending_urchin_refresh: None,
             pending_day_pass_scan: None,
+            day_pass_scan_open: None,
             day_pass_sack_probed: false,
             timed_commands: Vec::new(),
             remote_map_cache: None,
@@ -662,6 +675,7 @@ impl AppCore {
             webui_handshake_sent: false,
             webui_pages: Vec::new(),
             webui_available: false,
+            lich_connected: false,
             webui_gui_tx: None,
             webui_pending_raw: Vec::new(),
             webui_subscribed: std::collections::HashSet::new(),

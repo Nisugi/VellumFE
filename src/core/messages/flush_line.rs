@@ -104,8 +104,17 @@ impl MessageProcessor {
         // executor. Buffered here (no game_state); drained at the prompt into
         // game_state.move_feedback so each event fires exactly once. The
         // aho-corasick matcher is cheap on non-matching lines.
+        self.game_line_no += 1;
         if let Some(fb) = crate::core::move_feedback::classify_line(&full_text) {
-            self.pending_move_feedback.push(fb);
+            self.pending_move_feedback.push((self.game_line_no, fb));
+        }
+
+        // Raw line for scripted-edge `Await` steps. Unlike the typed feedback
+        // above we can't pre-classify these: the patterns live in mapdb data.
+        // Only buffered while a scripted edge is actually awaiting, so the
+        // common case costs one bool check.
+        if self.capture_recent_lines {
+            self.pending_recent_lines.push(full_text.clone());
         }
 
         // Character state (society/profession/CHE/citizenship). Buffer the line

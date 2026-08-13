@@ -55,6 +55,13 @@ pub struct GameState {
     /// This is the authoritative time source for roundtime/casttime comparisons
     pub game_time: i64,
 
+    /// When `game_time` was last updated, on the LOCAL clock. Prompts only
+    /// arrive with traffic, so during silence `game_time` stands still - and
+    /// a roundtime measured against it never counts down, freezing travel
+    /// until any line lands (a `look` used to unstick it). Extrapolating from
+    /// this stamp keeps RT flowing through quiet stretches.
+    pub game_time_received: Option<std::time::Instant>,
+
     /// Roundtime end timestamp (Unix time from game server)
     pub roundtime_end: Option<i64>,
 
@@ -154,6 +161,19 @@ pub struct GameState {
     /// Room metadata codes from the `<roommeta>` tag
     pub room_meta: RoomMetaState,
 
+    /// Latest structured inventory snapshot (`<inventoryManager>`, extended
+    /// feed). None until the client has sent `_inventory manager <token>`
+    /// and received an answer.
+    pub managed_inventory: Option<ManagedInventoryState>,
+
+    /// Count of `<pulse .../>` announcements received (extended feed). A
+    /// pulse fires every minute ±15s: each one absorbs field exp (when any
+    /// is pooled), and every other pulse is also a mana pulse. Serves as
+    /// the pulse clock's generation counter.
+    pub pulse_count: u64,
+    /// Whether the most recent pulse was a mana pulse (alternates)
+    pub last_pulse_mana: bool,
+
     /// Unified game-object registry: items (containers/worn/hands/at-feet/
     /// ground), creatures, players. The single source for game objects;
     /// see `core::game_objects`.
@@ -163,7 +183,29 @@ pub struct GameState {
     /// door, …) awaiting the walk executor. The parser pushes on each matching
     /// game line; `tick_travel` drains this once per tick so each event fires
     /// exactly once. See `core::move_feedback` and §09/§12 of the go2 plan.
-    pub move_feedback: std::collections::VecDeque<crate::core::move_feedback::MoveFeedback>,
+    pub move_feedback: std::collections::VecDeque<(u64, crate::core::move_feedback::MoveFeedback)>,
+    /// The message processor's flushed-line count at the last prompt - the
+    /// executor stamps its sends with this so stale failure lines (belonging
+    /// to an already-superseded move) can be told from fresh ones.
+    pub game_line_no: u64,
+
+    /// Recent raw game lines for scripted-edge `Await` steps, newest last.
+    ///
+    /// `move_feedback` is a fixed enum of pre-classified recovery events; an
+    /// `Await` needs the TEXT, because the pattern comes from mapdb data we
+    /// can't enumerate ahead of time (a ferry's arrival line, a lever's
+    /// response, a captured group interpolated into a later command).
+    ///
+    /// Unlike `move_feedback` this is NOT drained by the consumer — an await
+    /// arms mid-tick and must see lines that arrived before it started, and
+    /// several steps may match the same line. It is a bounded ring instead:
+    /// pushed on every line, capped at `RAW_LINE_RING`, with each entry
+    /// carrying the sequence number an await compares against so it only
+    /// matches lines newer than its own arming point.
+    pub recent_lines: std::collections::VecDeque<(u64, String)>,
+    /// Monotonic counter stamped onto `recent_lines`; also the "now" an await
+    /// records when it arms. Never reset.
+    pub line_seq: u64,
 
     /// Character state parsed from the feed (society status/rank, profession,
     /// CHE/House, citizenship) — gates seeking, guild, and locker travel.
@@ -178,6 +220,11 @@ pub struct GameState {
     /// Silver on hand, parsed from `wealth`/`wealth quiet` output. `None`
     /// until first seen. Drives go2's silver-funding for paid travel.
     pub silver: Option<u64>,
+    /// Flushed-line number of the last wealth reading. The funding phases
+    /// only trust a reading NEWER than their `wealth quiet` probe - deciding
+    /// on the cached value walked a broke character into a paid crossing
+    /// (the live 'you have 2000 - funded' on a freshly emptied purse).
+    pub silver_line_no: u64,
 
     /// Chronomage day-pass expiry cache, learned by `look`ing at passes (Lich's
     /// `$mapdb_day_passes` + `mapdb_day_pass_monitor`). Gates day-pass travel.
@@ -797,6 +844,112 @@ impl RoomMetaState {
     }
 }
 
+/// One item from an `<inventoryManager>` snapshot, mapped from the raw
+/// `<i .../>` attributes. Lenient where Saga's own validator is strict:
+/// a malformed field degrades to a default instead of dropping the item.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ManagedInventoryItem {
+    /// Exist id
+    pub id: String,
+    /// worn/righthand/lefthand/atfeet/reserved (parent = player),
+    /// in/on/behind/underneath (parent = a container's exist id), or "room"
+    pub relation: String,
+    /// "player", "room", or the parent container's exist id
+    pub parent: String,
+    /// Full display name (article + adjective + noun)
+    pub name: String,
+    pub article: String,
+    pub adjective: String,
+    pub noun: String,
+    /// Long description when it differs from `name` (`$_..$_` markers stripped)
+    pub long: Option<String>,
+    /// Item weight in pounds; -1 = unknown (the wire's sentinel, e.g. on
+    /// room furniture)
+    pub weight: i32,
+    /// Container capacity (contents), when the item is a container
+    pub in_max: Option<u32>,
+    /// Surface capacity (on top), when the item is a surface
+    pub on_max: Option<u32>,
+    /// Raw flags from the comma-separated `flags` attribute (e.g. "closed")
+    pub flags: Vec<String>,
+}
+
+impl ManagedInventoryItem {
+    /// Map one `<i .../>`'s raw attributes; None only when the id or loc is
+    /// missing/unusable (an item we could never anchor in the tree).
+    pub fn from_attrs(attrs: &[(String, String)]) -> Option<Self> {
+        let get = |name: &str| {
+            attrs
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.as_str())
+        };
+        let id = get("id")?.to_string();
+        let loc = get("loc")?;
+        let (relation, parent) = if loc == "room" {
+            ("room".to_string(), "room".to_string())
+        } else {
+            let (rel, parent) = loc.split_once(',')?;
+            (rel.trim().to_string(), parent.trim().to_string())
+        };
+        // name is "article,adjective,noun"; either of the first two may be
+        // empty. Anything that doesn't split into three keeps the whole
+        // string as the noun rather than losing the item.
+        let raw_name = get("name").unwrap_or_default();
+        let (article, adjective, noun) = match raw_name.splitn(3, ',').collect::<Vec<_>>()[..] {
+            [a, adj, n] => (a.trim().to_string(), adj.trim().to_string(), n.trim().to_string()),
+            _ => (String::new(), String::new(), raw_name.trim().to_string()),
+        };
+        let name = [article.as_str(), adjective.as_str(), noun.as_str()]
+            .iter()
+            .filter(|s| !s.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let long = get("long")
+            .map(|l| l.replace("$_", "").trim().to_string())
+            .filter(|l| !l.is_empty());
+        Some(Self {
+            id,
+            relation,
+            parent,
+            name,
+            article,
+            adjective,
+            noun,
+            long,
+            weight: get("weight").and_then(|w| w.trim().parse().ok()).unwrap_or(0),
+            in_max: get("in_max").and_then(|v| v.trim().parse().ok()),
+            on_max: get("on_max").and_then(|v| v.trim().parse().ok()),
+            flags: get("flags")
+                .map(|f| {
+                    f.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+    }
+}
+
+/// Latest `<inventoryManager>` snapshot (the structured inventory tree the
+/// extended feed serves in response to `_inventory manager <token>`).
+#[derive(Clone, Debug, Default)]
+pub struct ManagedInventoryState {
+    /// Correlation token from the request
+    pub token: String,
+    /// Room uid the snapshot was taken in
+    pub room: String,
+    pub items: Vec<ManagedInventoryItem>,
+    /// False when the response carried continuation cursors (paginated
+    /// inventory); continuation-following isn't implemented yet, so an
+    /// incomplete snapshot stays incomplete.
+    pub complete: bool,
+    /// Bumped on every snapshot for change detection
+    pub generation: u64,
+}
+
 /// GS4 Experience dialog state (from `<openDialog id='expr'>`)
 /// Composite of: yourLvl label + mindState progress + nextLvlPB progress
 #[derive(Clone, Debug, Default)]
@@ -1083,7 +1236,44 @@ impl BetrayerState {
         self.generation += 1;
     }
 }
+/// How many recent game lines stay available to `Await` steps. An await
+/// polls once per tick, so this only has to cover the burst a single tick can
+/// miss; 64 is far more than any observed edge needs and costs nothing.
+pub const RAW_LINE_RING: usize = 64;
+
 impl GameState {
+    /// Record a game line for scripted-edge awaits, evicting the oldest past
+    /// [`RAW_LINE_RING`]. Returns nothing; awaits read `recent_lines`.
+    pub fn push_recent_line(&mut self, line: &str) {
+        // Blank lines can't match a meaningful pattern and would evict real
+        // content from a small ring.
+        if line.trim().is_empty() {
+            return;
+        }
+        self.line_seq += 1;
+        self.recent_lines.push_back((self.line_seq, line.to_string()));
+        while self.recent_lines.len() > RAW_LINE_RING {
+            self.recent_lines.pop_front();
+        }
+    }
+
+    /// Whether a named debuff is on the Debuffs board right now. Lich's
+    /// `Status.bound?`/`Status.sleeping?` gate on the Bind/Sleep debuff
+    /// entries; the feed removes expired entries, so presence is the signal.
+    /// Matches the display text exactly or as a leading word ("Bind" also
+    /// matches "Bind (214)").
+    pub fn debuff_active(&self, name: &str) -> bool {
+        self.effects
+            .get("Debuffs")
+            .map(|c| {
+                c.effects.iter().any(|e| {
+                    let t = e.text.trim();
+                    t == name || t.starts_with(&format!("{name} "))
+                })
+            })
+            .unwrap_or(false)
+    }
+
     pub fn new() -> Self {
         Self {
             connected: false,
@@ -1092,6 +1282,7 @@ impl GameState {
             room_name: None,
             exits: Vec::new(),
             game_time: 0,
+            game_time_received: None,
             roundtime_end: None,
             casttime_end: None,
             spell: None,
@@ -1119,8 +1310,15 @@ impl GameState {
             spellbook: Vec::new(),
             spellbook_generation: 0,
             room_meta: RoomMetaState::default(),
+            managed_inventory: None,
+            pulse_count: 0,
+            last_pulse_mana: false,
             objects: crate::core::game_objects::GameObjects::default(),
             move_feedback: std::collections::VecDeque::new(),
+            game_line_no: 0,
+            silver_line_no: 0,
+            recent_lines: std::collections::VecDeque::new(),
+            line_seq: 0,
             spell_names_seen: std::collections::HashMap::new(),
             character: crate::core::character_state::CharacterState::default(),
             silver: None,
@@ -1144,6 +1342,7 @@ impl GameState {
     /// Also periodically recalculates estimated lag (every 30 seconds of game time).
     pub fn update_game_time(&mut self, prompt_time: i64) {
         self.game_time = prompt_time;
+        self.game_time_received = Some(std::time::Instant::now());
 
         // Periodically calculate lag (every LAG_CHECK_INTERVAL_SECS)
         if prompt_time - self.last_lag_check_time >= LAG_CHECK_INTERVAL_SECS {
@@ -1161,21 +1360,31 @@ impl GameState {
         }
     }
 
+    /// Server "now", extrapolated: the last prompt's timestamp plus how long
+    /// ago it arrived on the local clock. Timers keep flowing between lines.
+    pub fn game_time_now(&self) -> i64 {
+        self.game_time
+            + self
+                .game_time_received
+                .map(|at| at.elapsed().as_secs() as i64)
+                .unwrap_or(0)
+    }
+
     /// Check if currently in roundtime.
-    /// Compares against game server time, not system time.
+    /// Compares against extrapolated game server time, not system time.
     pub fn in_roundtime(&self) -> bool {
         if let Some(end_time) = self.roundtime_end {
-            self.game_time < end_time
+            self.game_time_now() < end_time
         } else {
             false
         }
     }
 
     /// Check if currently in casttime.
-    /// Compares against game server time, not system time.
+    /// Compares against extrapolated game server time, not system time.
     pub fn in_casttime(&self) -> bool {
         if let Some(end_time) = self.casttime_end {
-            self.game_time < end_time
+            self.game_time_now() < end_time
         } else {
             false
         }
@@ -1184,7 +1393,7 @@ impl GameState {
     /// Get remaining roundtime in seconds (0 if not in roundtime)
     pub fn roundtime_remaining(&self) -> i64 {
         if let Some(end_time) = self.roundtime_end {
-            (end_time - self.game_time).max(0)
+            (end_time - self.game_time_now()).max(0)
         } else {
             0
         }
@@ -1193,7 +1402,7 @@ impl GameState {
     /// Get remaining casttime in seconds (0 if not in casttime)
     pub fn casttime_remaining(&self) -> i64 {
         if let Some(end_time) = self.casttime_end {
-            (end_time - self.game_time).max(0)
+            (end_time - self.game_time_now()).max(0)
         } else {
             0
         }
