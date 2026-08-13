@@ -405,6 +405,18 @@ pub enum ParsedElement {
     /// `<inventoryViewItem>` response (extended feed); see
     /// [`InventoryViewItemResponse`].
     InventoryViewItem(InventoryViewItemResponse),
+    /// `<worldEvent realm="..." expires="MIN" time="...">text</worldEvent>`
+    /// (extended feed) — a realm-wide event announcement. `expires` is in
+    /// MINUTES (Saga computes expiresAt = now + 60000 * expires).
+    WorldEvent {
+        realm: Option<String>,
+        expires_min: Option<u32>,
+        text: String,
+    },
+    /// `<PantheonStatus value="N"/>` (extended feed) — pantheon meter.
+    PantheonStatus {
+        value: u32,
+    },
 }
 
 /// `<inventoryViewItem id exist [state]>` ... `</inventoryViewItem>` —
@@ -657,8 +669,9 @@ impl XmlParser {
 
             // Static start/end patterns - building these with format! allocated
             // 2 Strings x 10 tags per loop iteration in the hottest parse loop
-            const PAIRED_TAGS: [(&str, &str); 10] = [
+            const PAIRED_TAGS: [(&str, &str); 11] = [
                 ("<prompt", "</prompt>"),
+                ("<worldEvent", "</worldEvent>"),
                 ("<spell", "</spell>"),
                 ("<left", "</left>"),
                 ("<right", "</right>"),
@@ -997,6 +1010,14 @@ impl XmlParser {
         // structured inventory response to `_inventory manager <token>`
         else if tag.starts_with("<pulse") {
             self.handle_pulse(tag, elements);
+        } else if tag.starts_with("<worldEvent") {
+            self.handle_world_event(tag, elements);
+        } else if tag.starts_with("<PantheonStatus") {
+            if let Some(value) = Self::extract_attribute(tag, "value")
+                .and_then(|v| v.trim().parse().ok())
+            {
+                elements.push(ParsedElement::PantheonStatus { value });
+            }
         } else if tag.starts_with("<inventoryManager") {
             self.handle_inventory_manager_open(tag, elements);
         } else if Self::is_close_tag(tag, "inventoryManager") {

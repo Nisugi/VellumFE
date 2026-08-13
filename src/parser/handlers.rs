@@ -549,6 +549,55 @@ impl XmlParser {
         }
     }
 
+    /// `<worldEvent realm=.. expires=MIN time=..>text</worldEvent>` arrives
+    /// as one paired tag. Captures the announcement (inner markup stripped)
+    /// and emits a display line - without this the body leaked into the
+    /// stream as unlabeled bare text.
+    pub(super) fn handle_world_event(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        let realm = Self::extract_attribute(tag, "realm");
+        let expires_min: Option<u32> =
+            Self::extract_attribute(tag, "expires").and_then(|v| v.trim().parse().ok());
+        // Inner text: between the open tag's '>' and '</worldEvent>',
+        // any nested tags flattened away.
+        let text = tag
+            .find('>')
+            .map(|open_end| {
+                let inner = &tag[open_end + 1..];
+                let inner = inner.strip_suffix("</worldEvent>").unwrap_or(inner);
+                let mut out = String::new();
+                let mut rest = inner;
+                while let Some(lt) = rest.find('<') {
+                    out.push_str(&rest[..lt]);
+                    match rest[lt..].find('>') {
+                        Some(gt) => rest = &rest[lt + gt + 1..],
+                        None => {
+                            rest = "";
+                            break;
+                        }
+                    }
+                }
+                out.push_str(rest);
+                Self::decode_entities(out.trim().to_string())
+            })
+            .unwrap_or_default();
+        if text.is_empty() {
+            return;
+        }
+        // Display line so the announcement reaches the text stream labeled.
+        let label = match (&realm, expires_min) {
+            (Some(r), Some(m)) => format!("[World Event - {r}, {m}m] {text}"),
+            (Some(r), None) => format!("[World Event - {r}] {text}"),
+            (None, Some(m)) => format!("[World Event, {m}m] {text}"),
+            (None, None) => format!("[World Event] {text}"),
+        };
+        elements.push(ParsedElement::WorldEvent {
+            realm,
+            expires_min,
+            text,
+        });
+        elements.push(self.create_text_element(label));
+    }
+
     pub(super) fn handle_pulse(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
         // <pulse min="46" max="75" mana="0|1"/> - self-closing pulse
         // announcement. min/max = seconds window until the NEXT pulse

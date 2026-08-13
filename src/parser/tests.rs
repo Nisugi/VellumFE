@@ -2583,6 +2583,71 @@ fn test_inventory_view_item_open_container_and_prompt_tear() {
     assert!(elements.iter().any(|e| matches!(e, ParsedElement::Pulse { .. })));
 }
 
+#[test]
+fn test_world_event_tag() {
+    let mut parser = XmlParser::new();
+    let elements = parser.parse_line(
+        r#"<worldEvent realm="Elanthia" expires="90" time="1755000000">A <b>storm of wild magic</b> sweeps the land!</worldEvent>"#,
+    );
+    let ParsedElement::WorldEvent { realm, expires_min, text } = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::WorldEvent { .. }))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(realm.as_deref(), Some("Elanthia"));
+    assert_eq!(*expires_min, Some(90), "expires is MINUTES");
+    assert_eq!(text, "A storm of wild magic sweeps the land!");
+    // A labeled display line reaches the stream (the raw body must not).
+    assert!(elements.iter().any(|e| matches!(
+        e,
+        ParsedElement::Text { content, .. }
+            if content.contains("[World Event - Elanthia, 90m]")
+    )));
+}
+
+#[test]
+fn test_pantheon_status_tag() {
+    let mut parser = XmlParser::new();
+    let elements = parser.parse_line(r#"<PantheonStatus value="37"/>"#);
+    assert!(elements
+        .iter()
+        .any(|e| matches!(e, ParsedElement::PantheonStatus { value: 37 })));
+}
+
+#[test]
+fn test_crtr_status_health_condition_and_open_vocab() {
+    use crate::core::state::CreatureFlags;
+    let flags = CreatureFlags::from_xml_attrs([
+        ("hostile", "1"),
+        ("stunned", "1"),
+        ("health", "450"),
+        ("maxhealth", "500"),
+        ("condition", "bleeding heavily"),
+        // Unknown effect name with value 1 = open vocabulary.
+        ("frozen", "1"),
+        // Unknown attr with a non-1 value stays ignored.
+        ("mystery", "banana"),
+    ]);
+    assert!(flags.hostile);
+    assert_eq!(flags.health, Some(450));
+    assert_eq!(flags.max_health, Some(500));
+    assert_eq!(flags.health_percent(), Some(90));
+    assert_eq!(flags.condition.as_deref(), Some("bleeding heavily"));
+    assert_eq!(flags.statuses, vec!["stunned".to_string(), "frozen".to_string()]);
+
+    // maxhealth 0 or missing pieces yield no percentage.
+    assert_eq!(
+        CreatureFlags::from_xml_attrs([("health", "10"), ("maxhealth", "0")]).health_percent(),
+        None
+    );
+    assert_eq!(
+        CreatureFlags::from_xml_attrs([("health", "10")]).health_percent(),
+        None
+    );
+}
+
 // ==================== roommeta / mindState exp Parsing ====================
 
 #[test]

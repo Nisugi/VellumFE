@@ -2038,6 +2038,26 @@ impl MessageProcessor {
                     }
                 }
             }
+            ParsedElement::WorldEvent {
+                realm,
+                expires_min,
+                text,
+            } => {
+                self.chunk_has_silent_updates = true;
+                let now = chrono::Utc::now().timestamp();
+                game_state
+                    .world_events
+                    .retain(|e| e.expires_at.is_none_or(|t| t > now));
+                game_state.world_events.push(crate::core::state::WorldEventState {
+                    realm: realm.clone(),
+                    text: text.clone(),
+                    expires_at: expires_min.map(|m| now + 60 * m as i64),
+                });
+            }
+            ParsedElement::PantheonStatus { value } => {
+                self.chunk_has_silent_updates = true;
+                game_state.pantheon_value = Some(*value);
+            }
             ParsedElement::InventoryViewItem(resp) => {
                 self.chunk_has_silent_updates = true;
                 if let Some(verdict) = self.inv_service.on_viewitem(

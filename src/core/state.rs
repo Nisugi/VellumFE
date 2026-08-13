@@ -174,6 +174,12 @@ pub struct GameState {
     /// Whether the NEXT pulse restores mana — the wire's `mana` attribute
     /// declares the alternation up front (Saga semantics), nothing inferred.
     pub next_pulse_mana: bool,
+    /// Active world events (`<worldEvent>`, extended feed), pruned of
+    /// expired entries whenever a new one arrives.
+    pub world_events: Vec<WorldEventState>,
+    /// Pantheon meter (`<PantheonStatus value>`, extended feed)
+    pub pantheon_value: Option<u32>,
+
     /// Earliest arrival of the next pulse (server-clock epoch seconds,
     /// `now + min` from the last `<pulse>`); None before the first pulse.
     /// Drives the "pulse" countdown.
@@ -536,6 +542,14 @@ impl Creature {
             if flags.dead {
                 out.push("dead".to_string());
             }
+            // Extended feed extras lead: per-creature health percentage,
+            // then the condition string, then the status flags.
+            if let Some(pct) = flags.health_percent() {
+                out.push(format!("{pct}%"));
+            }
+            if let Some(cond) = &flags.condition {
+                out.push(cond.clone());
+            }
             out.extend(flags.statuses.iter().cloned());
             out
         } else {
@@ -633,7 +647,9 @@ impl Creature {
 /// text parse produces) and classification flags (dedicated bools).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CreatureFlags {
-    /// Active transient statuses in feed order ("stunned", "prone", ...)
+    /// Active transient statuses in feed order ("stunned", "prone", ...).
+    /// Open vocabulary: any unrecognized `="1"` attribute lands here too
+    /// (Saga's rule), so new server effects surface without a code change.
     pub statuses: Vec<String>,
     pub hostile: bool,
     pub disengaged: bool,
@@ -646,6 +662,12 @@ pub struct CreatureFlags {
     pub challenging: bool,
     pub rider: bool,
     pub mount: bool,
+    /// Current hit points, when the extended feed reports them
+    pub health: Option<u32>,
+    /// Maximum hit points
+    pub max_health: Option<u32>,
+    /// Free-text condition string, appended to the effect list by Saga
+    pub condition: Option<String>,
 }
 
 /// Maps `<crtrStatus>` transient-status attribute names to the canonical
@@ -673,6 +695,26 @@ impl CreatureFlags {
     pub fn from_xml_attrs<'a>(attrs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
         let mut flags = Self::default();
         for (name, value) in attrs {
+            // Numeric/text extras ride alongside the "1" flags (extended
+            // feed): per-creature hit points and a condition string.
+            match name {
+                "health" => {
+                    flags.health = value.trim().parse().ok();
+                    continue;
+                }
+                "maxhealth" => {
+                    flags.max_health = value.trim().parse().ok();
+                    continue;
+                }
+                "condition" => {
+                    let v = value.trim();
+                    if !v.is_empty() {
+                        flags.condition = Some(v.to_string());
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             let active = value == "1";
             if !active {
                 continue;
@@ -693,10 +735,22 @@ impl CreatureFlags {
                 "challenging" => flags.challenging = true,
                 "rider" => flags.rider = true,
                 "mount" => flags.mount = true,
-                _ => tracing::debug!("Unknown crtrStatus flag: {}", name),
+                // Open vocabulary (Saga's rule): any other ="1" attribute
+                // is an effect name - new server effects surface without a
+                // client release.
+                other => flags.statuses.push(other.to_string()),
             }
         }
         flags
+    }
+
+    /// Health percentage 0..=100 when both numbers are known and sane.
+    pub fn health_percent(&self) -> Option<u32> {
+        let (h, m) = (self.health?, self.max_health?);
+        if m == 0 {
+            return None;
+        }
+        Some(((h * 100) / m).min(100))
     }
 
     /// Boss-tier creature (AscensionBoss or MiniBoss).
@@ -899,6 +953,16 @@ pub struct ManagedInventoryItem {
     /// Raw flags from the comma-separated `flags` attribute (e.g. "closed",
     /// "locked")
     pub flags: Vec<String>,
+}
+
+/// One active `<worldEvent>` announcement.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorldEventState {
+    pub realm: Option<String>,
+    pub text: String,
+    /// Epoch seconds when the event lapses (wire `expires` is in minutes);
+    /// None = no stated expiry.
+    pub expires_at: Option<i64>,
 }
 
 /// Decoded packed capacity from `in_max`/`on_max`.
@@ -1402,6 +1466,8 @@ impl GameState {
             room_meta: RoomMetaState::default(),
             managed_inventory: None,
             pulse_count: 0,
+            world_events: Vec::new(),
+            pantheon_value: None,
             next_pulse_mana: false,
             pulse_next_earliest: None,
             pulse_next_latest: None,
