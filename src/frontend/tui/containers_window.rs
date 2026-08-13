@@ -51,19 +51,34 @@ impl ContainersWindow {
         for item in &snap.items {
             children.entry(item.parent.as_str()).or_default().push(item);
         }
-        let group_of = |relation: &str| -> usize {
-            match relation {
+        let group_of = |item: &ManagedInventoryItem| -> usize {
+            let has_kids = children
+                .get(item.id.as_str())
+                .is_some_and(|k| !k.is_empty());
+            let container = item.is_container() || has_kids;
+            match item.relation.as_str() {
                 "righthand" | "lefthand" => 0,
-                "worn" => 1,
-                "atfeet" | "reserved" => 2,
-                _ => 3,
+                "worn" if container => 1,
+                "worn" => 2,
+                "atfeet" => 3,
+                "reserved" => 4,
+                _ if container => 5,
+                _ => 6,
             }
         };
-        const GROUPS: [&str; 4] = ["hands", "worn", "at feet", "room"];
-        let mut roots: [Vec<&ManagedInventoryItem>; 4] = Default::default();
+        const GROUPS: [&str; 7] = [
+            "hands",
+            "worn containers",
+            "worn",
+            "at feet",
+            "reserved",
+            "room containers",
+            "on the ground",
+        ];
+        let mut roots: [Vec<&ManagedInventoryItem>; 7] = Default::default();
         for item in &snap.items {
             if item.parent == "player" || item.parent == "room" {
-                roots[group_of(&item.relation)].push(item);
+                roots[group_of(item)].push(item);
             }
         }
         for (gi, group) in roots.iter().enumerate() {
