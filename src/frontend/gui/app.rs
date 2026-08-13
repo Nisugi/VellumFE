@@ -2074,7 +2074,11 @@ impl eframe::App for VellumGuiApp {
         // stamps an orange "Unaligned" warning under widgets with
         // fractionally-sized rects — the phantom strip that haunted the
         // containers and bestiary windows in dev builds. Never wanted.
-        ctx.style_mut(|style| style.debug.show_unaligned = false);
+        if ctx.style().debug.show_unaligned {
+            let mut style = (*ctx.style()).clone();
+            style.debug.show_unaligned = false;
+            ctx.set_style(style);
+        }
         self.app_core.perf_stats.record_frame();
         // "Render" in the GUI is last frame's CPU cost as reported by
         // eframe (App::ui + painting); the first frame has none yet.
