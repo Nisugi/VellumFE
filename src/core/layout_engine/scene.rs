@@ -44,6 +44,10 @@ pub struct SceneRoom {
     pub entrance: bool,
     /// First room title, for hover text.
     pub title: String,
+    /// mapdb terrain string ("deciduous forest", "hard, flat", ...) for
+    /// terrain-tinted room fills. None/empty = theme fill.
+    #[serde(default)]
+    pub terrain: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -236,6 +240,7 @@ pub fn build_scene(
                     .and_then(|r| r.title.first())
                     .cloned()
                     .unwrap_or_default(),
+                terrain: room.and_then(|r| r.terrain.clone()),
             };
             let target = match sheet {
                 Sheet::Outdoor => &mut scene.outdoor,

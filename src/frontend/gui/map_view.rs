@@ -78,6 +78,56 @@ impl MapStyle {
     }
 }
 
+/// Terrain hue for a mapdb terrain string, or None for neutral ground
+/// ("hard, flat" streets, "none", unknown). The full GS4 vocabulary is
+/// ~19 values; matching is by keyword so variants ("deciduous" vs
+/// "deciduous forest") share a family.
+fn terrain_hue(terrain: &str) -> Option<Color32> {
+    let t = terrain.trim().to_ascii_lowercase();
+    if t.is_empty() || t == "none" || t == "hard, flat" {
+        return None;
+    }
+    let c = |r, g, b| Some(Color32::from_rgb(r, g, b));
+    if t.contains("coniferous") {
+        c(46, 110, 74) // deep pine green
+    } else if t.contains("deciduous") || t.contains("tropical") {
+        c(84, 140, 66) // leafy green
+    } else if t.contains("grass") || t.contains("cultivated") {
+        c(128, 154, 62) // yellow-green fields
+    } else if t.contains("scrub") {
+        c(140, 132, 78) // dusty olive
+    } else if t.contains("riparian") || t.contains("wetland") {
+        c(64, 128, 128) // waterside teal
+    } else if t.contains("sandy") {
+        c(190, 168, 110) // sand
+    } else if t.contains("dirt") || t.contains("muddy") {
+        c(134, 100, 66) // earth brown
+    } else if t.contains("mountain") || t.contains("hilly") || t.contains("rough") {
+        c(122, 116, 110) // slate
+    } else if t.contains("subterranean") {
+        c(96, 90, 104) // cave violet-grey
+    } else if t.contains("icy") || t.contains("glacier") {
+        c(150, 190, 210) // pale ice
+    } else {
+        None
+    }
+}
+
+/// Room fill for a terrain: the terrain hue pulled toward the theme fill so
+/// tinted rooms stay readable on both light and dark grounds and untinted
+/// rooms don't look foreign next to them.
+fn terrain_fill(terrain: Option<&str>, base: Color32) -> Color32 {
+    let Some(hue) = terrain.and_then(terrain_hue) else {
+        return base;
+    };
+    let mix = |a: u8, b: u8| ((a as u16 * 60 + b as u16 * 40) / 100) as u8;
+    Color32::from_rgb(
+        mix(hue.r(), base.r()),
+        mix(hue.g(), base.g()),
+        mix(hue.b(), base.b()),
+    )
+}
+
 /// Stable per-pair color for long-connector dots: the same two rooms get
 /// the same hue every session, and different pairs spread across a wheel of
 /// well-separated hues. Saturation/value sit high enough to read on both
@@ -353,7 +403,7 @@ pub fn paint_sheet(
         painter.rect(
             room_rect,
             1.5,
-            style.room_fill,
+            terrain_fill(room.terrain.as_deref(), style.room_fill),
             style.room_stroke,
             egui::StrokeKind::Middle,
         );
