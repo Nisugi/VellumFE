@@ -2342,3 +2342,25 @@ fn wheel_over_live_pane_scrolls_the_history_pane() {
     );
     assert!(!h.following(), "still detached while scrolled back");
 }
+
+/// A stray left click while following must neither detach follow nor open
+/// the split — only real scroll motion does.
+#[test]
+fn stray_click_does_not_split() {
+    let mut h = ScrollHarness::new("split_click", 300.0);
+    h.push_lines(100);
+    h.frame_split();
+    let hover = h.hover_center();
+    let press = eframe::egui::Event::PointerButton {
+        pos: eframe::egui::pos2(h.view.x * 0.5, h.view.y * 0.5),
+        button: eframe::egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: eframe::egui::Modifiers::default(),
+    };
+    h.frame_split_with(vec![hover, press]);
+    for _ in 0..5 {
+        h.frame_split();
+    }
+    assert!(h.following(), "a click must not detach follow");
+    assert!(!h.live_pane_rendered(), "a click must not open the split");
+}

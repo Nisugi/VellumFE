@@ -1549,17 +1549,32 @@ impl VellumGuiApp {
         // gate, wheeling (or clicking) in one window detached every other text
         // window from its tail whenever a burst had grown past the re-arm band.
         let pointer_over_window = ui.rect_contains_pointer(ui.max_rect());
-        let user_scrolled = pointer_over_window
+        // Two grades of user input, deliberately separate:
+        // - wheel_scrolled: actual scroll MOTION (wheel event or the smoothed
+        //   delta still moving) — the only thing that detaches follow. A
+        //   detach now opens the split view, so a stray click must never
+        //   count as one.
+        // - user_scrolled: motion OR a button press — suppresses the pin for
+        //   the frame so an explicit offset can't swallow the gesture or
+        //   shift the window mid-click (the click-shift bug).
+        let wheel_scrolled = pointer_over_window
             && ui.input(|input| {
                 input.smooth_scroll_delta.y != 0.0
-                    || input.raw.events.iter().any(|event| {
-                        matches!(
-                            event,
-                            egui::Event::MouseWheel { .. }
-                                | egui::Event::PointerButton { pressed: true, .. }
-                        )
-                    })
+                    || input
+                        .raw
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::MouseWheel { .. }))
             });
+        let user_scrolled = wheel_scrolled
+            || (pointer_over_window
+                && ui.input(|input| {
+                    input
+                        .raw
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::PointerButton { pressed: true, .. }))
+                }));
         // User input owns the window the moment it arrives. Setting the flag
         // is idempotent, so a producer repeating every frame can no longer
         // out-race it (the 82c2a8d5 failure: "the mouse lost every round").
@@ -1589,7 +1604,7 @@ impl VellumGuiApp {
                 was_following = follow_bottom,
                 "user_scrolled: follow detached"
             );
-            if !force_follow {
+            if wheel_scrolled && !force_follow {
                 follow_bottom = false;
             }
         }
