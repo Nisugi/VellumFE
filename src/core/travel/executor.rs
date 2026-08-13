@@ -928,13 +928,15 @@ impl TravelTask {
                     self.arrive();
                     return events;
                 }
-                if current != from {
-                    events.push(TravelEvent::Status(format!(
-                        "off the planned route (room {current}) - re-pathing"
-                    )));
-                    self.repath(ctx.db, current, ctx.lich_fallback, &mut events);
-                    return events;
-                }
+                // NO off-route check while a script runs: procs legitimately
+                // wander through mapped side rooms mid-crossing (the
+                // Glo'antern mist trail climbs a MAPPED boulder room to scout
+                // the direction, then climbs back down — treating that as
+                // "fled" aborted the script before its captured move, every
+                // lap, to the restart cap). Lich runs a proc to completion
+                // wherever it goes; a genuinely stuck script is bounded by
+                // its await/step timeouts, and the off-route check after
+                // completion (AwaitArrival) still catches real strays.
                 self.tick_script(
                     actions, pc, sleep_until, expected, from, awaiting, ctx, &mut events,
                 );
@@ -5189,6 +5191,68 @@ mod tests {
         sim.now = 600;
         let events = task.tick(sim.ctx(&db));
         assert_eq!(sent(&events), ["go turnstile"]);
+    }
+
+    #[test]
+    fn script_visiting_a_mapped_side_room_is_not_off_route() {
+        // The live Glo'antern mist-trail loop: the proc climbs a MAPPED
+        // boulder room (1265) to scout the direction, comes back down, and
+        // finishes with the captured move. The old RunScript off-route check
+        // treated the boulder as "fled" and re-pathed before `move dir`,
+        // every lap, to the restart cap. The proc text is verbatim mapdb.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1042, "uid": [13001070], "location": "T", "title": ["[Glo'antern Moor]"],
+                 "wayto": {"1041": ";e move 'climb boulder'\nfput 'look trail'\ndir = matchfindword \"You peer into the mist and see that the trail heads off to the ?\"\nmove 'down'\nsleep 5 if running?('agoto')\nmove dir",
+                           "1265": "climb boulder"},
+                 "timeto": {"1041": 0.2, "1265": 0.2}, "paths": ""},
+                {"id": 1041, "uid": [13001071], "location": "T", "title": ["[Glo'antern Moor]"],
+                 "wayto": {"1042": "southwest"}, "timeto": {"1042": 0.2}, "paths": ""},
+                {"id": 1265, "uid": [13001086], "location": "T", "title": ["[Glo'antern Moor, Boulder]"],
+                 "wayto": {"1042": "down"}, "timeto": {"1042": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1042, 1041, 0).unwrap();
+        let mut sim = Sim::new(1042);
+
+        // The proc edge routes (0.2 beats climbing up and being stuck).
+        let events = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&events), ["climb boulder"], "the scout climb");
+        // Atop the MAPPED boulder: the script must keep running, not repath.
+        sim.current = 1265;
+        sim.now += 300;
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            !events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("off the planned route"))),
+            "a mapped side room mid-script is NOT off-route: {events:?}"
+        );
+        assert_eq!(sent(&events), ["look trail"], "the script continues");
+        // Idle ticks while the await waits — still no repath.
+        sim.now += 300;
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            !events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("off the planned route"))),
+            "{events:?}"
+        );
+        // The scout line lands: capture the direction, climb down.
+        sim.say("You peer into the mist and see that the trail heads off to the east.");
+        sim.now += 300;
+        let events = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&events), ["down"], "back down after the capture");
+        // Down landed: the captured move fires.
+        sim.current = 1042;
+        sim.now += 300;
+        let events = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&events), ["east"], "the captured direction");
+        // And the crossing lands.
+        sim.current = 1041;
+        sim.now += 300;
+        let events = task.tick(sim.ctx(&db));
+        assert!(matches!(
+            events.last(),
+            Some(TravelEvent::Arrived { destination: 1041, .. })
+        ));
     }
 
     #[test]
