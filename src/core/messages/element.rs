@@ -1034,6 +1034,8 @@ impl MessageProcessor {
                 if id == "yourLvl" {
                     game_state.gs4_experience.update_level(value.clone());
                 }
+                // Training points + conversion rates ride the same dialog.
+                game_state.gs4_experience.update_tp_label(id, value);
                 // Update encumbrance blurb label
                 if id == "encumblurb" {
                     game_state.encumbrance.update_blurb(value.clone());

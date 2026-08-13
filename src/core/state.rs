@@ -1359,6 +1359,16 @@ pub struct GS4ExperienceState {
     pub lumnis: Option<u8>,
     /// RPA bonus multiplier (can be fractional); only present while active
     pub rpa: Option<f32>,
+    /// Physical training points (raw label text, e.g. "23")
+    pub ptps: Option<String>,
+    /// Mental training points
+    pub mtps: Option<String>,
+    /// Ascension training points
+    pub atps: Option<String>,
+    /// Physical-to-mental conversion rate label
+    pub p2m: Option<String>,
+    /// Mental-to-physical conversion rate label
+    pub m2p: Option<String>,
     /// Generation counter for change detection
     pub generation: u64,
 }
@@ -1446,6 +1456,26 @@ impl GS4ExperienceState {
         changed
     }
 
+    /// Update a training-point/conversion label from the expr dialog
+    /// (PTPs/MTPs/ATPs/p2m/m2p). Returns true if changed.
+    pub fn update_tp_label(&mut self, id: &str, value: &str) -> bool {
+        let field = match id {
+            "PTPs" => &mut self.ptps,
+            "MTPs" => &mut self.mtps,
+            "ATPs" => &mut self.atps,
+            "p2m" => &mut self.p2m,
+            "m2p" => &mut self.m2p,
+            _ => return false,
+        };
+        if field.as_deref() != Some(value) {
+            *field = Some(value.to_string());
+            self.generation += 1;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Clear all values (on disconnect/login)
     pub fn clear(&mut self) {
         self.level_text.clear();
@@ -1461,6 +1491,11 @@ impl GS4ExperienceState {
         self.fashlonae = None;
         self.lumnis = None;
         self.rpa = None;
+        self.ptps = None;
+        self.mtps = None;
+        self.atps = None;
+        self.p2m = None;
+        self.m2p = None;
         self.generation += 1;
     }
 }
