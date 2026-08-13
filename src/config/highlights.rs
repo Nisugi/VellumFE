@@ -308,14 +308,13 @@ pub const HIGHLIGHT_FIELDS: &[HlFieldDef] = &[
     HlFieldDef { name: "replace", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "stream", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "window", applies_to: &[Tui, Gui, Web] },
-    // Overlay alerts (2026-08-11). This catalog tracks where a field must be
-    // EDITABLE, which is not the same as where it renders: the TUI grew an
-    // alert overlay (banner line + edge flash) but still has no alert form,
-    // so listing Tui here would claim authoring support that does not exist.
-    // Widen to Tui when the TUI highlight form gains alert fields, and to Web
-    // when the phone client gets both a DOM overlay and a bridge message
-    // carrying active-alert state.
-    HlFieldDef { name: "alert", applies_to: &[Gui] },
+    // Overlay alerts (2026-08-11; TUI form fields 2026-08-13). The TUI edits
+    // the subset its renderer shows (banner/colors/flash/anchor/duration/
+    // cooldown) and preserves the rest via merge; the GUI edits everything.
+    // Web stays out: the phone RECEIVES alerts (delta + DOM overlay) but its
+    // highlight form doesn't author them yet — this catalog tracks
+    // editability, not rendering.
+    HlFieldDef { name: "alert", applies_to: &[Tui, Gui] },
 ];
 
 /// Deliberate coverage gaps, each with a reason. A `(field, frontend)`
@@ -356,7 +355,7 @@ pub const HL_TUI_COVERED: &[&str] = &[
     "pattern", "fg", "bg", "bold", "color_entire_line", "fast_parse", "sound",
     "sound_volume", "rumble", "category", "squelch", "silent_prompt",
     "redirect_to", "redirect_mode", "replace", "stream", "window",
-    "set_status", "status_duration", "clear_status",
+    "set_status", "status_duration", "clear_status", "alert",
 ];
 
 /// Fields edited by the GUI highlight editor

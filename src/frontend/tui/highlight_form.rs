@@ -16,7 +16,24 @@ use tui_textarea::TextArea;
 
 // Keep popup geometry in one place so dragging + rendering stay in sync
 const POPUP_WIDTH: u16 = 70;
-const POPUP_HEIGHT: u16 = 27;
+const POPUP_HEIGHT: u16 = 32;
+
+/// The nine screen anchors for the alert dropdown, in reading order with
+/// their serde/display labels.
+const ALERT_ANCHOR_OPTIONS: [(crate::config::AlertAnchor, &str); 9] = {
+    use crate::config::AlertAnchor::*;
+    [
+        (TopLeft, "top-left"),
+        (TopCenter, "top-center"),
+        (TopRight, "top-right"),
+        (CenterLeft, "center-left"),
+        (Center, "center"),
+        (CenterRight, "center-right"),
+        (BottomLeft, "bottom-left"),
+        (BottomCenter, "bottom-center"),
+        (BottomRight, "bottom-right"),
+    ]
+};
 
 /// Actions that can result from mouse interaction with the highlight form
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -94,13 +111,21 @@ pub struct HighlightFormWidget {
     status_duration: TextArea<'static>,
     clear_status: TextArea<'static>,
 
-    /// Overlay alert carried through untouched. The TUI has no alert renderer
-    /// yet (`alert` is GUI-only in HIGHLIGHT_FIELDS), so this form cannot edit
-    /// one — but it must not DESTROY one either. Hardcoding `None` here is the
-    /// exact bug that once wiped GUI-authored status actions on any TUI edit;
-    /// preserving the source spec is the fix. Delete this passthrough only
-    /// when the TUI grows real alert fields.
+    /// The alert subfields this form does NOT edit (art, id, priority,
+    /// offset, condition gate, re-arm, timer, cancels — the GUI's territory),
+    /// preserved so saving here never wipes them. The fields below EDIT the
+    /// rest; on save they merge over this remainder.
     alert: Option<crate::config::AlertSpec>,
+    // Editable alert fields (indices 23-29): what the TUI's own renderer can
+    // show — banner + colors, flash, anchor, plus duration/cooldown.
+    alert_banner: TextArea<'static>,
+    alert_banner_fg: TextArea<'static>,
+    alert_banner_bg: TextArea<'static>,
+    alert_flash: TextArea<'static>,
+    /// Index into ALERT_ANCHOR_OPTIONS (dropdown, field 27).
+    alert_anchor_index: usize,
+    alert_duration: TextArea<'static>,
+    alert_cooldown: TextArea<'static>,
 
     // Scope (Global vs Character)
     is_global: bool, // true = save to global/, false = save to character profile
@@ -213,6 +238,20 @@ impl HighlightFormWidget {
         clear_status.set_cursor_line_style(Style::default());
         clear_status.set_placeholder_text("status id to turn off (optional)");
 
+        // Alert fields. One tiny helper keeps nine constructions readable.
+        let text_field = |placeholder: &str| {
+            let mut area = TextArea::default();
+            area.set_cursor_line_style(Style::default());
+            area.set_placeholder_text(placeholder);
+            area
+        };
+        let alert_banner = text_field("overlay text (optional)");
+        let alert_banner_fg = text_field("color");
+        let alert_banner_bg = text_field("color");
+        let alert_flash = text_field("edge flash color (optional)");
+        let alert_duration = text_field("secs");
+        let alert_cooldown = text_field("secs");
+
         Self {
             name,
             pattern,
@@ -241,6 +280,13 @@ impl HighlightFormWidget {
             status_duration,
             clear_status,
             alert: None,
+            alert_banner,
+            alert_banner_fg,
+            alert_banner_bg,
+            alert_flash,
+            alert_anchor_index: 4, // Center, the schema default
+            alert_duration,
+            alert_cooldown,
             is_global: true,        // Default to global scope
             rumble: None,
             rumble_options: vec!["(none)".to_string()],
@@ -346,8 +392,33 @@ impl HighlightFormWidget {
             form.clear_status = TextArea::from([status.clone()]);
             form.clear_status.set_cursor_line_style(Style::default());
         }
-        // Not editable here; carried so saving doesn't wipe it (see field doc).
+        // Keep the whole spec as the merge base (see field doc), then load
+        // the subfields this form edits.
         form.alert = pattern.alert.clone();
+        if let Some(ref alert) = pattern.alert {
+            let fill = |target: &mut TextArea<'static>, value: Option<&str>| {
+                if let Some(value) = value {
+                    *target = TextArea::from([value.to_string()]);
+                    target.set_cursor_line_style(Style::default());
+                }
+            };
+            fill(&mut form.alert_banner, alert.banner.as_deref());
+            fill(&mut form.alert_banner_fg, alert.banner_fg.as_deref());
+            fill(&mut form.alert_banner_bg, alert.banner_bg.as_deref());
+            fill(&mut form.alert_flash, alert.flash.as_deref());
+            fill(
+                &mut form.alert_duration,
+                alert.duration.map(|v| v.to_string()).as_deref(),
+            );
+            fill(
+                &mut form.alert_cooldown,
+                alert.cooldown.map(|v| v.to_string()).as_deref(),
+            );
+            form.alert_anchor_index = ALERT_ANCHOR_OPTIONS
+                .iter()
+                .position(|(anchor, _)| *anchor == alert.anchor)
+                .unwrap_or(4);
+        }
 
         form.status_message = "Editing highlight".to_string();
         form
@@ -400,16 +471,50 @@ impl HighlightFormWidget {
         };
     }
 
+    /// Assemble the alert from the edited fields merged over the preserved
+    /// remainder (condition gate, timer, cancels, art, id, priority, offset —
+    /// the subfields this form does not host). Merging instead of replacing
+    /// is what keeps a GUI-authored gate alive through a TUI edit.
+    fn build_alert(&self) -> Option<crate::config::AlertSpec> {
+        let text = |area: &TextArea<'static>| {
+            let value = area.lines()[0].trim().to_string();
+            (!value.is_empty()).then_some(value)
+        };
+        let mut spec = self.alert.clone().unwrap_or_default();
+        spec.banner = text(&self.alert_banner);
+        spec.banner_fg = text(&self.alert_banner_fg);
+        spec.banner_bg = text(&self.alert_banner_bg);
+        spec.flash = text(&self.alert_flash);
+        spec.anchor = ALERT_ANCHOR_OPTIONS[self.alert_anchor_index.min(8)].0;
+        spec.duration = text(&self.alert_duration)
+            .and_then(|v| v.parse::<f32>().ok())
+            .filter(|v| *v > 0.0);
+        spec.cooldown = text(&self.alert_cooldown)
+            .and_then(|v| v.parse::<f32>().ok())
+            .filter(|v| *v >= 0.0);
+
+        // Nothing to show AND nothing preserved worth keeping: no alert at
+        // all, same emptiness rule as the GUI form.
+        let inert = spec.banner.is_none()
+            && spec.art.is_none()
+            && spec.flash.is_none()
+            && spec.when.is_none()
+            && spec.timer.is_none()
+            && spec.cancels.is_empty();
+        (!inert).then_some(spec)
+    }
+
     /// Move focus to next field
     pub fn focus_next(&mut self) {
-        // 0-22 (19 = rumble picklist, 20-22 = custom-status actions)
-        self.focused_field = (self.focused_field + 1) % 23;
+        // 0-29 (19 = rumble picklist, 20-22 = custom-status actions,
+        // 23-29 = overlay alert; 27 = anchor picklist)
+        self.focused_field = (self.focused_field + 1) % 30;
     }
 
     /// Move focus to previous field
     pub fn focus_prev(&mut self) {
         self.focused_field = if self.focused_field == 0 {
-            22
+            29
         } else {
             self.focused_field - 1
         };
@@ -517,6 +622,11 @@ impl HighlightFormWidget {
                         self.rumble_index -= 1;
                         self.update_rumble_from_index();
                     }
+                } else if self.focused_field == 27 {
+                    // Alert anchor dropdown
+                    if self.alert_anchor_index > 0 {
+                        self.alert_anchor_index -= 1;
+                    }
                 }
                 None
             }
@@ -540,6 +650,11 @@ impl HighlightFormWidget {
                     if self.rumble_index + 1 < self.rumble_options.len() {
                         self.rumble_index += 1;
                         self.update_rumble_from_index();
+                    }
+                } else if self.focused_field == 27 {
+                    // Alert anchor dropdown
+                    if self.alert_anchor_index + 1 < ALERT_ANCHOR_OPTIONS.len() {
+                        self.alert_anchor_index += 1;
                     }
                 }
                 None
@@ -577,6 +692,11 @@ impl HighlightFormWidget {
                                 (self.rumble_index + 1) % self.rumble_options.len();
                             self.update_rumble_from_index();
                         }
+                    }
+                    27 => {
+                        // Alert anchor dropdown: cycle through the 9-grid.
+                        self.alert_anchor_index =
+                            (self.alert_anchor_index + 1) % ALERT_ANCHOR_OPTIONS.len();
                     }
                     _ => {}
                 }
@@ -747,8 +867,7 @@ impl HighlightFormWidget {
                 let text = self.clear_status.lines()[0].as_str().trim();
                 (!text.is_empty()).then(|| text.to_string())
             },
-            // Preserved, never authored here — same reasoning as set_status above.
-            alert: self.alert.clone(),
+            alert: self.build_alert(),
             compiled_regex: None, // Will be compiled when config is loaded
         };
 
@@ -1535,6 +1654,138 @@ impl HighlightFormWidget {
             buf,
             theme,
         );
+        current_y += 1;
+
+        // ---- Overlay alert (fields 23-29) ---------------------------
+        // Split rows: render_text_row takes explicit x/width, so two fields
+        // share a line and the section costs 4 rows instead of 7.
+        let half = input_width / 2;
+        let right_label_x = input_start + half + 1;
+        let right_input_x = right_label_x + 6;
+        let right_width = (x + 2 + POPUP_WIDTH - 4).saturating_sub(right_input_x);
+
+        Self::render_text_row(
+            focused_field,
+            23,
+            "Alert banner:",
+            &mut self.alert_banner,
+            "optional",
+            x + 2,
+            current_y,
+            input_start,
+            input_width,
+            txtbg,
+            buf,
+            theme,
+        );
+        current_y += 1;
+
+        Self::render_text_row(
+            focused_field,
+            24,
+            "Banner fg:",
+            &mut self.alert_banner_fg,
+            "color",
+            x + 2,
+            current_y,
+            input_start,
+            half,
+            txtbg,
+            buf,
+            theme,
+        );
+        Self::render_text_row(
+            focused_field,
+            25,
+            "bg:",
+            &mut self.alert_banner_bg,
+            "color",
+            right_label_x,
+            current_y,
+            right_input_x,
+            right_width,
+            txtbg,
+            buf,
+            theme,
+        );
+        current_y += 1;
+
+        Self::render_text_row(
+            focused_field,
+            26,
+            "Alert flash:",
+            &mut self.alert_flash,
+            "color",
+            x + 2,
+            current_y,
+            input_start,
+            half,
+            txtbg,
+            buf,
+            theme,
+        );
+        // Anchor dropdown shares the flash row (field 27).
+        {
+            let focused = focused_field == 27;
+            let label_color = crossterm_bridge::to_ratatui_color(if focused {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            });
+            let label = "at:";
+            for (i, ch) in label.chars().enumerate() {
+                buf[(right_label_x + i as u16, current_y)]
+                    .set_char(ch)
+                    .set_fg(label_color)
+                    .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+            }
+            let value = format!(
+                "{} {} {}",
+                if focused { "<" } else { " " },
+                ALERT_ANCHOR_OPTIONS[self.alert_anchor_index.min(8)].1,
+                if focused { ">" } else { " " },
+            );
+            for (i, ch) in value.chars().enumerate() {
+                let cx = right_input_x + i as u16;
+                if cx >= x + POPUP_WIDTH - 1 {
+                    break;
+                }
+                buf[(cx, current_y)]
+                    .set_char(ch)
+                    .set_fg(label_color)
+                    .set_bg(txtbg);
+            }
+        }
+        current_y += 1;
+
+        Self::render_text_row(
+            focused_field,
+            28,
+            "Alert secs:",
+            &mut self.alert_duration,
+            "secs",
+            x + 2,
+            current_y,
+            input_start,
+            half,
+            txtbg,
+            buf,
+            theme,
+        );
+        Self::render_text_row(
+            focused_field,
+            29,
+            "cool:",
+            &mut self.alert_cooldown,
+            "secs",
+            right_label_x,
+            current_y,
+            right_input_x,
+            right_width,
+            txtbg,
+            buf,
+            theme,
+        );
     }
 
     fn render_text_row(
@@ -2016,6 +2267,12 @@ impl TextEditable for HighlightFormWidget {
             20 => Some(&self.set_status),
             21 => Some(&self.status_duration),
             22 => Some(&self.clear_status),
+            23 => Some(&self.alert_banner),
+            24 => Some(&self.alert_banner_fg),
+            25 => Some(&self.alert_banner_bg),
+            26 => Some(&self.alert_flash),
+            28 => Some(&self.alert_duration),
+            29 => Some(&self.alert_cooldown),
             _ => None,
         }
     }
@@ -2036,6 +2293,12 @@ impl TextEditable for HighlightFormWidget {
             20 => Some(&mut self.set_status),
             21 => Some(&mut self.status_duration),
             22 => Some(&mut self.clear_status),
+            23 => Some(&mut self.alert_banner),
+            24 => Some(&mut self.alert_banner_fg),
+            25 => Some(&mut self.alert_banner_bg),
+            26 => Some(&mut self.alert_flash),
+            28 => Some(&mut self.alert_duration),
+            29 => Some(&mut self.alert_cooldown),
             _ => None,
         }
     }
@@ -2255,4 +2518,79 @@ mod tests {
         };
         assert_eq!(pattern.redirect_mode, RedirectMode::RedirectCopy);
     }
+    #[test]
+    fn tui_form_authors_the_alert_fields_its_renderer_shows() {
+        let mut form = HighlightFormWidget::new();
+        form.name = TextArea::from(["stun".to_string()]);
+        form.pattern = TextArea::from(["You are stunned".to_string()]);
+        form.alert_banner = TextArea::from(["STUNNED".to_string()]);
+        form.alert_banner_fg = TextArea::from(["#ff0000".to_string()]);
+        form.alert_flash = TextArea::from(["#aa0000".to_string()]);
+        form.alert_anchor_index = 1; // top-center
+        form.alert_duration = TextArea::from(["6".to_string()]);
+        form.alert_cooldown = TextArea::from(["3".to_string()]);
+
+        let Some(FormResult::Save { pattern, .. }) = form.save_internal() else {
+            panic!("expected save");
+        };
+        let alert = pattern.alert.expect("alert authored");
+        assert_eq!(alert.banner.as_deref(), Some("STUNNED"));
+        assert_eq!(alert.banner_fg.as_deref(), Some("#ff0000"));
+        assert_eq!(alert.flash.as_deref(), Some("#aa0000"));
+        assert_eq!(alert.anchor, crate::config::AlertAnchor::TopCenter);
+        assert_eq!(alert.duration, Some(6.0));
+        assert_eq!(alert.cooldown, Some(3.0));
+    }
+
+    #[test]
+    fn tui_edit_preserves_the_alert_subfields_it_cannot_author() {
+        // The merge rule: banner edits here must not wipe a GUI-authored
+        // condition gate or timer — the status-actions wipe bug, prevented.
+        let mut source = pattern_with_filters();
+        source.alert = Some(crate::config::AlertSpec {
+            banner: Some("OLD".to_string()),
+            when: Some(crate::config::Condition::RtActive),
+            rearm: Some(5.0),
+            timer: Some(crate::config::AlertTimer {
+                id: Some("t".to_string()),
+                label: "Timer".to_string(),
+                duration: 12.0,
+                color: None,
+            }),
+            cancels: vec!["other".to_string()],
+            art: Some("lightning".to_string()),
+            ..Default::default()
+        });
+
+        let mut form = HighlightFormWidget::new_edit("rule".to_string(), &source);
+        // Loaded for editing…
+        assert_eq!(form.alert_banner.lines()[0], "OLD");
+        // …edit only the banner and save.
+        form.alert_banner = TextArea::from(["NEW".to_string()]);
+
+        let Some(FormResult::Save { pattern, .. }) = form.save_internal() else {
+            panic!("expected save");
+        };
+        let alert = pattern.alert.expect("alert survives");
+        assert_eq!(alert.banner.as_deref(), Some("NEW"), "edit applied");
+        assert!(alert.when.is_some(), "condition gate preserved");
+        assert_eq!(alert.rearm, Some(5.0), "rearm preserved");
+        assert!(alert.timer.is_some(), "timer preserved");
+        assert_eq!(alert.cancels, vec!["other"], "cancels preserved");
+        assert_eq!(alert.art.as_deref(), Some("lightning"), "art preserved");
+    }
+
+    #[test]
+    fn clearing_every_alert_field_on_a_plain_rule_yields_no_alert() {
+        // Empty alert fields on a rule with no preserved gate/timer must
+        // save as "no alert", not an inert empty spec.
+        let mut form = HighlightFormWidget::new();
+        form.name = TextArea::from(["plain".to_string()]);
+        form.pattern = TextArea::from(["hello".to_string()]);
+        let Some(FormResult::Save { pattern, .. }) = form.save_internal() else {
+            panic!("expected save");
+        };
+        assert!(pattern.alert.is_none());
+    }
+
 }
