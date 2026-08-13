@@ -41,7 +41,15 @@ const PORTAL_WHEEL_KEY: &str = crate::core::AppCore::PORTAL_WHEEL_KEY;
 /// Movement-stick choices for the Tuning tab.
 const MOVEMENT_STICKS: [&str; 2] = ["left", "right"];
 /// Leaf fire-mode choices for the Tuning tab (see `[controller_tuning]`).
-const FIRE_MODES: [&str; 3] = ["release", "edge", "retract"];
+/// Per-slice fire types for the slice-row dropdown (wheel v2). "none" is
+/// the dead-zone type; the other three match the old global fire modes.
+const SLICE_FIRE_TYPES: [(&str, &str); 4] = [
+    ("none", "None"),
+    ("release", "Release"),
+    ("edge", "Edge"),
+    ("retract", "Retract"),
+];
+const OPPOSING_STICK_ACTIONS: [&str; 2] = ["scroll", "none"];
 /// Screen-anchor choices for the reserved Back slice.
 const BACK_ANCHORS: [&str; 9] = [
     "up", "down", "left", "right", "up-left", "up-right", "down-left", "down-right",
@@ -893,6 +901,17 @@ impl VellumGuiApp {
                     );
                     combo_row(
                         ui,
+                        "Opposing stick",
+                        "What the non-movement stick does when it is NOT aiming an open \
+                         wheel. scroll: scrolls the story window and cycles interact-mode \
+                         focus (the classic behaviour). none: no idle action — a stray \
+                         nudge does nothing. Wheel aiming works either way.",
+                        &mut tuning.opposing_stick,
+                        &OPPOSING_STICK_ACTIONS,
+                        &mut changed,
+                    );
+                    combo_row(
+                        ui,
                         "Back slice anchor",
                         "Screen side the reserved Back slice is pinned to inside a folder. \
                          Back is a real, aimable slice; the ring rotates so its center sits \
@@ -1018,46 +1037,41 @@ impl VellumGuiApp {
                     });
 
                     ui.separator();
-                    combo_row(
-                        ui,
-                        "Fire mode",
-                        "How a committed leaf slice fires. release: on wheel-button release \
-                         (dwell to commit first). edge: the instant the stick crosses the \
-                         edge threshold, no dwell — fastest on sparse wheels. retract: dwell \
-                         to commit, then fire on a small inward flick (deflection dropping \
-                         below its peak) without recentering. Folders always descend on dwell.",
-                        &mut tuning.fire_mode,
-                        &FIRE_MODES,
-                        &mut changed,
+                    // Fire type is chosen per slice now (the dropdown in each
+                    // slice row of the Wheels tab); a slice without its own
+                    // type falls back to release. These parameterize the
+                    // edge/retract types wherever a slice uses them.
+                    ui.weak(
+                        "How a slice fires is set per slice in the Wheels tab \
+                         (None / Release / Edge / Retract). The knobs below tune \
+                         the edge and retract behaviours for every slice that \
+                         uses them.",
                     );
-                    // Only the active mode's threshold is worth showing.
-                    if tuning.fire_mode == "edge" {
-                        ui.horizontal(|ui| {
-                            ui.label("Edge threshold").on_hover_text(
-                                "Deflection at which a leaf fires in edge mode. Higher means \
-                                 you must push the stick nearer the rim before it fires.",
-                            );
-                            if ui
-                                .add(egui::Slider::new(&mut tuning.edge_threshold, 10..=100).suffix("%"))
-                                .changed()
-                            {
-                                changed = true;
-                            }
-                        });
-                    } else if tuning.fire_mode == "retract" {
-                        ui.horizontal(|ui| {
-                            ui.label("Retract delta").on_hover_text(
-                                "How far the stick must pull back from its peak deflection to \
-                                 fire in retract mode. Smaller means a lighter inward flick fires.",
-                            );
-                            if ui
-                                .add(egui::Slider::new(&mut tuning.retract_delta, 1..=50).suffix("%"))
-                                .changed()
-                            {
-                                changed = true;
-                            }
-                        });
-                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Edge threshold").on_hover_text(
+                            "Deflection at which an edge-type slice fires. Higher means \
+                             you must push the stick nearer the rim before it fires.",
+                        );
+                        if ui
+                            .add(egui::Slider::new(&mut tuning.edge_threshold, 10..=100).suffix("%"))
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Retract delta").on_hover_text(
+                            "How far the stick must pull back from its peak deflection to \
+                             fire a retract-type slice. Smaller means a lighter inward \
+                             flick fires.",
+                        );
+                        if ui
+                            .add(egui::Slider::new(&mut tuning.retract_delta, 1..=50).suffix("%"))
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    });
 
                     ui.separator();
                     ui.weak(
@@ -1839,7 +1853,14 @@ fn render_wheels_tab(
                 .auto_shrink([false, false])
                 .max_height((ui.available_height() - 60.0).max(60.0))
                 .show(ui, |ui| {
-                    render_slice_rows(ui, buffer, &mut Vec::new(), &mut ops, inner_ceiling);
+                    render_slice_rows(
+                        ui,
+                        buffer,
+                        &mut Vec::new(),
+                        &mut ops,
+                        inner_ceiling,
+                        &config.controller_tuning.fire_mode,
+                    );
                     if ui.button("+ Add slice").clicked() {
                         ops.push(WheelOp::AddChild(Vec::new()));
                     }
@@ -1863,6 +1884,7 @@ fn render_wheels_tab(
                 &config.controller_tuning.back_slice,
                 global_dz,
                 inner_ceiling,
+                &config.controller_tuning.fire_mode,
                 &mut ops,
             );
         }
@@ -1902,6 +1924,7 @@ fn render_slice_rows(
     path: &mut Vec<usize>,
     ops: &mut Vec<WheelOp>,
     inner_ceiling: u8,
+    default_fire: &str,
 ) {
     for i in 0..slices.len() {
         path.push(i);
@@ -1909,7 +1932,7 @@ fn render_slice_rows(
             let slice = &mut slices[i];
             ui.horizontal(|ui| {
                 ui.add_space((path.len() - 1) as f32 * 18.0);
-                render_slice_fields(ui, slice, inner_ceiling);
+                render_slice_fields(ui, slice, inner_ceiling, default_fire);
 
                 if ui.small_button("^").on_hover_text("Move up").clicked() {
                     ops.push(WheelOp::MoveUp(path.clone()));
@@ -1928,17 +1951,23 @@ fn render_slice_rows(
             });
         }
         if !slices[i].slices.is_empty() {
-            render_slice_rows(ui, &mut slices[i].slices, path, ops, inner_ceiling);
+            render_slice_rows(ui, &mut slices[i].slices, path, ops, inner_ceiling, default_fire);
         }
         path.pop();
     }
 }
 
-/// The per-slice edit widgets — label, command, color, span, inner —
+/// The per-slice edit widgets — label, command, type, color, span, inner —
 /// shared by the numeric rows and the designer's selected-slice panel so
 /// the two edit paths can't diverge. Caller supplies the surrounding row
-/// (indent, move/add/delete buttons).
-fn render_slice_fields(ui: &mut egui::Ui, slice: &mut WheelSlice, inner_ceiling: u8) {
+/// (indent, move/add/delete buttons). `default_fire` is the config's global
+/// `fire_mode`, shown as the effective type of a slice without its own.
+fn render_slice_fields(
+    ui: &mut egui::Ui,
+    slice: &mut WheelSlice,
+    inner_ceiling: u8,
+    default_fire: &str,
+) {
     let is_folder = slice.is_folder();
     ui.add(
         egui::TextEdit::singleline(&mut slice.label)
@@ -1959,15 +1988,63 @@ fn render_slice_fields(ui: &mut egui::Ui, slice: &mut WheelSlice, inner_ceiling:
              floor, position — edits like any other slice.",
         );
     } else {
-        ui.add(
+        let is_dead = slice.is_none_type();
+        ui.add_enabled(
+            !is_dead,
             egui::TextEdit::singleline(&mut slice.command)
                 .desired_width(150.0)
-                .hint_text(if is_folder { "(folder)" } else { "command" }),
+                .hint_text(if is_folder {
+                    "(folder)"
+                } else if is_dead {
+                    "(dead zone)"
+                } else {
+                    "command"
+                }),
         )
         .on_hover_text(
             "Command sent to the game when this slice fires. A slice with \
              sub-slices is a folder — leave its command empty.",
+        )
+        .on_disabled_hover_text(
+            "A None-type slice is a dead zone — it never fires, so it has \
+             no command. Change its type to make it live.",
         );
+    }
+    // Per-slice fire type (wheel v2). Folders always descend on dwell and
+    // Back always ascends, so only plain leaves get the dropdown. A slice
+    // without its own type shows the global default it inherits.
+    if !slice.back && !is_folder {
+        let effective = slice
+            .fire_type
+            .clone()
+            .unwrap_or_else(|| default_fire.to_string());
+        let shown = SLICE_FIRE_TYPES
+            .iter()
+            .find(|(v, _)| *v == effective)
+            .map(|(_, l)| *l)
+            .unwrap_or("Release");
+        egui::ComboBox::from_id_salt(ui.id().with("slice_fire_type"))
+            .selected_text(shown)
+            .width(74.0)
+            .show_ui(ui, |ui| {
+                for (value, label) in SLICE_FIRE_TYPES {
+                    if ui
+                        .selectable_label(effective == value, label)
+                        .clicked()
+                    {
+                        slice.fire_type = Some(value.to_string());
+                    }
+                }
+            })
+            .response
+            .on_hover_text(
+                "How this slice fires. None: dead zone — holds its seat but \
+                 never aims or fires. Release: dwell to commit, fires when the \
+                 wheel button comes up. Edge: fires the instant the stick \
+                 crosses the edge threshold, no dwell. Retract: dwell to \
+                 commit, then a small inward flick fires. Folders aren't a \
+                 type — use +sub to give a slice a child ring.",
+            );
     }
     let mut color = slice.color.clone().unwrap_or_default();
     super::color_field(ui, &mut color);
@@ -2051,6 +2128,7 @@ fn render_wheel_designer(
     back_anchor: &str,
     global_deadzone: f32,
     inner_ceiling: u8,
+    default_fire: &str,
     ops: &mut Vec<WheelOp>,
 ) {
     // A structural edit (delete, move) can strand the path; fall back to
@@ -2626,46 +2704,8 @@ fn render_wheel_designer(
         }
     });
 
-    // Directed mirrors (top level only): keep the named half, replace the
-    // other with its reflection — the reference designer's mirror.
-    if at_top && !level.is_empty() {
-        ui.horizontal(|ui| {
-            let mirrors = [
-                // ▸ not →: the basic Arrows block (U+2190..) is missing from
-                // the bundled fallback fonts and renders as tofu.
-                ("Left ▸ right", MirrorKeep::Left),
-                ("Right ▸ left", MirrorKeep::Right),
-                ("Top ▸ bottom", MirrorKeep::Top),
-                ("Bottom ▸ top", MirrorKeep::Bottom),
-            ];
-            for (label, keep) in mirrors {
-                if ui
-                    .button(label)
-                    .on_hover_text(
-                        "Keep that half of the ring and replace the opposite half \
-                         with its mirror image (slices are cloned). A slice \
-                         crossing the axis isn't cut — it becomes symmetric \
-                         about it.",
-                    )
-                    .clicked()
-                {
-                    let view = build_view(level, meta);
-                    if let Some((mirrored, new_start)) =
-                        mirror_half(level, &view.layout, keep)
-                    {
-                        *level = mirrored;
-                        let norm = new_start.rem_euclid(360.0);
-                        let new = if norm.abs() < 1e-4 { None } else { Some(norm) };
-                        if new != meta.start {
-                            meta.start = new;
-                            *meta_save = Some((wheel_name.to_string(), meta.clone()));
-                        }
-                        *selected_slice = None;
-                    }
-                }
-            }
-        });
-    }
+    // (wheel v2: the four directional axis-mirror buttons are gone — the
+    // single Mirror covers flipping, and they confused layout design.)
 
     // Selected-slice panel: the shared field widgets plus the structural
     // buttons the numeric rows offer.
@@ -2678,7 +2718,7 @@ fn render_wheel_designer(
             let mut slice_path = designer_path.clone();
             slice_path.push(i);
             ui.horizontal(|ui| {
-                render_slice_fields(ui, &mut level[i], inner_ceiling);
+                render_slice_fields(ui, &mut level[i], inner_ceiling, default_fire);
                 let mut locked = level[i].locked;
                 if ui
                     .checkbox(&mut locked, "lock")
@@ -2777,115 +2817,6 @@ fn mirror_slices(level: &mut [WheelSlice]) {
     if level.len() > 1 {
         level[1..].reverse();
     }
-}
-
-/// Which half of the ring a directed mirror keeps.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum MirrorKeep {
-    Left,
-    Right,
-    Top,
-    Bottom,
-}
-
-impl MirrorKeep {
-    /// The two angles (aim convention) where the mirror axis meets the
-    /// ring: the vertical axis (0/180) for left/right keeps, the
-    /// horizontal one (90/270) for top/bottom.
-    fn axis_points(self) -> [f32; 2] {
-        match self {
-            MirrorKeep::Left | MirrorKeep::Right => [0.0, 180.0],
-            MirrorKeep::Top | MirrorKeep::Bottom => [90.0, 270.0],
-        }
-    }
-
-    /// Reflect an angle across the mirror axis.
-    fn reflect(self, deg: f32) -> f32 {
-        match self {
-            MirrorKeep::Left | MirrorKeep::Right => (-deg).rem_euclid(360.0),
-            MirrorKeep::Top | MirrorKeep::Bottom => (180.0 - deg).rem_euclid(360.0),
-        }
-    }
-
-    /// Is an angle strictly inside the kept half (the axis itself is
-    /// neither side — axis-crossing slices are handled separately)?
-    fn keeps(self, deg: f32) -> bool {
-        let d = deg.rem_euclid(360.0);
-        match self {
-            MirrorKeep::Right => d > 0.0 && d < 180.0,
-            MirrorKeep::Left => d > 180.0 && d < 360.0,
-            MirrorKeep::Top => !(90.0..=270.0).contains(&d),
-            MirrorKeep::Bottom => d > 90.0 && d < 270.0,
-        }
-    }
-}
-
-/// The reference designer's directed mirror: keep the named half and
-/// replace the opposite half with its reflection. Kept slices project
-/// mirrored clones (labels, commands, folders and all) onto the other
-/// side; a slice whose wedge crosses the axis isn't cut — it recenters ON
-/// the axis, symmetric about it; the rest are dropped. The result is
-/// scaled uniformly to close the ring (which preserves the symmetry) and
-/// anchored at the axis, so the mirror is exact after normalization.
-/// Returns the new slice list (all spans explicit) plus the ring's new
-/// `start`; None only for an empty level.
-fn mirror_half(
-    level: &[WheelSlice],
-    layout: &super::super::gamepad::ResolvedLayout,
-    keep: MirrorKeep,
-) -> Option<(Vec<WheelSlice>, f32)> {
-    use super::super::gamepad::angular_gap;
-    let [p0, p1] = keep.axis_points();
-
-    // The surviving seats as (center, width, slice), pre-normalization.
-    let mut seats: Vec<(f32, f32, WheelSlice)> = Vec::new();
-    for (slice, seat) in level.iter().zip(&layout.seats) {
-        let center = seat.center_deg().rem_euclid(360.0);
-        let w = seat.span_deg;
-        let g0 = angular_gap(center, p0);
-        let g1 = angular_gap(center, p1);
-        if g0 < w / 2.0 || g1 < w / 2.0 {
-            // Crosses the axis: becomes symmetric about the nearer point.
-            let p = if g0 <= g1 { p0 } else { p1 };
-            seats.push((p, w, slice.clone()));
-        } else if keep.keeps(center) {
-            seats.push((center, w, slice.clone()));
-            seats.push((keep.reflect(center), w, slice.clone()));
-        }
-    }
-    if seats.is_empty() {
-        return None;
-    }
-
-    // Lay the symmetric set back out: sort clockwise from the axis and
-    // anchor there — a seat centered on the axis keeps its center on it,
-    // otherwise a boundary sits exactly on it. Uniform scaling keeps the
-    // palindrome (and thus the symmetry) intact.
-    seats.sort_by(|a, b| {
-        (a.0 - p0)
-            .rem_euclid(360.0)
-            .total_cmp(&(b.0 - p0).rem_euclid(360.0))
-    });
-    let total: f32 = seats.iter().map(|s| s.1).sum();
-    let scale = 360.0 / total;
-    let first_on_axis = angular_gap(seats[0].0, p0) < 1e-3;
-    let mut edge = if first_on_axis {
-        p0 - seats[0].1 * scale / 2.0
-    } else {
-        p0
-    };
-    let mut out = Vec::with_capacity(seats.len());
-    let mut start = 0.0;
-    for (i, (_, w, mut slice)) in seats.into_iter().enumerate() {
-        let w = w * scale;
-        if i == 0 {
-            start = edge + w / 2.0;
-        }
-        slice.span = Some(w);
-        out.push(slice);
-        edge += w;
-    }
-    Some((out, start.rem_euclid(360.0)))
 }
 
 /// A dragged floor radius → the slice's `inner` value: percent of full
@@ -3149,63 +3080,6 @@ mod designer_tests {
             span,
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn directed_mirror_keeps_left_and_projects_it_right() {
-        // Even 4-ring a(0) b(90) c(180) d(270), keep Left: a and c cross
-        // the axis and recenter on it, d projects a clone to 90, b (right
-        // half) is replaced by it.
-        let level = vec![named("a", None), named("b", None), named("c", None), named("d", None)];
-        let layout = gamepad::resolve_spans(&[None, None, None, None], 0.0);
-        let (out, start) = mirror_half(&level, &layout, MirrorKeep::Left).unwrap();
-        let labels: Vec<&str> = out.iter().map(|s| s.label.as_str()).collect();
-        assert_eq!(labels, vec!["a", "d", "c", "d"]);
-        assert!(start.abs() < 1e-3);
-        for s in &out {
-            assert!((s.span.unwrap() - 90.0).abs() < 1e-3);
-        }
-    }
-
-    #[test]
-    fn directed_mirror_rescales_and_stays_symmetric() {
-        // Widths [60,120,90,90] from start 0 → centers 0/90/195/285.
-        // Keep Right: a crosses the top axis point, c (center 195) crosses
-        // the bottom one and recenters at 180, b is kept and cloned to the
-        // left, d is replaced. Total 390 → uniform rescale closes the ring
-        // without breaking the symmetry.
-        let level = vec![
-            named("a", Some(60.0)),
-            named("b", Some(120.0)),
-            named("c", Some(90.0)),
-            named("d", Some(90.0)),
-        ];
-        let layout =
-            gamepad::resolve_spans(&[Some(60.0), Some(120.0), Some(90.0), Some(90.0)], 0.0);
-        let (out, start) = mirror_half(&level, &layout, MirrorKeep::Right).unwrap();
-        let labels: Vec<&str> = out.iter().map(|s| s.label.as_str()).collect();
-        assert_eq!(labels, vec!["a", "b", "c", "b"]);
-        assert!(start.abs() < 1e-3);
-        let spans: Vec<f32> = out.iter().map(|s| s.span.unwrap()).collect();
-        assert!((spans.iter().sum::<f32>() - 360.0).abs() < 1e-2);
-        // The two b wedges mirror each other exactly.
-        assert!((spans[1] - spans[3]).abs() < 1e-3);
-        // Proportions kept: b is still twice a's width... (120/60 = 2).
-        assert!((spans[1] / spans[0] - 2.0).abs() < 1e-3);
-    }
-
-    #[test]
-    fn directed_mirror_single_slice_and_empty() {
-        // A one-slice ring covers the axis and survives unchanged.
-        let level = vec![named("solo", None)];
-        let layout = gamepad::resolve_spans(&[None], 0.0);
-        let (out, start) = mirror_half(&level, &layout, MirrorKeep::Top).unwrap();
-        assert_eq!(out.len(), 1);
-        assert!((out[0].span.unwrap() - 360.0).abs() < 1e-3);
-        assert!(start.abs() < 1e-3 || (start - 90.0).abs() < 1e-3);
-        // Empty rings have nothing to mirror.
-        let layout = gamepad::resolve_spans(&[], 0.0);
-        assert!(mirror_half(&[], &layout, MirrorKeep::Left).is_none());
     }
 
     #[test]
