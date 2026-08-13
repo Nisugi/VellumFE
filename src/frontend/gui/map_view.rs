@@ -78,6 +78,28 @@ impl MapStyle {
     }
 }
 
+/// Stable per-pair color for long-connector dots: the same two rooms get
+/// the same hue every session, and different pairs spread across a wheel of
+/// well-separated hues. Saturation/value sit high enough to read on both
+/// light and dark grounds.
+fn connector_pair_color(a: u32, b: u32) -> Color32 {
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    // FNV-1a over the pair for a stable, well-mixed hue index.
+    let mut h: u32 = 0x811c9dc5;
+    for byte in lo.to_le_bytes().into_iter().chain(hi.to_le_bytes()) {
+        h ^= byte as u32;
+        h = h.wrapping_mul(0x01000193);
+    }
+    // Golden-ratio spacing keeps nearby hash values far apart on the wheel.
+    let hue = (h as f32 / u32::MAX as f32 * 0.618_034).fract();
+    egui::ecolor::Hsva::new(hue, 0.75, 0.85, 1.0).into()
+}
+
+/// Connectors at or under this cell length keep the dashed line (a local
+/// "go arch" between adjacent rooms reads better as a line); anything
+/// longer becomes paired dots so long links stop crossing the sheet.
+const CONNECTOR_DASH_MAX_CELLS: f32 = 2.5;
+
 /// A text label whose paint is deferred until after the rooms. `candidates`
 /// lists alternative anchor positions in preference order; the first whose
 /// spot is free of room squares wins, so labels land in empty space instead
@@ -156,6 +178,9 @@ pub fn paint_sheet(
     // Text painted after the rooms, so a label can never be buried under a
     // room square (they used to paint in the edge pass, beneath everything).
     let mut deferred_labels: Vec<DeferredLabel> = Vec::new();
+    // Long-connector pair dots, painted after the rooms so they sit on the
+    // squares' shoulders instead of underneath them.
+    let mut deferred_dots: Vec<(Pos2, f32, Color32)> = Vec::new();
 
     // --- Edges (under rooms) ---
     for edge in &sheet.edges {
@@ -174,37 +199,63 @@ pub fn paint_sheet(
                 painter.line_segment([a, b], style.directional);
             }
             SceneEdgeKind::Connector => {
-                painter.extend(egui::Shape::dashed_line(
-                    &[a, b],
-                    style.connector,
-                    ppc * 0.25,
-                    ppc * 0.18,
-                ));
-                // Labels whenever zoomed in enough to read them — short
-                // passages included ("go arch" between adjacent bank rooms);
-                // the deferred placement hunts for empty space around the
-                // line, so the old minimum-length gate is unnecessary.
-                if show_connector_labels {
-                    if let Some(label) = &edge.label {
-                        // Slide along the line, then perpendicular of the
-                        // midpoint, hunting for a room-free spot.
-                        let perp = {
-                            let d = (b - a).normalized();
-                            Vec2::new(-d.y, d.x) * ppc * 0.75
-                        };
-                        let mid = a.lerp(b, 0.5);
-                        deferred_labels.push(DeferredLabel {
-                            candidates: vec![
-                                mid,
-                                a.lerp(b, 0.35),
-                                a.lerp(b, 0.65),
-                                mid + perp,
-                                mid - perp,
-                            ],
-                            align: Align2::CENTER_CENTER,
-                            text: label.clone(),
-                            font_size: (ppc * 0.45).clamp(8.0, 13.0),
-                        });
+                let cell_len = (ax - bx).hypot(ay - by);
+                if cell_len <= CONNECTOR_DASH_MAX_CELLS {
+                    // Local passage between near-adjacent rooms: the quiet
+                    // dashed line still reads best.
+                    painter.extend(egui::Shape::dashed_line(
+                        &[a, b],
+                        style.connector,
+                        ppc * 0.25,
+                        ppc * 0.18,
+                    ));
+                    if show_connector_labels {
+                        if let Some(label) = &edge.label {
+                            // Slide along the line, then perpendicular of
+                            // the midpoint, hunting for a room-free spot.
+                            let perp = {
+                                let d = (b - a).normalized();
+                                Vec2::new(-d.y, d.x) * ppc * 0.75
+                            };
+                            let mid = a.lerp(b, 0.5);
+                            deferred_labels.push(DeferredLabel {
+                                candidates: vec![
+                                    mid,
+                                    a.lerp(b, 0.35),
+                                    a.lerp(b, 0.65),
+                                    mid + perp,
+                                    mid - perp,
+                                ],
+                                align: Align2::CENTER_CENTER,
+                                text: label.clone(),
+                                font_size: (ppc * 0.45).clamp(8.0, 13.0),
+                            });
+                        }
+                    }
+                } else {
+                    // Long link: no line at all. A matching-color dot on
+                    // each linked room's shoulder (toward its partner) says
+                    // "these two connect" without crossing the sheet.
+                    let color = connector_pair_color(edge.a_room, edge.b_room);
+                    let dot_r = (ppc * 0.14).clamp(2.0, 5.0);
+                    let dir = (b - a).normalized();
+                    for (from, toward) in [(a, dir), (b, -dir)] {
+                        let dot = from + toward * (room_size * 0.5 + dot_r + 1.5);
+                        deferred_dots.push((dot, dot_r, color));
+                        if show_connector_labels {
+                            if let Some(label) = &edge.label {
+                                deferred_labels.push(DeferredLabel {
+                                    candidates: vec![
+                                        dot + toward * (dot_r + ppc * 0.45),
+                                        dot + Vec2::new(0.0, -ppc * 0.55),
+                                        dot + Vec2::new(0.0, ppc * 0.55),
+                                    ],
+                                    align: Align2::CENTER_CENTER,
+                                    text: label.clone(),
+                                    font_size: (ppc * 0.4).clamp(7.0, 12.0),
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -350,6 +401,11 @@ pub fn paint_sheet(
                 response.on_hover_text(format!("{} ({})", room.title, room.id));
             }
         }
+    }
+
+    // --- Long-connector pair dots, on the rooms' shoulders ---
+    for (pos, r, color) in deferred_dots {
+        painter.circle_filled(pos, r, color);
     }
 
     // --- Labels, on top and hunting for empty space (a label under a room
