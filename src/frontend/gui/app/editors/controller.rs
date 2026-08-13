@@ -110,6 +110,10 @@ pub(in super::super) struct ControllerEditorState {
     /// Bounded; cleared on wheel switch. Field edits (label/command text)
     /// stay outside it by design.
     wheel_undo: Vec<(Vec<WheelSlice>, Option<f32>)>,
+    /// Stick overlay (F10): peak deflection since the stick last rested,
+    /// and the previous frame's magnitude (for the outward/inward read).
+    wheel_stick_peak: f32,
+    wheel_stick_prev_mag: f32,
     /// Save scope for every write in this editor: `true` = the shared global
     /// controller.toml, `false` = the active character's override file. Load
     /// always merges character over global; this only picks where edits land,
@@ -133,6 +137,8 @@ impl ControllerEditorState {
             wheel_selected_slice: None,
             wheel_drag: WheelDesignerDrag::None,
             wheel_undo: Vec::new(),
+            wheel_stick_peak: 0.0,
+            wheel_stick_prev_mag: 0.0,
             is_global: true,
         }
     }
@@ -792,6 +798,7 @@ impl VellumGuiApp {
                         &mut wheel_save,
                         &mut meta_save,
                         &mut wheel_delete,
+                        self.gp_aim_prev,
                     );
                     return;
                 }
@@ -1676,6 +1683,7 @@ fn render_wheels_tab(
     save_clicked: &mut bool,
     meta_save: &mut Option<(String, crate::config::WheelMeta)>,
     delete_request: &mut Option<String>,
+    stick: (f32, f32),
 ) {
     ui.horizontal(|ui| {
         // User-defined wheels, minus "portals": the portals wheel is dynamic
@@ -1989,6 +1997,9 @@ fn render_wheels_tab(
                 &mut ops,
                 &mut state.wheel_undo,
                 &mut state.wheel_status,
+                stick,
+                &mut state.wheel_stick_peak,
+                &mut state.wheel_stick_prev_mag,
             );
         }
     }
@@ -2271,6 +2282,9 @@ fn render_wheel_designer(
     ops: &mut Vec<WheelOp>,
     undo: &mut Vec<(Vec<WheelSlice>, Option<f32>)>,
     status: &mut Option<String>,
+    stick: (f32, f32),
+    stick_peak: &mut f32,
+    stick_prev_mag: &mut f32,
 ) -> bool {
     // A structural edit (delete, move) can strand the path; fall back to
     // the top level rather than a blank canvas.
@@ -2915,6 +2929,57 @@ fn render_wheel_designer(
                     }
                 }
             }
+        }
+    }
+
+    // ----- Stick position overlay (F10): the live aim-stick tilt drawn on
+    // the ring — a line from center to the stick point, a filled dot, a
+    // faint peak-deflection ring, colored by travel direction (outward
+    // reads as edge, inward as retract). Lets you SEE what the wheel will
+    // read before binding anything.
+    {
+        let (sx, sy_up) = stick;
+        let magnitude = (sx * sx + sy_up * sy_up).sqrt().min(1.0);
+        if magnitude < 0.05 {
+            // At rest: clear the peak so the next push starts fresh.
+            *stick_peak = 0.0;
+            *stick_prev_mag = 0.0;
+        } else {
+            let outward = magnitude >= *stick_prev_mag - 1e-3;
+            *stick_prev_mag = magnitude;
+            *stick_peak = stick_peak.max(magnitude);
+            // Sage for outward/edge, amber for inward/retract.
+            let color = if outward {
+                egui::Color32::from_rgb(130, 165, 120)
+            } else {
+                ui.visuals().warn_fg_color
+            };
+            // Screen point: aim convention x right, y up; screen y down.
+            let point = center + egui::vec2(sx, -sy_up) * outer;
+            // Faint peak ring behind the live point.
+            if *stick_peak > 0.1 {
+                painter.circle_stroke(
+                    center,
+                    *stick_peak * outer,
+                    egui::Stroke::new(1.0, color.gamma_multiply(0.35)),
+                );
+            }
+            painter.line_segment(
+                [center, point],
+                egui::Stroke::new(2.0, color.gamma_multiply(0.8)),
+            );
+            painter.circle_filled(point, 5.0, color);
+            painter.text(
+                point + egui::vec2(10.0, -10.0),
+                egui::Align2::LEFT_CENTER,
+                // ▸/◂ not arrows: U+2190.. renders as tofu in the bundled
+                // fallback fonts (see gui-arrow-glyphs memory).
+                if outward { "edge ▸" } else { "◂ retract" },
+                egui::FontId::proportional(10.0),
+                color,
+            );
+            // Keep repainting while the stick is live so the overlay tracks.
+            ui.ctx().request_repaint();
         }
     }
 

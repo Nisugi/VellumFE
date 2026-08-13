@@ -1975,12 +1975,14 @@ impl Config {
     }
 
     /// Resolve a wheel pick from a remote client: `path` indexes down to
-    /// a leaf slice, whose non-empty command is returned. Folder slices
-    /// and empty commands resolve to None (nothing to fire).
+    /// a leaf slice, whose non-empty command is returned. Folder slices,
+    /// None-type dead zones, and empty commands resolve to None (nothing
+    /// to fire) — a dead zone is inert everywhere a wheel renders.
     pub fn wheel_pick_command(&self, key: &str, path: &[usize]) -> Option<String> {
         let (&leaf, folders) = path.split_last()?;
         let slice = self.wheel_level_slices(key, folders)?.get(leaf)?;
-        (!slice.is_folder() && !slice.command.is_empty()).then(|| slice.command.clone())
+        (!slice.is_folder() && !slice.is_none_type() && !slice.command.is_empty())
+            .then(|| slice.command.clone())
     }
 
     /// Replace one wheel's slice list in the global keybinds.toml:
@@ -2017,6 +2019,9 @@ impl Config {
             }
             if slice.back {
                 t.insert("back", Value::from(true));
+            }
+            if let Some(fire_type) = &slice.fire_type {
+                t.insert("fire_type", Value::from(fire_type.clone()));
             }
             if !slice.slices.is_empty() {
                 t.insert("slices", Self::wheel_slices_to_inline(&slice.slices));
@@ -3598,6 +3603,46 @@ command = \"fire\"
             doc.get("controller_wheel").unwrap().clone().try_into().expect("legacy parses")
         };
         assert_eq!((legacy[0].span, legacy[0].inner), (None, None));
+    }
+
+    #[test]
+    fn wheel_fire_type_round_trips_and_legacy_loads_none() {
+        // fire_type serializes through the inline-table writer and parses
+        // back; slices without it (every pre-v2 config) load as None so
+        // they inherit the global fire_mode (F3a).
+        let wheel = vec![
+            WheelSlice {
+                label: "quick".into(),
+                command: "attack".into(),
+                fire_type: Some("edge".into()),
+                ..Default::default()
+            },
+            WheelSlice {
+                label: "".into(),
+                fire_type: Some("none".into()),
+                ..Default::default()
+            },
+            WheelSlice { label: "look".into(), command: "look".into(), ..Default::default() },
+        ];
+        let inline = Config::wheel_slices_to_inline(&wheel);
+        let toml_str = format!("controller_wheel = {inline}");
+        let doc: toml::Value = toml::from_str(&toml_str).unwrap();
+        let back: Vec<WheelSlice> =
+            doc.get("controller_wheel").unwrap().clone().try_into().unwrap();
+        assert_eq!(back[0].fire_type.as_deref(), Some("edge"));
+        assert!(back[1].is_none_type());
+        assert_eq!(back[2].fire_type, None, "untyped stays untyped");
+
+        // A none-type slice never resolves a pick command, even with a
+        // stale command left in the file.
+        let legacy: Vec<WheelSlice> = {
+            let doc: toml::Value = toml::from_str(
+                "controller_wheel = [{ label = \"x\", command = \"stab\", fire_type = \"none\" }]",
+            )
+            .unwrap();
+            doc.get("controller_wheel").unwrap().clone().try_into().unwrap()
+        };
+        assert!(legacy[0].is_none_type());
     }
 
     #[test]
