@@ -235,6 +235,14 @@ pub enum WindowDef {
         data: ContainersWidgetData,
     },
 
+    #[serde(rename = "bestiaryview")]
+    BestiaryView {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: BestiaryViewWidgetData,
+    },
+
     #[serde(rename = "multiaccount")]
     MultiAccount {
         #[serde(flatten)]
@@ -542,6 +550,10 @@ impl WindowDef {
                 base,
                 data: ContainersWidgetData {},
             },
+            "bestiaryview" => WindowDef::BestiaryView {
+                base,
+                data: BestiaryViewWidgetData {},
+            },
             "multiaccount" => WindowDef::MultiAccount {
                 base,
                 data: MultiAccountWidgetData::default(),
@@ -619,6 +631,7 @@ impl WindowDef {
             WindowDef::Spells { base, .. } => &base.name,
             WindowDef::MissingSpells { base, .. } => &base.name,
             WindowDef::Containers { base, .. } => &base.name,
+            WindowDef::BestiaryView { base, .. } => &base.name,
             WindowDef::MultiAccount { base, .. } => &base.name,
             WindowDef::Perception { base, .. } => &base.name,
             WindowDef::Experience { base, .. } => &base.name,
@@ -660,6 +673,7 @@ impl WindowDef {
             WindowDef::Spells { .. } => "spells",
             WindowDef::MissingSpells { .. } => "missingspells",
             WindowDef::Containers { .. } => "containers",
+            WindowDef::BestiaryView { .. } => "bestiaryview",
             WindowDef::MultiAccount { .. } => "multiaccount",
             WindowDef::Perception { .. } => "perception",
             WindowDef::Experience { .. } => "experience",
@@ -701,6 +715,7 @@ impl WindowDef {
             WindowDef::Spells { base, .. } => base,
             WindowDef::MissingSpells { base, .. } => base,
             WindowDef::Containers { base, .. } => base,
+            WindowDef::BestiaryView { base, .. } => base,
             WindowDef::MultiAccount { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
             WindowDef::Experience { base, .. } => base,
@@ -742,6 +757,7 @@ impl WindowDef {
             WindowDef::Spells { base, .. } => base,
             WindowDef::MissingSpells { base, .. } => base,
             WindowDef::Containers { base, .. } => base,
+            WindowDef::BestiaryView { base, .. } => base,
             WindowDef::MultiAccount { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
             WindowDef::Experience { base, .. } => base,

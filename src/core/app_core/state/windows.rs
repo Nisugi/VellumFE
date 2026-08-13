@@ -282,6 +282,7 @@ impl AppCore {
                 WidgetType::Players => WindowContent::Players,
                 WidgetType::MissingSpells => WindowContent::MissingSpells,
                 WidgetType::Containers => WindowContent::Containers,
+                WidgetType::BestiaryView => WindowContent::BestiaryView,
                 WidgetType::MultiAccount => WindowContent::MultiAccount,
                 WidgetType::Items => WindowContent::Items,
                 WidgetType::Container => {
@@ -658,6 +659,7 @@ impl AppCore {
             WidgetType::Players => WindowContent::Players,
             WidgetType::MissingSpells => WindowContent::MissingSpells,
             WidgetType::Containers => WindowContent::Containers,
+            WidgetType::BestiaryView => WindowContent::BestiaryView,
             WidgetType::MultiAccount => WindowContent::MultiAccount,
             WidgetType::Items => WindowContent::Items,
             WidgetType::Container => {

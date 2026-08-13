@@ -209,6 +209,7 @@ impl WindowEditor {
             WindowDef::Quickbar { .. } => {}
             WindowDef::MissingSpells { .. } => {}
             WindowDef::Containers { .. } => {}
+            WindowDef::BestiaryView { .. } => {}
             WindowDef::Hotkeybar { .. } => {}
             // Dialog panels have no editable content fields; the game
             // defines their controls. Only geometry (base) applies.

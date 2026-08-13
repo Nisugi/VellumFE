@@ -1800,6 +1800,38 @@ impl AppCore {
 
     /// Add a system message to a window that receives the "main" stream.
     /// First tries window named "main", then looks for any window subscribed to "main" stream.
+    /// Clear every window (or tab) subscribed to a stream. Page semantics
+    /// for app-like streams (bestiary): each navigation step replaces the
+    /// view instead of appending to a scrollback.
+    pub fn clear_stream_windows(&mut self, stream: &str) {
+        use crate::data::WindowContent;
+        for window in self.ui_state.windows.values_mut() {
+            match &mut window.content {
+                WindowContent::Text(content)
+                    if content.streams.iter().any(|s| s.eq_ignore_ascii_case(stream)) =>
+                {
+                    content.lines.clear();
+                    content.generation = content.generation.wrapping_add(1);
+                }
+                WindowContent::TabbedText(content) => {
+                    for tab in content.tabs.iter_mut() {
+                        if tab
+                            .definition
+                            .streams
+                            .iter()
+                            .any(|s| s.eq_ignore_ascii_case(stream))
+                        {
+                            tab.content.lines.clear();
+                            tab.content.generation = tab.content.generation.wrapping_add(1);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.needs_render = true;
+    }
+
     /// Deliver client-generated styled lines to whatever window subscribes
     /// to the given stream, falling back to the main window so the output
     /// is never silently lost (ebestiary-style scroll output by default;

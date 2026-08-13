@@ -2136,6 +2136,10 @@ impl AppCore {
                 }
             }
         };
+        // App-style navigation: each step is a page, not appended scroll.
+        // Only bestiary-subscribed windows clear; the main-window fallback
+        // (no bestiary window in the layout) keeps its scrollback.
+        self.clear_stream_windows(format::STREAM);
         self.add_client_lines_to_stream(format::STREAM, lines);
     }
 

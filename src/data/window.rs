@@ -69,6 +69,9 @@ pub enum WidgetType {
     /// items nested under their real parents. Reads
     /// `GameState.managed_inventory`.
     Containers,
+    /// Bestiary browser (GUI: search/filter/entry pages over the bundled
+    /// codex; TUI points at .bestiary).
+    BestiaryView,
 }
 
 impl WidgetType {
@@ -102,6 +105,7 @@ impl WidgetType {
             "players" => Some(WidgetType::Players),
             "missingspells" => Some(WidgetType::MissingSpells),
             "containers" => Some(WidgetType::Containers),
+            "bestiaryview" => Some(WidgetType::BestiaryView),
             "multiaccount" => Some(WidgetType::MultiAccount),
             "items" => Some(WidgetType::Items),
             "spells" => Some(WidgetType::Spells),
@@ -210,6 +214,9 @@ pub enum WindowContent {
     /// Managed-inventory container tree (extended feed snapshot).
     /// Reads from GameState.managed_inventory (no data stored here).
     Containers,
+    /// Bestiary browser; data comes from the bundled codex, view state
+    /// lives frontend-side.
+    BestiaryView,
     Dashboard {
         indicators: Vec<(String, u8)>, // (id, value) pairs
     },
