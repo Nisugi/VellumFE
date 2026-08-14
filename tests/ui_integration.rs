@@ -2565,6 +2565,7 @@ fn make_highlight_pattern(
         set_status: None,
         status_duration: None,
         clear_status: None,
+        alert: None,
         compiled_regex: None,
     }
 }
