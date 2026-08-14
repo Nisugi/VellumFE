@@ -51,6 +51,13 @@ pub(super) struct RoomSections {
     pub(super) show_exits: bool,
 }
 
+/// Creature field per-window display options (CreatureFieldWidgetData).
+#[derive(Clone, Debug)]
+pub(super) struct CreatureFieldConfig {
+    pub(super) show_grid: bool,
+    pub(super) show_order: bool,
+}
+
 /// Targets window per-window display options (TargetsWidgetData).
 #[derive(Clone, Debug)]
 pub(super) struct TargetsConfig {
@@ -158,6 +165,7 @@ pub(super) struct WindowConfigView {
     pub(super) effects_category: Option<String>,
     pub(super) room: Option<RoomSections>,
     pub(super) targets: Option<TargetsConfig>,
+    pub(super) creature_field: Option<CreatureFieldConfig>,
     pub(super) experience: Option<ExperienceConfig>,
     pub(super) encum: Option<EncumConfig>,
     pub(super) multiaccount: Option<MultiAccountConfig>,
@@ -202,6 +210,7 @@ fn widget_section_label(widget_type: &crate::data::WidgetType) -> Option<&'stati
         W::ActiveEffects => "Effects",
         W::Room => "Room",
         W::Targets => "Targets",
+        W::CreatureField => "Creature field",
         W::GS4Experience => "Experience",
         W::Encumbrance => "Encumbrance",
         W::MiniVitals => "Vitals",
@@ -312,6 +321,7 @@ impl VellumGuiApp {
             effects_category: None,
             room: None,
             targets: None,
+            creature_field: None,
             experience: None,
             encum: None,
             multiaccount: None,
@@ -388,6 +398,12 @@ impl VellumGuiApp {
                 view.targets = Some(TargetsConfig {
                     show_appendages: data.show_body_part_count,
                     status_position: data.status_position.clone().unwrap_or_default(),
+                });
+            }
+            Some(crate::config::WindowDef::CreatureField { data, .. }) => {
+                view.creature_field = Some(CreatureFieldConfig {
+                    show_grid: data.show_grid,
+                    show_order: data.show_order,
                 });
             }
             Some(crate::config::WindowDef::GS4Experience { data, .. }) => {
@@ -699,6 +715,15 @@ impl VellumGuiApp {
                     data.show_body_part_count = targets.show_appendages;
                     data.status_position = Some(targets.status_position)
                         .filter(|position| !position.is_empty());
+                    self.app_core.schedule_layout_autosave();
+                }
+            }
+            GuiWindowMenuCommand::SetCreatureFieldConfig(cfg) => {
+                if let Some(crate::config::WindowDef::CreatureField { data, .. }) =
+                    self.layout_def_mut(&name)
+                {
+                    data.show_grid = cfg.show_grid;
+                    data.show_order = cfg.show_order;
                     self.app_core.schedule_layout_autosave();
                 }
             }
@@ -1140,6 +1165,24 @@ impl VellumGuiApp {
                         }
                     });
             });
+        }
+        if let Some(cf) = &view.creature_field {
+            let mut next = cf.clone();
+            let mut changed = false;
+            changed |= ui
+                .checkbox(&mut next.show_grid, "Floor grid")
+                .on_hover_text("Draw the perspective floor under the cards.")
+                .changed();
+            changed |= ui
+                .checkbox(&mut next.show_order, "Targeting order pips")
+                .on_hover_text(
+                    "Number the creatures left to right along the bottom — \
+                     the next/previous targeting order.",
+                )
+                .changed();
+            if changed {
+                command = Some(GuiWindowMenuCommand::SetCreatureFieldConfig(next));
+            }
         }
         if let Some(experience) = &view.experience {
             ui.label("Fields");

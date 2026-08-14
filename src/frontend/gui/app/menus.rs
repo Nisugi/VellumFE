@@ -160,6 +160,8 @@ pub(super) enum GuiWindowMenuCommand {
     SetRoomSections(super::window_config::RoomSections),
     /// Targets window per-window display options.
     SetTargetsConfig(super::window_config::TargetsConfig),
+    /// Creature field per-window display options.
+    SetCreatureFieldConfig(super::window_config::CreatureFieldConfig),
     /// gs4_experience display toggles + bar colors.
     SetExperienceConfig(super::window_config::ExperienceConfig),
     /// Encumbrance display toggles.
@@ -514,6 +516,7 @@ impl VellumGuiApp {
             | C::SetEffectsCategory(_)
             | C::SetRoomSections(_)
             | C::SetTargetsConfig(_)
+            | C::SetCreatureFieldConfig(_)
             | C::SetExperienceConfig(_)
             | C::SetEncumConfig(_)
             | C::SetMultiAccountConfig(_)
@@ -748,6 +751,7 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetEffectsCategory(_)
             | GuiWindowMenuCommand::SetRoomSections(_)
             | GuiWindowMenuCommand::SetTargetsConfig(_)
+            | GuiWindowMenuCommand::SetCreatureFieldConfig(_)
             | GuiWindowMenuCommand::SetExperienceConfig(_)
             | GuiWindowMenuCommand::SetEncumConfig(_)
             | GuiWindowMenuCommand::SetMultiAccountConfig(_)
