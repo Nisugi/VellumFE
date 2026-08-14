@@ -142,6 +142,10 @@ pub struct MessageProcessor {
     /// drained into `game_state.move_feedback` at the prompt so the walk
     /// executor sees each one exactly once.
     pending_move_feedback: Vec<(u64, crate::core::move_feedback::MoveFeedback)>,
+    /// Message-derived creature-effect events captured during flush (no
+    /// game_state in hand there): (exist id, effect name, Some(severity) =
+    /// start / None = end, timeout_s). Drained at the prompt.
+    pub(crate) pending_creature_effects: Vec<(String, String, Option<u8>, u32)>,
     /// Monotone count of flushed game lines - the stamp on move-feedback
     /// events (Lich's room_count guard generalized): the executor ignores
     /// reactive events whose line predates its last send.
@@ -360,6 +364,7 @@ impl MessageProcessor {
             pending_container_ingest: None,
             pending_ready_stow: Vec::new(),
             pending_move_feedback: Vec::new(),
+            pending_creature_effects: Vec::new(),
             game_line_no: 0,
             pending_recent_lines: Vec::new(),
             capture_recent_lines: false,

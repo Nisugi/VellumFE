@@ -358,6 +358,19 @@ impl MessageProcessor {
                 game_state
                     .move_feedback
                     .extend(self.pending_move_feedback.drain(..));
+                // Creature-effect events captured during flush apply now
+                // that game_state is in hand (starts re-arm, ends remove).
+                if !self.pending_creature_effects.is_empty() {
+                    let now_server =
+                        chrono::Utc::now().timestamp() + self.server_time_offset;
+                    for (exist, name, severity, timeout_s) in
+                        self.pending_creature_effects.drain(..).collect::<Vec<_>>()
+                    {
+                        game_state.apply_creature_effect_event(
+                            &exist, &name, severity, timeout_s, now_server,
+                        );
+                    }
+                }
                 game_state.game_line_no = self.game_line_no;
 
                 // Raw lines for scripted-edge awaits. A bounded ring, not a

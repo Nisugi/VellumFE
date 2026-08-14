@@ -366,10 +366,17 @@ impl VellumGuiApp {
             );
             body = dest;
             // Manifest overlays: quad layers warp/scale with the card,
-            // screen layers sit flat above it.
+            // screen layers sit flat above it. Ranked art resolves its
+            // {severity} from the live derived-effect store.
             if let Some(resolved) = &resolved {
                 animated |= Self::paint_card_overlays(
-                    painter, cache, resolved, art, dest, now_ms,
+                    painter,
+                    cache,
+                    resolved,
+                    art,
+                    dest,
+                    now_ms,
+                    &|name| gs.creature_effect_severity(&creature.id, name),
                 );
             }
         } else {
@@ -509,6 +516,7 @@ impl VellumGuiApp {
         art: &crate::frontend::gui::skin::CreatureArt,
         dest: egui::Rect,
         now_ms: f64,
+        severity_of: &dyn Fn(&str) -> Option<u8>,
     ) -> bool {
         use crate::config::skins::{AnimateKind, OverlaySpace};
         let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
@@ -542,12 +550,22 @@ impl VellumGuiApp {
             )
         };
         for overlay in &resolved.overlays {
-            if overlay.image.contains('{') {
-                // Ranked (message-derived) art needs a live severity;
-                // nothing supplies one yet.
-                continue;
-            }
-            let Some(texture) = cache.overlays.get(&overlay.image).cloned().flatten() else {
+            let image = if overlay.image.contains("{severity}") {
+                // Ranked art: severity comes from the live derived-effect
+                // store, looked up by the effect name the overlay's own
+                // condition tests. No live rank = nothing to draw.
+                let mut ids = Vec::new();
+                overlay.when.referenced_crtr_status_ids(&mut ids);
+                let Some(sev) = ids.iter().find_map(|id| severity_of(id)) else {
+                    continue;
+                };
+                overlay.image.replace("{severity}", &sev.to_string())
+            } else if overlay.image.contains('{') {
+                continue; // per-creature placeholders are refused at load
+            } else {
+                overlay.image.clone()
+            };
+            let Some(texture) = cache.overlays.get(&image).cloned().flatten() else {
                 continue;
             };
             let anim = overlay.animate.as_ref();

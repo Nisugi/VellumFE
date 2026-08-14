@@ -142,6 +142,21 @@ impl Condition {
             _ => {}
         }
     }
+
+    /// Every creature-status id this tree tests via `Condition::CrtrStatus`,
+    /// descending through All/Any. Used by ranked overlay art to find which
+    /// derived effect supplies its `{severity}`.
+    pub fn referenced_crtr_status_ids(&self, out: &mut Vec<String>) {
+        match self {
+            Condition::CrtrStatus { id, .. } => out.push(id.clone()),
+            Condition::All { conditions } | Condition::Any { conditions } => {
+                for c in conditions {
+                    c.referenced_crtr_status_ids(out);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Body-part ids the injury feed uses (same keys as the injury doll). The

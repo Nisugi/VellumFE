@@ -118,6 +118,19 @@ pub struct GameState {
     pub room_creatures: Vec<Creature>,
     /// Bumped whenever room_creatures is rewritten; sync skips unchanged rebuilds
     pub room_creatures_generation: u64,
+    /// Message-derived per-creature effects (bleeding and friends), keyed
+    /// by exist id. Authoritative store with expiry — the names are merged
+    /// into each creature's open-vocabulary statuses by
+    /// `tick_creature_effects`, so everything downstream (crtr_status
+    /// conditions, badges, the web wire) sees them for free. Feed-derived
+    /// crtrStatus flags never live here; only lossy messaging does, which
+    /// is why every entry expires.
+    pub creature_effects: std::collections::HashMap<String, Vec<ActiveCreatureEffect>>,
+    /// Every effect name the store has ever applied (lowercase). The merge
+    /// may remove exactly these from a creature's statuses when the effect
+    /// ends — feed statuses are never touched, without consulting the
+    /// effect-list table (which can be swapped out from under us).
+    pub(crate) derived_status_names: std::collections::HashSet<String>,
 
     /// Objects (non-creatures) in room (parsed from room objs component)
     /// Primary source for items widget
@@ -644,6 +657,16 @@ impl Creature {
     }
 }
 
+/// One live message-derived effect on one creature. `expires_at` is server
+/// time (the countdown convention); a start match re-arms it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActiveCreatureEffect {
+    pub name: String,
+    /// Rank 1-3, from the matched start message — reuses wound-rank art.
+    pub severity: u8,
+    pub expires_at: i64,
+}
+
 /// Structured creature status from the `<crtrStatus>` XML tag (a full
 /// snapshot: absent or "0" flags mean inactive, not unknown).
 ///
@@ -796,6 +819,115 @@ impl CreatureFlags {
                 .iter()
                 .any(|s| s.eq_ignore_ascii_case(name)),
         }
+    }
+}
+
+#[cfg(test)]
+mod creature_effect_tests {
+    use super::*;
+
+    fn state_with_creature(id: &str, feed_statuses: &[&str]) -> GameState {
+        let mut gs = GameState::new();
+        gs.room_creatures.push(Creature {
+            name: format!("a test {id}"),
+            noun: Some("test".into()),
+            id: id.to_string(),
+            status: None,
+            flags: Some(CreatureFlags {
+                statuses: feed_statuses.iter().map(|s| s.to_string()).collect(),
+                hostile: true,
+                ..Default::default()
+            }),
+        });
+        gs
+    }
+
+    fn statuses(gs: &GameState, id: &str) -> Vec<String> {
+        gs.room_creatures
+            .iter()
+            .find(|c| c.id == id)
+            .and_then(|c| c.flags.as_ref())
+            .map(|f| f.statuses.clone())
+            .unwrap_or_default()
+    }
+
+    /// The full lifecycle: start merges the status (crtr_status conditions
+    /// and badges see it for free), refresh re-arms and re-ranks, end
+    /// removes it — feed statuses untouched throughout.
+    #[test]
+    fn start_refresh_end_lifecycle() {
+        let mut gs = state_with_creature("607736", &["stunned"]);
+        let g0 = gs.room_creatures_generation;
+
+        gs.apply_creature_effect_event("607736", "bleeding", Some(2), 15, 1000);
+        assert_eq!(statuses(&gs, "607736"), vec!["stunned", "bleeding"]);
+        assert_eq!(gs.creature_effect_severity("607736", "bleeding"), Some(2));
+        assert!(gs.room_creatures_generation > g0);
+
+        // Refresh: severity climbs, timer re-arms, no stacking.
+        gs.apply_creature_effect_event("607736", "bleeding", Some(3), 15, 1005);
+        assert_eq!(gs.creature_effects["607736"].len(), 1);
+        assert_eq!(gs.creature_effect_severity("607736", "bleeding"), Some(3));
+        assert_eq!(gs.creature_effects["607736"][0].expires_at, 1020);
+
+        // End message: gone, feed status stays.
+        gs.apply_creature_effect_event("607736", "bleeding", None, 15, 1010);
+        assert_eq!(statuses(&gs, "607736"), vec!["stunned"]);
+        assert!(gs.creature_effects.is_empty());
+        // The creature's own flag is not removable by the derived store.
+        assert!(statuses(&gs, "607736").contains(&"stunned".to_string()));
+    }
+
+    /// The timeout safety net: a missed end message can never leave a
+    /// stale layer.
+    #[test]
+    fn timeout_expires_unrefreshed_effects() {
+        let mut gs = state_with_creature("1", &[]);
+        gs.apply_creature_effect_event("1", "bleeding", Some(1), 15, 1000);
+        assert_eq!(statuses(&gs, "1"), vec!["bleeding"]);
+        gs.tick_creature_effects(1010); // not yet
+        assert_eq!(statuses(&gs, "1"), vec!["bleeding"]);
+        let g = gs.room_creatures_generation;
+        gs.tick_creature_effects(1016); // past expiry
+        assert!(statuses(&gs, "1").is_empty());
+        assert!(gs.creature_effects.is_empty());
+        assert!(gs.room_creatures_generation > g);
+        // Settled state: further ticks change nothing.
+        let g = gs.room_creatures_generation;
+        gs.tick_creature_effects(1017);
+        assert_eq!(gs.room_creatures_generation, g);
+    }
+
+    /// A room-objs rebuild replaces flags wholesale; the next tick repairs
+    /// the derived status without needing a new message.
+    #[test]
+    fn derived_status_survives_roster_rebuild() {
+        let mut gs = state_with_creature("1", &["stunned"]);
+        gs.apply_creature_effect_event("1", "bleeding", Some(2), 60, 1000);
+        // Rebuild: fresh flags from a new <crtrStatus>, derived name gone.
+        gs.room_creatures[0].flags = Some(CreatureFlags {
+            statuses: vec!["webbed".to_string()],
+            hostile: true,
+            ..Default::default()
+        });
+        gs.tick_creature_effects(1010);
+        assert_eq!(statuses(&gs, "1"), vec!["webbed", "bleeding"]);
+    }
+
+    /// Derived effects can arrive before any <crtrStatus> snapshot; the
+    /// badge shows on a default snapshot until the feed profiles it.
+    #[test]
+    fn effect_on_flagless_creature_creates_snapshot() {
+        let mut gs = state_with_creature("1", &[]);
+        gs.room_creatures[0].flags = None;
+        gs.apply_creature_effect_event("1", "bleeding", Some(1), 15, 1000);
+        assert_eq!(statuses(&gs, "1"), vec!["bleeding"]);
+        // And the crtr_status condition path sees it.
+        assert!(gs.room_creatures[0]
+            .flags
+            .as_ref()
+            .unwrap()
+            .has_flag("bleeding"));
     }
 }
 
@@ -1690,6 +1822,120 @@ impl BetrayerState {
 pub const RAW_LINE_RING: usize = 64;
 
 impl GameState {
+    /// Apply one message-derived creature-effect event: a start re-arms the
+    /// timer and takes the newest severity (refresh, never stack); an end
+    /// removes the effect. The status name is merged into / removed from
+    /// the creature's flags immediately, with a generation bump so widgets
+    /// and the web wire react.
+    pub fn apply_creature_effect_event(
+        &mut self,
+        exist: &str,
+        name: &str,
+        severity: Option<u8>, // Some = start (rank), None = end
+        timeout_s: u32,
+        now_server: i64,
+    ) {
+        self.derived_status_names.insert(name.to_ascii_lowercase());
+        let effects = self.creature_effects.entry(exist.to_string()).or_default();
+        match severity {
+            Some(severity) => {
+                let expires_at = now_server + timeout_s as i64;
+                match effects.iter_mut().find(|e| e.name == name) {
+                    Some(e) => {
+                        e.severity = severity;
+                        e.expires_at = expires_at;
+                    }
+                    None => effects.push(ActiveCreatureEffect {
+                        name: name.to_string(),
+                        severity,
+                        expires_at,
+                    }),
+                }
+            }
+            None => effects.retain(|e| e.name != name),
+        }
+        if effects.is_empty() {
+            self.creature_effects.remove(exist);
+        }
+        self.merge_creature_effect_statuses();
+    }
+
+    /// Expire timed-out effects and (re)merge the survivors' names into
+    /// their creatures' open-vocabulary statuses. Called once per frame —
+    /// the merge also repairs flags after a room-objs rebuild replaced
+    /// them, so derived statuses survive roster refreshes. Generation bumps
+    /// only on real change.
+    pub fn tick_creature_effects(&mut self, now_server: i64) {
+        if self.creature_effects.is_empty() {
+            return;
+        }
+        for effects in self.creature_effects.values_mut() {
+            effects.retain(|e| e.expires_at > now_server);
+        }
+        self.creature_effects.retain(|_, effects| !effects.is_empty());
+        self.merge_creature_effect_statuses();
+    }
+
+    /// Live severity (1-3) of a named derived effect on a creature — the
+    /// `{severity}` in ranked overlay art paths.
+    pub fn creature_effect_severity(&self, exist: &str, name: &str) -> Option<u8> {
+        self.creature_effects
+            .get(exist)?
+            .iter()
+            .find(|e| e.name == name)
+            .map(|e| e.severity)
+    }
+
+    /// Reconcile every room creature's statuses with the derived-effect
+    /// store: add missing names, drop stale ones. Only names the store has
+    /// ever produced are dropped — feed statuses are never touched.
+    fn merge_creature_effect_statuses(&mut self) {
+        // Disjoint field borrows: the closure reads derived names while the
+        // loop mutates creatures.
+        let GameState {
+            room_creatures,
+            creature_effects,
+            derived_status_names,
+            room_creatures_generation,
+            ..
+        } = self;
+        let mut changed = false;
+        for creature in room_creatures.iter_mut() {
+            let wanted: Vec<&str> = creature_effects
+                .get(&creature.id)
+                .map(|effects| effects.iter().map(|e| e.name.as_str()).collect())
+                .unwrap_or_default();
+            let Some(flags) = creature.flags.as_mut() else {
+                // Derived effects can attach before any <crtrStatus> was
+                // seen; a default snapshot carries the badge until then.
+                if !wanted.is_empty() {
+                    let mut flags = CreatureFlags::default();
+                    flags.statuses.extend(wanted.iter().map(|s| s.to_string()));
+                    creature.flags = Some(flags);
+                    changed = true;
+                }
+                continue;
+            };
+            // Drop derived names no longer active — only names this store
+            // has itself applied are removable; feed statuses never are.
+            let before = flags.statuses.len();
+            flags.statuses.retain(|s| {
+                wanted.iter().any(|w| w.eq_ignore_ascii_case(s))
+                    || !derived_status_names.contains(&s.to_ascii_lowercase())
+            });
+            changed |= flags.statuses.len() != before;
+            for name in wanted {
+                if !flags.statuses.iter().any(|s| s.eq_ignore_ascii_case(name)) {
+                    flags.statuses.push(name.to_string());
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            *room_creatures_generation += 1;
+        }
+    }
+
     /// Record a game line for scripted-edge awaits, evicting the oldest past
     /// [`RAW_LINE_RING`]. Returns nothing; awaits read `recent_lines`.
     pub fn push_recent_line(&mut self, line: &str) {
@@ -1748,6 +1994,8 @@ impl GameState {
             target_list: TargetListState::default(),
             room_creatures: Vec::new(),
             room_creatures_generation: 0,
+            creature_effects: std::collections::HashMap::new(),
+            derived_status_names: std::collections::HashSet::new(),
             room_objects: Vec::new(),
             room_objects_generation: 0,
             room_players: Vec::new(),

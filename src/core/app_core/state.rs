@@ -991,6 +991,14 @@ impl AppCore {
         self.poll_jinx();
         // Auto-clear expired highlight-set custom statuses.
         self.tick_custom_statuses();
+        // Expire message-derived creature effects (the timeout safety net —
+        // a missed end message can never leave a stale bleed) and keep the
+        // derived statuses merged across roster rebuilds.
+        {
+            let now_server =
+                chrono::Utc::now().timestamp() + self.message_processor.server_time_offset;
+            self.game_state.tick_creature_effects(now_server);
+        }
         // Creature-field roster diff (no-op while the generation matches).
         crate::core::creature_cards::sync_field(
             &mut self.creature_field,
