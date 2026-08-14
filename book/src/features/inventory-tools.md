@@ -176,6 +176,192 @@ Item names stay clickable, categories come from the same
 `gameobj-data.xml` as `.foreach`, and the setting is remembered between
 sessions (it also appears in **Settings → UI → Sort Container Looks**).
 
+## Extended-feed commands (`.invsync`, `.find`, `.viewitem`, `.drag`)
+
+These four commands work from a **structured snapshot** of everything you
+carry, rather than by reading room prose. That buys you things `.foreach`
+cannot do: search every container at once by name, pull up an item's full
+detail by id, and move an item with the client *confirming* the move
+landed.
+
+### First: you need the extended feed
+
+All four need the extended feed. In the client's own words, that means
+**"the WRAYTH banner, sent in direct mode or by Lich."**
+
+Without it the server does not answer these commands at all. There is no
+error from the game — the request goes out and nothing comes back.
+
+> ⚠️ **The symptom is silence, not an error.** If `.invsync` prints
+> `[invsync] requesting inventory snapshot...` and nothing ever follows,
+> you do not have the extended feed. Connect with `--direct`, or launch
+> through Lich. Everything above — `.foreach`, `.sorter` — works either
+> way; only these four depend on the banner.
+
+### `.invsync` — take the snapshot
+
+```
+.invsync
+```
+
+`.invsync` sends the extended feed's `_inventory manager` request and
+follows its continuation cursors until the whole snapshot has arrived.
+
+You'll see:
+
+```
+[invsync] requesting inventory snapshot...
+[invsync] snapshot complete: 213 items (room 5872).
+```
+
+Run it again and the count updates. Run it while one is already running
+and it declines rather than overlapping:
+
+```
+[invsync] refresh already in progress.
+```
+
+**Refresh is manual, on purpose.** Nothing re-syncs behind your back — not
+after you loot, not on a timer. When you have moved a lot of items, take a
+fresh snapshot yourself.
+
+The same snapshot is what the
+[Containers window](../widgets/containers-window.md) draws as a
+collapsible tree; its **⟳ Refresh** button runs this command for you.
+
+### `.find` — where is that thing
+
+```
+.find <name fragment>
+```
+
+`.find` searches **the snapshot**, not the live game — it matches your
+fragment against each item's name and its long description, and prints
+where each match lives.
+
+You'll see, for `.find sapphire`:
+
+```
+[find] 2 matches:
+  a blue sapphire - in your leather backpack > blue velvet pouch  (#42817)
+  a blue sapphire - at your feet  (#42901)
+```
+
+The path reads outermost-first, and a container that is shut is marked
+inline — `in your leather backpack > iron strongbox (closed)` — so you
+know to open it before reaching in.
+
+With no snapshot taken yet:
+
+```
+[find] no inventory snapshot yet - run .invsync first.
+```
+
+And when the snapshot arrived only partly, every result set ends with:
+
+```
+  (snapshot INCOMPLETE - rerun .invsync)
+```
+
+> ⚠️ **Results are only as fresh as your last `.invsync`.** `.find` never
+> touches the game. An item you sold two rooms ago still shows up until
+> you re-sync. This is the opposite of `.foreach`, which reads containers
+> you have looked in this session.
+
+### `.viewitem` — full detail for one item
+
+```
+.viewitem <exist-id>
+.inspect <exist-id>
+```
+
+`.viewitem` (and its alias `.inspect`) asks the extended feed for an
+item's detail — the look, inspect, analyze and read text — in one request.
+
+**It takes an exist id, not a noun.** `.viewitem dagger` will not work.
+Ids come from the `(#42817)` column in `.find` output, and from clicking
+any item in the [Containers window](../widgets/containers-window.md),
+which fills in the id for you.
+
+The answer is banner-separated by section and routed to the **`inspect`**
+stream, never to your main window — an ANALYZE result alone can run pages
+long. Subscribe a text window to the `inspect` stream to keep a log of
+what you have looked at. In the GUI it also loads into the Containers
+window's **Item** tab.
+
+If nothing is subscribed to that stream, the client tells you where the
+answer went instead of dropping it.
+
+### `.drag` — moves that are confirmed, not assumed
+
+```
+.drag <exist> left|right|drop|wear|feet
+.drag <exist> in|on|behind|underneath <dest-exist>
+```
+
+`.drag` is a **verified** move. "Verified" is literal here: the client
+decides whether the move worked by watching your hands change in the
+feed, and never by matching the game's prose. A move that produced no
+confirming hand update inside 8 seconds is reported as a failure even if
+the game printed something that looked like success.
+
+Three outcomes, in these words:
+
+| Outcome | What you'll see | Meaning |
+|---------|-----------------|---------|
+| Confirmed | `[drag] ... - confirmed.` | A hand event proved it |
+| Sent | `[drag] ... - sent (container-direct; no hand event to confirm).` | Command went out; the item never passed through a hand, so nothing could confirm it |
+| Failed | `[drag] ... FAILED: no confirming hand update within 8s` | The window closed with no proof |
+
+It also refuses moves that cannot succeed, before sending anything — a
+full hand, or a move already in progress. Only one `.drag` runs at a time.
+
+> **"Sent" is not "failed."** A container-to-container move the server
+> completes in one motion never touches a hand, so there is no event to
+> watch. The command went out. Re-run `.invsync` and `.find` the item if
+> you want to see where it ended up.
+
+### Worked recipe: find a gem you know you own, look at it, pocket it
+
+You remember buying a star sapphire and have no idea which bag it went in.
+
+```
+.invsync
+.find star sapphire
+```
+
+You'll see:
+
+```
+[invsync] snapshot complete: 213 items (room 5872).
+[find] 1 match:
+  a star sapphire - in your leather backpack > blue velvet pouch  (#42817)
+```
+
+Now pull its detail and move it to your gem pouch (id `#9114`, from the
+same snapshot):
+
+```
+.viewitem 42817
+.drag 42817 right
+.drag 42817 in 9114
+```
+
+**You'll see** the detail arrive on the `inspect` stream, then two `[drag]`
+lines reporting **confirmed** — both moves proved against real hand events.
+When the snapshot knows a container's noun phrase, `.drag` addresses it by
+name rather than by id, which is what makes lockers work.
+
+### Which one do I reach for?
+
+| You want to | Use |
+|-------------|-----|
+| Run commands over every gem in a bag | `.foreach` (above) |
+| Locate one item across every container at once | `.find`, after `.invsync` |
+| Read an item's full look / analyze / read text | `.viewitem` |
+| Move one item and know it landed | `.drag` |
+| Browse everything you carry as a tree | the [Containers window](../widgets/containers-window.md) |
+
 ## The data pack (`.data`)
 
 `.foreach` and `.sorter` classify items using `gameobj-data.xml`, the

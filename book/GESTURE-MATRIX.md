@@ -33,13 +33,12 @@
 > - ~~**`VALID_TYPES` moved**~~ **RESOLVED** — cite now `window.rs:131-167`.
 > - **`CATALOG` line cites elsewhere in this file have shifted** by 2–5 lines (new rows were
 >   inserted mid-array). The gating block is re-cited; other blocks are not.
-> - **There are now TWO container widgets.** `container` (per-bag, ephemeral, opt-in) is what
->   `widgets/containers.md` documents; **`containers`** is a *different* widget — the
->   extended-feed managed-inventory tree, catalog-placeable, titled **"Containers"**. The
->   existing page is actively misleading about which one a reader gets.
-> - The **inventory/containers section below predates the extended feed entirely.** `.invsync`,
->   `.find`, `.viewitem`, and `.drag` build a structured snapshot with no `LOOK IN` required —
->   a second discovery path the section presents as nonexistent.
+> - ~~**There are now TWO container widgets.**~~ **RESOLVED 2026-08-14 (Wave 10).** The per-bag
+>   page is now `widgets/container-windows.md`; the tree has its own page,
+>   `widgets/containers-window.md`. See the dedicated block below.
+> - ~~The **inventory/containers section predates the extended feed.**~~ **RESOLVED (Wave 10)** —
+>   `features/inventory-tools.md` gained an extended-feed section covering `.invsync`, `.find`,
+>   `.viewitem`, and `.drag`, led by the WRAYTH-banner prerequisite.
 > - **Undocumented commands:** `.bestiary`, `.mappromote`, `.emptyhands`/`.eh`,
 >   `.fillhands`/`.fh`, `.viewitem`/`.inspect`, `.find`, `.drag`, `.invsync`. Three of them
 >   need the **WRAYTH banner** (direct mode or Lich) — a prerequisite the book never states.
@@ -596,6 +595,48 @@ So "GS4-gated" means **hidden from DR characters**, not "requires you to set the
 and the bare-`.addwindow` picker (`state/menus.rs:573` → `addable_by_category`). **NOT
 gated:** the six-argument `.addwindow` form — `commands.rs:2295-2317` calls `add_window`
 with no game check. A DR player can force a `reserve` window; it renders empty.
+
+### The two container widgets + the extended feed (added 2026-08-14, Wave 10)
+
+**`container` (singular) ≠ `containers` (plural).** Both ship; they are unrelated widgets.
+- `container` — one window PER BAG, session-only, opt-in by ticking a bag row in the Windows
+  list. `WidgetCategory::Container` (`config.rs:204`). Documented: `widgets/container-windows.md`.
+- `containers` — ONE window, whole inventory as a tree, from the `.invsync` snapshot. Catalog key
+  GS4-gated (`presets.rs:191`), template `presets.rs:1661` (title "Containers", 20x40, min 5x20),
+  `WidgetCategory::Character` (`config.rs:197-201`). Documented: `widgets/containers-window.md`.
+- `ContainersWidgetData` is an EMPTY struct → **zero widget-specific TOML fields**, and no arm in
+  `widget_section_label` → **no GUI widget section**.
+
+**Renderers differ substantially — do not describe one and imply both:**
+- GUI (`gui/app/widgets/containers.rs`): four tabs (Containers/Worn/Room/Item), stat columns
+  `[N]  W.W / C`, weight amber ≥70% of cap and red ≥90%, collapse default CLOSED, left-click a
+  non-container row → `.viewitem` + jumps to Item tab, right-click → Inspect/Look/To hand/Drop/
+  Wear/Focus, Focus mode flattens one subtree with a "◀ All containers" back button.
+- TUI (`tui/containers_window.rs`): **always fully expanded, NO stat columns, rows NOT clickable**
+  (every `add_simple_line` passes `link = None`). Flat line form `{name}{state} ({n}) {w}/{cap} lbs`,
+  `═ WORN CONTAINERS ═` headings, title `Containers (N)` / `Containers (N, incomplete)`
+  (`:121-126`), empty state is the literal line `.invsync to load` (`:50-54`).
+
+**Extended-feed commands — all four need the WRAYTH banner** ("sent in direct mode or by Lich",
+`command_help.rs:210,217`). Without it the server never answers; the symptom is SILENCE, not an
+error. The GUI empty state says so in the window (`containers.rs:88-101`).
+- `.invsync` (`commands.rs:2647-2657`) — `_inventory manager` + continuation-following. Overlap
+  guard prints `[invsync] refresh already in progress.` **Manual by owner decision; NO auto-refresh**
+  (`containers.rs:1-5`).
+- `.find <fragment>` (`commands.rs:2586`, handler `:1866`) — searches the SNAPSHOT, never the live
+  game. **The command is `.find`, NOT `.invfind`** (an agent got this wrong twice in Wave 10).
+  Line form `  {name} - {location}  (#{id})` (`:1885-1890`), header `[find] N match/matches:`
+  (`:1902-1907`), no-snapshot `[find] no inventory snapshot yet - run .invsync first.` (`:1873`),
+  incomplete footer `  (snapshot INCOMPLETE - rerun .invsync)` (`:1912`).
+- `.viewitem` / `.inspect <exist-id>` (`commands.rs:2623-2629`) — takes an EXIST ID, not a noun.
+  Routes to the `inspect` stream.
+- `.drag` (`commands.rs:2645`, handler `:1918`, engine `core/item_mover.rs`) — "verified" is
+  literal: confirmed against `<left>`/`<right>` hand events within `MOVE_TIMEOUT_MS = 8_000`
+  (`item_mover.rs:16`), **never by matching prose**. Three outcomes
+  (`state/travel_ticks.rs:659-669`): `- confirmed.` / `- sent (container-direct; no hand event to
+  confirm).` / `FAILED: {reason}`. One move at a time.
+
+**Mobile has NO containers surface** — only the `inv` stream chip and a touch-wheel Inventory slice.
 
 ### Bestiary — one feature, two surfaces (added 2026-08-14)
 

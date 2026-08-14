@@ -239,7 +239,7 @@ terminal and the GUI reads it from the layout.
   window means
 - [Active Effects](./active-effects.md) — the dialog-fed widget you probably want instead of a
   raw dialog panel
-- [Containers](./containers.md) — the other session-only windows `.hidecontainers` reaches
+- [Containers](./container-windows.md) — the other session-only windows `.hidecontainers` reaches
 - [Creating Layouts](../customization/layouts.md) — placing, saving, and restoring all of these
 - [Widgets](./README.md) — the full roster, and the three routes for adding any of them
 

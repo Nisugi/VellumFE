@@ -104,7 +104,7 @@ string, four presets.
 | Row reads | Type to add | What it's for | Page |
 |---|---|---|---|
 | Inventory | `inventory` | What you're carrying | [Inventory](./inventory.md) |
-| Containers **GS4** | `containers` | Your whole inventory as one tree, bags and all | [Containers](./containers.md) |
+| Containers **GS4** | `containers` | Your whole inventory as one tree, bags and all | [Containers Window](./containers-window.md) |
 | Characters | `multiaccount` | Your other logged-in characters, at a glance | *(no page yet)* |
 | Reserve **GS4** | `reserve` | What the game is holding aside for you | [Reserve](./reserve.md) |
 | Spells | `spells` | Your known-spells snapshot from login | [Spells](./spells.md) |
@@ -140,7 +140,12 @@ The **Actions** row is the hotbar widget — the title differs from the type str
 
 | Row reads | Type to add | What it's for | Page |
 |---|---|---|---|
-| *(one row per bag you've opted in)* | `container` | The contents of one specific container | [Containers](./containers.md) |
+| *(one row per bag you've opted in)* | `container` | The contents of one specific container | [Container Windows](./container-windows.md) |
+
+> **`container` and `containers` are different widgets.** Singular = one window per
+> bag, listed here. Plural = one window holding everything as a tree, and it lives
+> in **Character**, not in this group. See
+> [Containers Window](./containers-window.md).
 
 Container rows are not fixed. A bag appears as a row once the game has shown you
 inside it this session, and ticking the row is what creates the window. There is
@@ -175,7 +180,7 @@ to type the full `.addwindow` form.
 |---|---|---|
 | `command_input` *(or `commandinput`)* | The input line itself. Your layout already has one. | [Utility & Layout Widgets](./utility-widgets.md) |
 | `spacer` | Blank filler that reserves space in a layout | [Utility & Layout Widgets](./utility-widgets.md) |
-| `container` | One bag's contents — reachable by ticking a bag row, never by a fixed catalog entry | [Containers](./containers.md) |
+| `container` | One bag's contents — reachable by ticking a bag row, never by a fixed catalog entry | [Containers](./container-windows.md) |
 | `performance` | Frame timings and message throughput | [Performance Monitor](../reference/performance.md) |
 | `webui` *(or `lichui`)* | A Lich WebUI page drawn as a native window | [Utility & Layout Widgets](./utility-widgets.md) |
 | `dialogpanel` *(or `dialog_panel`)* | A resident game dialog, addressed by its id | [Utility & Layout Widgets](./utility-widgets.md) |

@@ -76,7 +76,7 @@ carried items, and tapping an item raises that item's verb sheet.
 ### A carry column you can bag loot into
 
 Add the inventory window, send it to the **Right Bar**, and give it about twenty rows. Open an
-[Items](./items.md) window above it and a [Container](./containers.md) window for your pack
+[Items](./items.md) window above it and a [Container](./container-windows.md) window for your pack
 below it. Now hold **Ctrl** and drag a row from the items window onto the container window.
 
 **You'll see:** the item lands in the bag, disappears from the ground list on the next room
@@ -110,7 +110,7 @@ desktop frontends. Hold the drag modifier first — it's `ui.drag_modifier_key` 
 and accepts `ctrl`, `alt`, or `shift`.
 
 **The window can be empty-looking rather than empty.** Unlike [Items](./items.md), which prints
-**No objects here.**, and [Containers](./containers.md), which prints **Empty.**, inventory
+**No objects here.**, and [Containers](./container-windows.md), which prints **Empty.**, inventory
 renders nothing at all until the game has sent the list. Type `inv` once after login if a fresh
 window looks blank.
 
@@ -130,7 +130,7 @@ way. See [Inventory Tools](../features/inventory-tools.md).
 
 ## See also
 
-- [Containers](./containers.md) — a window per bag, and the drop target for stowing
+- [Containers](./container-windows.md) — a window per bag, and the drop target for stowing
 - [Items](./items.md) — what's on the ground rather than on you
 - [Reserve](./reserve.md) — the same snapshot widget on the `reserve` feed (GemStone IV)
 - [Inventory Tools (.foreach, .sorter)](../features/inventory-tools.md) — batch commands over

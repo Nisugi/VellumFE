@@ -133,7 +133,7 @@ than height. With **Help text** off, 3 rows is the whole window.
 - [Progress Bars](./progress-bars.md) — the plain `encumlevel` bar, and every other feed
 - [Mini Vitals](./minivitals.md) — encumbrance as one bar in a shared strip (desktop GUI)
 - [Inventory](./inventory.md) — what you're carrying, which is what moved this number
-- [Containers](./containers.md) — a window per bag, for finding the heavy thing
+- [Containers](./container-windows.md) — a window per bag, for finding the heavy thing
 - [Experience (GemStone IV)](./gs4-experience.md) — the other resident dialog with its own widget
 - [Creating Layouts](../customization/layouts.md) — placing and saving these windows
 

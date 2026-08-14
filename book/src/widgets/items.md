@@ -108,7 +108,7 @@ next room update. What you're carrying belongs to the [Inventory](./inventory.md
 - [Targets](./targets.md) — the bolded, creature half of the same room feed
 - [Players](./players.md) — the room roster, with corpse styling
 - [Inventory](./inventory.md) — what you're carrying, rather than what's on the floor
-- [Containers](./containers.md) — a window per bag, and the drop target for dragging loot
+- [Containers](./container-windows.md) — a window per bag, and the drop target for dragging loot
 - [Room Window](./room-window.md) — the prose, with its **Objects** section toggle
 
 <details>

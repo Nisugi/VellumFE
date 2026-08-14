@@ -119,7 +119,7 @@ window definition still loads for them, but it stays empty.
 ## See also
 
 - [Inventory](./inventory.md) — the same widget mechanics, fed by what you carry
-- [Containers](./containers.md) — a window per bag, for what's inside them
+- [Containers](./container-windows.md) — a window per bag, for what's inside them
 - [Items](./items.md) — what's on the ground, rather than what's yours
 - [Text Windows](./text-windows.md) — how stream-fed windows work generally
 - [Creating Layouts](../customization/layouts.md) — placing and saving these windows

@@ -1,14 +1,14 @@
-# Containers
+# Container Windows
 
 > A live window per bag — your pack, your bandolier, your gem pouch — each one showing what's
 > actually inside it right now, and each one a target you can drop loot onto.
 
-> ⚠️ **Two different widgets share this name.** This page documents the **`container`**
-> widget: one window per bag, created by ticking that bag in the Windows list. There is also a
-> newer **`containers`** widget — a single window holding your whole inventory as a tree, built
-> from the extended feed's `.invsync` snapshot, which ships as a catalog row also titled
-> **Containers**. That one has no page yet. If you ticked **Containers** in the catalog and got
-> one window with tabs rather than a window per bag, you have the newer widget.
+> ⚠️ **Two different widgets do container work.** This page is the **`container`** widget
+> (singular): one window per bag, session-only, created by ticking that bag in the Windows list.
+> The other is [**`containers`**](./containers-window.md) (plural) — a single window holding your
+> whole inventory as a tree, built from the extended feed's `.invsync` snapshot, which ships as a
+> catalog row titled **Containers**. If you ticked that row and got one window with tabs rather
+> than a window per bag, you want [that page](./containers-window.md).
 
 ## What it's for
 
@@ -162,6 +162,8 @@ it can't find your container, look in it once and re-run. See
 
 ## See also
 
+- [Containers Window](./containers-window.md) — the plural `containers` widget: your whole
+  inventory as one tree
 - [Inventory](./inventory.md) — everything you're carrying, including the bags themselves
 - [Items](./items.md) — what's on the ground, and the usual drag source for stowing
 - [Reserve](./reserve.md) — the GemStone IV reserved-items snapshot
