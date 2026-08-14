@@ -124,6 +124,10 @@ pub(super) struct WidgetRenderSettings {
     /// Widget sprite art from the active skin (status icons, compass,
     /// injury doll); None = draw the built-in vector graphics.
     skin_art: Option<std::sync::Arc<skin::SkinWidgetArt>>,
+    /// Creature-card art cache (creaturefield widget); loading happens in
+    /// the update loop, renderers only read. None in contexts without a
+    /// skin state.
+    creature_art: Option<skin::SharedCreatureArt>,
     /// Current command-input buffer, only for command-input windows. Render
     /// paths are `&self`; edits flow back via `CommandInputEcho`.
     command_input_seed: Option<String>,
@@ -2347,6 +2351,29 @@ impl eframe::App for VellumGuiApp {
             self.ui_settings.active_skin.as_deref(),
             self.ui_settings.doll_image.as_deref(),
         );
+        // Creature-card art: resolve + load base sprites for the field's
+        // current roster (lazy, negative-cached — a settled room is a few
+        // hash lookups). Family is not sourced yet, so None.
+        {
+            let wanted: Vec<(String, Option<String>)> = self
+                .app_core
+                .creature_field
+                .units()
+                .iter()
+                .flat_map(|u| u.members.iter())
+                .filter_map(|m| {
+                    self.app_core
+                        .game_state
+                        .room_creatures
+                        .iter()
+                        .find(|c| &c.id == m)
+                })
+                .filter_map(|c| c.noun.clone().map(|noun| (noun, None)))
+                .collect();
+            if !wanted.is_empty() {
+                self.skin_state.prepare_creature_art(&ctx, &wanted);
+            }
+        }
         self.apply_ui_sizing(&ctx);
         // Prime the item classifier while &mut self is available; render
         // paths (hotbar/hand conditions) read the immutable cache.

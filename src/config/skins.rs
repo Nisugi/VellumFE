@@ -925,6 +925,41 @@ description = ""
 # head = [0.2, 0.7]
 # [injury_doll.variants.skin.leftArm]
 # healthy = "doll/downed_arm_ok.png"
+
+# ---- Creature cards (creaturefield widget) --------------------------------
+# One shared template for EVERY creature. The base image resolves per
+# creature through the cascade below ({noun} comes from the game feed); a
+# creature with no art keeps the built-in placeholder standee. Head/feet
+# anchors derive automatically from each sprite's transparent bounds — only
+# mouth/saddle need authoring, and only for families that use them.
+# Status overlay art is SHARED across all families (that is what keeps the
+# asset count small); per-creature placeholders in overlay paths are
+# rejected. Creatures take wounds only: injury1-3 (scar keys are ignored).
+# [creature_card]
+# base = "creatures/default.png"
+# resolve = ["creatures/{noun}.png", "creatures/{family}.png", "creatures/default.png"]
+#
+# [[creature_card.overlays]]
+# image = "creatures/fx/webbed.png"
+# when  = { type = "crtr_status", id = "webbed", active = true }
+#
+# [[creature_card.overlays]]
+# image   = "creatures/fx/stun_star.png"
+# space   = "screen"
+# anchor  = "head"
+# animate = { kind = "orbit", count = 3, period_ms = 2400 }
+# when    = { type = "crtr_status", id = "stunned", active = true }
+#
+# [[creature_card.variants]]
+# name = "airborne"
+# [creature_card.variants.when]
+# type = "any"
+# conditions = [
+#   { type = "crtr_status", id = "flying",   active = true },
+#   { type = "crtr_status", id = "hovering", active = true },
+# ]
+# [creature_card.variants.skin]
+# lift = { offset_y = -0.22, shadow_scale = 0.55, shadow_opacity = 0.4 }
 "##;
 
 /// Create `skins/<name>/` with the commented starter skin.toml. Refuses to

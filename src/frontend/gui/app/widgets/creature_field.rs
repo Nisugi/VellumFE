@@ -78,6 +78,7 @@ impl VellumGuiApp {
         app_core: &AppCore,
         ui: &mut egui::Ui,
         window_name: &str,
+        settings: &WidgetRenderSettings,
     ) -> Option<GuiLinkClick> {
         // Per-window options from the layout def (shared with the TUI).
         let (show_grid, show_order) = match app_core
@@ -116,7 +117,17 @@ impl VellumGuiApp {
         let current_target =
             Self::normalize_entity_id(&app_core.game_state.target_list.current_target);
         let now_ms = ui.input(|i| i.time) * 1000.0;
+        let now_server =
+            chrono::Utc::now().timestamp() + app_core.message_processor.server_time_offset;
+        let gameobj = app_core.gameobj_data_cached();
         let mut any_animated = false;
+
+        // Skin creature art, prepared in the update loop; render only reads.
+        let art_cache = settings
+            .creature_art
+            .as_ref()
+            .map(|a| a.lock().expect("creature art lock"));
+        let art_cache = art_cache.as_deref().filter(|c| c.active);
 
         // Far -> near (painter's algorithm), ground-z keyed in the solver.
         for &i in &field.draw_order() {
@@ -141,6 +152,10 @@ impl VellumGuiApp {
                     is_target,
                     now_ms,
                     ui.visuals().dark_mode,
+                    art_cache,
+                    &app_core.game_state,
+                    now_server,
+                    gameobj,
                 );
             }
         }
@@ -243,8 +258,10 @@ impl VellumGuiApp {
         }
     }
 
-    /// One creature's placeholder card. Returns true when it painted a
-    /// moving effect (caller schedules a repaint).
+    /// One creature's card: skin sprite art with manifest-driven overlays
+    /// when the resolve cascade found a base, the generated placeholder
+    /// standee otherwise. Returns true when it painted a moving effect
+    /// (caller schedules a repaint).
     #[allow(clippy::too_many_arguments)]
     fn paint_creature_card(
         painter: &egui::Painter,
@@ -255,13 +272,41 @@ impl VellumGuiApp {
         is_target: bool,
         now_ms: f64,
         dark: bool,
+        art_cache: Option<&crate::frontend::gui::skin::CreatureArtCache>,
+        gs: &crate::core::state::GameState,
+        now_server: i64,
+        gameobj: Option<&crate::core::gameobj_data::GameObjData>,
     ) -> bool {
         let flags = creature.flags.as_ref();
         let dead = creature.is_dead();
-        let lift = flags
-            .filter(|f| f.has_flag("flying"))
-            .map(|_| -0.22f32)
-            .or_else(|| flags.filter(|f| f.has_flag("hovering")).map(|_| -0.12f32));
+        let noun = creature.noun.as_deref().unwrap_or("creature");
+
+        // Skin path: base art + the manifest's resolved card (variant,
+        // lift, overlays), all evaluated host-style through resolve_card.
+        let art = art_cache.and_then(|c| c.base(noun, None));
+        let resolved = match (art_cache, flags) {
+            (Some(cache), Some(flags)) => Some(crate::core::creature_cards::resolve_card(
+                &cache.card,
+                flags,
+                gs,
+                now_server,
+                gameobj,
+            )),
+            _ => None,
+        };
+
+        // Lift: the manifest's airborne variant wins; built-in defaults
+        // cover skinless rooms.
+        let lift = resolved
+            .as_ref()
+            .and_then(|r| r.lift())
+            .map(|l| l.offset_y)
+            .or_else(|| {
+                flags
+                    .filter(|f| f.has_flag("flying"))
+                    .map(|_| -0.22f32)
+                    .or_else(|| flags.filter(|f| f.has_flag("hovering")).map(|_| -0.12f32))
+            });
 
         let base = field.rect(unit);
         let (foot_x, foot_y) = field.foot(unit);
@@ -272,48 +317,92 @@ impl VellumGuiApp {
             r.y1 += dy;
         }
         let card = map.rect(&r);
-        let noun = creature.noun.as_deref().unwrap_or("creature");
 
         // Contact shadow stays at the floor footprint; softens with lift.
-        let shadow_w = card.width() * 0.55 * if lift.is_some() { 0.55 } else { 1.0 };
-        let shadow_alpha = if lift.is_some() { 24 } else { 60 };
+        let (shadow_scale, shadow_alpha) = resolved
+            .as_ref()
+            .and_then(|r| r.lift())
+            .map(|l| (l.shadow_scale, (l.shadow_opacity * 60.0) as u8))
+            .unwrap_or(if lift.is_some() { (0.55, 24) } else { (1.0, 60) });
+        let shadow_w = card.width() * 0.55 * shadow_scale;
         painter.add(egui::epaint::PathShape::convex_polygon(
             ellipse_points(map.pt(foot_x, foot_y), shadow_w, shadow_w * 0.24),
             Color32::from_black_alpha(shadow_alpha),
             Stroke::NONE,
         ));
 
-        // Posture: prone/kneeling/sitting squash the standee toward the
-        // ground until real variant art exists.
+        let mut animated = false;
         let mut body = card;
-        let downed = flags.is_some_and(|f| {
-            f.has_flag("prone") || f.has_flag("kneeling") || f.has_flag("sitting")
-        });
-        if downed {
-            body.set_top(body.top() + body.height() * 0.45);
-        }
-
-        // Body capsule + head circle, tinted by noun.
-        let color = body_color(noun, dead);
-        let head_r = body.width() * 0.22;
-        let torso = egui::Rect::from_min_max(
-            egui::pos2(body.left() + body.width() * 0.18, body.top() + head_r * 1.6),
-            egui::pos2(body.right() - body.width() * 0.18, body.bottom()),
-        );
-        painter.rect_filled(torso, head_r * 0.8, color);
-        painter.circle_filled(
-            egui::pos2(body.center().x, body.top() + head_r),
-            head_r,
-            color,
-        );
-        // Boss brow: a heavier outline instead of a bigger palette.
-        if flags.is_some_and(|f| f.is_boss()) {
-            painter.rect_stroke(
-                torso,
-                head_r * 0.8,
-                Stroke::new(2.0, Color32::from_rgb(0xc9, 0xa2, 0x27)),
-                egui::StrokeKind::Outside,
+        if let (Some(cache), Some(art)) = (art_cache, art) {
+            // ---- sprite card -------------------------------------------
+            // A matched variant with placeholder-free authored art replaces
+            // the cascade's base; template paths keep the ground pose.
+            let texture = resolved
+                .as_ref()
+                .and_then(|r| r.base_override())
+                .filter(|p| !p.contains('{'))
+                .and_then(|p| cache.overlays.get(p).cloned().flatten())
+                .unwrap_or_else(|| art.texture.clone());
+            // Aspect-fit into the card rect, anchored bottom-centre (the
+            // foot point), like a standee on its base.
+            let tex_size = texture.size_vec2();
+            let scale = (card.width() / tex_size.x).min(card.height() / tex_size.y);
+            let draw_w = tex_size.x * scale;
+            let draw_h = tex_size.y * scale;
+            let dest = egui::Rect::from_min_max(
+                egui::pos2(card.center().x - draw_w / 2.0, card.bottom() - draw_h),
+                egui::pos2(card.center().x + draw_w / 2.0, card.bottom()),
             );
+            let tint = if dead {
+                Color32::from_gray(110)
+            } else {
+                Color32::WHITE
+            };
+            painter.image(
+                texture.id(),
+                dest,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                tint,
+            );
+            body = dest;
+            // Manifest overlays: quad layers warp/scale with the card,
+            // screen layers sit flat above it.
+            if let Some(resolved) = &resolved {
+                animated |= Self::paint_card_overlays(
+                    painter, cache, resolved, art, dest, now_ms,
+                );
+            }
+        } else {
+            // ---- placeholder standee -----------------------------------
+            // Posture: prone/kneeling/sitting squash toward the ground
+            // until real variant art exists.
+            let downed = flags.is_some_and(|f| {
+                f.has_flag("prone") || f.has_flag("kneeling") || f.has_flag("sitting")
+            });
+            if downed {
+                body.set_top(body.top() + body.height() * 0.45);
+            }
+            let color = body_color(noun, dead);
+            let head_r = body.width() * 0.22;
+            let torso = egui::Rect::from_min_max(
+                egui::pos2(body.left() + body.width() * 0.18, body.top() + head_r * 1.6),
+                egui::pos2(body.right() - body.width() * 0.18, body.bottom()),
+            );
+            painter.rect_filled(torso, head_r * 0.8, color);
+            painter.circle_filled(
+                egui::pos2(body.center().x, body.top() + head_r),
+                head_r,
+                color,
+            );
+            // Boss brow: a heavier outline instead of a bigger palette.
+            if flags.is_some_and(|f| f.is_boss()) {
+                painter.rect_stroke(
+                    torso,
+                    head_r * 0.8,
+                    Stroke::new(2.0, Color32::from_rgb(0xc9, 0xa2, 0x27)),
+                    egui::StrokeKind::Outside,
+                );
+            }
         }
         if dead {
             let m = body.width() * 0.24;
@@ -371,7 +460,6 @@ impl VellumGuiApp {
         }
 
         // Stun swirl: three orbiting stars, wall-clock phased.
-        let mut animated = false;
         if flags.is_some_and(|f| f.has_flag("stunned")) && !dead {
             animated = true;
             let orbit_r = (card.width() * 0.42).max(9.0);
@@ -405,6 +493,151 @@ impl VellumGuiApp {
                 Color32::from_rgb(0x48, 0xc7, 0x74),
                 Stroke::new(1.2, Color32::from_rgba_unmultiplied(12, 40, 22, 217)),
             ));
+        }
+        animated
+    }
+
+    /// Manifest-driven overlay layers over one sprite card. Quad layers
+    /// scale with the card (body-wrap = the art's alpha bbox, anchored =
+    /// placed at an anchor fraction); screen layers sit flat above it and
+    /// may animate (orbit / pulse from wall clock). Returns true when any
+    /// active layer animates.
+    fn paint_card_overlays(
+        painter: &egui::Painter,
+        cache: &crate::frontend::gui::skin::CreatureArtCache,
+        resolved: &crate::core::creature_cards::ResolvedCard<'_>,
+        art: &crate::frontend::gui::skin::CreatureArt,
+        dest: egui::Rect,
+        now_ms: f64,
+    ) -> bool {
+        use crate::config::skins::{AnimateKind, OverlaySpace};
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        let mut animated = false;
+        // The art's alpha bbox mapped into the dest rect: what body-wrap
+        // overlays cover, so canvas padding in the base costs nothing.
+        let bbox = egui::Rect::from_min_max(
+            egui::pos2(
+                dest.left() + art.bbox[0] * dest.width(),
+                dest.top() + art.bbox[1] * dest.height(),
+            ),
+            egui::pos2(
+                dest.left() + art.bbox[2] * dest.width(),
+                dest.top() + art.bbox[3] * dest.height(),
+            ),
+        );
+        let anchor_pt = |name: &str| -> egui::Pos2 {
+            // Manifest calibration wins; the art's derived head/feet cover
+            // the common case; centre is the never-crash fallback.
+            let frac = resolved
+                .anchor(name)
+                .or(match name {
+                    "head" => Some(art.head),
+                    "feet" => Some(art.feet),
+                    _ => None,
+                })
+                .unwrap_or([0.5, 0.5]);
+            egui::pos2(
+                dest.left() + frac[0] * dest.width(),
+                dest.top() + frac[1] * dest.height(),
+            )
+        };
+        for overlay in &resolved.overlays {
+            if overlay.image.contains('{') {
+                // Ranked (message-derived) art needs a live severity;
+                // nothing supplies one yet.
+                continue;
+            }
+            let Some(texture) = cache.overlays.get(&overlay.image).cloned().flatten() else {
+                continue;
+            };
+            let anim = overlay.animate.as_ref();
+            animated |= anim.is_some();
+            match overlay.space {
+                OverlaySpace::Quad => {
+                    let rect = match overlay.anchor.as_deref() {
+                        // Body-wrap: stretched over the sprite's alpha bbox.
+                        None => bbox,
+                        Some(name) => {
+                            // Anchored: sized to half the card width,
+                            // aspect-preserving, centred on the anchor.
+                            let pt = anchor_pt(name);
+                            let ts = texture.size_vec2();
+                            let w = dest.width() * 0.5;
+                            let h = w * ts.y / ts.x.max(1.0);
+                            egui::Rect::from_center_size(pt, egui::vec2(w, h))
+                        }
+                    };
+                    let alpha = match anim.map(|a| a.kind) {
+                        Some(AnimateKind::Pulse) => {
+                            let period = anim.map(|a| a.period_ms).unwrap_or(2400).max(1);
+                            let ph = (now_ms / period as f64 * std::f64::consts::TAU).sin();
+                            (170.0 + ph * 85.0) as u8
+                        }
+                        Some(AnimateKind::Flicker) => {
+                            let period = anim.map(|a| a.period_ms).unwrap_or(2400).max(1) as f64;
+                            if (now_ms / (period / 6.0)) as u64 % 3 == 0 {
+                                120
+                            } else {
+                                255
+                            }
+                        }
+                        _ => 255,
+                    };
+                    painter.image(
+                        texture.id(),
+                        rect,
+                        uv,
+                        Color32::from_white_alpha(alpha),
+                    );
+                }
+                OverlaySpace::Screen => {
+                    let pt = anchor_pt(overlay.anchor.as_deref().unwrap_or("head"));
+                    match anim.map(|a| a.kind) {
+                        Some(AnimateKind::Orbit) => {
+                            let a = anim.expect("kind implies spec");
+                            let rx = dest.width() * a.rx;
+                            let ry = dest.width() * a.ry;
+                            let period = a.period_ms.max(1) as f64;
+                            for k in 0..a.count.max(1) {
+                                let ph = (now_ms / period * std::f64::consts::TAU) as f32
+                                    + k as f32 * std::f32::consts::TAU
+                                        / a.count.max(1) as f32;
+                                let depth = (ph.sin() + 1.0) / 2.0;
+                                let size = dest.width() * (0.10 + 0.05 * depth);
+                                let center = egui::pos2(
+                                    pt.x + ph.cos() * rx,
+                                    pt.y - ry * 1.5 + ph.sin() * ry,
+                                );
+                                painter.image(
+                                    texture.id(),
+                                    egui::Rect::from_center_size(
+                                        center,
+                                        egui::vec2(size, size),
+                                    ),
+                                    uv,
+                                    Color32::from_white_alpha(140 + (depth * 100.0) as u8),
+                                );
+                            }
+                        }
+                        _ => {
+                            // Static screen layer: sits just above the
+                            // anchor, sized like an anchored quad layer.
+                            let ts = texture.size_vec2();
+                            let w = dest.width() * 0.4;
+                            let h = w * ts.y / ts.x.max(1.0);
+                            painter.image(
+                                texture.id(),
+                                egui::Rect::from_center_size(
+                                    egui::pos2(pt.x, pt.y - h * 0.8),
+                                    egui::vec2(w, h),
+                                ),
+                                uv,
+                                Color32::WHITE,
+                            );
+                        }
+                    }
+                }
+            }
         }
         animated
     }

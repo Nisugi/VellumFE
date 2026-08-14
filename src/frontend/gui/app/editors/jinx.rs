@@ -56,6 +56,7 @@ fn kind_label(kind: &str) -> &str {
         "statusicon" => "Status icons",
         "compass" => "Compass",
         "hand" => "Hands",
+        "creature" => "Creatures",
         "doll" => "Injury doll",
         "frame" => "Frames",
         "background" => "Backgrounds",
@@ -110,8 +111,8 @@ impl VellumGuiApp {
 
         // Categories present in the catalog, in a stable friendly order.
         const KIND_ORDER: &[&str] = &[
-            "data", "skin", "layout", "uipack", "statusicon", "compass", "hand", "doll", "frame",
-            "background", "icon", "iconmap", "image", "sound",
+            "data", "skin", "layout", "uipack", "statusicon", "compass", "hand", "creature",
+            "doll", "frame", "background", "icon", "iconmap", "image", "sound",
         ];
         let mut kinds: Vec<String> = Vec::new();
         for entry in &catalog {

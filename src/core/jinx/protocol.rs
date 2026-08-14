@@ -140,7 +140,7 @@ impl Asset {
             // repos publish per-file (skins and widget overrides reference
             // them by pool-relative path).
             "iconmap" | "image" | "icon" | "doll" | "skin" | "layout" | "uipack" | "frame"
-            | "background" | "compass" | "statusicon" | "hand" | "sound" => true,
+            | "background" | "compass" | "statusicon" | "hand" | "creature" | "sound" => true,
             // Never installable, pool tag or not: code is Lich's, and map
             // IMAGE tiles (kind `map`) are unused here. The map database
             // itself is `mapdb.json` (kind `data`, allowed above).

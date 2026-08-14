@@ -78,6 +78,13 @@ const SEEDS: &[Seed] = &[
         url: "https://nisugi.github.io/vellum-assets/hands",
         only: None,
     },
+    // Creature-card base sprites for the creaturefield widget, resolved by
+    // noun/family through [creature_card].resolve (GS4 feature).
+    Seed {
+        name: "vellum-creatures",
+        url: "https://nisugi.github.io/vellum-assets/creatures",
+        only: Some(GameType::GS4),
+    },
 ];
 
 /// Root discovery index of the vellum-assets monorepo: a repos.json listing

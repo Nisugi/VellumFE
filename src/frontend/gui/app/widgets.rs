@@ -287,7 +287,7 @@ impl VellumGuiApp {
                 Self::render_targets_content(app_core, ui, &tab.window_name)
             }
             WindowContent::CreatureField => {
-                Self::render_creature_field_content(app_core, ui, &tab.window_name)
+                Self::render_creature_field_content(app_core, ui, &tab.window_name, &settings)
             }
             WindowContent::Players => Self::render_players_content(app_core, ui),
             WindowContent::Countdown(countdown) => {
