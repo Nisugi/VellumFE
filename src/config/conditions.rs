@@ -104,6 +104,19 @@ pub enum Condition {
         #[serde(default)]
         name_match: NameMatch,
     },
+    /// A creature's `<crtrStatus>` flag by name, evaluated against the
+    /// creature in scope (creature-card overlays and variants). Open
+    /// vocabulary: canonical status names ("stunned", "webbed", ...),
+    /// classification flags ("hostile", "dead", "rider", ...), the feed's
+    /// raw spellings ("immobile"), and any status the server invents later
+    /// all resolve, case-insensitively. Fails closed — in a player-scoped
+    /// context (hotbars, hand icons, the player doll) there is no creature,
+    /// so this evaluates false regardless of `active`.
+    CrtrStatus {
+        id: String,
+        #[serde(default = "default_true")]
+        active: bool,
+    },
 }
 
 fn default_true() -> bool {

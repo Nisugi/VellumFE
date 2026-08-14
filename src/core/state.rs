@@ -742,8 +742,13 @@ impl CreatureFlags {
                 "mount" => flags.mount = true,
                 // Open vocabulary (Saga's rule): any other ="1" attribute
                 // is an effect name - new server effects surface without a
-                // client release.
-                other => flags.statuses.push(other.to_string()),
+                // client release. Logged so the creature-cards flag census
+                // can enumerate what the server actually sends beyond the
+                // canonical table (grep logs for "crtrStatus open-vocab").
+                other => {
+                    tracing::debug!("crtrStatus open-vocab flag: {other}");
+                    flags.statuses.push(other.to_string());
+                }
             }
         }
         flags
@@ -761,6 +766,36 @@ impl CreatureFlags {
     /// Boss-tier creature (AscensionBoss or MiniBoss).
     pub fn is_boss(&self) -> bool {
         self.ascension_boss || self.mini_boss
+    }
+
+    /// Whether a named status/classification flag is active, for
+    /// `Condition::CrtrStatus`. Accepts the canonical status names
+    /// ("immobilized"), the feed's raw spellings ("immobile", "MiniBoss"),
+    /// and any open-vocabulary status the server sent, case-insensitively.
+    /// Unknown names read false — same fail-closed shape as indicators.
+    pub fn has_flag(&self, name: &str) -> bool {
+        // Feed spelling -> canonical, so authors can use either.
+        let name = CRTR_STATUS_FLAGS
+            .iter()
+            .find(|(xml, _)| xml.eq_ignore_ascii_case(name))
+            .map_or(name, |(_, canonical)| canonical);
+        match name.to_ascii_lowercase().as_str() {
+            "hostile" => self.hostile,
+            "disengaged" => self.disengaged,
+            "dead" => self.dead,
+            "sympathetic" => self.sympathetic,
+            "ascended" => self.ascended,
+            "inferior" => self.inferior,
+            "ascensionboss" => self.ascension_boss,
+            "miniboss" => self.mini_boss,
+            "challenging" => self.challenging,
+            "rider" => self.rider,
+            "mount" => self.mount,
+            _ => self
+                .statuses
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(name)),
+        }
     }
 }
 

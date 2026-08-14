@@ -12,6 +12,7 @@ pub mod bounty_parser;
 pub mod character_state;
 pub mod day_pass;
 pub mod conditions;
+pub mod creature_cards;
 pub mod doll_rules;
 pub mod curated_maps;
 pub mod custom_emoji;

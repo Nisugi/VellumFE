@@ -93,6 +93,10 @@ fn leaf_kind_index(cond: &Condition) -> usize {
         Condition::HandHolds { .. } => 10,
         Condition::SpellPrepared { .. } => 11,
         Condition::TimeOfDay { .. } => 12,
+        // Creature-scoped: not offered in LEAF_KINDS (player-scoped surfaces
+        // can never satisfy it); a hand-authored one displays via the
+        // fallback arm below without being rewritten.
+        Condition::CrtrStatus { .. } => 0,
         Condition::All { .. } | Condition::Any { .. } => 0,
     }
 }
@@ -1488,6 +1492,15 @@ fn render_leaf_condition(
             changed |= match_combo(ui, &format!("{}_match", id), name_match);
         }
         Condition::RtActive | Condition::CtActive => {}
+        Condition::CrtrStatus { id: flag, active } => {
+            // Creature-scoped, hand-authored: display honestly. It can never
+            // fire on a player-scoped surface (no creature in scope).
+            ui.weak(format!(
+                "creature status \"{flag}\" {} — creature cards only, never \
+                 matches here",
+                if *active { "active" } else { "inactive" }
+            ));
+        }
         Condition::All { .. } | Condition::Any { .. } => {}
     }
     changed
