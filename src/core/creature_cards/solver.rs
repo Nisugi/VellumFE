@@ -311,6 +311,32 @@ impl CreatureField {
         }
     }
 
+    /// Endpoints (virtual stage) of the floor grid line along depth row
+    /// `r` (0..=rows). For renderers.
+    pub fn floor_row_line(&self, r: u32) -> ((f32, f32), (f32, f32)) {
+        let z = self.depth_at(r as f32);
+        let lo = self.col_left(*self.cols.first().unwrap());
+        let hi = self.col_left(*self.cols.last().unwrap()) + self.cell_w();
+        let y = self.screen_y(z);
+        ((self.screen_x(lo, z), y), (self.screen_x(hi, z), y))
+    }
+
+    /// Endpoints (virtual stage) of the floor grid line down column
+    /// boundary `k` (0..=columns().len()). For renderers.
+    pub fn floor_col_line(&self, k: usize) -> ((f32, f32), (f32, f32)) {
+        let x = if k < self.cols.len() {
+            self.col_left(self.cols[k])
+        } else {
+            self.col_left(*self.cols.last().unwrap()) + self.cell_w()
+        };
+        let zn = self.depth_at(0.0);
+        let zf = self.depth_at(self.params.rows as f32);
+        (
+            (self.screen_x(x, zn), self.screen_y(zn)),
+            (self.screen_x(x, zf), self.screen_y(zf)),
+        )
+    }
+
     // ---- queries --------------------------------------------------------
 
     pub fn units(&self) -> &[Unit] {

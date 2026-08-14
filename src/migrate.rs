@@ -779,6 +779,7 @@ impl BaseMut for WindowDef {
             WindowDef::ActiveEffects { base, .. } => Some(base),
             WindowDef::Performance { base, .. } => Some(base),
             WindowDef::Targets { base, .. } => Some(base),
+            WindowDef::CreatureField { base, .. } => Some(base),
             WindowDef::Players { base, .. } => Some(base),
             WindowDef::Items { base, .. } => Some(base),
             WindowDef::Container { base, .. } => Some(base),

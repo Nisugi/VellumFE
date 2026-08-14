@@ -150,6 +150,16 @@ pub enum WindowDef {
         data: TargetsWidgetData,
     },
 
+    /// Sprite creature field (GUI): the room's hostiles as cards on a
+    /// perspective floor.
+    #[serde(rename = "creaturefield")]
+    CreatureField {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: CreatureFieldWidgetData,
+    },
+
     #[serde(rename = "players")]
     Players {
         #[serde(flatten)]
@@ -500,6 +510,10 @@ impl WindowDef {
                     status_position: None,
                 },
             },
+            "creaturefield" => WindowDef::CreatureField {
+                base,
+                data: CreatureFieldWidgetData::default(),
+            },
             "players" => WindowDef::Players {
                 base,
                 data: PlayersWidgetData {
@@ -621,6 +635,7 @@ impl WindowDef {
             WindowDef::ActiveEffects { base, .. } => &base.name,
             WindowDef::Performance { base, .. } => &base.name,
             WindowDef::Targets { base, .. } => &base.name,
+            WindowDef::CreatureField { base, .. } => &base.name,
             WindowDef::Players { base, .. } => &base.name,
             WindowDef::Items { base, .. } => &base.name,
             WindowDef::Container { base, .. } => &base.name,
@@ -663,6 +678,7 @@ impl WindowDef {
             WindowDef::ActiveEffects { .. } => "active_effects",
             WindowDef::Performance { .. } => "performance",
             WindowDef::Targets { .. } => "targets",
+            WindowDef::CreatureField { .. } => "creaturefield",
             WindowDef::Players { .. } => "players",
             WindowDef::Items { .. } => "items",
             WindowDef::Container { .. } => "container",
@@ -705,6 +721,7 @@ impl WindowDef {
             WindowDef::ActiveEffects { base, .. } => base,
             WindowDef::Performance { base, .. } => base,
             WindowDef::Targets { base, .. } => base,
+            WindowDef::CreatureField { base, .. } => base,
             WindowDef::Players { base, .. } => base,
             WindowDef::Items { base, .. } => base,
             WindowDef::Container { base, .. } => base,
@@ -747,6 +764,7 @@ impl WindowDef {
             WindowDef::ActiveEffects { base, .. } => base,
             WindowDef::Performance { base, .. } => base,
             WindowDef::Targets { base, .. } => base,
+            WindowDef::CreatureField { base, .. } => base,
             WindowDef::Players { base, .. } => base,
             WindowDef::Items { base, .. } => base,
             WindowDef::Container { base, .. } => base,

@@ -103,6 +103,7 @@ text_custom
 chat
 tabbedtext_custom
 targets
+creaturefield
 players
 items
 entity_custom
@@ -246,6 +247,7 @@ text_custom = None
 chat = None
 tabbedtext_custom = None
 targets = None
+creaturefield = Some(GS4)
 players = None
 items = None
 entity_custom = None
@@ -329,7 +331,7 @@ ActiveEffects: buffs, debuffs, cooldowns, active_spells, alert_timers, active_ef
 Character: inventory, reserve, spells, missingspells, containers, injuries, perception, experience, gs4_experience, encum, multiaccount
 Countdown: roundtime, casttime, stuntime, pulse, countdown_custom
 Dialog: betrayer
-Entity: targets, players, items, entity_custom
+Entity: targets, creaturefield, players, items, entity_custom
 Hand: left, right, spell
 Hotbars: quickbar, hotkeybar
 Navigation: room, compass, map
@@ -356,7 +358,7 @@ ActiveEffects: buffs, debuffs, cooldowns, active_spells, alert_timers, active_ef
 Character: inventory, reserve, spells, missingspells, containers, injuries, gs4_experience, encum, multiaccount
 Countdown: roundtime, casttime, stuntime, pulse, countdown_custom
 Dialog: betrayer
-Entity: targets, players, items, entity_custom
+Entity: targets, creaturefield, players, items, entity_custom
 Hand: left, right, spell
 Hotbars: quickbar, hotkeybar
 Navigation: room, compass, map
@@ -1302,6 +1304,28 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   entity_id = "targetcount"
   show_body_part_count = false
+
+[template.creaturefield]
+  widget_type = "creaturefield"
+  name = "creaturefield"
+  row = 0
+  col = 0
+  rows = 16
+  cols = 60
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Creature Field"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 8
+  min_cols = 30
+  visibility = "shown"
+  tts_speak = false
+  show_grid = true
+  show_order = false
 
 [template.players]
   widget_type = "players"

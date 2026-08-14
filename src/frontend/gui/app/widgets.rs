@@ -9,6 +9,7 @@ mod bestiary;
 mod boards;
 mod command_widget;
 mod containers;
+mod creature_field;
 mod injury;
 mod links_bars;
 mod map_compass;
@@ -284,6 +285,9 @@ impl VellumGuiApp {
             }
             WindowContent::Targets => {
                 Self::render_targets_content(app_core, ui, &tab.window_name)
+            }
+            WindowContent::CreatureField => {
+                Self::render_creature_field_content(app_core, ui, &tab.window_name)
             }
             WindowContent::Players => Self::render_players_content(app_core, ui),
             WindowContent::Countdown(countdown) => {

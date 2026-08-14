@@ -72,6 +72,10 @@ pub enum WidgetType {
     /// Bestiary browser (GUI: search/filter/entry pages over the bundled
     /// codex; TUI points at .bestiary).
     BestiaryView,
+    /// Sprite-based creature field: the room's hostiles as cards on a
+    /// perspective floor, placed by the core solver. Reads
+    /// `AppCore.creature_field` + `GameState.room_creatures`.
+    CreatureField,
 }
 
 impl WidgetType {
@@ -120,6 +124,7 @@ impl WidgetType {
             "hotkeybar" => Some(WidgetType::Hotkeybar),
             "minivitals" => Some(WidgetType::MiniVitals),
             "betrayer" => Some(WidgetType::Betrayer),
+            "creaturefield" | "creature_field" => Some(WidgetType::CreatureField),
             "webui" | "lichui" => Some(WidgetType::WebUi),
             "map" => Some(WidgetType::Map),
             "dialogpanel" | "dialog_panel" => Some(WidgetType::DialogPanel),
@@ -161,6 +166,7 @@ impl WidgetType {
         "hotkeybar",
         "minivitals",
         "betrayer",
+        "creaturefield",
         "webui",
         "map",
         "dialogpanel",
@@ -218,6 +224,9 @@ pub enum WindowContent {
     /// Bestiary browser; data comes from the bundled codex, view state
     /// lives frontend-side.
     BestiaryView,
+    /// Creature field: no data stored here — placement lives on
+    /// `AppCore.creature_field`, roster on `GameState.room_creatures`.
+    CreatureField,
     Dashboard {
         indicators: Vec<(String, u8)>, // (id, value) pairs
     },

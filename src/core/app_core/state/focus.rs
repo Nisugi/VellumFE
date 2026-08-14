@@ -271,6 +271,7 @@ impl AppCore {
             crate::data::WidgetType::Items => "items",
             crate::data::WidgetType::WebUi => "webui",
             crate::data::WidgetType::DialogPanel => "dialogpanel",
+            crate::data::WidgetType::CreatureField => "creaturefield",
         };
         focusable.contains(kind)
     }

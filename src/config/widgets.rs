@@ -877,6 +877,27 @@ pub struct TargetsWidgetData {
     pub status_position: Option<String>,
 }
 
+/// Creature field widget specific data (GUI sprite field). Field names
+/// must not shadow WindowBase keys (serde flatten).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreatureFieldWidgetData {
+    /// Draw the perspective floor grid.
+    #[serde(default = "default_true")]
+    pub show_grid: bool,
+    /// Draw the left-to-right targeting order pips along the bottom.
+    #[serde(default)]
+    pub show_order: bool,
+}
+
+impl Default for CreatureFieldWidgetData {
+    fn default() -> Self {
+        Self {
+            show_grid: true,
+            show_order: false,
+        }
+    }
+}
+
 /// Players widget specific data
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlayersWidgetData {

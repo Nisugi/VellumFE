@@ -172,6 +172,63 @@ pub fn resolve_base_image(
         .find(|path| path.is_file())
 }
 
+/// Whether a room creature belongs on the creature field. The targets-list
+/// gate (hostile + valid_target) EXCEPT death: a corpse keeps its card,
+/// tinted, until looting drops it from the roster — its square frees then.
+pub fn field_member(c: &crate::core::state::Creature, excluded_nouns: &[String]) -> bool {
+    let hostile = c.flags.as_ref().is_some_and(|f| f.hostile);
+    hostile && (c.is_valid_target(excluded_nouns) || c.is_dead())
+}
+
+/// Card size for one creature: bosses get a visibly bigger card. Real
+/// per-family sizes arrive with art (the sprite's aspect); these are the
+/// placeholder-card dimensions.
+pub fn card_size_for(c: &crate::core::state::Creature) -> solver::CardSize {
+    if c.flags.as_ref().is_some_and(|f| f.is_boss()) {
+        solver::CardSize { w: 0.78, h: 1.52 }
+    } else {
+        solver::CardSize::default()
+    }
+}
+
+/// Event-driven roster sync: diff the field's units against the room's
+/// creatures. Arrivals place (permanently), departures free their square.
+/// Cheap no-op while the roster generation is unchanged, so calling it
+/// once per frame costs one comparison.
+pub fn sync_field(
+    field: &mut solver::CreatureField,
+    synced_gen: &mut u64,
+    gs: &GameState,
+    excluded_nouns: &[String],
+) {
+    if *synced_gen == gs.room_creatures_generation {
+        return;
+    }
+    *synced_gen = gs.room_creatures_generation;
+    let wanted: Vec<&crate::core::state::Creature> = gs
+        .room_creatures
+        .iter()
+        .filter(|c| field_member(c, excluded_nouns))
+        .collect();
+    // Departures first, so a full room swap frees the floor before the new
+    // room's creatures fit themselves in.
+    let gone: Vec<String> = field
+        .units()
+        .iter()
+        .flat_map(|u| u.members.iter())
+        .filter(|m| !wanted.iter().any(|c| &c.id == *m))
+        .cloned()
+        .collect();
+    for exist in gone {
+        field.depart(&exist);
+    }
+    for c in wanted {
+        if field.unit_of(&c.id).is_none() {
+            field.arrive(&c.id, card_size_for(c));
+        }
+    }
+}
+
 /// Map an external creature body-part name (CreatureBar vocabulary) onto
 /// the canonical doll part key used everywhere in Vellum. Differences:
 /// `nerves` -> `nsys`, and foot wounds fold into the matching leg. Canonical
