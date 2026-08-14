@@ -862,7 +862,11 @@ function handleSnapshot(d) {
   // Sidecar servers (TUI/GUI hosting) don't send session info; treat the
   // session as an implicitly-connected one we can't control.
   safely("session", () => setSession(d.session || { state: "connected", session_control: false }));
-  safely("text", () => { for (const item of d.text) appendText(item.seq, item.stream, item.line); flushPendingLines(); });
+  // d.text is omitted entirely when there's no scrollback (fresh core,
+  // watch-mode snapshots). Iterating it bare threw before the fault
+  // isolation existed — killing setSession behind it: THE iOS dead-game-
+  // view bug (login overlay never shown). Named by the fault strip live.
+  safely("text", () => { for (const item of d.text || []) appendText(item.seq, item.stream, item.line); flushPendingLines(); });
   safely("character", () => setCharacter(d.character));
   safely("vitals", () => setVitals(d.vitals));
   safely("room", () => setRoom(d.room));
