@@ -24,6 +24,7 @@ dead
 main
 thoughts
 speech
+bestiary
 announcements
 loot
 death
@@ -88,6 +89,7 @@ dead
 main
 thoughts
 speech
+bestiary
 announcements
 loot
 death
@@ -121,6 +123,8 @@ reserve
 room
 spells
 missingspells
+containers
+bestiaryview
 compass
 map
 injuries
@@ -158,6 +162,7 @@ dead
 main
 thoughts
 speech
+bestiary
 announcements
 loot
 death
@@ -225,6 +230,7 @@ dead = None
 main = None
 thoughts = None
 speech = None
+bestiary = None
 announcements = None
 loot = None
 death = None
@@ -258,6 +264,8 @@ reserve = Some(GS4)
 room = None
 spells = None
 missingspells = None
+containers = Some(GS4)
+bestiaryview = Some(GS4)
 compass = None
 map = None
 injuries = None
@@ -314,17 +322,17 @@ multiaccount = None
 
 [templates_by_category]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
-Character: inventory, reserve, spells, missingspells, injuries, perception, experience, gs4_experience, encum, multiaccount
+Character: inventory, reserve, spells, missingspells, containers, injuries, perception, experience, gs4_experience, encum, multiaccount
 Countdown: roundtime, casttime, stuntime, pulse, countdown_custom
 Dialog: betrayer
 Entity: targets, players, items, entity_custom
 Hand: left, right, spell
 Hotbars: quickbar, hotkeybar
 Navigation: room, compass, map
-Other: spacer
+Other: bestiaryview, spacer
 ProgressBar: health, mana, stamina, spirit, concentration, stance, progress_custom, minivitals
 Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, kneeling, sitting, prone, hidden, invisible, joined, dead
-TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
+TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
 
 [addable_on_empty_layout.all]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
@@ -337,21 +345,21 @@ Navigation: room, compass, map
 Other: spacer
 ProgressBar: health, mana, stamina, spirit, stance, progress_custom
 Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, kneeling, sitting, prone, hidden, invisible, joined, dead
-TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
+TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
 
 [addable_on_empty_layout.gs4]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
-Character: inventory, reserve, spells, missingspells, injuries, gs4_experience, encum, multiaccount
+Character: inventory, reserve, spells, missingspells, containers, injuries, gs4_experience, encum, multiaccount
 Countdown: roundtime, casttime, stuntime, pulse, countdown_custom
 Dialog: betrayer
 Entity: targets, players, items, entity_custom
 Hand: left, right, spell
 Hotbars: quickbar, hotkeybar
 Navigation: room, compass, map
-Other: spacer
+Other: bestiaryview, spacer
 ProgressBar: health, mana, stamina, spirit, stance, progress_custom, minivitals
 Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, kneeling, sitting, prone, hidden, invisible, joined, dead
-TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
+TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
 
 [addable_on_empty_layout.dr]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
@@ -364,7 +372,7 @@ Navigation: room, compass, map
 Other: spacer
 ProgressBar: health, mana, stamina, spirit, concentration, stance, progress_custom
 Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, kneeling, sitting, prone, hidden, invisible, joined, dead
-TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
+TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
 
 [template.health]
   widget_type = "progress"
@@ -969,6 +977,29 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
   show_timestamps = false
   compact = false
 
+[template.bestiary]
+  widget_type = "text"
+  name = "bestiary"
+  row = 0
+  col = 0
+  rows = 24
+  cols = 69
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Bestiary"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  streams = ["bestiary"]
+  buffer_size = 10000
+  wordwrap = false
+  show_timestamps = false
+  compact = false
+
 [template.announcements]
   widget_type = "text"
   name = "announcements"
@@ -1416,6 +1447,7 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
   id = "pulse"
   icon = ""
   show_when_zero = true
+  count_past_zero = true
 
 [template.countdown_custom]
   widget_type = "countdown"
@@ -1700,6 +1732,46 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
   locked = false
   min_rows = 3
   min_cols = 14
+  visibility = "shown"
+  tts_speak = false
+
+[template.containers]
+  widget_type = "containers"
+  name = "containers"
+  row = 0
+  col = 0
+  rows = 20
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Containers"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 5
+  min_cols = 20
+  visibility = "shown"
+  tts_speak = false
+
+[template.bestiaryview]
+  widget_type = "bestiaryview"
+  name = "bestiaryview"
+  row = 0
+  col = 0
+  rows = 24
+  cols = 60
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Bestiary Browser"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 8
+  min_cols = 30
   visibility = "shown"
   tts_speak = false
 

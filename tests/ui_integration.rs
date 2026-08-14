@@ -145,6 +145,7 @@ fn add_countdown_window(ui_state: &mut UiState, name: &str, countdown_id: &str) 
             countdown_id: countdown_id.to_string(),
             color: None,
             show_when_zero: false,
+            count_past_zero: false,
         }),
         position: position(),
         visible: true,

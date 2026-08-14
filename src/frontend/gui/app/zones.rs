@@ -1373,6 +1373,45 @@ impl VellumGuiApp {
                     GuiShellZone::Center => {}
                 }
             });
+        // egui raises any pressed Area to the top of its order and remembers
+        // that order across frames — so a click on the drawer's empty space
+        // lifted this opaque backdrop ABOVE the drawer's own windows (also
+        // Foreground) and "disappeared" them, surviving drawer hide/show.
+        // Registration order only protects the first appearance; enforce the
+        // invariant every frame: if the backdrop sits above any of this
+        // zone's windows, re-raise them in their existing relative order.
+        let backdrop_id = egui::Id::new(("gui_overlay_backdrop", zone.label()));
+        let zone_window_ids: std::collections::HashSet<egui::Id> = self
+            .available_tabs
+            .keys()
+            .filter(|key| self.zone_for_tab(key) == zone)
+            .map(|key| Self::zone_window_id(zone, key))
+            .collect();
+        let ordered_foreground: Vec<egui::Id> = ctx.memory(|mem| {
+            mem.layer_ids()
+                .filter(|layer| layer.order == egui::Order::Foreground)
+                .map(|layer| layer.id)
+                .collect()
+        });
+        let backdrop_pos = ordered_foreground.iter().position(|id| *id == backdrop_id);
+        if let Some(backdrop_pos) = backdrop_pos {
+            let any_below = ordered_foreground[..backdrop_pos]
+                .iter()
+                .any(|id| zone_window_ids.contains(id));
+            if any_below {
+                // Sink the backdrop to the BOTTOM of Foreground: egui has no
+                // move_to_bottom, so raise every OTHER Foreground layer in
+                // its existing back-to-front order — their relative stacking
+                // (windows, splitter gutters, band handles) is preserved
+                // exactly, and the backdrop lands lowest, which is all it
+                // needs (Foreground alone already covers the Middle-order
+                // center windows).
+                for id in ordered_foreground.iter().filter(|id| **id != backdrop_id) {
+                    ctx.move_to_top(egui::LayerId::new(egui::Order::Foreground, *id));
+                }
+                ctx.request_repaint();
+            }
+        }
     }
 
     pub(super) fn render_zone_surface(
