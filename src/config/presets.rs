@@ -182,6 +182,7 @@ pub const CATALOG: &[(&str, Option<GameType>)] = &[
     ("debuffs", None),
     ("cooldowns", None),
     ("active_spells", None),
+    ("alert_timers", None),
     ("active_effects_custom", None),
     ("inventory", None),
     ("reserve", Some(GameType::GS4)),
@@ -1203,6 +1204,23 @@ impl Config {
                 },
                 data: ActiveEffectsWidgetData {
                     category: "ActiveSpells".to_string(),
+                },
+            }),
+
+            // Client-authored countdown bars started by alerts. An ordinary
+            // effects window on a client-owned category: same bars, same
+            // ticking, no new renderer.
+            "alert_timers" => Some(WindowDef::ActiveEffects {
+                base: WindowBase {
+                    name: "alert_timers".to_string(),
+                    title: Some("Timers".to_string()),
+                    rows: Height::new(10),
+                    cols: Width::new(30),
+                    show_border: true,
+                    ..base_defaults.clone()
+                },
+                data: ActiveEffectsWidgetData {
+                    category: crate::core::alert_timers::TIMERS_CATEGORY.to_string(),
                 },
             }),
 

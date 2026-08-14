@@ -149,6 +149,23 @@ impl Config {
         Ok(Self::global_dir()?.join("skins"))
     }
 
+    /// Alert packs: shareable rule files, one pack per .toml. Kept OUT of
+    /// highlights.toml on purpose — a pack is a distribution unit, and
+    /// sharing one must never ship the user's personal highlight rules
+    /// along with it.
+    /// Returns: ~/.vellum-fe/global/alertpacks/
+    pub fn alertpacks_dir() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("alertpacks"))
+    }
+
+    /// Local record of which pack contents the user approved, keyed by file
+    /// hash. Deliberately NOT inside a pack and never exported: an approval
+    /// that travelled with the pack it approves would be worthless.
+    /// Returns: ~/.vellum-fe/alertpack-approvals.toml
+    pub fn alertpack_approvals_path() -> Result<PathBuf> {
+        Ok(Self::config_dir()?.join("alertpack-approvals.toml"))
+    }
+
     /// Category subfolders of the shared image pool. Created at startup so
     /// the structure is visible; nothing enforces which category a file
     /// lives in (resolution is by relative path).

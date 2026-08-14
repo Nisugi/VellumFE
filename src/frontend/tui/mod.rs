@@ -42,6 +42,7 @@ mod performance_stats;
 mod containers_window;
 mod missing_spells;
 mod players;
+mod alert_overlay;
 mod popup_menu;
 mod progress_bar;
 mod quickbar;

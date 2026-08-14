@@ -283,6 +283,11 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
             entry!(&["highlights", "hl"], "", "Open highlights browser"),
             entry!(&["addhighlight", "addhl"], "", "Create new highlight"),
             entry!(
+                &["alertpacks"],
+                "[list|on|off|show|approve|revoke] [name]",
+                "Browse shared alert packs and review their replace/redirect rules"
+            ),
+            entry!(
                 &["edithighlight", "edithl"],
                 "[name]",
                 "Edit existing highlight (or open the browser)"

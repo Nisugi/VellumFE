@@ -18,6 +18,142 @@ impl Default for RedirectMode {
     }
 }
 
+/// Where an alert overlay is pinned on the main viewport. A 9-grid anchor
+/// keeps authored packs resolution-independent: the same pack lands sensibly
+/// on a 1080p laptop and an ultrawide. Screen-anchored is the v1 model;
+/// window-anchored overlays are deliberately deferred (they need
+/// hidden/closed/detached fallback rules that have no customer yet).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertAnchor {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    #[default]
+    Center,
+    CenterRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+/// Presentation + discipline for one alert. Attached to a `HighlightPattern`,
+/// so alerts inherit the whole highlight system: the same editors, the same
+/// per-stream filtering, the same fast-parse matching path. No new trigger
+/// infrastructure exists or should exist.
+///
+/// Every presentation field is optional and they compose: an alert may show a
+/// banner AND art AND a flash. An alert with no presentation at all is inert
+/// (and rejected by the editor) rather than an error.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AlertSpec {
+    /// Stable identity for cooldown state and (later) timer `cancels`
+    /// references and pack-update diffing. Falls back to the pattern text
+    /// when absent, which is stable enough for cooldowns but changes if the
+    /// user edits the pattern — hence the explicit id for authored packs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
+    /// Banner text shown at the anchor. Supports `$1`-style capture groups
+    /// expanded from the triggering match, so "%s is casting" style alerts
+    /// can name the caster.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner: Option<String>,
+    /// Banner foreground/background color names (same palette as highlights).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner_fg: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner_bg: Option<String>,
+
+    /// Image played once at the anchor. Any decodable format: a static PNG is
+    /// simply a one-frame animation and takes the decoder's static path, so
+    /// "icon popup" and "animated flourish" are the same field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art: Option<String>,
+
+    /// Viewport-edge tint pulse color. Photosensitivity-sensitive: always
+    /// scaled by the global intensity ceiling and killable outright.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flash: Option<String>,
+
+    /// Where on the viewport this alert is pinned.
+    #[serde(default, skip_serializing_if = "is_default_anchor")]
+    pub anchor: AlertAnchor,
+    /// Pixel nudge from the anchor point, `(x, y)`, +y down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<(f32, f32)>,
+
+    /// Seconds on screen before auto-dismiss. Alerts ALWAYS expire; there is
+    /// no infinite alert, because a stuck overlay over combat prose is
+    /// unrecoverable without a config edit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f32>,
+
+    /// Minimum seconds between fires of this rule. Anti-spam is the product:
+    /// a heavy-scroll Reim pull must not machine-gun one rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cooldown: Option<f32>,
+
+    /// Higher wins when the concurrent cap evicts. Carried in v1 but not yet
+    /// consulted (eviction is oldest-first); present now because retrofitting
+    /// a field into already-authored TOML is far costlier than reserving it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i32>,
+
+    /// Game-state gate. When present WITHOUT a pattern, this alert is
+    /// condition-driven: it fires once on the false->true transition ("health
+    /// crossed 30%"), stays silent while it remains true, and re-arms when it
+    /// clears. Level-triggered firing would repaint the warning every frame,
+    /// which is why the engine is edge-triggered by construction.
+    ///
+    /// Evaluated in core once per frame, never in a render path — a condition
+    /// evaluated while painting fires twice on a detached viewport and cannot
+    /// reach the phone bridge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<crate::config::Condition>,
+
+    /// Seconds the gate must stay continuously FALSE before this rule may
+    /// fire again. The anti-flap guard: a vital hovering on its threshold
+    /// (29/31/29%) would otherwise machine-gun the screen. Defaults to
+    /// `DEFAULT_REARM_SECS`; 0 means re-arm the instant it clears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rearm: Option<f32>,
+
+    /// Start a countdown bar in the Timers window when this fires. The bar is
+    /// an ordinary `ActiveEffect` with an absolute `expires_at`, so it drains
+    /// smoothly and reads HH:MM:SS with no new rendering code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer: Option<AlertTimer>,
+
+    /// Timer ids this rule cancels when it fires. The counterpart to `timer`:
+    /// "the boss died" must be able to stop "boss cast in 12s", because a
+    /// countdown still running for something already over is a lie on screen.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cancels: Vec<String>,
+}
+
+/// A countdown bar started by an alert.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertTimer {
+    /// Stable id, used by `cancels` and to restart rather than duplicate a
+    /// bar that is already running. Defaults to the alert's own id when
+    /// absent — a rule that starts a timer usually IS that timer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Text shown on the bar.
+    pub label: String,
+    /// How long the bar runs, in seconds.
+    pub duration: f32,
+    /// Bar fill color; falls back to the widget accent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+fn is_default_anchor(anchor: &AlertAnchor) -> bool {
+    *anchor == AlertAnchor::default()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HighlightPattern {
     pub pattern: String,
@@ -59,6 +195,8 @@ pub struct HighlightPattern {
     pub status_duration: Option<f32>, // Seconds until the set status auto-clears; None = until cleared
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clear_status: Option<String>, // Custom status id to deactivate on match
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alert: Option<AlertSpec>, // Overlay alert (banner/art/flash) to raise on match
 
     // Performance optimization: cache compiled regex (not serialized)
     #[serde(skip)]
@@ -170,6 +308,13 @@ pub const HIGHLIGHT_FIELDS: &[HlFieldDef] = &[
     HlFieldDef { name: "replace", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "stream", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "window", applies_to: &[Tui, Gui, Web] },
+    // Overlay alerts (2026-08-11; TUI form fields 2026-08-13). The TUI edits
+    // the subset its renderer shows (banner/colors/flash/anchor/duration/
+    // cooldown) and preserves the rest via merge; the GUI edits everything.
+    // Web stays out: the phone RECEIVES alerts (delta + DOM overlay) but its
+    // highlight form doesn't author them yet — this catalog tracks
+    // editability, not rendering.
+    HlFieldDef { name: "alert", applies_to: &[Tui, Gui] },
 ];
 
 /// Deliberate coverage gaps, each with a reason. A `(field, frontend)`
@@ -210,7 +355,7 @@ pub const HL_TUI_COVERED: &[&str] = &[
     "pattern", "fg", "bg", "bold", "color_entire_line", "fast_parse", "sound",
     "sound_volume", "rumble", "category", "squelch", "silent_prompt",
     "redirect_to", "redirect_mode", "replace", "stream", "window",
-    "set_status", "status_duration", "clear_status",
+    "set_status", "status_duration", "clear_status", "alert",
 ];
 
 /// Fields edited by the GUI highlight editor
@@ -219,7 +364,7 @@ pub const HL_GUI_COVERED: &[&str] = &[
     "pattern", "fg", "bg", "bold", "color_entire_line", "fast_parse", "sound",
     "sound_volume", "rumble", "category", "squelch", "silent_prompt",
     "redirect_to", "redirect_mode", "replace", "stream", "window",
-    "set_status", "status_duration", "clear_status",
+    "set_status", "status_duration", "clear_status", "alert",
 ];
 
 /// Fields edited by the web/phone highlight form
@@ -303,6 +448,24 @@ impl Config {
             highlights = toml::from_str(DEFAULT_HIGHLIGHTS).unwrap_or_default();
         }
 
+        // Enabled alert packs merge in AFTER personal rules. Pack rule names
+        // are namespaced (`pack:<pack>/<rule>`), so this can never overwrite
+        // something the user wrote — and unapproved packs arrive with their
+        // replace/redirect powers already stripped.
+        // Scope is applied later by `rearm_alert_packs` once the current room
+        // is known; at load time nothing is known about location, so packs
+        // start unscoped-armed and the first room sync narrows them.
+        let packs = Self::load_alert_packs();
+        if !packs.is_empty() {
+            let approvals = Self::load_alertpack_approvals();
+            Self::merge_alert_packs(
+                &mut highlights,
+                &packs,
+                &approvals,
+                &crate::config::RoomScope::default(),
+            );
+        }
+
         // Compile all regex patterns for performance
         Self::compile_highlight_patterns(&mut highlights);
 
@@ -312,6 +475,14 @@ impl Config {
     /// Compile regex patterns for all highlights (performance optimization)
     pub fn compile_highlight_patterns(highlights: &mut HashMap<String, HighlightPattern>) {
         for (name, pattern) in highlights.iter_mut() {
+            // A condition-driven alert has no pattern at all. An empty regex
+            // is valid and matches EVERY line, so compiling one would turn a
+            // condition alert into a rule that fires on all text. Leave it
+            // uncompiled: the engine skips rules without a regex.
+            if pattern.pattern.is_empty() {
+                pattern.compiled_regex = None;
+                continue;
+            }
             if !pattern.fast_parse {
                 // Only compile regex for non-fast_parse patterns
                 match regex::Regex::new(&pattern.pattern) {
@@ -709,6 +880,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 
@@ -741,6 +913,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 
@@ -776,6 +949,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 
@@ -805,6 +979,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 
@@ -834,6 +1009,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 
@@ -1002,6 +1178,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 
@@ -1052,6 +1229,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
         let toml_str = toml::to_string(&pattern).unwrap();
@@ -1109,6 +1287,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         };
 

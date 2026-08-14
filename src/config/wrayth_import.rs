@@ -124,6 +124,7 @@ pub fn import_wrayth_settings(xml: &str) -> Result<WraythImport> {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None, // Wrayth has no alert concept to import
             compiled_regex: None,
         };
         let key = unique_key(&format!("wrayth_names_{:02}", i + 1), &mut used_keys);
@@ -275,6 +276,7 @@ fn convert_entry(
         set_status: None,
         status_duration: None,
         clear_status: None,
+        alert: None, // Wrayth has no alert concept to import
         compiled_regex: None,
     }
 }

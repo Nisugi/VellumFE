@@ -13,6 +13,8 @@ use crate::performance::PerformanceStats;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 
+mod alerts;
+mod custom_status;
 mod focus;
 mod menus;
 mod persistence;
@@ -119,6 +121,21 @@ pub struct AppCore {
     /// Auto-clear deadlines for highlight-set custom statuses (UPPERCASE
     /// id -> when it switches back off).
     pub custom_status_expiries: std::collections::HashMap<String, std::time::Instant>,
+    /// Live overlay alerts + their discipline (cooldowns, concurrent cap).
+    /// Core-owned so detached viewports can't double-fire it and the phone
+    /// bridge can push it; frontends only ever read `alerts.active()`.
+    pub alerts: crate::core::alerts::AlertState,
+    /// Installed alert packs, cached in memory so per-room re-arming never
+    /// touches the disk (`reload_highlights` does, and would be far too
+    /// expensive to run every time the player walks through a door).
+    pub alert_packs: Vec<crate::config::AlertPack>,
+    /// Enable/approval record for those packs.
+    pub alertpack_approvals: crate::config::AlertPackApprovals,
+    /// Room scope the pack set was last armed for. Re-arming compares against
+    /// this, so moving between rooms in the same area rebuilds nothing.
+    pub last_pack_scope: Option<crate::config::RoomScope>,
+    /// Whether the pack cache has been populated from disk this session.
+    pub alert_packs_loaded: bool,
     /// Cached indicator templates keyed by UPPERCASE id, rebuilt from disk on
     /// load and after the template editor saves. Status icon resolution
     /// (indicator windows + dashboards) reads this per frame; the underlying
@@ -424,6 +441,11 @@ impl AppCore {
             map_updater: crate::core::mapdb_update::MapDbUpdater::new(temp.join("mapdb")),
             jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             custom_status_expiries: std::collections::HashMap::new(),
+            alerts: crate::core::alerts::AlertState::new(),
+            alert_packs: Vec::new(),
+            alertpack_approvals: Default::default(),
+            last_pack_scope: None,
+            alert_packs_loaded: false,
             indicator_templates: std::collections::HashMap::new(),
             jinx_catalog: None,
             jinx_nudge_pending: true,
@@ -623,6 +645,11 @@ impl AppCore {
             ),
             jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             custom_status_expiries: std::collections::HashMap::new(),
+            alerts: crate::core::alerts::AlertState::new(),
+            alert_packs: Vec::new(),
+            alertpack_approvals: Default::default(),
+            last_pack_scope: None,
+            alert_packs_loaded: false,
             indicator_templates: std::collections::HashMap::new(),
             jinx_catalog: None,
             jinx_nudge_pending: true,
@@ -953,6 +980,17 @@ impl AppCore {
         self.poll_jinx();
         // Auto-clear expired highlight-set custom statuses.
         self.tick_custom_statuses();
+        // Arm/disarm area-scoped packs for wherever we are now. Gated on the
+        // scope actually changing, so this is a cheap comparison on the
+        // overwhelming majority of frames.
+        self.rearm_alert_packs();
+        // Edge-detect condition-gated alerts, then retire expired ones.
+        // Evaluation runs before expiry so an alert firing this frame gets
+        // its full duration rather than being aged by a stale tick.
+        self.tick_alert_conditions();
+        self.tick_alerts();
+        // Client timers have no server to remove them; core reaps its own.
+        self.tick_alert_timers();
         // Browse replies waiting on the layout worker.
         self.service_pending_map_views();
         // A layout that finished generating between game lines still needs
@@ -965,90 +1003,6 @@ impl AppCore {
         }
     }
 
-    /// Apply queued custom-status changes from matched highlights: flip any
-    /// indicator/dashboard entry whose id matches, and track auto-clear
-    /// deadlines. Statuses ride the exact indicator machinery the server's
-    /// IconXXX updates use, so icons, grayscale, and TUI glyphs all apply.
-    pub fn apply_pending_status_actions(&mut self) {
-        let actions: Vec<_> = self
-            .message_processor
-            .pending_status_actions
-            .drain(..)
-            .collect();
-        for action in actions {
-            if let Some((id, duration)) = action.set {
-                self.set_custom_status(&id, true);
-                match duration {
-                    Some(secs) if secs > 0.0 => {
-                        self.custom_status_expiries.insert(
-                            id.to_ascii_uppercase(),
-                            std::time::Instant::now()
-                                + std::time::Duration::from_secs_f32(secs),
-                        );
-                    }
-                    _ => {
-                        self.custom_status_expiries
-                            .remove(&id.to_ascii_uppercase());
-                    }
-                }
-            }
-            if let Some(id) = action.clear {
-                self.set_custom_status(&id, false);
-                self.custom_status_expiries.remove(&id.to_ascii_uppercase());
-            }
-        }
-    }
-
-    /// Deactivate custom statuses whose duration ran out. Called once per
-    /// frame alongside the other pollers.
-    pub fn tick_custom_statuses(&mut self) {
-        if self.custom_status_expiries.is_empty() {
-            return;
-        }
-        let now = std::time::Instant::now();
-        let expired: Vec<String> = self
-            .custom_status_expiries
-            .iter()
-            .filter(|(_, deadline)| **deadline <= now)
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in expired {
-            self.custom_status_expiries.remove(&id);
-            self.set_custom_status(&id, false);
-        }
-    }
-
-    /// Flip every indicator/dashboard entry whose id matches (the same
-    /// update the server's status indicators perform).
-    fn set_custom_status(&mut self, id: &str, active: bool) {
-        let claimed = self.indicator_id_is_claimed(id);
-        for window in self.ui_state.windows.values_mut() {
-            match &mut window.content {
-                crate::data::WindowContent::Indicator(ref mut indicator) => {
-                    if indicator.indicator_id.eq_ignore_ascii_case(id) {
-                        indicator.active = active;
-                    }
-                }
-                crate::data::WindowContent::Dashboard { indicators } => {
-                    let mut found = false;
-                    for (indicator_id, value) in indicators.iter_mut() {
-                        if indicator_id.eq_ignore_ascii_case(id) {
-                            *value = if active { 1 } else { 0 };
-                            found = true;
-                            break;
-                        }
-                    }
-                    // Same claim guard as the server-indicator path: don't
-                    // auto-add an id a combined indicator template owns.
-                    if !found && active && !claimed {
-                        indicators.push((id.to_string(), 1));
-                    }
-                }
-                _ => {}
-            }
-        }
-        self.needs_render = true;
-    }
 
     /// Drain the asset-manager worker: print each line to the game text and
     /// apply any post-install effect. Called once per frame from `poll_map`,
@@ -1421,6 +1375,8 @@ impl AppCore {
             self.queue_highlight_rumbles();
             // Highlight-driven custom statuses flip their indicators.
             self.apply_pending_status_actions();
+            // Overlay alerts admitted through the same drain seam.
+            self.apply_pending_alerts();
 
             // Attribute mapping observations to the current room uid
             if !self.message_processor.pending_evidence.is_empty() {
@@ -1503,6 +1459,8 @@ impl AppCore {
             self.queue_highlight_rumbles();
             // Highlight-driven custom statuses flip their indicators.
             self.apply_pending_status_actions();
+            // Overlay alerts admitted through the same drain seam.
+            self.apply_pending_alerts();
 
             // Attribute mapping observations to the current room uid
             if !self.message_processor.pending_evidence.is_empty() {

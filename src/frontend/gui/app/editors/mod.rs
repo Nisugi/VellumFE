@@ -17,6 +17,7 @@ mod keybinds;
 mod known_windows;
 mod launcher;
 mod menu_keybinds;
+mod alertpacks;
 mod packs;
 mod settings;
 mod room_images;
@@ -25,6 +26,7 @@ mod tabs;
 mod themes;
 mod touch_wheel;
 
+pub(super) use alertpacks::AlertPacksEditorState;
 pub(super) use colors::ColorsEditorState;
 #[cfg(feature = "gamepad")]
 pub(super) use controller::ControllerEditorState;
@@ -99,6 +101,7 @@ impl VellumGuiApp {
         self.render_touch_wheel_editor(ctx);
         self.render_doll_calibration(ctx);
         self.render_pack_editor(ctx);
+        self.render_alertpacks_editor(ctx);
     }
 }
 

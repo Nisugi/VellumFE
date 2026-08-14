@@ -36,6 +36,35 @@ pub struct HighlightsConfig {
     /// Enable color highlighting
     #[serde(default = "default_highlights_enabled")]
     pub coloring_enabled: bool,
+
+    // ---- Overlay alerts (accessibility-critical) --------------------
+    /// Master switch for overlay alerts. First-class and prominent by
+    /// design: anything that paints animation over the screen must be
+    /// killable in one click, without hunting for the rule that did it.
+    #[serde(default = "default_highlights_enabled")]
+    pub alerts_enabled: bool,
+    /// Degrade motion: art overlays fall back to their banner text and
+    /// flashes are suppressed. For vestibular sensitivity and for players
+    /// who simply want the information without the animation.
+    #[serde(default)]
+    pub alerts_reduce_motion: bool,
+    /// Hard ceiling on alert opacity (0.05..=1.0). Alerts paint OVER combat
+    /// prose; an ambiance overlay that hides the text it decorates is its
+    /// own failure mode, so the user always keeps a floor of readability.
+    #[serde(default = "default_alert_opacity")]
+    pub alerts_max_opacity: f32,
+    /// Scales flash brightness (0.0..=1.0). Photosensitivity ceiling: 0.0
+    /// disables flashes outright while leaving banners and art alone.
+    #[serde(default = "default_alert_flash_intensity")]
+    pub alerts_flash_intensity: f32,
+}
+
+fn default_alert_opacity() -> f32 {
+    0.85
+}
+
+fn default_alert_flash_intensity() -> f32 {
+    0.5
 }
 
 impl Default for HighlightsConfig {
@@ -45,6 +74,10 @@ impl Default for HighlightsConfig {
             replace_enabled: true,
             redirect_enabled: true,
             coloring_enabled: true,
+            alerts_enabled: true,
+            alerts_reduce_motion: false,
+            alerts_max_opacity: default_alert_opacity(),
+            alerts_flash_intensity: default_alert_flash_intensity(),
         }
     }
 }

@@ -105,6 +105,9 @@ pub enum UiAction {
     SorterEdit,
     /// Open the room-art editor (image -> rooms mappings).
     RoomImagesEdit,
+    /// Open the alert-pack browser (installed packs, enable toggles,
+    /// and the trust digest for packs carrying replace/redirect rules).
+    AlertPacks,
     /// Open the touch-wheel editor (the phone's long-press radial wheel).
     TouchWheelEditor,
 
@@ -342,6 +345,7 @@ impl UiAction {
             "edittheme" => UiAction::EditTheme,
             "sorteredit" => UiAction::SorterEdit,
             "roomimagesedit" => UiAction::RoomImagesEdit,
+            "alertpacks" => UiAction::AlertPacks,
             "touchwheel" => UiAction::TouchWheelEditor,
             "skins" => UiAction::Skins,
             "reloadskin" => UiAction::ReloadSkin,
@@ -408,6 +412,7 @@ impl std::fmt::Display for UiAction {
             UiAction::EditTheme => write!(f, "action:edittheme"),
             UiAction::SorterEdit => write!(f, "action:sorteredit"),
             UiAction::RoomImagesEdit => write!(f, "action:roomimagesedit"),
+            UiAction::AlertPacks => write!(f, "action:alertpacks"),
             UiAction::TouchWheelEditor => write!(f, "action:touchwheel"),
             UiAction::Skins => write!(f, "action:skins"),
             UiAction::SetSkin(name) => write!(f, "action:setskin:{name}"),
@@ -522,6 +527,7 @@ mod tests {
             UiAction::EditTheme,
             UiAction::SorterEdit,
             UiAction::RoomImagesEdit,
+            UiAction::AlertPacks,
             UiAction::TouchWheelEditor,
             UiAction::Skins,
             UiAction::SetSkin("wrayth".into()),

@@ -31,6 +31,7 @@ mod launch;
 mod layout_persistence;
 mod server_pump;
 mod webui_bridge;
+mod alert_overlay;
 mod custom_emoji_render;
 mod detached;
 mod map_explorer;
@@ -540,6 +541,7 @@ pub struct VellumGuiApp {
     launcher_editor: Option<editors::LauncherEditorState>,
     doll_calibration: Option<editors::DollCalibrationState>,
     pack_editor: Option<editors::PackEditorState>,
+    alertpacks_editor: Option<editors::AlertPacksEditorState>,
     /// Editor window Id to raise to the top on the next frame. Set when a
     /// settings command (`.controller`, `.settings`, …) is re-issued while
     /// its editor is already open, so the command surfaces the buried
@@ -1061,6 +1063,7 @@ impl VellumGuiApp {
             launcher_editor: None,
             doll_calibration: None,
             pack_editor: None,
+            alertpacks_editor: None,
             pending_editor_raise: None,
             search_bar_needs_focus: false,
             search_match_cache: None,
@@ -1598,6 +1601,7 @@ impl VellumGuiApp {
                 }
             },
             A::RoomImagesEdit => self.open_room_images_editor(),
+            A::AlertPacks => self.open_alertpacks_editor(),
             A::SorterEdit => self.open_sorter_editor(),
             A::TouchWheelEditor => self.open_touch_wheel_editor(),
             A::Reconnect => self.reconnect(),
@@ -2592,6 +2596,13 @@ impl eframe::App for VellumGuiApp {
                             if ui.button("Highlights").clicked() {
                                 self.open_highlight_editor(None);
                             }
+                            // Sits with Highlights because that is what a
+                            // pack is: highlight rules written by someone
+                            // else, with a trust gate on the powers that can
+                            // alter game text.
+                            if ui.button("Alert Packs").clicked() {
+                                self.open_alertpacks_editor();
+                            }
                             ui.separator();
                             if ui.button("Keybinds").clicked() {
                                 self.open_keybind_editor();
@@ -3190,6 +3201,9 @@ impl eframe::App for VellumGuiApp {
         for (origin, click) in detached_link_clicks {
             self.handle_link_click(click, Some(origin));
         }
+        // Alerts sit above the game windows but BELOW menus, popups, and
+        // editors: ambiance art must never cover a menu the user just opened.
+        self.render_alert_overlay(&ctx);
         self.render_window_context_popup(&ctx);
         self.render_popup_menus(&ctx);
         self.render_interact_overlay(&ctx);

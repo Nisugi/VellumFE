@@ -17,6 +17,21 @@ pub struct SoundTrigger {
     pub volume: Option<f32>,
 }
 
+/// An overlay alert raised by a highlight match. Carries the authored spec
+/// plus the resolved identity used for cooldown bookkeeping, so the core
+/// alert state does not have to re-derive it. The banner text is expanded
+/// here (while capture groups are still in scope) rather than downstream.
+#[derive(Clone, Debug)]
+pub struct AlertTrigger {
+    /// Cooldown/dedupe identity: the authored `alert.id` when present, else
+    /// the pattern text.
+    pub key: String,
+    /// The authored presentation + discipline settings.
+    pub spec: crate::config::AlertSpec,
+    /// `spec.banner` with capture groups expanded against the match.
+    pub banner: Option<String>,
+}
+
 /// A replacement that was deferred because it targets a specific window
 #[derive(Clone, Debug)]
 pub struct DeferredReplacement {
@@ -42,6 +57,10 @@ pub struct HighlightResult {
     pub rumbles: Vec<String>,
     /// Custom-status changes triggered by matches (set/clear).
     pub status_actions: Vec<StatusAction>,
+    /// Overlay alerts raised by matches. At most one per rule per line: a
+    /// pattern matching five times on one line is one event to the user, not
+    /// five stacked overlays.
+    pub alerts: Vec<AlertTrigger>,
     /// Replacements that target specific windows (applied during routing)
     pub deferred_replacements: Vec<DeferredReplacement>,
     /// True if the ENTIRE line was covered by silent_prompt patterns (suppress prompt)
@@ -126,6 +145,19 @@ impl CoreHighlightEngine {
             h.set_status.hash(&mut hasher);
             h.status_duration.map(f32::to_bits).hash(&mut hasher);
             h.clear_status.hash(&mut hasher);
+            // Alerts are read by apply_highlights (three match sites call
+            // `alert_for`), so per the rule above they must be hashed or
+            // editing ONLY a rule's alert would keep serving the old one.
+            // AlertSpec isn't Hash (it carries f32s and a Condition tree), so
+            // hash its serialized form — correctness over elegance, and it
+            // costs nothing on the common None path.
+            match h.alert.as_ref() {
+                None => 0u8.hash(&mut hasher),
+                Some(alert) => {
+                    1u8.hash(&mut hasher);
+                    toml::to_string(alert).unwrap_or_default().hash(&mut hasher);
+                }
+            }
         }
         hasher.finish()
     }
@@ -166,6 +198,11 @@ impl CoreHighlightEngine {
                         }
                     }
                     None // Don't compile as regex
+                } else if h.pattern.is_empty() {
+                    // Condition-driven alerts carry no pattern. An empty
+                    // regex matches every line, so it must never be compiled
+                    // — this rule has no text trigger at all.
+                    None
                 } else {
                     // Regular regex pattern (reuse compiled regex when available)
                     if let Some(regex) = h.compiled_regex.clone() {
@@ -236,6 +273,7 @@ impl CoreHighlightEngine {
                 sounds: Vec::new(),
                 rumbles: Vec::new(),
                 status_actions: Vec::new(),
+                alerts: Vec::new(),
                 deferred_replacements: Vec::new(),
                 line_is_silent: false,
             })
@@ -296,6 +334,7 @@ impl CoreHighlightEngine {
         let mut sounds: Vec<SoundTrigger> = Vec::new();
         let mut rumbles: Vec<String> = Vec::new();
         let mut status_actions: Vec<StatusAction> = Vec::new();
+        let mut alerts: Vec<AlertTrigger> = Vec::new();
         // Shared by the three match sites below.
         let status_action_for = |highlight: &crate::config::HighlightPattern| {
             (highlight.set_status.is_some() || highlight.clear_status.is_some()).then(|| {
@@ -307,6 +346,37 @@ impl CoreHighlightEngine {
                     clear: highlight.clear_status.clone(),
                 }
             })
+        };
+
+        // Build the alert for a matching rule, if it authored one. Returns
+        // None when the rule has no alert OR when this rule already fired on
+        // this line: the regex sites below iterate every occurrence, and one
+        // line mentioning a creature five times is still one warning to the
+        // player. Cross-LINE rate limiting is the core's cooldown; this is
+        // only the within-line collapse, which must happen here because
+        // downstream has no notion of "same line".
+        let alert_for = |highlight: &crate::config::HighlightPattern,
+                         caps: Option<&regex::Captures>,
+                         out: &mut Vec<AlertTrigger>| {
+            let Some(spec) = highlight.alert.as_ref() else {
+                return;
+            };
+            let key = spec.id.clone().unwrap_or_else(|| highlight.pattern.clone());
+            if out.iter().any(|a| a.key == key) {
+                return;
+            }
+            // Expand $1/$2 against the match while captures are still in
+            // scope. Without captures (fast-parse literals) the template is
+            // taken verbatim.
+            let banner = spec.banner.as_ref().map(|template| match caps {
+                Some(caps) => {
+                    let mut expanded = String::new();
+                    caps.expand(template, &mut expanded);
+                    expanded
+                }
+                None => template.clone(),
+            });
+            out.push(AlertTrigger { key, spec: spec.clone(), banner });
         };
 
         // Try Aho-Corasick fast patterns (with word boundary checking)
@@ -354,6 +424,7 @@ impl CoreHighlightEngine {
                             if let Some(action) = status_action_for(highlight) {
                                 status_actions.push(action);
                             }
+                            alert_for(highlight, None, &mut alerts);
 
                             matches.push(MatchInfo {
                                 start_byte: start,
@@ -405,6 +476,7 @@ impl CoreHighlightEngine {
                                 if let Some(action) = status_action_for(highlight) {
                                     status_actions.push(action);
                                 }
+                                alert_for(highlight, Some(&caps), &mut alerts);
 
                                 // Expand capture groups
                                 let mut expanded = String::new();
@@ -438,6 +510,21 @@ impl CoreHighlightEngine {
                         if let Some(action) = status_action_for(highlight) {
                             status_actions.push(action);
                         }
+                        if highlight.alert.is_some() {
+                            // `find_iter` discards capture groups. Re-run the
+                            // regex over just this match ONLY when the alert
+                            // actually references a group — the common case
+                            // (plain banner text) pays nothing.
+                            let wants_caps = highlight
+                                .alert
+                                .as_ref()
+                                .and_then(|a| a.banner.as_deref())
+                                .is_some_and(|b| b.contains('$'));
+                            let caps = wants_caps
+                                .then(|| regex.captures(&full_text[m.start()..m.end()]))
+                                .flatten();
+                            alert_for(highlight, caps.as_ref(), &mut alerts);
+                        }
 
                         matches.push(MatchInfo {
                             start_byte: m.start(),
@@ -460,7 +547,10 @@ impl CoreHighlightEngine {
         // so they cannot be lost here.
         if matches.is_empty() {
             debug_assert!(
-                sounds.is_empty() && rumbles.is_empty() && status_actions.is_empty()
+                sounds.is_empty()
+                    && rumbles.is_empty()
+                    && status_actions.is_empty()
+                    && alerts.is_empty()
             );
             return None;
         }
@@ -692,6 +782,7 @@ impl CoreHighlightEngine {
             sounds,
             rumbles,
             status_actions,
+            alerts,
             deferred_replacements,
             line_is_silent,
         })
@@ -866,6 +957,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         }
     }
@@ -1648,6 +1740,144 @@ mod tests {
         // No match, no actions.
         let result = engine.apply_highlights(&[make_segment("nothing here")], "main");
         assert!(result.status_actions.is_empty());
+    }
+
+    // ===========================================
+    // Alert collection tests
+    // ===========================================
+
+    fn alert_pattern(pattern: &str, banner: &str) -> crate::config::HighlightPattern {
+        let mut p = make_pattern(pattern);
+        p.alert = Some(crate::config::AlertSpec {
+            banner: Some(banner.to_string()),
+            ..Default::default()
+        });
+        p
+    }
+
+    #[test]
+    fn alert_collected_on_match_and_absent_otherwise() {
+        let engine = CoreHighlightEngine::new(vec![alert_pattern("stunned", "STUNNED")]);
+
+        let result = engine.apply_highlights(&[make_segment("You are stunned!")], "main");
+        assert_eq!(result.alerts.len(), 1);
+        assert_eq!(result.alerts[0].banner.as_deref(), Some("STUNNED"));
+
+        let result = engine.apply_highlights(&[make_segment("You feel fine")], "main");
+        assert!(result.alerts.is_empty());
+    }
+
+    #[test]
+    fn alert_key_prefers_authored_id_over_pattern() {
+        let mut p = alert_pattern("web.*you", "WEBBED");
+        p.alert.as_mut().expect("alert").id = Some("web".to_string());
+        let engine = CoreHighlightEngine::new(vec![p]);
+
+        let result = engine.apply_highlights(&[make_segment("webs entangle you")], "main");
+        assert_eq!(result.alerts.len(), 1);
+        // The stable id, not the regex source, is the cooldown identity.
+        assert_eq!(result.alerts[0].key, "web");
+    }
+
+    #[test]
+    fn one_rule_matching_many_times_yields_one_alert_per_line() {
+        // The heavy-scroll case: a rule hitting repeatedly on a single line is
+        // one event to the player, not one overlay per occurrence.
+        let engine = CoreHighlightEngine::new(vec![alert_pattern("kobold", "KOBOLD")]);
+        let result = engine.apply_highlights(
+            &[make_segment("A kobold, a kobold, and another kobold arrive.")],
+            "main",
+        );
+        assert_eq!(result.alerts.len(), 1);
+    }
+
+    #[test]
+    fn alert_banner_expands_capture_groups() {
+        let engine =
+            CoreHighlightEngine::new(vec![alert_pattern(r"(\w+) gestures", "$1 is casting!")]);
+        let result = engine.apply_highlights(&[make_segment("Grishnak gestures broadly")], "main");
+        assert_eq!(result.alerts.len(), 1);
+        assert_eq!(result.alerts[0].banner.as_deref(), Some("Grishnak is casting!"));
+    }
+
+    #[test]
+    fn alert_respects_stream_filter() {
+        let mut p = alert_pattern("whisper", "PSST");
+        p.stream = Some("thoughts".to_string());
+        let engine = CoreHighlightEngine::new(vec![p]);
+
+        assert!(engine
+            .apply_highlights(&[make_segment("a whisper")], "main")
+            .alerts
+            .is_empty());
+        assert_eq!(
+            engine
+                .apply_highlights(&[make_segment("a whisper")], "thoughts")
+                .alerts
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn editing_only_the_alert_still_rebuilds_the_engine() {
+        // compute_hash gates rebuilds. A field apply_highlights READS but
+        // does not hash is invisible to update_if_changed, so the engine
+        // keeps serving the stale value forever. `alert` was exactly that.
+        let base = alert_pattern("stunned", "OLD");
+        let mut engine = CoreHighlightEngine::new(vec![base.clone()]);
+
+        let mut edited = base.clone();
+        edited.alert.as_mut().expect("alert").banner = Some("NEW".to_string());
+        assert!(
+            engine.update_if_changed(vec![edited]),
+            "an alert-only edit must rebuild"
+        );
+
+        let result = engine.apply_highlights(&[make_segment("You are stunned")], "main");
+        assert_eq!(result.alerts[0].banner.as_deref(), Some("NEW"));
+    }
+
+    #[test]
+    fn adding_or_removing_an_alert_changes_the_hash() {
+        let plain = make_pattern("kobold");
+        let alerting = alert_pattern("kobold", "KOBOLD");
+        assert_ne!(
+            CoreHighlightEngine::compute_hash(&[plain.clone()]),
+            CoreHighlightEngine::compute_hash(&[alerting.clone()]),
+            "gaining an alert is a change"
+        );
+        assert_eq!(
+            CoreHighlightEngine::compute_hash(&[plain.clone()]),
+            CoreHighlightEngine::compute_hash(&[plain]),
+            "identical rules still hash equal"
+        );
+    }
+
+    #[test]
+    fn a_pattern_less_condition_rule_never_matches_text() {
+        // Condition-driven alerts have an empty pattern. An empty regex is
+        // valid and matches EVERY line, so without an explicit guard such a
+        // rule would fire its alert (and apply its colors) on all game text.
+        let mut p = alert_pattern("", "SHOULD NOT FIRE");
+        p.fg = Some("#ff0000".to_string());
+        let engine = CoreHighlightEngine::new(vec![p]);
+
+        let result = engine.apply_highlights(&[make_segment("any ordinary line")], "main");
+        assert!(
+            result.alerts.is_empty(),
+            "a rule with no pattern has no text trigger"
+        );
+    }
+
+    #[test]
+    fn patterns_without_alerts_produce_none() {
+        // Plain coloring rules must not manufacture alerts.
+        let mut p = make_pattern("ordinary");
+        p.fg = Some("#FF0000".to_string());
+        let engine = CoreHighlightEngine::new(vec![p]);
+        let result = engine.apply_highlights(&[make_segment("ordinary text")], "main");
+        assert!(result.alerts.is_empty());
     }
 
     // ===========================================

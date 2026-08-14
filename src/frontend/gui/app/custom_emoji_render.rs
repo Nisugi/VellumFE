@@ -82,6 +82,34 @@ struct EmojiFrames {
 }
 
 impl EmojiFrames {
+    /// Pick the texture for a ONE-SHOT playback that started `elapsed` seconds
+    /// ago: the animation runs forward once and then holds its final frame
+    /// instead of looping. `frame_at` wraps with `%` by construction, which is
+    /// right for emoji but wrong for an alert flourish that should play and be
+    /// done — hence a separate method rather than a flag.
+    ///
+    /// Returns the last frame once `elapsed` passes the cycle length, so a
+    /// caller whose overlay outlives the animation shows a settled image
+    /// rather than a restart.
+    fn frame_once_at(&self, elapsed: f32) -> &egui::TextureHandle {
+        if self.total <= 0.0 || self.frames.len() <= 1 {
+            return &self.frames[0].0;
+        }
+        for (texture, end) in &self.frames {
+            if elapsed < *end {
+                return texture;
+            }
+        }
+        &self.frames.last().expect("frames is non-empty").0
+    }
+
+    /// Whether a one-shot playback that began `elapsed` seconds ago is still
+    /// advancing. Lets the caller stop scheduling repaints once the animation
+    /// has settled, so a lingering overlay costs nothing.
+    fn one_shot_running(&self, elapsed: f32) -> bool {
+        self.total > 0.0 && self.frames.len() > 1 && elapsed < self.total
+    }
+
     /// Pick the texture to show at monotonic `time` (seconds since app start),
     /// cycling by accumulated frame delays. Static emoji (one frame) always
     /// return that frame.
@@ -381,6 +409,56 @@ pub(super) fn paint_custom_emoji(
     true
 }
 
+/// Paint alert art into `rect`, played ONCE from `elapsed` seconds after its
+/// spawn and tinted by `tint` (the overlay's fade envelope). Returns `false`
+/// when the name doesn't resolve, letting the caller fall back to the alert's
+/// banner text rather than showing nothing.
+///
+/// Art resolves through the inline-image pool, so alert art is authored and
+/// installed exactly like every other image asset — no third registry.
+pub(super) fn paint_alert_art(
+    ctx: &egui::Context,
+    painter: &egui::Painter,
+    name: &str,
+    rect: egui::Rect,
+    elapsed: f32,
+    tint: egui::Color32,
+) -> bool {
+    let cache = ArtSource::InlineImage.cache(ctx);
+    let Some(frames) = frames_for_source(ctx, &cache, name, ArtSource::InlineImage) else {
+        return false;
+    };
+    let texture = frames.frame_once_at(elapsed);
+    painter.image(
+        texture.id(),
+        rect,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        tint,
+    );
+
+    // Keep a still-playing one-shot advancing; once it settles, stop asking
+    // for repaints on its account (the overlay's own fade still drives them).
+    if frames.one_shot_running(elapsed) {
+        let next_end = frames
+            .frames
+            .iter()
+            .map(|(_, end)| *end)
+            .find(|end| *end > elapsed)
+            .unwrap_or(frames.total);
+        ctx.request_repaint_after(Duration::from_secs_f32((next_end - elapsed).max(0.0)));
+    }
+    true
+}
+
+/// Natural pixel size of an alert art asset's first frame, for aspect-ratio
+/// preserving layout. `None` when the name doesn't resolve.
+pub(super) fn alert_art_size(ctx: &egui::Context, name: &str) -> Option<egui::Vec2> {
+    let cache = ArtSource::InlineImage.cache(ctx);
+    let frames = frames_for_source(ctx, &cache, name, ArtSource::InlineImage)?;
+    let size = frames.frames.first()?.0.size();
+    Some(egui::vec2(size[0] as f32, size[1] as f32))
+}
+
 /// Natural pixel size of an inline image's first frame, or `None` when the
 /// name doesn't resolve. Callers need this to preserve aspect ratio: the
 /// float's height comes from `rows`, and the width follows from this.
@@ -485,6 +563,46 @@ mod tests {
         assert_ne!(f0, f1, "different frames selected across the cycle");
         // Wrap: 0.25 + 0.05 lands back on the first frame.
         assert_eq!(frames.frame_at(0.30).id(), f0);
+    }
+
+    #[test]
+    fn frame_once_at_plays_forward_then_holds_the_last_frame() {
+        let ctx = egui::Context::default();
+        let frames = decode_gif(&ctx, "flash", &tiny_gif()).expect("gif decodes");
+        let f0 = frames.frame_once_at(0.05).id();
+        let f1 = frames.frame_once_at(0.20).id();
+        assert_ne!(f0, f1, "advances through the animation");
+
+        // The whole point of one-shot: past the cycle it HOLDS the final frame
+        // instead of wrapping back to the start like `frame_at` does.
+        assert_eq!(frames.frame_once_at(0.30).id(), f1);
+        assert_eq!(frames.frame_once_at(60.0).id(), f1);
+        assert_eq!(
+            frames.frame_at(0.30).id(),
+            f0,
+            "the looping accessor still wraps — the two must not be confused"
+        );
+    }
+
+    #[test]
+    fn one_shot_running_reports_completion() {
+        let ctx = egui::Context::default();
+        let frames = decode_gif(&ctx, "flash", &tiny_gif()).expect("gif decodes");
+        assert!(frames.one_shot_running(0.0));
+        assert!(frames.one_shot_running(0.24));
+        // Past total: settled, so callers stop scheduling repaints for it.
+        assert!(!frames.one_shot_running(0.26));
+    }
+
+    #[test]
+    fn static_art_is_a_one_frame_one_shot_that_never_animates() {
+        let ctx = egui::Context::default();
+        let frames = decode_static(&ctx, "icon", &static_png(), image::ImageFormat::Png)
+            .expect("png decodes");
+        // A static PNG is simply a one-frame animation: same texture at any
+        // elapsed time, and never "running", so it costs no repaints.
+        assert_eq!(frames.frame_once_at(0.0).id(), frames.frame_once_at(99.0).id());
+        assert!(!frames.one_shot_running(0.0));
     }
 
     #[test]

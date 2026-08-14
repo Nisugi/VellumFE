@@ -377,6 +377,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         }]);
         window.set_entries(vec![
@@ -429,6 +430,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         }]);
         window.set_entries(vec![PerceptionEntry {
@@ -472,6 +474,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         }]);
         window.set_entries(vec![PerceptionEntry {
@@ -514,6 +517,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         }]);
         window.set_entries(vec![PerceptionEntry {
@@ -556,6 +560,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         }]);
         window.set_entries(vec![PerceptionEntry {
@@ -599,6 +604,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         }]);
         window.set_replace_enabled(false);
@@ -643,6 +649,7 @@ mod tests {
             set_status: None,
             status_duration: None,
             clear_status: None,
+            alert: None,
             compiled_regex: None,
         }]);
         window.set_entries(vec![PerceptionEntry {
