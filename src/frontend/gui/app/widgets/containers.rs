@@ -6,6 +6,15 @@
 
 use super::*;
 
+/// Stat column widths for container rows: `[N]  W.W / C`. Weight and cap
+/// right-align into their own cells around a fixed slash cell, so the
+/// decimals and caps line up down the whole window.
+const COUNT_COL: f32 = 46.0;
+const WEIGHT_COL: f32 = 44.0;
+const SLASH_COL: f32 = 10.0;
+const CAP_COL: f32 = 34.0;
+const STAT_COLS_WIDTH: f32 = COUNT_COL + WEIGHT_COL + SLASH_COL + CAP_COL;
+
 impl VellumGuiApp {
     /// One fixed-width, right-aligned stat cell. Allocates the exact width
     /// whether or not there's text, so columns line up across rows; the
@@ -399,18 +408,19 @@ impl VellumGuiApp {
                 "locked".to_string()
             } else {
                 let n = counts.get(item.id.as_str()).copied().unwrap_or(0);
-                format!("{n} item{}", if n == 1 { "" } else { "s" })
+                format!("[{n}]")
             };
             let bd = weights.get(item.id.as_str()).copied().unwrap_or_default();
-            let weight = format!("{} lbs", Self::fmt_lbs(bd.total));
+            let weight = Self::fmt_lbs(bd.total);
             let capacity = match item.in_capacity() {
-                Some(cap) => format!("{} cap", cap.pounds),
+                Some(cap) => cap.pounds.to_string(),
                 None => String::new(),
             };
-            // Custom header row: name on the left, stats in fixed-width
-            // right-aligned columns (items | lbs | cap) so every row's
-            // numbers line up — a plain CollapsingHeader title can't
-            // column-align in a proportional font.
+            // Custom header row: name on the left, stats condensed to
+            // `[N]  W.W / C` in fixed-width right-aligned columns (weight
+            // and cap each right-align around a fixed slash, so decimals
+            // and caps line up down the window) — a plain CollapsingHeader
+            // title can't column-align in a proportional font.
             let state_id = ui.make_persistent_id(("containers_node", item.id.as_str()));
             let cstate = egui::collapsing_header::CollapsingState::load_with_default_open(
                 ui.ctx(),
@@ -419,17 +429,33 @@ impl VellumGuiApp {
             );
             let (response, _, _) = cstate
                 .show_header(ui, |ui| {
-                    ui.label(format!("{glyph}{}", item.name));
+                    // Cap the name to the width the stat columns leave so a
+                    // long name truncates instead of painting under them.
+                    let reserved = STAT_COLS_WIDTH
+                        + ui.spacing().item_spacing.x * 5.0;
+                    let name_width = (ui.available_width() - reserved).max(60.0);
+                    ui.scope(|ui| {
+                        ui.set_max_width(name_width);
+                        ui.add(
+                            egui::Label::new(format!("{glyph}{}", item.name)).truncate(),
+                        );
+                    });
                     ui.with_layout(
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
                             // Right-to-left: rightmost column first. Exact
                             // allocations so an empty cell still reserves
                             // its column (painter text, not labels — labels
-                            // shrink and break the grid).
-                            Self::stat_col(ui, &capacity, 70.0);
-                            Self::stat_col(ui, &weight, 62.0);
-                            Self::stat_col(ui, &count, 62.0);
+                            // shrink and break the grid). The slash is its
+                            // own cell, present only when a cap exists.
+                            Self::stat_col(ui, &capacity, CAP_COL);
+                            Self::stat_col(
+                                ui,
+                                if capacity.is_empty() { "" } else { "/" },
+                                SLASH_COL,
+                            );
+                            Self::stat_col(ui, &weight, WEIGHT_COL);
+                            Self::stat_col(ui, &count, COUNT_COL);
                         },
                     );
                 })
@@ -454,19 +480,29 @@ impl VellumGuiApp {
             Self::containers_context_menu(ui, &response, item, clicked, click);
         } else {
             let weight = if item.weight > 0 {
-                format!("{} lb{}", item.weight, if item.weight == 1 { "" } else { "s" })
+                item.weight.to_string()
             } else {
                 String::new()
             };
-            // Same column treatment as container rows: name left, weight in
-            // a fixed right-aligned column.
+            // Same column treatment as container rows: name left (truncated
+            // to the columns' edge), weight aligned to the shared weight
+            // column (empty cap/slash cells reserve their widths).
             let mut name_response = None;
             ui.horizontal(|ui| {
-                name_response = Some(
-                    ui.add(egui::Label::new(&item.name).sense(egui::Sense::click())),
-                );
+                let reserved = STAT_COLS_WIDTH + ui.spacing().item_spacing.x * 4.0;
+                let name_width = (ui.available_width() - reserved).max(60.0);
+                ui.scope(|ui| {
+                    ui.set_max_width(name_width);
+                    name_response = Some(ui.add(
+                        egui::Label::new(&item.name)
+                            .truncate()
+                            .sense(egui::Sense::click()),
+                    ));
+                });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    Self::stat_col(ui, &weight, 62.0);
+                    Self::stat_col(ui, "", CAP_COL);
+                    Self::stat_col(ui, "", SLASH_COL);
+                    Self::stat_col(ui, &weight, WEIGHT_COL);
                 });
             });
             let response = name_response
