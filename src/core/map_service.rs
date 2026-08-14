@@ -801,12 +801,18 @@ impl MapService {
     /// Promote personal map edits into the staging export that feeds the
     /// shipped community layer (defaults/map_overrides.json).
     ///
-    /// Whole-map semantics: each promoted map's staging entry is REPLACED
-    /// by the current personal state, and the personal entry is cleared —
-    /// the promoted data now reaches the user through the community layer
-    /// instead (leaving it personal too would double-apply group-offset
-    /// deltas, which ADD across layers). `key = None` promotes every map
-    /// with personal edits. Returns the promoted keys and the staging path.
+    /// Each promoted map's personal state MERGES into its staging entry
+    /// with the same semantics the renderer uses at use time
+    /// (`overrides::merge_location`: personal wins per key, group offsets
+    /// ADD) — after a first promote empties the personal layer, later
+    /// edits are only deltas relative to the staged curation, and the old
+    /// wholesale replacement threw the whole staged map away on the second
+    /// promote, reverting everything but the newest nudge to auto-layout.
+    /// The personal entry is then cleared — the promoted data reaches the
+    /// user through the community layer instead (leaving it personal too
+    /// would double-apply group-offset deltas). `key = None` promotes
+    /// every map with personal edits. Returns the promoted keys and the
+    /// staging path.
     pub fn promote_overrides(
         &mut self,
         key: Option<&str>,
@@ -827,7 +833,9 @@ impl MapService {
         let mut staging = overrides::load(&staging_path);
         for key in &keys {
             if let Some(entry) = self.overrides.locations.remove(key) {
-                staging.locations.insert(key.clone(), entry);
+                let merged =
+                    overrides::merge_location(staging.locations.get(key), Some(&entry));
+                staging.locations.insert(key.clone(), merged);
             }
         }
         overrides::save(&staging_path, &staging)
@@ -1327,6 +1335,67 @@ mod tests {
         assert!(svc.promote_overrides(None).is_err());
         let staged = overrides::load(&staging_path);
         assert_eq!(staged.locations.len(), 2, "staging accumulates across promotes");
+    }
+
+    /// Promote → edit → promote again must FOLD the new deltas onto the
+    /// staged curation, not replace it: after the first promote the
+    /// personal layer holds only the edits made since, and wholesale
+    /// replacement threw the whole staged map away on the second promote
+    /// (the .mappromote map-mangling bug).
+    #[test]
+    fn second_promote_merges_into_staged_curation() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut svc = MapService::new(
+            dir.path().join("cache"),
+            dir.path().join("map_overrides.json"),
+        );
+        // Session 1: real curation — an offset, a pin, a name — promoted.
+        svc.apply_override_edit(OverrideEdit::GroupOffset {
+            location: "town".into(),
+            anchor: 100,
+            delta: Cell { x: 2, y: 1 },
+        });
+        svc.apply_override_edit(OverrideEdit::RoomPin {
+            location: "town".into(),
+            key: 29217,
+            pin: Some(Cell { x: 5, y: 5 }),
+        });
+        svc.apply_override_edit(OverrideEdit::GroupName {
+            location: "town".into(),
+            anchor: 100,
+            name: Some("Hornwort Cavern".into()),
+        });
+        let (_, staging_path) = svc.promote_overrides(Some("town")).unwrap();
+
+        // One incremental nudge afterwards, promoted again.
+        svc.apply_override_edit(OverrideEdit::RoomPin {
+            location: "town".into(),
+            key: 29217,
+            pin: Some(Cell { x: 4, y: 5 }),
+        });
+        svc.promote_overrides(Some("town")).unwrap();
+
+        let staged = overrides::load(&staging_path);
+        let town = &staged.locations["town"];
+        assert_eq!(
+            town.room_pins[&29217],
+            Cell { x: 4, y: 5 },
+            "the nudge lands"
+        );
+        assert_eq!(
+            town.group_offsets[&100],
+            Cell { x: 2, y: 1 },
+            "the first promote's offset survives the second"
+        );
+        assert_eq!(
+            town.names[&100], "Hornwort Cavern",
+            "the first promote's name survives the second"
+        );
+        assert_eq!(
+            svc.community_overrides.locations["town"].group_offsets[&100],
+            Cell { x: 2, y: 1 },
+            "in-memory community layer serves the merged entry"
+        );
     }
 
     /// Community layering: shipped defaults under a mapdb release's
