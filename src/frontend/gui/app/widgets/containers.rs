@@ -20,6 +20,14 @@ impl VellumGuiApp {
     /// whether or not there's text, so columns line up across rows; the
     /// text is painted (not a Label) because labels shrink to content.
     fn stat_col(ui: &mut egui::Ui, text: &str, width: f32) {
+        let color = ui.visuals().weak_text_color();
+        Self::stat_col_colored(ui, text, width, color);
+    }
+
+    /// Same cell, explicit color. Digits render in the monospace face so
+    /// they grid up down the window (proportional digits never align even
+    /// when right-aligned).
+    fn stat_col_colored(ui: &mut egui::Ui, text: &str, width: f32, color: egui::Color32) {
         let height = ui.text_style_height(&egui::TextStyle::Body);
         let (rect, _) =
             ui.allocate_exact_size(egui::Vec2::new(width, height), egui::Sense::hover());
@@ -28,9 +36,26 @@ impl VellumGuiApp {
                 rect.right_center(),
                 egui::Align2::RIGHT_CENTER,
                 text,
-                egui::TextStyle::Body.resolve(ui.style()),
-                ui.visuals().weak_text_color(),
+                egui::TextStyle::Monospace.resolve(ui.style()),
+                color,
             );
+        }
+    }
+
+    /// Weight color graded by fullness: quiet until 70% of cap, amber to
+    /// 90%, red past that — a stuffed container reads at a glance without
+    /// anyone doing division.
+    fn weight_color(ui: &egui::Ui, weight: Option<f32>, cap: Option<f32>) -> egui::Color32 {
+        let ratio = match (weight, cap) {
+            (Some(w), Some(c)) if c > 0.0 => w / c,
+            _ => 0.0,
+        };
+        if ratio >= 0.9 {
+            egui::Color32::from_rgb(224, 96, 96)
+        } else if ratio >= 0.7 {
+            egui::Color32::from_rgb(216, 168, 88)
+        } else {
+            ui.visuals().text_color()
         }
     }
 
@@ -411,7 +436,12 @@ impl VellumGuiApp {
                 format!("[{n}]")
             };
             let bd = weights.get(item.id.as_str()).copied().unwrap_or_default();
-            let weight = Self::fmt_lbs(bd.total);
+            // Always one decimal so the points stack down the column.
+            let weight = match bd.total {
+                Some(v) => format!("{v:.1}"),
+                None => "?".to_string(),
+            };
+            let cap_lbs = item.in_capacity().map(|cap| cap.pounds as f32);
             let capacity = match item.in_capacity() {
                 Some(cap) => cap.pounds.to_string(),
                 None => String::new(),
@@ -454,7 +484,8 @@ impl VellumGuiApp {
                                 if capacity.is_empty() { "" } else { "/" },
                                 SLASH_COL,
                             );
-                            Self::stat_col(ui, &weight, WEIGHT_COL);
+                            let color = Self::weight_color(ui, bd.total, cap_lbs);
+                            Self::stat_col_colored(ui, &weight, WEIGHT_COL, color);
                             Self::stat_col(ui, &count, COUNT_COL);
                         },
                     );
@@ -480,7 +511,9 @@ impl VellumGuiApp {
             Self::containers_context_menu(ui, &response, item, clicked, click);
         } else {
             let weight = if item.weight > 0 {
-                item.weight.to_string()
+                // One decimal like the container rows, so every weight in
+                // the window shares one decimal-point rail.
+                format!("{:.1}", item.weight as f32)
             } else {
                 String::new()
             };
