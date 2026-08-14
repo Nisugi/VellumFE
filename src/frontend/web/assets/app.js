@@ -847,29 +847,40 @@ function handleSnapshot(d) {
   } else if (d.mode === "gap") {
     appendMarker("— missed output —");
   }
-  for (const item of d.text) appendText(item.seq, item.stream, item.line);
-  flushPendingLines();
-  setCharacter(d.character);
-  setVitals(d.vitals);
-  setRoom(d.room);
-  setHands(d.hands || {});
-  setIndicators(d.indicators || {});
-  setEffects(d.effects || []);
-  setSpells(d.spellbook || []);
-  setInjuries(d.injuries || {});
-  setDollState({ variant: d.doll_variant, hidden: d.doll_hidden });
-  setTargets(d.targets || []);
-  setRoomEntities(d.entities || {});
-  setPortals(d.portals || []);
-  setCharInfo(d.char_info || {});
-  setRt(d.rt);
-  if (d.map_scene) setMapScene(d.map_scene);
-  setMapState(d.map_state || {});
+  // SESSION ROUTING FIRST, and every other setter fault-isolated. One
+  // setter throwing (a WebKit quirk, a malformed field) must never stop
+  // the rest of the snapshot from applying — before this, an exception
+  // anywhere above setSession left the login overlay permanently hidden:
+  // a dead game view with a "live" socket label and no way to log in
+  // (iOS TestFlight build 80 field report).
+  const safely = (label, fn) => {
+    try { fn(); } catch (err) {
+      console.error(`snapshot ${label} failed:`, err);
+      reportClientFault(`${label}: ${err && err.message ? err.message : err}`);
+    }
+  };
   // Sidecar servers (TUI/GUI hosting) don't send session info; treat the
   // session as an implicitly-connected one we can't control.
-  setSession(d.session || { state: "connected", session_control: false });
+  safely("session", () => setSession(d.session || { state: "connected", session_control: false }));
+  safely("text", () => { for (const item of d.text) appendText(item.seq, item.stream, item.line); flushPendingLines(); });
+  safely("character", () => setCharacter(d.character));
+  safely("vitals", () => setVitals(d.vitals));
+  safely("room", () => setRoom(d.room));
+  safely("hands", () => setHands(d.hands || {}));
+  safely("indicators", () => setIndicators(d.indicators || {}));
+  safely("effects", () => setEffects(d.effects || []));
+  safely("spellbook", () => setSpells(d.spellbook || []));
+  safely("injuries", () => setInjuries(d.injuries || {}));
+  safely("doll", () => setDollState({ variant: d.doll_variant, hidden: d.doll_hidden }));
+  safely("targets", () => setTargets(d.targets || []));
+  safely("entities", () => setRoomEntities(d.entities || {}));
+  safely("portals", () => setPortals(d.portals || []));
+  safely("char_info", () => setCharInfo(d.char_info || {}));
+  safely("rt", () => setRt(d.rt));
+  safely("map_scene", () => { if (d.map_scene) setMapScene(d.map_scene); });
+  safely("map_state", () => setMapState(d.map_state || {}));
   // WebUI pages ride the snapshot so a connecting client has the picker list.
-  if (Array.isArray(d.webui_pages)) { webuiState.pages = d.webui_pages; webuiState.connected = true; }
+  safely("webui", () => { if (Array.isArray(d.webui_pages)) { webuiState.pages = d.webui_pages; webuiState.connected = true; } });
   if (autoScroll) scrollToBottom();
 }
 
@@ -1000,6 +1011,29 @@ document.addEventListener("visibilitychange", () => {
 // connected, with reconnecting/disconnected on drops. The overlay is the
 // login screen; sidecar servers (TUI/GUI hosting) never advertise the
 // capability and never see any of this.
+
+// On-page fault surface: client-side exceptions on a phone are otherwise
+// invisible (no dev console). Faults stack in a small dismissible red strip
+// so a field report can say WHICH setter/API failed instead of "it's broke".
+function reportClientFault(message) {
+  let strip = document.getElementById("client-fault-strip");
+  if (!strip) {
+    strip = document.createElement("div");
+    strip.id = "client-fault-strip";
+    strip.style.cssText =
+      "position:fixed;bottom:0;left:0;right:0;z-index:9999;background:#7a1f1f;" +
+      "color:#fff;font:12px monospace;padding:4px 8px;white-space:pre-wrap;";
+    strip.addEventListener("click", () => strip.remove());
+    document.body.appendChild(strip);
+  }
+  strip.textContent += (strip.textContent ? "\n" : "client fault (tap to dismiss)\n") + message;
+}
+window.addEventListener("error", (e) => {
+  reportClientFault(`js: ${e.message} @ ${e.filename ? e.filename.split("/").pop() : "?"}:${e.lineno}`);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  reportClientFault(`promise: ${e.reason && e.reason.message ? e.reason.message : e.reason}`);
+});
 
 let session = { state: "connected", session_control: false };
 let profilesRequested = false;
