@@ -11,6 +11,8 @@
 //!   adapter rather than rippling foot parts and a `nerves` rename into the
 //!   player-doll ecosystem and its published assets.
 
+pub mod solver;
+
 use std::path::{Path, PathBuf};
 
 use crate::config::skins::{
