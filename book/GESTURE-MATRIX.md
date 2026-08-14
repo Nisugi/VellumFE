@@ -16,6 +16,42 @@
 > 3. **Staleness markers.** When behavior changes under an in-flight fix, mark the cell
 >    **🕒 STALE — re-verify (reason)**. Never write a page from a 🕒 cell.
 >
+> ## 🕒 DRIFT WARNING — audited 2026-08-11 against `47742fea`
+>
+> **The body of this file was verified against `bf2beaed`. 144 commits have landed since**,
+> including five merged feature branches (bestiary, saga-protocol-wins/extended feed,
+> curated-map-membership, wheel-v2, split-screen scrollback). A drift audit found the
+> following. **Treat every cell below as 🕒 until its area is re-verified.**
+>
+> **Known-false claims (do not transcribe):**
+> - The **widget roster and its counts are stale.** `WidgetType` gained `Containers`,
+>   `MultiAccount`, and `BestiaryView`; `CATALOG` gained `bestiary`, `pulse`, `containers`,
+>   `bestiaryview`, `multiaccount`. **GS4-only is now seven keys**, not four: `pulse`,
+>   `reserve`, `containers`, `bestiaryview`, `gs4_experience`, `minivitals`, `betrayer`.
+>   **Seventeen widget types have a GUI section**, not sixteen — `MultiAccount` →
+>   **"Characters"**. The no-section list gained `Containers` and `BestiaryView`.
+> - **`widget_section_label` moved** from `window_config.rs:140-161` to **`:194-216`**.
+>   Every cite of the old range in this file is wrong.
+> - **`VALID_TYPES` moved** from `window.rs:116-148` to **`:131-170`**.
+> - **`CATALOG` line cites have all shifted** by 2–5 lines (new rows were inserted mid-array).
+> - **There are now TWO container widgets.** `container` (per-bag, ephemeral, opt-in) is what
+>   `widgets/containers.md` documents; **`containers`** is a *different* widget — the
+>   extended-feed managed-inventory tree, catalog-placeable, titled **"Containers"**. The
+>   existing page is actively misleading about which one a reader gets.
+> - The **inventory/containers section below predates the extended feed entirely.** `.invsync`,
+>   `.find`, `.viewitem`, and `.drag` build a structured snapshot with no `LOOK IN` required —
+>   a second discovery path the section presents as nonexistent.
+> - **Undocumented commands:** `.bestiary`, `.mappromote`, `.emptyhands`/`.eh`,
+>   `.fillhands`/`.fh`, `.viewitem`/`.inspect`, `.find`, `.drag`, `.invsync`. Three of them
+>   need the **WRAYTH banner** (direct mode or Lich) — a prerequisite the book never states.
+> - **Undocumented features with no page:** bestiary codex + browser, managed-inventory tree,
+>   multi-account **Characters** widget and `/characters` wall, split-screen scrollback (GUI),
+>   pinned map service tags, map curation (`.mappromote`, curated bases, satellites), the
+>   **Pulse** countdown.
+>
+> **Not audited, assume stale:** every cite into `commands.rs`, `state.rs` (+988 lines),
+> `element.rs`, `parser/handlers.rs` (+252), and `app.js`.
+>
 > **Verified against current source on 2026-08-10**, after the window context-menu
 > overhaul (`8cd3b951` — the GUI Window Editor was deleted and replaced by a sectioned
 > right-click menu; `69acf18e` — detached windows got the same menu) and the

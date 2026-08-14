@@ -3,6 +3,13 @@
 > A live window per bag — your pack, your bandolier, your gem pouch — each one showing what's
 > actually inside it right now, and each one a target you can drop loot onto.
 
+> ⚠️ **Two different widgets share this name.** This page documents the **`container`**
+> widget: one window per bag, created by ticking that bag in the Windows list. There is also a
+> newer **`containers`** widget — a single window holding your whole inventory as a tree, built
+> from the extended feed's `.invsync` snapshot, which ships as a catalog row also titled
+> **Containers**. That one has no page yet. If you ticked **Containers** in the catalog and got
+> one window with tabs rather than a window per bag, you have the newer widget.
+
 ## What it's for
 
 `LOOK IN MY PACK` tells you what's in the pack once, then scrolls away, and the next time you
