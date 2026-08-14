@@ -167,6 +167,7 @@ pub const CATALOG: &[(&str, Option<GameType>)] = &[
     ("chat", None),
     ("tabbedtext_custom", None),
     ("targets", None),
+    ("creaturefield", Some(GameType::GS4)),
     ("players", None),
     ("items", None),
     ("entity_custom", None),
@@ -481,6 +482,20 @@ impl Config {
                     show_body_part_count: false,
                     status_position: None,
                 },
+            }),
+            "creaturefield" => Some(WindowDef::CreatureField {
+                base: WindowBase {
+                    name: "creaturefield".to_string(),
+                    title: Some("Creature Field".to_string()),
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(16),
+                    cols: Width::new(60),
+                    min_rows: Some(8),
+                    min_cols: Some(30),
+                    ..base_defaults.clone()
+                },
+                data: CreatureFieldWidgetData::default(),
             }),
             "players" => Some(WindowDef::Players {
                 base: WindowBase {

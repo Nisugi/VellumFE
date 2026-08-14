@@ -190,6 +190,7 @@ impl VellumGuiApp {
                 )
             }),
             skin_art: self.skin_state.widget_art(),
+            creature_art: Some(self.skin_state.creature_art()),
             command_input_seed: self
                 .available_tabs
                 .get(key)

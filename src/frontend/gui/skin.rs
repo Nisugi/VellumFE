@@ -557,6 +557,75 @@ pub struct ResolvedBorder {
 }
 
 /// Runtime skin state owned by the GUI app: the active manifest plus its
+/// Loaded art for one creature-card base image.
+#[derive(Clone)]
+pub struct CreatureArt {
+    pub texture: egui::TextureHandle,
+    /// Derived head anchor (top-centre of the alpha bbox) as fractions of
+    /// the image. A manifest-calibrated anchor wins over this.
+    pub head: [f32; 2],
+    /// Derived foot anchor (bottom-centre of the alpha bbox).
+    pub feet: [f32; 2],
+    /// Alpha bbox as fractions [x0, y0, x1, y1] — body-wrap overlays scale
+    /// to this, not the full canvas, so padding in the art costs nothing.
+    pub bbox: [f32; 4],
+}
+
+/// Lazily loaded creature-card art, shared with the creaturefield renderer.
+/// Bases resolve per creature through the `[creature_card]` cascade and are
+/// negative-cached (a noun with no art is one lookup, ever); the shared
+/// status-overlay textures load once per skin.
+#[derive(Default)]
+pub struct CreatureArtCache {
+    /// "noun|family" -> resolved art (None = nothing on disk).
+    pub bases: HashMap<String, Option<CreatureArt>>,
+    /// Overlay manifest path -> texture (None = load failed).
+    pub overlays: HashMap<String, Option<egui::TextureHandle>>,
+    /// The manifest's `[creature_card]` template.
+    pub card: skins::CreatureCardSkin,
+    /// Skin root for the resolve cascade.
+    root: PathBuf,
+    skin_name: String,
+    /// False when no skin is loaded — renderers fall back to placeholder
+    /// standees without touching the cache.
+    pub active: bool,
+}
+
+// TextureHandle has no Debug; summarize (WidgetRenderSettings derives it).
+impl std::fmt::Debug for CreatureArt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreatureArt")
+            .field("head", &self.head)
+            .field("feet", &self.feet)
+            .field("bbox", &self.bbox)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for CreatureArtCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreatureArtCache")
+            .field("active", &self.active)
+            .field("bases", &self.bases.len())
+            .field("overlays", &self.overlays.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl CreatureArtCache {
+    /// Base art for one creature, if prepared. Key mirrors `prepare`.
+    pub fn base(&self, noun: &str, family: Option<&str>) -> Option<&CreatureArt> {
+        self.bases
+            .get(&format!("{noun}|{}", family.unwrap_or("")))
+            .and_then(|art| art.as_ref())
+    }
+}
+
+/// Per-skin, per-frame handle to `CreatureArtCache`: loading happens in the
+/// frame update (`prepare_creature_art`, &mut self), renderers only read.
+/// The mutex is uncontended — everything runs on the UI thread.
+pub type SharedCreatureArt = std::sync::Arc<std::sync::Mutex<CreatureArtCache>>;
+
 /// loaded textures. Textures live for as long as the skin stays active.
 #[derive(Default)]
 pub struct SkinState {
@@ -619,6 +688,9 @@ pub struct SkinState {
     /// `apply_if_changed`); menus fill in over a few frames instead of
     /// hitching once on a big pool.
     thumb_budget: u32,
+    /// Creature-card art, lazily resolved per creature (see
+    /// `prepare_creature_art`).
+    creature_art: SharedCreatureArt,
 }
 
 impl SkinState {
@@ -681,6 +753,99 @@ impl SkinState {
 
         self.load_textures(ctx, active.unwrap_or("shared-icons"));
         self.widget_art = self.build_widget_art();
+
+        // Reset the creature-card art cache for the new skin: bases resolve
+        // lazily per creature (prepare_creature_art), overlay textures load
+        // there too on first demand.
+        {
+            let mut cache = self.creature_art.lock().expect("creature art lock");
+            *cache = CreatureArtCache {
+                card: self.manifest.creature_card.clone(),
+                root: self.root.clone(),
+                skin_name: active.unwrap_or_default().to_string(),
+                active: active.is_some(),
+                ..Default::default()
+            };
+        }
+    }
+
+    /// Shared handle to the creature-card art cache for renderers.
+    pub fn creature_art(&self) -> SharedCreatureArt {
+        self.creature_art.clone()
+    }
+
+    /// Resolve + load base art for the given creatures (noun, family) and
+    /// the card's overlay textures. Called once per frame from the update
+    /// loop with the current field roster; everything is cached (including
+    /// misses), so a settled room costs a few hash lookups.
+    pub fn prepare_creature_art(
+        &mut self,
+        ctx: &egui::Context,
+        wanted: &[(String, Option<String>)],
+    ) {
+        let cache = self.creature_art.clone();
+        let mut cache = cache.lock().expect("creature art lock");
+        if !cache.active {
+            return;
+        }
+        for (noun, family) in wanted {
+            let key = format!("{noun}|{}", family.as_deref().unwrap_or(""));
+            if cache.bases.contains_key(&key) {
+                continue;
+            }
+            let art = crate::core::creature_cards::resolve_base_image(
+                &cache.root,
+                &cache.card,
+                Some(noun),
+                family.as_deref(),
+            )
+            .and_then(|path| load_creature_art(ctx, &path, &cache.skin_name));
+            cache.bases.insert(key, art);
+        }
+        // Shared overlay textures: small set, loaded once. Placeholder
+        // paths ({severity}) expand 1-3.
+        // Placeholder-free variant bases ride the same map: a variant with
+        // a {family}/{noun} template resolves per creature (not yet
+        // sourced), so those keep the ground pose for now.
+        let variant_bases = cache
+            .card
+            .variants
+            .iter()
+            .filter_map(|v| v.skin.base.clone())
+            .filter(|p| !p.contains('{'));
+        let overlay_paths: Vec<String> = variant_bases
+            .chain(cache
+            .card
+            .overlays
+            .iter()
+            .flat_map(|o| {
+                if o.image.contains("{severity}") {
+                    (1..=3)
+                        .map(|s| o.image.replace("{severity}", &s.to_string()))
+                        .collect::<Vec<_>>()
+                } else if o.image.contains('{') {
+                    // Per-family/noun status art is the asset explosion the
+                    // plan forbids; refuse to expand it.
+                    tracing::warn!(
+                        "creature_card overlay '{}' uses a per-creature placeholder; \
+                         status art is shared - overlay skipped",
+                        o.image
+                    );
+                    Vec::new()
+                } else {
+                    vec![o.image.clone()]
+                }
+            }))
+            .collect();
+        for path in overlay_paths {
+            if cache.overlays.contains_key(&path) {
+                continue;
+            }
+            let root = cache.root.clone();
+            let name = cache.skin_name.clone();
+            let tex = load_texture(ctx, &root, &path, &name);
+            cache.overlays.insert(path, tex);
+        }
     }
 
     /// Fold the shared icon store's sheets into the loaded manifest.
@@ -1648,6 +1813,80 @@ fn load_texture(
     skin_name: &str,
 ) -> Option<egui::TextureHandle> {
     load_texture_impl(ctx, root, image_path, skin_name, false)
+}
+
+/// Decode one creature-card base image and derive its anchors from the
+/// alpha bbox: head = top-centre, feet = bottom-centre. Calibration for the
+/// common case comes free from the art itself; only mouth/saddle need a
+/// human (manifest anchors win when authored).
+fn load_creature_art(
+    ctx: &egui::Context,
+    path: &Path,
+    skin_name: &str,
+) -> Option<CreatureArt> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            tracing::warn!(
+                "Skin '{}': cannot read creature art {}: {}",
+                skin_name,
+                path.display(),
+                err
+            );
+            return None;
+        }
+    };
+    let decoded = match image::load_from_memory(&bytes) {
+        Ok(decoded) => decoded,
+        Err(err) => {
+            tracing::warn!(
+                "Skin '{}': cannot decode creature art {}: {}",
+                skin_name,
+                path.display(),
+                err
+            );
+            return None;
+        }
+    };
+    let rgba = decoded.to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    if w == 0 || h == 0 {
+        return None;
+    }
+    // Alpha bbox (threshold matches the palette sampler's).
+    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0u32, 0u32);
+    for (x, y, px) in rgba.enumerate_pixels() {
+        if px.0[3] >= 32 {
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+    }
+    let bbox = if x0 <= x1 && y0 <= y1 {
+        [
+            x0 as f32 / w as f32,
+            y0 as f32 / h as f32,
+            (x1 + 1) as f32 / w as f32,
+            (y1 + 1) as f32 / h as f32,
+        ]
+    } else {
+        [0.0, 0.0, 1.0, 1.0] // fully transparent: degenerate but harmless
+    };
+    let mid_x = (bbox[0] + bbox[2]) / 2.0;
+    let size = [w as usize, h as usize];
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+    let texture = ctx.load_texture(
+        format!("creature:{}", path.display()),
+        color_image,
+        egui::TextureOptions::LINEAR,
+    );
+    Some(CreatureArt {
+        texture,
+        head: [mid_x, bbox[1]],
+        feet: [mid_x, bbox[3]],
+        bbox,
+    })
 }
 
 /// Desaturated twin of a texture (hotbar sheet grayscale variants);

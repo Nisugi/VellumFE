@@ -241,6 +241,43 @@ async fn main() {
             // by the wheel_pick resolver below, like AppCore's).
             snap.portals = scripted_portals();
         }
+        // Creature-field cards for /creatures, placed by the REAL solver so
+        // the harness exercises actual placement, not hand-picked rects.
+        {
+            use vellum_fe::core::creature_cards::solver::{CardSize, CreatureField};
+            use vellum_fe::core::remote::RemoteFieldCard;
+            let mut cf = CreatureField::default();
+            cf.arrive("111", CardSize::default());
+            cf.arrive("222", CardSize { w: 0.78, h: 1.52 }); // boss-sized
+            cf.arrive("555", CardSize { w: 0.92, h: 0.60 }); // low, wide
+            let meta = |id: &str| match id {
+                "111" => ("hog", "a muddy hog", vec!["stunned".to_string()], false, false),
+                "222" => ("kobold", "a kobold", vec![], true, true), // boss + current
+                _ => ("spider", "a dusky spider", vec!["webbed".to_string()], false, false),
+            };
+            snap.field = cf
+                .draw_order()
+                .iter()
+                .map(|&i| {
+                    let u = &cf.units()[i];
+                    let r = cf.rect(u);
+                    let (fx, fy) = cf.foot(u);
+                    let (noun, name, statuses, boss, current) = meta(&u.members[0]);
+                    RemoteFieldCard {
+                        id: u.members[0].clone(),
+                        noun: noun.into(),
+                        name: name.into(),
+                        rect: [r.x0, r.y0, r.x1, r.y1],
+                        foot: [fx, fy],
+                        dead: false,
+                        boss,
+                        current,
+                        statuses,
+                        lift: None,
+                    }
+                })
+                .collect();
+        }
         // Scripted room name + description prose so the status drawer's Room
         // section has a "look" to render, and a spellbook so the Spells
         // section is populated (both P2 feeds). Both ride the wire as styled

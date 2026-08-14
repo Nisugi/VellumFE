@@ -90,6 +90,13 @@ pub struct AppCore {
     /// Position of last link click (for menu positioning)
     pub last_link_click_pos: Option<(u16, u16)>,
 
+    /// Creature-field placement (the creaturefield widget's solver state).
+    /// Synced from `game_state.room_creatures` by `sync_creature_field`,
+    /// event-driven on the roster generation — never per frame.
+    pub creature_field: crate::core::creature_cards::solver::CreatureField,
+    /// Roster generation the field was last synced against.
+    pub creature_field_synced_gen: u64,
+
     /// Performance statistics tracking
     pub perf_stats: PerformanceStats,
 
@@ -478,6 +485,8 @@ impl AppCore {
             pending_menu_requests: HashMap::new(),
             menu_categories: HashMap::new(),
             last_link_click_pos: None,
+            creature_field: Default::default(),
+            creature_field_synced_gen: 0,
             perf_stats: PerformanceStats::new(),
             show_perf_stats: false,
             sound_player: None,
@@ -682,6 +691,8 @@ impl AppCore {
             pending_menu_requests: HashMap::new(),
             menu_categories: HashMap::new(),
             last_link_click_pos: None,
+            creature_field: Default::default(),
+            creature_field_synced_gen: 0,
             perf_stats: PerformanceStats::new(),
             show_perf_stats: false,
             sound_player,
@@ -980,6 +991,21 @@ impl AppCore {
         self.poll_jinx();
         // Auto-clear expired highlight-set custom statuses.
         self.tick_custom_statuses();
+        // Expire message-derived creature effects (the timeout safety net —
+        // a missed end message can never leave a stale bleed) and keep the
+        // derived statuses merged across roster rebuilds.
+        {
+            let now_server =
+                chrono::Utc::now().timestamp() + self.message_processor.server_time_offset;
+            self.game_state.tick_creature_effects(now_server);
+        }
+        // Creature-field roster diff (no-op while the generation matches).
+        crate::core::creature_cards::sync_field(
+            &mut self.creature_field,
+            &mut self.creature_field_synced_gen,
+            &self.game_state,
+            &self.config.target_list.excluded_nouns,
+        );
         // Arm/disarm area-scoped packs for wherever we are now. Gated on the
         // scope actually changing, so this is a cheap comparison on the
         // overwhelming majority of frames.

@@ -19,6 +19,71 @@ impl MessageProcessor {
         }
     }
 
+    /// Scan a flushed chunk for creature-effect start/end messages and
+    /// attribute matches to the creature linked ON THAT LINE — the markup
+    /// carries the exist id, so there is no name matching and no "which
+    /// kobold" ambiguity. Lines with no creature link can't attribute and
+    /// are skipped (deliberate: a bleed line without its subject's link is
+    /// exactly the ambiguous case the id requirement exists to avoid).
+    fn scan_creature_effects(&mut self, full_text: &str) {
+        let tables = crate::core::spell_table::creature_effects();
+        let specs = tables.creature_effects();
+        if specs.is_empty() {
+            return;
+        }
+        // Creature exist ids bucketed per line of the chunk (players carry
+        // negative ids and are excluded), same walk as buffer_group_events.
+        let mut per_line: Vec<Vec<String>> = Vec::new();
+        let mut current: Vec<String> = Vec::new();
+        for seg in &self.current_segments {
+            if let Some(l) = &seg.link_data {
+                if !l.exist_id.is_empty()
+                    && !l.exist_id.starts_with('_')
+                    && !l.exist_id.starts_with('-')
+                {
+                    current.push(l.exist_id.clone());
+                }
+            }
+            for _ in 0..seg.text.matches('\n').count() {
+                per_line.push(std::mem::take(&mut current));
+            }
+        }
+        if !current.is_empty() {
+            per_line.push(current);
+        }
+        if per_line.iter().all(|ids| ids.is_empty()) {
+            return;
+        }
+        for (idx, line) in full_text.lines().enumerate() {
+            let Some(ids) = per_line.get(idx).filter(|ids| !ids.is_empty()) else {
+                continue;
+            };
+            for spec in specs {
+                if let Some((_, severity)) =
+                    spec.starts.iter().find(|(re, _)| re.is_match(line))
+                {
+                    for exist in ids {
+                        self.pending_creature_effects.push((
+                            exist.clone(),
+                            spec.name.clone(),
+                            Some(*severity),
+                            spec.timeout_s,
+                        ));
+                    }
+                } else if spec.ends.iter().any(|re| re.is_match(line)) {
+                    for exist in ids {
+                        self.pending_creature_effects.push((
+                            exist.clone(),
+                            spec.name.clone(),
+                            None,
+                            spec.timeout_s,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     /// Buffer the group events in a flushed chunk, each with the links that
     /// appear on its own line.
     ///
@@ -108,6 +173,11 @@ impl MessageProcessor {
         if let Some(fb) = crate::core::move_feedback::classify_line(&full_text) {
             self.pending_move_feedback.push((self.game_line_no, fb));
         }
+
+        // Message-derived creature effects (bleeding and friends): free when
+        // the installed effect-list.xml declares none. Buffered like move
+        // feedback (no game_state here); drained at the prompt.
+        self.scan_creature_effects(&full_text);
 
         // Raw line for scripted-edge `Await` steps. Unlike the typed feedback
         // above we can't pre-classify these: the patterns live in mapdb data.

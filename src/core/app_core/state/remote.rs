@@ -310,6 +310,10 @@ impl AppCore {
         );
         snap.doll_variant = doll_variant;
         snap.doll_hidden = doll_hidden;
+        // Creature field: host-placed cards on the solver's virtual stage,
+        // in draw order, so browsers paint the list as-is with no solver
+        // and no condition logic of their own (the doll rule, again).
+        snap.field = self.build_remote_field();
         // Real sessions rarely set game_state.room_name/exits; fall back
         // the same way the room widget does (see gui sync_room_windows):
         // subtitle from <streamWindow> for the name, compass for exits.
@@ -345,6 +349,67 @@ impl AppCore {
         if let Some(remote) = self.message_processor.remote.as_mut() {
             remote.flush_state(snap);
         }
+    }
+
+    /// Creature-field cards for remote clients: one per creature, placed
+    /// on the solver's fixed 880x470 virtual stage, farthest first.
+    fn build_remote_field(&self) -> Vec<crate::core::remote::RemoteFieldCard> {
+        let field = &self.creature_field;
+        if field.units().is_empty() {
+            return Vec::new();
+        }
+        let current = self
+            .game_state
+            .target_list
+            .current_target
+            .trim_start_matches('#');
+        let mut out = Vec::new();
+        for &i in &field.draw_order() {
+            let unit = &field.units()[i];
+            let rect = field.rect(unit);
+            let (fx, fy) = field.foot(unit);
+            for member in &unit.members {
+                let Some(c) = self
+                    .game_state
+                    .room_creatures
+                    .iter()
+                    .find(|c| &c.id == member)
+                else {
+                    continue;
+                };
+                let flags = c.flags.as_ref();
+                let lift = flags.and_then(|f| {
+                    if f.has_flag("flying") {
+                        Some(-0.22)
+                    } else if f.has_flag("hovering") {
+                        Some(-0.12)
+                    } else {
+                        None
+                    }
+                });
+                out.push(crate::core::remote::RemoteFieldCard {
+                    id: member.trim_start_matches('#').to_string(),
+                    noun: c
+                        .noun
+                        .clone()
+                        .unwrap_or_else(|| {
+                            c.name.rsplit(' ').next().unwrap_or(&c.name).to_string()
+                        }),
+                    name: c.name.clone(),
+                    rect: [rect.x0, rect.y0, rect.x1, rect.y1],
+                    foot: [fx, fy],
+                    dead: c.is_dead(),
+                    boss: flags.is_some_and(|f| f.is_boss()),
+                    current: !current.is_empty()
+                        && member.trim_start_matches('#') == current,
+                    statuses: flags
+                        .map(|f| f.statuses.clone())
+                        .unwrap_or_default(),
+                    lift,
+                });
+            }
+        }
+        out
     }
 
     /// The phone map's wire data: the same sheet + building filter the

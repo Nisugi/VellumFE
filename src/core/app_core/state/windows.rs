@@ -279,6 +279,7 @@ impl AppCore {
                     })
                 }
                 WidgetType::Targets => WindowContent::Targets,
+                WidgetType::CreatureField => WindowContent::CreatureField,
                 WidgetType::Players => WindowContent::Players,
                 WidgetType::MissingSpells => WindowContent::MissingSpells,
                 WidgetType::Containers => WindowContent::Containers,
@@ -656,6 +657,7 @@ impl AppCore {
                 })
             }
             WidgetType::Targets => WindowContent::Targets,
+                WidgetType::CreatureField => WindowContent::CreatureField,
             WidgetType::Players => WindowContent::Players,
             WidgetType::MissingSpells => WindowContent::MissingSpells,
             WidgetType::Containers => WindowContent::Containers,

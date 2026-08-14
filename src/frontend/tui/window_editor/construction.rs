@@ -176,6 +176,8 @@ impl WindowEditor {
             // Multi-account cards are GUI-only and configured there; the TUI
             // editor exposes only the shared base fields.
             WindowDef::MultiAccount { .. } => {}
+            // Creature field is GUI-only; base fields suffice in the TUI.
+            WindowDef::CreatureField { .. } => {}
             WindowDef::CommandInput { .. } => {
                 fields.push(FieldRef::PromptIcon);
                 fields.push(FieldRef::PromptIconColor);

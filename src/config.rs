@@ -80,6 +80,7 @@ pub use widgets::{
     DEFAULT_INJURY_PALETTE,
     ActiveEffectsWidgetData, BetrayerWidgetData, BorderSides, CommandInputWidgetData,
     CompassWidgetData, CompiledTextReplacement, ContainerWidgetData, CountdownWidgetData,
+    CreatureFieldWidgetData,
     DashboardIndicatorDef, DashboardLayout, DashboardWidgetData, DialogPanelWidgetData,
     EncumbranceWidgetData,
     ExperienceWidgetData,
@@ -198,7 +199,7 @@ impl WidgetCategory {
             "indicator" | "dashboard" => Self::Status,
             "progress" | "minivitals" => Self::ProgressBar,
             "text" | "tabbedtext" => Self::TextWindow,
-            "targets" | "players" | "items" => Self::Entity,
+            "targets" | "players" | "items" | "creaturefield" => Self::Entity,
             "inventory" | "spells" | "missingspells" | "containers" | "injury_doll"
             | "experience" | "gs4_experience" | "encum" | "reserve" | "perception"
             | "multiaccount" => {
@@ -401,6 +402,7 @@ fn default_focus_exclude() -> Vec<String> {
         "quickbar".to_string(),
         "hotkeybar".to_string(),
         "targets".to_string(),
+        "creaturefield".to_string(),
         "players".to_string(),
         "items".to_string(),
         "inventory".to_string(),

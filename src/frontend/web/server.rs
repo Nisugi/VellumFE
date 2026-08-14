@@ -228,6 +228,7 @@ fn full_router(state: Arc<WebState>) -> Router {
         .route("/", get(dashboard_html))
         .route("/play", get(index_html))
         .route("/characters", get(characters_html))
+        .route("/creatures", get(creatures_html))
         .route("/sessions", get(sessions_json))
         .route("/app.js", get(app_js))
         .route("/wheel-core.js", get(wheel_core_js))
@@ -405,6 +406,16 @@ async fn characters_html() -> impl IntoResponse {
     (
         [(header::CACHE_CONTROL, "no-cache")],
         Html(include_str!("assets/characters.html")),
+    )
+}
+
+/// The creature field: the room's hostiles as host-placed cards, drawn on
+/// a canvas from `field` snapshots/deltas over `/ws` in watch mode. Tap to
+/// target. Entirely client-side, like the characters wall.
+async fn creatures_html() -> impl IntoResponse {
+    (
+        [(header::CACHE_CONTROL, "no-cache")],
+        Html(include_str!("assets/creatures.html")),
     )
 }
 

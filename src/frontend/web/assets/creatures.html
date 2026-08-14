@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111318">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <title>VellumFE — Creatures</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      min-height: 100%;
+      background: #111318;
+      color: #d6d6d6;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      -webkit-text-size-adjust: 100%;
+    }
+    body { padding: env(safe-area-inset-top) 12px env(safe-area-inset-bottom); }
+    header { display: flex; align-items: baseline; gap: 10px; padding: 14px 4px 12px; }
+    header h1 { font-size: 18px; color: #d9b44f; }
+    header a { color: #8a8f98; font-size: 12px; text-decoration: none; }
+    header a:hover { color: #d6d6d6; }
+    #who { margin-left: auto; color: #8a8f98; font-size: 12px; }
+    #stage-wrap {
+      background: #0f1116; border: 1px solid #2a2e37; border-radius: 10px;
+      padding: 8px; max-width: 960px;
+    }
+    canvas { display: block; width: 100%; height: auto; border-radius: 6px; touch-action: manipulation; }
+    #empty {
+      color: #8a8f98; font-size: 13px; text-align: center; padding: 40px 0;
+      display: none;
+    }
+    #status { color: #8a8f98; font-size: 11.5px; padding: 8px 4px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Creatures</h1>
+    <a id="back" href="/">&larr; play</a>
+    <a id="wall" href="/characters">wall</a>
+    <span id="who"></span>
+  </header>
+  <div id="stage-wrap">
+    <canvas id="stage" width="880" height="470"
+            aria-label="Creature field: the room's hostiles, tap to target"></canvas>
+    <div id="empty">No hostiles in the room</div>
+  </div>
+  <div id="status">connecting&hellip;</div>
+  <script>
+    "use strict";
+    // The host does all placement and condition logic; this page draws the
+    // broadcast cards (880x470 virtual stage, already in draw order) and
+    // taps send an ordinary target command. Same handshake as the wall:
+    // auth, declare watch BEFORE resume so the snapshot arrives trimmed.
+    const STAGE_W = 880, STAGE_H = 470;
+    const cv = document.getElementById("stage");
+    const ctx = cv.getContext("2d");
+    const statusEl = document.getElementById("status");
+    const emptyEl = document.getElementById("empty");
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = STAGE_W * dpr; cv.height = STAGE_H * dpr;
+
+    function pairingToken() {
+      const m = location.hash.match(/token=([^&]+)/);
+      return m ? decodeURIComponent(m[1]) : "";
+    }
+    document.getElementById("back").href = "/" + location.hash;
+    document.getElementById("wall").href = "/characters" + location.hash;
+
+    let field = [];
+    let animTimer = null;
+
+    function bodyColor(noun, dead) {
+      if (dead) return "#555555";
+      let h = 2166136261;
+      for (let i = 0; i < noun.length; i++) {
+        h ^= noun.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0;
+      }
+      return `hsl(${h % 360} 35% 45%)`;
+    }
+
+    function draw(nowMs) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, STAGE_W, STAGE_H);
+      const bg = ctx.createLinearGradient(0, 0, 0, STAGE_H);
+      bg.addColorStop(0, "#0f1116"); bg.addColorStop(1, "#191d25");
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, STAGE_W, STAGE_H);
+      emptyEl.style.display = field.length ? "none" : "block";
+
+      let anyStunned = false;
+      for (const c of field) {           // already far -> near
+        let [x0, y0, x1, y1] = c.rect;
+        const [fx, fy] = c.foot;
+        const lifted = typeof c.lift === "number";
+        if (lifted) { const dy = c.lift * (y1 - y0); y0 += dy; y1 += dy; }
+        const w = x1 - x0, hgt = y1 - y0, cx = (x0 + x1) / 2;
+
+        // Contact shadow stays at the floor footprint; softens when lifted.
+        ctx.fillStyle = `rgba(0,0,0,${lifted ? 0.12 : 0.28})`;
+        ctx.beginPath();
+        ctx.ellipse(fx, fy, w * 0.55 * (lifted ? 0.55 : 1), w * 0.13, 0, 0, 7);
+        ctx.fill();
+
+        // Downed postures squash the standee toward the ground.
+        const statuses = c.statuses || [];
+        const downed = statuses.some(s => s === "prone" || s === "kneeling" || s === "sitting");
+        const top = downed ? y0 + hgt * 0.45 : y0;
+
+        // Body capsule + head circle, noun-tinted (matches the GUI).
+        const color = bodyColor(c.noun || "creature", !!c.dead);
+        const headR = w * 0.22;
+        ctx.fillStyle = color;
+        roundRect(x0 + w * 0.18, top + headR * 1.6, w * 0.64, y1 - top - headR * 1.6, headR * 0.8);
+        ctx.fill();
+        ctx.beginPath(); ctx.arc(cx, top + headR, headR, 0, 7); ctx.fill();
+        if (c.boss) {
+          ctx.strokeStyle = "#c9a227"; ctx.lineWidth = 2;
+          roundRect(x0 + w * 0.18, top + headR * 1.6, w * 0.64, y1 - top - headR * 1.6, headR * 0.8);
+          ctx.stroke();
+        }
+        if (c.dead) {
+          const m = w * 0.24;
+          ctx.strokeStyle = "#d24b3c"; ctx.lineWidth = 2.5; ctx.lineCap = "round";
+          ctx.beginPath(); ctx.moveTo(x0 + m, top + m * 0.6); ctx.lineTo(x1 - m, top + m * 1.4); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(x1 - m, top + m * 0.6); ctx.lineTo(x0 + m, top + m * 1.4); ctx.stroke();
+        }
+
+        // Noun label at the feet.
+        ctx.fillStyle = "rgba(214,214,214,.6)";
+        ctx.font = "11px ui-monospace, Menlo, Consolas, monospace";
+        ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText(c.noun || "", cx, y1 + 2);
+
+        // Status badges above the head (postures are drawn, not written).
+        let topY = top;
+        const badges = statuses.filter(s =>
+          !["prone", "kneeling", "sitting", "flying", "hovering", "stunned"].includes(s));
+        if (badges.length) {
+          ctx.fillStyle = "#4fd1c5"; ctx.textBaseline = "bottom";
+          ctx.font = "9.5px ui-monospace, Menlo, Consolas, monospace";
+          ctx.fillText(badges.join(" "), cx, topY - 4);
+          topY -= 14;
+        }
+
+        // Stun swirl: three orbiting stars, wall-clock phased.
+        if (statuses.includes("stunned") && !c.dead) {
+          anyStunned = true;
+          const orbitR = Math.max(9, w * 0.42);
+          const cy = topY - orbitR * 0.42;
+          for (let k = 0; k < 3; k++) {
+            const ph = nowMs * 0.0026 + k * 2.0944;
+            const depth = (Math.sin(ph) + 1) / 2;
+            ctx.globalAlpha = 0.55 + 0.45 * depth;
+            ctx.fillStyle = "#f2c23c";
+            ctx.beginPath();
+            ctx.arc(cx + Math.cos(ph) * orbitR, cy + Math.sin(ph) * orbitR * 0.34,
+                    Math.max(1.6, w * (0.05 + 0.025 * depth)), 0, 7);
+            ctx.fill();
+          }
+          ctx.globalAlpha = 1;
+          topY = cy - orbitR * 0.34;
+        }
+
+        // Targeting reticule: downward green triangle on the current target.
+        if (c.current) {
+          const rw = Math.max(11, w * 0.34), rh = rw * 0.86;
+          const tipY = Math.min(topY - rw * 0.3, top);
+          ctx.fillStyle = "#48c774";
+          ctx.strokeStyle = "rgba(12,40,22,.85)"; ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.moveTo(cx, tipY); ctx.lineTo(cx - rw / 2, tipY - rh); ctx.lineTo(cx + rw / 2, tipY - rh);
+          ctx.closePath(); ctx.fill(); ctx.stroke();
+        }
+      }
+
+      // Idle rooms cost nothing: animate only while something is stunned.
+      if (anyStunned && !animTimer) {
+        animTimer = setInterval(() => draw(performance.now()), 50);
+      } else if (!anyStunned && animTimer) {
+        clearInterval(animTimer); animTimer = null;
+      }
+    }
+
+    function roundRect(x, y, w, h, r) {
+      r = Math.min(r, w / 2, Math.max(0, h / 2));
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+
+    // Tap-to-target: nearest card wins, so walk the draw order backwards.
+    cv.addEventListener("pointerdown", (ev) => {
+      const r = cv.getBoundingClientRect();
+      const px = (ev.clientX - r.left) * STAGE_W / r.width;
+      const py = (ev.clientY - r.top) * STAGE_H / r.height;
+      for (let i = field.length - 1; i >= 0; i--) {
+        const c = field[i];
+        let [x0, y0, x1, y1] = c.rect;
+        if (typeof c.lift === "number") { const dy = c.lift * (y1 - y0); y0 += dy; y1 += dy; }
+        if (px >= x0 && px <= x1 && py >= y0 && py <= y1) {
+          if (ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ t: "cmd", d: { text: `target #${c.id}` } }));
+          }
+          return;
+        }
+      }
+    });
+
+    // ---- socket ------------------------------------------------------------
+    let ws = null, retry = 1000;
+    function connect() {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      ws = new WebSocket(`${proto}://${location.host}/ws`);
+      ws.onopen = () => {
+        retry = 1000;
+        ws.send(JSON.stringify({ t: "auth", d: { token: pairingToken() } }));
+        ws.send(JSON.stringify({ t: "subscribe", d: { mode: "watch" } }));
+        ws.send(JSON.stringify({ t: "resume", d: { seq: 0 } }));
+        statusEl.textContent = "connected";
+      };
+      ws.onmessage = (ev) => {
+        let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg.t === "hello" && msg.d && msg.d.character) {
+          document.getElementById("who").textContent = msg.d.character;
+        } else if (msg.t === "snapshot") {
+          field = (msg.d && msg.d.field) || [];
+          draw(performance.now());
+        } else if (msg.t === "field") {
+          field = msg.d || [];
+          draw(performance.now());
+        }
+      };
+      ws.onclose = () => {
+        statusEl.textContent = "reconnecting…";
+        setTimeout(connect, retry);
+        retry = Math.min(retry * 2, 15000);
+      };
+    }
+    connect();
+    draw(performance.now());
+  </script>
+</body>
+</html>

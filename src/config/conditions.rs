@@ -104,6 +104,19 @@ pub enum Condition {
         #[serde(default)]
         name_match: NameMatch,
     },
+    /// A creature's `<crtrStatus>` flag by name, evaluated against the
+    /// creature in scope (creature-card overlays and variants). Open
+    /// vocabulary: canonical status names ("stunned", "webbed", ...),
+    /// classification flags ("hostile", "dead", "rider", ...), the feed's
+    /// raw spellings ("immobile"), and any status the server invents later
+    /// all resolve, case-insensitively. Fails closed — in a player-scoped
+    /// context (hotbars, hand icons, the player doll) there is no creature,
+    /// so this evaluates false regardless of `active`.
+    CrtrStatus {
+        id: String,
+        #[serde(default = "default_true")]
+        active: bool,
+    },
 }
 
 fn default_true() -> bool {
@@ -124,6 +137,21 @@ impl Condition {
             Condition::All { conditions } | Condition::Any { conditions } => {
                 for c in conditions {
                     c.referenced_indicator_ids(out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Every creature-status id this tree tests via `Condition::CrtrStatus`,
+    /// descending through All/Any. Used by ranked overlay art to find which
+    /// derived effect supplies its `{severity}`.
+    pub fn referenced_crtr_status_ids(&self, out: &mut Vec<String>) {
+        match self {
+            Condition::CrtrStatus { id, .. } => out.push(id.clone()),
+            Condition::All { conditions } | Condition::Any { conditions } => {
+                for c in conditions {
+                    c.referenced_crtr_status_ids(out);
                 }
             }
             _ => {}

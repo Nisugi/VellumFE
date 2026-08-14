@@ -135,6 +135,11 @@ struct SnapshotPayload {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     doll_hidden: Vec<String>,
     targets: Vec<RemoteTarget>,
+    /// Creature-field cards, host-placed on the 880x470 virtual stage in
+    /// draw order (see RemoteFieldCard). Kept in watch snapshots — the
+    /// /creatures page is a watch client.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    field: Vec<crate::core::remote::RemoteFieldCard>,
     entities: RemoteRoomEntities,
     portals: Vec<String>,
     char_info: RemoteCharInfo,
@@ -229,6 +234,7 @@ pub fn snapshot_for(
         doll_variant: state.doll_variant.clone(),
         doll_hidden: state.doll_hidden.clone(),
         targets: state.targets.clone(),
+        field: state.field.clone(),
         entities: state.entities.clone(),
         portals: state.portals.clone(),
         char_info: state.char_info.clone(),
@@ -358,6 +364,7 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
             serde_json::json!({ "variant": variant, "hidden": hidden }),
         ),
         RemoteDelta::Targets(targets) => encode("targets", last_seq, targets),
+        RemoteDelta::Field(cards) => encode("field", last_seq, cards),
         RemoteDelta::Entities(entities) => encode("entities", last_seq, entities),
         RemoteDelta::Portals(portals) => encode("portals", last_seq, portals),
         RemoteDelta::CharInfo(info) => encode("charinfo", last_seq, info),
@@ -663,6 +670,7 @@ impl SubscribeMode {
                     | D::Effects(_)
                     | D::Hands { .. }
                     | D::Doll { .. }
+                    | D::Field(_)
                     | D::Session(_)
             ),
         }
@@ -1261,6 +1269,12 @@ mod tests {
         }];
         state.spellbook = state.room_description.clone();
         state.portals = vec!["portal".to_string()];
+        state.field = vec![crate::core::remote::RemoteFieldCard {
+            id: "123".to_string(),
+            noun: "kobold".to_string(),
+            name: "a kobold".to_string(),
+            ..Default::default()
+        }];
         state.webui_pages = Vec::new();
         state.prepared_spell = Some("Spirit Warding I".to_string());
 
@@ -1291,6 +1305,9 @@ mod tests {
             "doll_variant",
             "doll_hidden",
             "targets",
+            // Deliberate: the /creatures page is a watch client; cards are
+            // small (no art on the wire) and are its whole reason to exist.
+            "field",
             "entities",
             "portals",
             "char_info",

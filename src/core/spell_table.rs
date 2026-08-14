@@ -38,10 +38,36 @@ pub struct SpellInfo {
     pub end_messages: Vec<String>,
 }
 
+/// One message-derived creature effect (`<effect availability="creature">`
+/// in effect-list.xml): bleeding and friends. Unlike crtrStatus flags these
+/// come from lossy combat messaging, so every one carries a timeout — a
+/// missed end message can never leave a stale layer. A start match re-arms
+/// the timer (Major Bleed ticks often); it must refresh, not stack.
+#[derive(Debug, Clone)]
+pub struct CreatureEffectSpec {
+    /// Status name injected into the creature's open-vocabulary statuses
+    /// ("bleeding") — drives `crtr_status` conditions, badges, and art.
+    pub name: String,
+    /// Seconds an unrefreshed instance survives (`<duration>`, integer).
+    pub timeout_s: u32,
+    /// Start messages: (compiled regex, severity rank 1-3).
+    pub starts: Vec<(regex::Regex, u8)>,
+    /// End messages.
+    pub ends: Vec<regex::Regex>,
+}
+
+/// Everything parsed from effect-list.xml: the spell reference plus the
+/// creature-effect specs. Derefs to the spell map for existing callers.
+#[derive(Default)]
+pub struct Tables {
+    spells: HashMap<u16, SpellInfo>,
+    creature_effects: Vec<CreatureEffectSpec>,
+}
+
 /// The live table, behind an `RwLock` so `.jinx install effect-list.xml` can
 /// swap in a newer copy without a restart. An `Arc` inside lets `table()`
 /// hand out a cheap snapshot without holding the lock.
-static TABLE: RwLock<Option<Arc<HashMap<u16, SpellInfo>>>> = RwLock::new(None);
+static TABLE: RwLock<Option<Arc<Tables>>> = RwLock::new(None);
 
 /// The effect-list XML to parse: a user copy in `global/data/` if present,
 /// else the bundled default. Mirrors the data pack's local-store-over-bundled
@@ -56,8 +82,8 @@ fn resolve_xml() -> std::borrow::Cow<'static, str> {
     std::borrow::Cow::Borrowed(EFFECT_LIST_XML)
 }
 
-/// The whole table, parsed on first use from the resolved source.
-pub fn table() -> Arc<HashMap<u16, SpellInfo>> {
+/// Parsed tables snapshot, parsed on first use from the resolved source.
+fn tables() -> Arc<Tables> {
     if let Some(table) = TABLE.read().unwrap().as_ref() {
         return Arc::clone(table);
     }
@@ -68,12 +94,37 @@ pub fn table() -> Arc<HashMap<u16, SpellInfo>> {
     parsed
 }
 
+/// The spell reference table.
+pub fn table() -> Arc<Tables> {
+    tables()
+}
+
+impl std::ops::Deref for Tables {
+    type Target = HashMap<u16, SpellInfo>;
+    fn deref(&self) -> &Self::Target {
+        &self.spells
+    }
+}
+
+/// Message-derived creature effect specs (bleeding and friends). Empty
+/// until an effect-list.xml with `<effect availability="creature">` entries
+/// is installed; the scanner is a no-op then.
+pub fn creature_effects() -> Arc<Tables> {
+    tables()
+}
+
+impl Tables {
+    pub fn creature_effects(&self) -> &[CreatureEffectSpec] {
+        &self.creature_effects
+    }
+}
+
 /// Re-read effect-list.xml from disk (preferring the installed copy) and swap
 /// the table. Called after `.jinx install effect-list.xml`. Returns the spell
 /// count for reporting.
 pub fn reload() -> usize {
     let parsed = Arc::new(parse_effect_list(&resolve_xml()));
-    let count = parsed.len();
+    let count = parsed.spells.len();
     *TABLE.write().unwrap() = Some(parsed);
     count
 }
@@ -81,19 +132,25 @@ pub fn reload() -> usize {
 /// Lookup by spell number. Returns an owned copy so callers don't hold the
 /// table lock; `SpellInfo` is small and clones cheaply.
 pub fn spell(number: u16) -> Option<SpellInfo> {
-    table().get(&number).cloned()
+    tables().spells.get(&number).cloned()
 }
 
-fn parse_effect_list(xml: &str) -> HashMap<u16, SpellInfo> {
+/// Default timeout for a creature effect whose `<duration>` is absent or a
+/// Ruby formula — the safety net must exist even when the data is sloppy.
+const DEFAULT_CREATURE_TIMEOUT_S: u32 = 15;
+
+fn parse_effect_list(xml: &str) -> Tables {
     use quick_xml::events::Event;
 
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
-    let mut spells = HashMap::new();
+    let mut tables = Tables::default();
     let mut current: Option<SpellInfo> = None;
-    // (element, attr "type") whose text content we are waiting for.
-    let mut pending: Option<(String, String)> = None;
+    // Creature effect being built: (spec, raw start (pattern, severity)).
+    let mut current_effect: Option<(String, u32, Vec<(String, u8)>, Vec<String>)> = None;
+    // (element, attr "type", attr "severity") whose text we wait for.
+    let mut pending: Option<(String, String, u8)> = None;
 
     let mut buf = Vec::new();
     loop {
@@ -118,15 +175,52 @@ fn parse_effect_list(xml: &str) -> HashMap<u16, SpellInfo> {
                             ..Default::default()
                         });
                     }
-                    "cost" | "message" if current.is_some() => {
-                        pending = attr("type").map(|kind| (tag, kind));
+                    // Message-derived creature effect (schema extension;
+                    // older clients ignore the unknown tag, Lich untouched).
+                    "effect" if attr("availability").as_deref() == Some("creature") => {
+                        if let Some(name) = attr("name").filter(|n| !n.is_empty()) {
+                            current_effect = Some((
+                                name,
+                                DEFAULT_CREATURE_TIMEOUT_S,
+                                Vec::new(),
+                                Vec::new(),
+                            ));
+                        }
+                    }
+                    "cost" | "message" if current.is_some() || current_effect.is_some() => {
+                        let severity = attr("severity")
+                            .and_then(|s| s.parse::<u8>().ok())
+                            .unwrap_or(1)
+                            .clamp(1, 3);
+                        pending = attr("type").map(|kind| (tag, kind, severity));
+                    }
+                    "duration" if current_effect.is_some() => {
+                        pending = Some((tag, String::new(), 1));
                     }
                     _ => {}
                 }
             }
             Ok(Event::Text(t)) => {
-                if let (Some(spell), Some((element, kind))) = (&mut current, &pending) {
-                    let text = t.unescape().map(|s| s.into_owned()).unwrap_or_default();
+                let text = || t.unescape().map(|s| s.into_owned()).unwrap_or_default();
+                if let (Some(effect), Some((element, kind, severity))) =
+                    (&mut current_effect, &pending)
+                {
+                    match element.as_str() {
+                        // Absent/formula durations keep the default net.
+                        "duration" => {
+                            if let Ok(secs) = text().trim().parse::<u32>() {
+                                effect.1 = secs.max(1);
+                            }
+                        }
+                        "message" => match kind.as_str() {
+                            "start" => effect.2.push((text(), *severity)),
+                            "end" => effect.3.push(text()),
+                            _ => {}
+                        },
+                        _ => {}
+                    }
+                } else if let (Some(spell), Some((element, kind, _))) = (&mut current, &pending) {
+                    let text = text();
                     match element.as_str() {
                         "cost" => match text.trim().parse::<u16>() {
                             Ok(value) => match kind.as_str() {
@@ -154,10 +248,40 @@ fn parse_effect_list(xml: &str) -> HashMap<u16, SpellInfo> {
                 match e.name().as_ref() {
                     b"spell" => {
                         if let Some(spell) = current.take() {
-                            spells.insert(spell.number, spell);
+                            tables.spells.insert(spell.number, spell);
                         }
                     }
-                    b"cost" | b"message" => pending = None,
+                    b"effect" => {
+                        if let Some((name, timeout_s, starts, ends)) = current_effect.take() {
+                            let compile = |src: &str| -> Option<regex::Regex> {
+                                regex::Regex::new(src)
+                                    .map_err(|e| {
+                                        tracing::warn!(
+                                            "effect-list creature effect '{}': bad regex {:?}: {}",
+                                            name,
+                                            src,
+                                            e
+                                        )
+                                    })
+                                    .ok()
+                            };
+                            let spec = CreatureEffectSpec {
+                                starts: starts
+                                    .iter()
+                                    .filter_map(|(src, sev)| {
+                                        compile(src).map(|re| (re, *sev))
+                                    })
+                                    .collect(),
+                                ends: ends.iter().filter_map(|src| compile(src)).collect(),
+                                name,
+                                timeout_s,
+                            };
+                            if !spec.starts.is_empty() {
+                                tables.creature_effects.push(spec);
+                            }
+                        }
+                    }
+                    b"cost" | b"message" | b"duration" => pending = None,
                     _ => {}
                 }
             }
@@ -170,7 +294,7 @@ fn parse_effect_list(xml: &str) -> HashMap<u16, SpellInfo> {
         }
         buf.clear();
     }
-    spells
+    tables
 }
 
 #[cfg(test)]
@@ -201,6 +325,56 @@ mod tests {
         // Song of Luck (1006): bard cost formula -> dynamic_cost.
         let song = spell(1006).expect("spell 1006");
         assert!(song.dynamic_cost);
+    }
+
+    #[test]
+    fn creature_effects_parse_with_severity_duration_and_bad_regex_skip() {
+        let tables = parse_effect_list(
+            r#"<spells>
+                 <spell number="101" name="Spirit Warding I"><cost type="mana">1</cost></spell>
+                 <effect availability="creature" name="bleeding">
+                   <duration>20</duration>
+                   <message type="start" severity="3">gushes blood</message>
+                   <message type="start" severity="1">a trickle of blood</message>
+                   <message type="start">unranked default</message>
+                   <message type="end">the bleeding stops</message>
+                 </effect>
+                 <effect availability="creature" name="broken">
+                   <message type="start">[unclosed(</message>
+                 </effect>
+                 <effect availability="self-cast" name="not-creature">
+                   <message type="start">ignored</message>
+                 </effect>
+               </spells>"#,
+        );
+        // Spells co-exist untouched.
+        assert_eq!(tables.spells.get(&101).unwrap().mana, Some(1));
+        // "broken" (only regex invalid) and "not-creature" both dropped.
+        assert_eq!(tables.creature_effects.len(), 1);
+        let bleed = &tables.creature_effects[0];
+        assert_eq!(bleed.name, "bleeding");
+        assert_eq!(bleed.timeout_s, 20);
+        assert_eq!(bleed.starts.len(), 3);
+        assert_eq!(bleed.starts[0].1, 3);
+        assert_eq!(bleed.starts[1].1, 1);
+        // No severity attr -> rank 1.
+        assert_eq!(bleed.starts[2].1, 1);
+        assert_eq!(bleed.ends.len(), 1);
+        assert!(bleed.starts[0].0.is_match("A troll gushes blood everywhere!"));
+    }
+
+    #[test]
+    fn creature_effect_duration_defaults_when_absent_or_formula() {
+        let tables = parse_effect_list(
+            r#"<spells>
+                 <effect availability="creature" name="poisoned">
+                   <duration>30+LEVEL*2</duration>
+                   <message type="start">looks sickly</message>
+                 </effect>
+               </spells>"#,
+        );
+        // Formula duration keeps the safety-net default.
+        assert_eq!(tables.creature_effects[0].timeout_s, DEFAULT_CREATURE_TIMEOUT_S);
     }
 
     #[test]

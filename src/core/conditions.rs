@@ -122,20 +122,50 @@ pub fn resolve_hand(
 
 /// Evaluate one condition tree against the game state. `gameobj` powers the
 /// hand-holds item-type tests; None fails those closed (every other
-/// condition works without it).
+/// condition works without it). Player-scoped: `CrtrStatus` conditions fail
+/// closed here — use [`eval_condition_for_creature`] when a creature is in
+/// scope.
 pub fn eval_condition(
     cond: &Condition,
     gs: &GameState,
     now_server: i64,
     gameobj: Option<&GameObjData>,
 ) -> bool {
+    eval(cond, gs, now_server, gameobj, None)
+}
+
+/// Evaluate one condition tree with a creature in scope (creature-card
+/// overlays and variants): `CrtrStatus` leaves test the given creature's
+/// flags; every other leaf evaluates exactly as [`eval_condition`] does, so
+/// creature rules can mix in player state (`rt_active`, `time_of_day`, ...)
+/// freely.
+pub fn eval_condition_for_creature(
+    cond: &Condition,
+    gs: &GameState,
+    now_server: i64,
+    gameobj: Option<&GameObjData>,
+    creature: &crate::core::state::CreatureFlags,
+) -> bool {
+    eval(cond, gs, now_server, gameobj, Some(creature))
+}
+
+fn eval(
+    cond: &Condition,
+    gs: &GameState,
+    now_server: i64,
+    gameobj: Option<&GameObjData>,
+    creature: Option<&crate::core::state::CreatureFlags>,
+) -> bool {
     match cond {
         Condition::All { conditions } => conditions
             .iter()
-            .all(|c| eval_condition(c, gs, now_server, gameobj)),
+            .all(|c| eval(c, gs, now_server, gameobj, creature)),
         Condition::Any { conditions } => conditions
             .iter()
-            .any(|c| eval_condition(c, gs, now_server, gameobj)),
+            .any(|c| eval(c, gs, now_server, gameobj, creature)),
+        Condition::CrtrStatus { id, active } => creature
+            .map(|flags| flags.has_flag(id) == *active)
+            .unwrap_or(false),
         Condition::EffectActive {
             category,
             name,
@@ -684,6 +714,94 @@ mod tests {
         assert!(crate::config::INJURY_AREAS.contains(&"neck"));
         assert!(crate::config::INJURY_AREAS.contains(&"nsys"));
         assert_eq!(crate::config::INJURY_AREAS.len(), 14);
+    }
+}
+
+#[cfg(test)]
+mod crtr_status_tests {
+    use super::*;
+    use crate::core::state::CreatureFlags;
+
+    fn crtr(id: &str, active: bool) -> Condition {
+        Condition::CrtrStatus {
+            id: id.to_string(),
+            active,
+        }
+    }
+
+    fn flags(attrs: &[(&str, &str)]) -> CreatureFlags {
+        CreatureFlags::from_xml_attrs(attrs.iter().copied())
+    }
+
+    /// Canonical names, the feed's raw spellings, classification bools, and
+    /// open-vocabulary statuses all resolve — one evaluator, any casing.
+    #[test]
+    fn crtr_status_matches_all_flag_vocabularies() {
+        let gs = GameState::new();
+        let f = flags(&[
+            ("stunned", "1"),
+            ("immobile", "1"), // canonicalized to "immobilized"
+            ("dead", "1"),
+            ("rider", "1"),
+            ("frobozzed", "1"), // open vocabulary: unknown server flag
+        ]);
+        for id in ["stunned", "STUNNED", "immobilized", "immobile", "dead", "rider", "frobozzed"] {
+            assert!(
+                eval_condition_for_creature(&crtr(id, true), &gs, 0, None, &f),
+                "{id} should read active"
+            );
+            assert!(!eval_condition_for_creature(&crtr(id, false), &gs, 0, None, &f));
+        }
+        // Inactive flag: active=false matches, active=true doesn't.
+        assert!(!eval_condition_for_creature(&crtr("webbed", true), &gs, 0, None, &f));
+        assert!(eval_condition_for_creature(&crtr("webbed", false), &gs, 0, None, &f));
+    }
+
+    /// Player-scoped evaluation has no creature: CrtrStatus fails closed in
+    /// BOTH directions, so a hand-authored one on a hotbar can never fire.
+    #[test]
+    fn crtr_status_fails_closed_without_a_creature() {
+        let gs = GameState::new();
+        assert!(!eval_condition(&crtr("stunned", true), &gs, 0, None));
+        assert!(!eval_condition(&crtr("stunned", false), &gs, 0, None));
+    }
+
+    /// Composes with All/Any and with player-scoped leaves under the same
+    /// creature context — a creature rule can mix in player state.
+    #[test]
+    fn crtr_status_composes_and_threads_creature_through_nesting() {
+        let mut gs = GameState::new();
+        gs.status.set("hidden", true);
+        let f = flags(&[("stunned", "1")]);
+        let cond = Condition::All {
+            conditions: vec![
+                crtr("stunned", true),
+                Condition::Indicator {
+                    id: "hidden".to_string(),
+                    active: true,
+                },
+            ],
+        };
+        assert!(eval_condition_for_creature(&cond, &gs, 0, None, &f));
+        // Same tree player-scoped: the creature leaf kills the All.
+        assert!(!eval_condition(&cond, &gs, 0, None));
+    }
+
+    /// Variant-style Any over postures, the creature-card motivating case.
+    #[test]
+    fn airborne_variant_condition_shape() {
+        let gs = GameState::new();
+        let airborne = Condition::Any {
+            conditions: vec![crtr("flying", true), crtr("hovering", true)],
+        };
+        assert!(eval_condition_for_creature(
+            &airborne, &gs, 0, None,
+            &flags(&[("hovering", "1")])
+        ));
+        assert!(!eval_condition_for_creature(
+            &airborne, &gs, 0, None,
+            &flags(&[("prone", "1")])
+        ));
     }
 }
 

@@ -269,6 +269,9 @@ fn plain_file_dest(asset: &Asset) -> Result<Option<PathBuf>, String> {
         "statusicon" => Config::global_image_category_dir("statusicons"),
         // Hand-widget icons (static picker + status-driven states).
         "hand" => Config::global_image_category_dir("hands"),
+        // Creature-card base sprites; the [creature_card] cascade finds
+        // them via the shared image pool ("creatures/{noun}.png").
+        "creature" => Config::global_image_category_dir("creatures"),
         // Sound packs land in the shared sounds dir (highlight sounds, music).
         "sound" => Config::sounds_dir(),
         // Composed bundles: extracted elsewhere, not a plain write.
@@ -599,6 +602,7 @@ mod tests {
             ("compass", "compass"),
             ("statusicon", "statusicons"),
             ("hand", "hands"),
+            ("creature", "creatures"),
         ] {
             let mut db = InstalledDb::default();
             let body = format!("PNG-{kind}").into_bytes();

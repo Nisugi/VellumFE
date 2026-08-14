@@ -451,6 +451,20 @@ impl Frontend for TuiFrontend {
                         );
                         f.render_widget(note, area);
                     }
+                    WindowContent::CreatureField => {
+                        // GUI-only sprite widget; the TUI equivalent for
+                        // per-creature status is the targets window.
+                        let note = ratatui::widgets::Paragraph::new(
+                            "Creature field is a GUI widget. In the TUI, the targets \
+                             window carries per-creature status.",
+                        )
+                        .wrap(ratatui::widgets::Wrap { trim: true })
+                        .style(
+                            ratatui::style::Style::default()
+                                .fg(ratatui::style::Color::DarkGray),
+                        );
+                        f.render_widget(note, area);
+                    }
                     WindowContent::Items => {
                         // Use the Items widget (component-based, reads from GameState.room_objects)
                         if let Some(items_widget) = items_widgets.get_mut(name) {
