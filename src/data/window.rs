@@ -148,6 +148,7 @@ impl WidgetType {
         "spells",
         "missingspells",
         "containers",
+        "bestiaryview",
         "multiaccount",
         "perception",
         "performance",
