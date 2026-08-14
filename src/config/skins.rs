@@ -78,6 +78,11 @@ pub struct SkinManifest {
     /// Sprite paperdoll replacing the vector injury doll.
     #[serde(default)]
     pub injury_doll: InjuryDollSkin,
+    /// Creature cards: the shared card template for the creaturefield
+    /// widget. One template serves every creature; per-creature art comes
+    /// from the resolve cascade, per-creature state from `<crtrStatus>`.
+    #[serde(default)]
+    pub creature_card: CreatureCardSkin,
     /// Editor/menu color palette. Every field is optional: unset colors are
     /// auto-derived from the skin's art at load, and any `[ui]` entry
     /// overrides its derived default. This is what makes config editors,
@@ -251,6 +256,220 @@ fn default_dot_opacity() -> f32 {
 
 fn default_dot_diameter() -> f32 {
     0.07
+}
+
+/// Creature card template, deliberately the injury doll's shape so the
+/// condition evaluator, variant matcher, and calibration UI are shared
+/// rather than forked. Differences from `[injury_doll]`:
+///
+/// - One template serves EVERY creature; the base image resolves per
+///   creature through `resolve` ({noun}/{family} placeholders).
+/// - Conditions here are creature-scoped: `crtr_status` leaves test the
+///   card's creature; player-scoped leaves still work and read the player.
+/// - Creatures take wounds only: injury1-3 + healthy. Scar states
+///   (scar1-3) are intentionally unused — the loader drops them — but the
+///   key space stays reserved so a future reversal is a content change.
+/// - Status overlay art is SHARED across families (scaled to the card's
+///   alpha bbox or placed by anchor fraction). Never author per-family
+///   status art; that is what keeps the asset count linear.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CreatureCardSkin {
+    /// Final fallback when nothing in `resolve` exists on disk.
+    #[serde(default)]
+    pub base: Option<String>,
+    /// Base-image resolution cascade, first existing file wins. Templates:
+    /// `{noun}` (from the room-objs parse) and `{family}` (when known).
+    /// Candidates whose placeholders can't be filled are skipped. Empty =
+    /// the built-in default cascade.
+    #[serde(default)]
+    pub resolve: Vec<String>,
+    /// Card anchor points as fractions (0-1) of the base image: "head",
+    /// "mouth", "feet", and "saddle" (mount-capable families). Missing
+    /// anchors fall back to `CREATURE_ANCHOR_DEFAULTS`.
+    #[serde(default)]
+    pub anchors: HashMap<String, [f32; 2]>,
+    /// Status/effect layers, evaluated per creature in declaration order;
+    /// every matching overlay draws (unlike variants, these stack).
+    #[serde(default)]
+    pub overlays: Vec<CardOverlay>,
+    /// Named alternate cards selected by creature-scoped condition, first
+    /// match wins (posture swaps: downed, airborne). A matched variant
+    /// replaces base/anchors/parts wholesale, doll-style; its `lift`
+    /// offsets the drawn card without moving its floor footprint.
+    #[serde(default)]
+    pub variants: Vec<CardVariant>,
+    /// Per-part injury overlay art, identical shape to the doll's part
+    /// tables (scar keys dropped at load).
+    #[serde(flatten)]
+    pub parts: HashMap<String, DollPartSpec>,
+}
+
+/// One status/effect layer on the card.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CardOverlay {
+    /// Image path (skin-relative). May contain `{severity}` for ranked
+    /// message-derived effects (expanded 1-3 at render).
+    pub image: String,
+    /// Where the layer lives: warped with the card quad, or flat in screen
+    /// space (head FX, reticules — never warped into the floor plane).
+    #[serde(default)]
+    pub space: OverlaySpace,
+    /// Anchor name this layer is placed at ("head", "mouth", ...). None =
+    /// body-wrap: scaled to the card's alpha bbox.
+    #[serde(default)]
+    pub anchor: Option<String>,
+    /// Draw order within the card's layer stack (higher = nearer).
+    #[serde(default)]
+    pub layer: i32,
+    /// Authority tier: feed-derived flags never go stale; message-derived
+    /// layers must carry `timeout_s` so a missed end message can't leave
+    /// the layer stuck.
+    #[serde(default)]
+    pub source: OverlaySource,
+    /// Seconds after which a message-derived layer expires unrefreshed.
+    #[serde(default)]
+    pub timeout_s: Option<u32>,
+    /// Data-driven motion (orbit, pulse, ...), rendered from wall clock.
+    #[serde(default)]
+    pub animate: Option<AnimateSpec>,
+    /// Creature-scoped activation condition (`crtr_status` + the shared
+    /// vocabulary).
+    pub when: super::conditions::Condition,
+}
+
+/// Layer coordinate space.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverlaySpace {
+    #[default]
+    Quad,
+    Screen,
+}
+
+/// Layer authority tier (which system may activate/expire it).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverlaySource {
+    /// `<crtrStatus>` flags: authoritative, no expiry needed.
+    #[default]
+    Feed,
+    /// Combat-message inference: lossy, requires `timeout_s`.
+    Message,
+}
+
+/// Data-driven motion for a card overlay. All primitives take their phase
+/// from the wall clock, so an idle room renders zero frames.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AnimateSpec {
+    pub kind: AnimateKind,
+    /// Instances drawn (orbit stars, drift motes).
+    #[serde(default = "default_animate_count")]
+    pub count: u32,
+    /// Orbit x-radius as a fraction of the anchor width.
+    #[serde(default = "default_animate_rx")]
+    pub rx: f32,
+    /// Orbit y-radius as a fraction of the anchor width.
+    #[serde(default = "default_animate_ry")]
+    pub ry: f32,
+    /// One full cycle, in milliseconds.
+    #[serde(default = "default_animate_period")]
+    pub period_ms: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnimateKind {
+    Orbit,
+    Pulse,
+    Drift,
+    Shake,
+    Flicker,
+    Spin,
+}
+
+fn default_animate_count() -> u32 {
+    1
+}
+fn default_animate_rx() -> f32 {
+    0.42
+}
+fn default_animate_ry() -> f32 {
+    0.14
+}
+fn default_animate_period() -> u32 {
+    2400
+}
+
+/// One conditional card variant: a replacement card set plus its
+/// creature-scoped activation condition.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CardVariant {
+    pub name: String,
+    pub when: super::conditions::Condition,
+    #[serde(default)]
+    pub skin: CardSet,
+}
+
+/// A complete card set as carried by a variant (no nesting, doll-style).
+/// `base: None` keeps the resolved ground pose — an airborne variant can be
+/// pure lift with no dedicated art.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CardSet {
+    #[serde(default)]
+    pub base: Option<String>,
+    #[serde(default)]
+    pub anchors: HashMap<String, [f32; 2]>,
+    /// Screen-space lift for airborne variants: the card rises, the
+    /// contact shadow stays at the floor footprint and softens.
+    #[serde(default)]
+    pub lift: Option<LiftSpec>,
+    /// part -> its overlay art and options.
+    #[serde(flatten)]
+    pub parts: HashMap<String, DollPartSpec>,
+}
+
+/// Airborne offset: fractions of card height / shadow multipliers, so the
+/// values survive the card-shrink that happens as the floor grows columns.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct LiftSpec {
+    /// Vertical screen offset as a fraction of card height (negative = up).
+    pub offset_y: f32,
+    #[serde(default = "default_shadow_scale")]
+    pub shadow_scale: f32,
+    #[serde(default = "default_shadow_opacity")]
+    pub shadow_opacity: f32,
+}
+
+fn default_shadow_scale() -> f32 {
+    0.55
+}
+fn default_shadow_opacity() -> f32 {
+    0.4
+}
+
+/// Built-in base-image cascade when the manifest's `resolve` is empty.
+pub const CREATURE_RESOLVE_DEFAULT: &[&str] = &[
+    "creatures/{noun}.png",
+    "creatures/{family}.png",
+    "creatures/default.png",
+];
+
+/// Default card anchors as fractions of the base image, used when the skin
+/// hasn't calibrated one. Head/feet are also derivable from the sprite's
+/// alpha bounds at render; these are the resting positions.
+pub const CREATURE_ANCHOR_DEFAULTS: &[(&str, [f32; 2])] = &[
+    ("head", [0.50, 0.06]),
+    ("mouth", [0.50, 0.16]),
+    ("feet", [0.50, 0.98]),
+    ("saddle", [0.50, 0.35]),
+];
+
+/// Built-in anchor for a creature-card anchor name (case-insensitive).
+pub fn default_creature_anchor(name: &str) -> Option<[f32; 2]> {
+    CREATURE_ANCHOR_DEFAULTS
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, anchor)| *anchor)
 }
 
 /// Canonical body parts: (protocol key, display name, default anchor as
