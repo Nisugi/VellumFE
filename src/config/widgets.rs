@@ -994,6 +994,11 @@ pub struct MissingSpellsWidgetData {}
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ContainersWidgetData {}
 
+/// Bestiary browser widget (GUI: search/filter table + stat-grid entry
+/// view over the bundled codex; TUI renders a pointer to .bestiary)
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct BestiaryViewWidgetData {}
+
 /// Multi-account cards: which rows each character's card shows.
 ///
 /// Every element is opt-in per field rather than a fixed card template,

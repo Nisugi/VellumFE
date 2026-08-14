@@ -5,6 +5,7 @@
 
 use super::*;
 
+mod bestiary;
 mod boards;
 mod command_widget;
 mod containers;
@@ -151,6 +152,9 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::Containers => Self::render_containers_content(app_core, ui),
+            WindowContent::BestiaryView => {
+                Self::render_bestiary_content(app_core, ui, &tab.window_name)
+            }
             WindowContent::MissingSpells => {
                 Self::render_missing_spells_content(app_core, ui);
                 None

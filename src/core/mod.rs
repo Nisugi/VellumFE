@@ -5,6 +5,7 @@
 //! Core updates data structures in the data layer, frontends read and render.
 
 pub mod app_core;
+pub mod bestiary;
 pub mod bounty_parser;
 pub mod character_state;
 pub mod day_pass;

@@ -327,6 +327,12 @@ impl MapService {
         }
     }
 
+    /// The real server uid of the room we're standing in, when known.
+    /// (Bestiary "here" queries key spawn ranges off this.)
+    pub fn current_uid(&self) -> Option<i64> {
+        self.last_uid
+    }
+
     pub fn db_state(&self) -> DbState {
         self.db_state
     }

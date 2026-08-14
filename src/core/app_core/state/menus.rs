@@ -313,6 +313,24 @@ impl AppCore {
             }
         }
 
+        // Local codex injection: when the clicked object's noun is a known
+        // creature (targets window, room creatures), the game's own context
+        // menu gains a Bestiary item. `.bestiary <noun>` resolves unique
+        // nouns straight to the entry and ambiguous ones to a match table.
+        if !crate::core::bestiary::format::shared()
+            .by_noun(&pending.noun)
+            .is_empty()
+        {
+            categories
+                .entry("0".to_string())
+                .or_default()
+                .push(crate::data::ui_state::PopupMenuItem {
+                    text: "Bestiary".to_string(),
+                    command: format!(".bestiary {}", pending.noun),
+                    disabled: false,
+                });
+        }
+
         if categories.is_empty() {
             tracing::warn!("No menu items available for this object");
             self.answer_remote_menu_empty(&pending);

@@ -789,6 +789,7 @@ impl BaseMut for WindowDef {
             WindowDef::Spells { base, .. } => Some(base),
             WindowDef::MissingSpells { base, .. } => Some(base),
             WindowDef::Containers { base, .. } => Some(base),
+            WindowDef::BestiaryView { base, .. } => Some(base),
             WindowDef::MultiAccount { base, .. } => Some(base),
             WindowDef::Perception { base, .. } => Some(base),
             WindowDef::Experience { base, .. } => Some(base),

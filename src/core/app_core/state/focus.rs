@@ -255,6 +255,7 @@ impl AppCore {
             crate::data::WidgetType::Spells => "spells",
             crate::data::WidgetType::MissingSpells => "missingspells",
             crate::data::WidgetType::Containers => "containers",
+            crate::data::WidgetType::BestiaryView => "bestiaryview",
             crate::data::WidgetType::MultiAccount => "multiaccount",
             crate::data::WidgetType::Spacer => "spacer",
             crate::data::WidgetType::Performance => "performance",

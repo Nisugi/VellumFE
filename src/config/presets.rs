@@ -154,6 +154,7 @@ pub const CATALOG: &[(&str, Option<GameType>)] = &[
     ("main", None),
     ("thoughts", None),
     ("speech", None),
+    ("bestiary", None),
     ("announcements", None),
     ("loot", None),
     ("death", None),
@@ -188,6 +189,7 @@ pub const CATALOG: &[(&str, Option<GameType>)] = &[
     ("spells", None),
     ("missingspells", None),
     ("containers", Some(GameType::GS4)),
+    ("bestiaryview", Some(GameType::GS4)),
     ("compass", None),
     ("map", None),
     ("injuries", None),
@@ -1320,6 +1322,28 @@ impl Config {
                 },
             }),
 
+            "bestiary" => Some(WindowDef::Text {
+                base: WindowBase {
+                    name: "bestiary".to_string(),
+                    title: Some("Bestiary".to_string()),
+                    rows: Height::new(24),
+                    cols: Width::new(69),
+                    show_border: true,
+                    ..base_defaults.clone()
+                },
+                data: TextWidgetData {
+                    // .bestiary output; wordwrap off keeps the 65-col boxes
+                    // and tables aligned (the window scrolls horizontally
+                    // when narrower).
+                    streams: vec!["bestiary".to_string()],
+                    buffer_size: 10000,
+                    wordwrap: false,
+                    show_timestamps: false,
+                    timestamp_position: None,
+                    compact: false,
+                },
+            }),
+
             "announcements" => Some(WindowDef::Text {
                 base: WindowBase {
                     name: "announcements".to_string(),
@@ -1647,6 +1671,21 @@ impl Config {
                     ..base_defaults.clone()
                 },
                 data: ContainersWidgetData {},
+            }),
+            // Bestiary browser (GUI app-style pages over the bundled codex)
+            "bestiaryview" => Some(WindowDef::BestiaryView {
+                base: WindowBase {
+                    name: "bestiaryview".to_string(),
+                    title: Some("Bestiary Browser".to_string()),
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(24),
+                    cols: Width::new(60),
+                    min_rows: Some(8),
+                    min_cols: Some(30),
+                    ..base_defaults.clone()
+                },
+                data: BestiaryViewWidgetData {},
             }),
             "perception" => Some(WindowDef::Perception {
                 base: WindowBase {

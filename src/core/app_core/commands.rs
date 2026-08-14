@@ -2065,6 +2065,84 @@ impl AppCore {
         }
     }
 
+    /// `.bestiary` — creature lookup against the bundled codex. Output is
+    /// styled lines on the `bestiary` stream (falls back to main when no
+    /// window subscribes to it); links re-enter this dispatch as
+    /// `.bestiary ...` direct commands.
+    fn handle_bestiary(&mut self, parts: &[&str]) {
+        use crate::core::bestiary::format;
+        let db = format::shared();
+        if db.is_empty() {
+            self.add_system_message("[bestiary] bundled codex failed to load.");
+            return;
+        }
+        let args = &parts[1..];
+        let lines = match args.first().map(|s| s.to_ascii_lowercase()).as_deref() {
+            None | Some("help") => format::help_lines(),
+            Some("here") => match self.map.current_uid() {
+                Some(uid) if uid > 0 => {
+                    let rows = db.here(uid as u64);
+                    format::table_lines(&rows, "Spawns around this room")
+                }
+                _ => {
+                    self.add_system_message("[bestiary] current room uid unknown.");
+                    return;
+                }
+            },
+            Some("level") => {
+                let spec = args.get(1).copied().unwrap_or("");
+                let (lo, hi) = match spec.split_once('-') {
+                    Some((a, b)) => (a.trim().parse().ok(), b.trim().parse().ok()),
+                    None => {
+                        let v: Option<i64> = spec.trim().parse().ok();
+                        (v, v)
+                    }
+                };
+                match (lo, hi) {
+                    (Some(lo), Some(hi)) => {
+                        format::table_lines(&db.by_level(lo, hi), &format!("Level {spec}"))
+                    }
+                    _ => {
+                        self.add_system_message("Usage: .bestiary level <n> or <a>-<b>");
+                        return;
+                    }
+                }
+            }
+            Some("area") => {
+                let q = args[1..].join(" ");
+                format::table_lines(&db.by_area(&q), &format!("Area '{q}'"))
+            }
+            Some("family") => {
+                let q = args[1..].join(" ");
+                format::table_lines(&db.by_family(&q), &format!("Family '{q}'"))
+            }
+            Some("undead") => format::table_lines(&db.undead(), "Undead"),
+            Some("search") => {
+                let q = args[1..].join(" ");
+                format::table_lines(&db.search(&q), &format!("Search '{q}'"))
+            }
+            Some(_) => {
+                let q = args.join(" ");
+                match db.resolve(&q) {
+                    Some(entry) => format::entry_lines(entry),
+                    None => {
+                        let rows = db.search(&q);
+                        if rows.is_empty() {
+                            self.add_system_message(&format!("[bestiary] no creature matches '{q}'."));
+                            return;
+                        }
+                        format::table_lines(&rows, &format!("Matches for '{q}'"))
+                    }
+                }
+            }
+        };
+        // App-style navigation: each step is a page, not appended scroll.
+        // Only bestiary-subscribed windows clear; the main-window fallback
+        // (no bestiary window in the layout) keeps its scrollback.
+        self.clear_stream_windows(format::STREAM);
+        self.add_client_lines_to_stream(format::STREAM, lines);
+    }
+
     fn handle_dot_command(&mut self, command: &str) -> Result<CommandOutcome> {
         let parts: Vec<&str> = command[1..].split_whitespace().collect();
         let cmd = parts.first().map(|s| s.to_lowercase()).unwrap_or_default();
@@ -2577,6 +2655,9 @@ impl AppCore {
                     self.message_processor.inv_service.request_refresh(now_ms);
                     self.add_system_message("[invsync] requesting inventory snapshot...");
                 }
+            }
+            "bestiary" => {
+                self.handle_bestiary(&parts);
             }
             "rename" => {
                 if parts.len() >= 3 {

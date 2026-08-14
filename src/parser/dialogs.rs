@@ -479,13 +479,37 @@ impl XmlParser {
 
         if let Some(id) = Self::extract_attribute(tag_head, "id") {
             if Self::is_quickbar_id(&id) {
+                // Titles arrive entity-escaped (and sometimes doubly so:
+                // "Friends &amp;amp;&amp;amp; Enemies" on the wire) — decode
+                // until stable so the stored title is the human string.
                 let title = Self::extract_attribute(tag_head, "title")
-                    .map(|t| t.trim().to_string())
+                    .map(|t| {
+                        let mut text = t.trim().to_string();
+                        loop {
+                            let decoded = Self::decode_entities(text.clone());
+                            if decoded == text {
+                                break text;
+                            }
+                            text = decoded;
+                        }
+                    })
                     .filter(|t| !t.is_empty());
                 elements.push(ParsedElement::QuickbarOpen { id, title });
             } else {
+                // Titles arrive entity-escaped (and sometimes doubly so:
+                // "Friends &amp;amp;&amp;amp; Enemies" on the wire) — decode
+                // until stable so the stored title is the human string.
                 let title = Self::extract_attribute(tag_head, "title")
-                    .map(|t| t.trim().to_string())
+                    .map(|t| {
+                        let mut text = t.trim().to_string();
+                        loop {
+                            let decoded = Self::decode_entities(text.clone());
+                            if decoded == text {
+                                break text;
+                            }
+                            text = decoded;
+                        }
+                    })
                     .filter(|t| !t.is_empty());
                 if is_resident {
                     // Resident dialogs are persistent PANELS (combat, Buffs,

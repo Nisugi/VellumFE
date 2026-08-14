@@ -2026,7 +2026,18 @@ impl VellumGuiApp {
         };
 
         let outbound = match dispatch {
-            GuiLinkDispatch::NetworkCommand(command) => command,
+            GuiLinkDispatch::NetworkCommand(command) => {
+                if command.trim_start().starts_with('.') {
+                    // Synthetic client links (bestiary tables, etc.) carry
+                    // dot-commands; route through dot dispatch, not the game.
+                    self.app_core
+                        .message_processor
+                        .pending_client_commands
+                        .push(command.trim().to_string());
+                    return;
+                }
+                command
+            }
             GuiLinkDispatch::MenuRequest { exist_id, noun } => {
                 self.popup_menu_host = origin;
                 self.app_core.request_menu(exist_id, noun, click.click_pos)
@@ -2052,6 +2063,20 @@ impl VellumGuiApp {
 impl eframe::App for VellumGuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // Widget forensics: VELLUM_DEBUG_HOVER=1 turns on egui's
+        // debug-on-hover with the callstack feature — hovering ANY widget
+        // shows the source location that created it. For "what is drawing
+        // this?" mysteries; costs nothing when the env var is absent.
+        if std::env::var_os("VELLUM_DEBUG_HOVER").is_some() {
+            ctx.set_debug_on_hover(true);
+        }
+        // egui's DebugOptions.show_unaligned defaults ON in debug builds and
+        // stamps an orange "Unaligned" warning under widgets with
+        // fractionally-sized rects — the phantom strip that haunted the
+        // containers and bestiary windows in dev builds. Never wanted.
+        if ctx.global_style().debug.show_unaligned {
+            ctx.all_styles_mut(|style| style.debug.show_unaligned = false);
+        }
         self.app_core.perf_stats.record_frame();
         // "Render" in the GUI is last frame's CPU cost as reported by
         // eframe (App::ui + painting); the first frame has none yet.

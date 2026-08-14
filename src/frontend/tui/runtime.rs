@@ -609,10 +609,20 @@ async fn async_run(
                     )?;
 
                     if let Some(cmd) = command {
-                        app_core
-                            .perf_stats
-                            .record_bytes_sent((cmd.len() + 1) as u64);
-                        let _ = command_tx.send(cmd);
+                        if cmd.trim_start().starts_with('.') {
+                            // Synthetic client links (bestiary tables, etc.)
+                            // carry dot-commands; those re-enter dot dispatch
+                            // instead of going to the game.
+                            app_core
+                                .message_processor
+                                .pending_client_commands
+                                .push(cmd.trim().to_string());
+                        } else {
+                            app_core
+                                .perf_stats
+                                .record_bytes_sent((cmd.len() + 1) as u64);
+                            let _ = command_tx.send(cmd);
+                        }
                     }
 
                     if handled {

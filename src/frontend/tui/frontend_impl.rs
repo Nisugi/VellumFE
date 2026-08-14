@@ -437,6 +437,20 @@ impl Frontend for TuiFrontend {
                         );
                         f.render_widget(note, area);
                     }
+                    WindowContent::BestiaryView => {
+                        // GUI-only browse widget; the TUI experience is the
+                        // .bestiary command with its linked text output.
+                        let note = ratatui::widgets::Paragraph::new(
+                            "Bestiary browser is a GUI widget. In the TUI, use .bestiary \
+                             (add a 'bestiary' text window for a dedicated page view).",
+                        )
+                        .wrap(ratatui::widgets::Wrap { trim: true })
+                        .style(
+                            ratatui::style::Style::default()
+                                .fg(ratatui::style::Color::DarkGray),
+                        );
+                        f.render_widget(note, area);
+                    }
                     WindowContent::Items => {
                         // Use the Items widget (component-based, reads from GameState.room_objects)
                         if let Some(items_widget) = items_widgets.get_mut(name) {

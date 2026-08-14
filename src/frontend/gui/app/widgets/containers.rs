@@ -7,6 +7,24 @@
 use super::*;
 
 impl VellumGuiApp {
+    /// One fixed-width, right-aligned stat cell. Allocates the exact width
+    /// whether or not there's text, so columns line up across rows; the
+    /// text is painted (not a Label) because labels shrink to content.
+    fn stat_col(ui: &mut egui::Ui, text: &str, width: f32) {
+        let height = ui.text_style_height(&egui::TextStyle::Body);
+        let (rect, _) =
+            ui.allocate_exact_size(egui::Vec2::new(width, height), egui::Sense::hover());
+        if !text.is_empty() {
+            ui.painter().text(
+                rect.right_center(),
+                egui::Align2::RIGHT_CENTER,
+                text,
+                egui::TextStyle::Body.resolve(ui.style()),
+                ui.visuals().weak_text_color(),
+            );
+        }
+    }
+
     pub(super) fn render_containers_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
@@ -384,17 +402,38 @@ impl VellumGuiApp {
                 format!("{n} item{}", if n == 1 { "" } else { "s" })
             };
             let bd = weights.get(item.id.as_str()).copied().unwrap_or_default();
-            let weight = format!(" · {} lbs", Self::fmt_lbs(bd.total));
+            let weight = format!("{} lbs", Self::fmt_lbs(bd.total));
             let capacity = match item.in_capacity() {
-                Some(cap) => format!(" · {} lbs cap", cap.pounds),
+                Some(cap) => format!("{} cap", cap.pounds),
                 None => String::new(),
             };
-            let title = format!("{glyph}{} — {count}{weight}{capacity}", item.name);
-            let header = egui::CollapsingHeader::new(title)
-                .id_salt(("containers_node", item.id.as_str()))
-                .default_open(false);
-            let response = header
-                .show(ui, |ui| {
+            // Custom header row: name on the left, stats in fixed-width
+            // right-aligned columns (items | lbs | cap) so every row's
+            // numbers line up — a plain CollapsingHeader title can't
+            // column-align in a proportional font.
+            let state_id = ui.make_persistent_id(("containers_node", item.id.as_str()));
+            let cstate = egui::collapsing_header::CollapsingState::load_with_default_open(
+                ui.ctx(),
+                state_id,
+                false,
+            );
+            let (response, _, _) = cstate
+                .show_header(ui, |ui| {
+                    ui.label(format!("{glyph}{}", item.name));
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            // Right-to-left: rightmost column first. Exact
+                            // allocations so an empty cell still reserves
+                            // its column (painter text, not labels — labels
+                            // shrink and break the grid).
+                            Self::stat_col(ui, &capacity, 70.0);
+                            Self::stat_col(ui, &weight, 62.0);
+                            Self::stat_col(ui, &count, 62.0);
+                        },
+                    );
+                })
+                .body(|ui| {
                     if let Some(kids) = kids {
                         for kid in kids {
                             Self::containers_node(
@@ -406,22 +445,32 @@ impl VellumGuiApp {
                     } else {
                         ui.weak("empty");
                     }
-                })
-                .header_response
-                .on_hover_text(format!(
-                    "Container: {} lbs, Contents: {} lbs",
-                    Self::fmt_lbs(bd.own),
-                    Self::fmt_lbs(bd.contents)
-                ));
+                });
+            let response = response.on_hover_text(format!(
+                "Container: {} lbs, Contents: {} lbs",
+                Self::fmt_lbs(bd.own),
+                Self::fmt_lbs(bd.contents)
+            ));
             Self::containers_context_menu(ui, &response, item, clicked, click);
         } else {
             let weight = if item.weight > 0 {
-                format!("  ({} lb{})", item.weight, if item.weight == 1 { "" } else { "s" })
+                format!("{} lb{}", item.weight, if item.weight == 1 { "" } else { "s" })
             } else {
                 String::new()
             };
-            let response = ui
-                .add(egui::Label::new(format!("{}{weight}", item.name)).sense(egui::Sense::click()))
+            // Same column treatment as container rows: name left, weight in
+            // a fixed right-aligned column.
+            let mut name_response = None;
+            ui.horizontal(|ui| {
+                name_response = Some(
+                    ui.add(egui::Label::new(&item.name).sense(egui::Sense::click())),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    Self::stat_col(ui, &weight, 62.0);
+                });
+            });
+            let response = name_response
+                .expect("horizontal closure ran")
                 .on_hover_text(item.long.as_deref().unwrap_or(&item.name));
             // Left-click loads the item into the Item tab.
             if response.clicked() && clicked.is_none() {
