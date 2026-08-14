@@ -22,7 +22,7 @@ get it."
 
 <figure class="shot" data-shot="widgets/widgets-catalog-all-categories">
   <div class="shot-ph">📷 screenshot pending</div>
-  <figcaption>The <b>Windows</b> catalog with every category collapsed, showing the groups — <b>Status</b>, <b>Progress Bars</b>, <b>Countdowns</b>, <b>Active Effects</b>, <b>Entities</b>, <b>Hands</b>, <b>Text Windows</b>, <b>Character</b>, <b>Navigation</b>, <b>Hotbars</b>, <b>Containers</b>, <b>Dialogs</b>, <b>Other</b> — in the order the client lists them.</figcaption>
+  <figcaption>The <b>Windows</b> catalog with every category collapsed, showing the groups — <b>Status</b>, <b>Progress Bars</b>, <b>Countdowns</b>, <b>Active Effects</b>, <b>Entities</b>, <b>Hands</b>, <b>Text Windows</b>, <b>Character</b>, <b>Navigation</b>, <b>Hotbars</b>, <b>Containers</b>, <b>Dialogs</b>, and <b>Other</b> — in the order the client lists them.</figcaption>
 </figure>
 
 ## The roster
@@ -63,6 +63,7 @@ Custom bars are not a catalog row — see [Route 2](#route-2-the-custom-window-m
 | RT | `countdown` | Roundtime, counting down | [Countdowns](./countdowns.md) |
 | Cast | `countdown` | Cast time | [Countdowns](./countdowns.md) |
 | Stun | `countdown` | Stun time | [Countdowns](./countdowns.md) |
+| Pulse **GS4** | `countdown` | Time until the next mana/health pulse | [Countdowns](./countdowns.md) |
 
 ### Active Effects
 
@@ -95,7 +96,7 @@ string, four presets.
 | Row reads | Type to add | What it's for | Page |
 |---|---|---|---|
 | Story | `text` | The main game feed | [Text Windows](./text-windows.md) |
-| Thoughts · Speech · Announcements · Loot · Death · Logons · Familiar · Ambients · Bounties · Society Tasks | `text` | One window per stream, so it stops interrupting your story pane | [Text Windows](./text-windows.md) |
+| Thoughts · Speech · Bestiary · Announcements · Loot · Death · Logons · Familiar · Ambients · Bounties · Society Tasks | `text` | One window per stream, so it stops interrupting your story pane | [Text Windows](./text-windows.md) |
 | Chat | `tabbedtext` | Several streams as tabs in one window | [Tabbed Text](./tabbed-text.md) |
 
 ### Character
@@ -103,6 +104,8 @@ string, four presets.
 | Row reads | Type to add | What it's for | Page |
 |---|---|---|---|
 | Inventory | `inventory` | What you're carrying | [Inventory](./inventory.md) |
+| Containers **GS4** | `containers` | Your whole inventory as one tree, bags and all | [Containers](./containers.md) |
+| Characters | `multiaccount` | Your other logged-in characters, at a glance | *(no page yet)* |
 | Reserve **GS4** | `reserve` | What the game is holding aside for you | [Reserve](./reserve.md) |
 | Spells | `spells` | Your known-spells snapshot from login | [Spells](./spells.md) |
 | Missing Spells | `missingspells` | Watched spells that are *not* currently up | [Missing Spells](./missing-spells.md) |
@@ -148,6 +151,20 @@ no `container` row in a fresh catalog.
 | Row reads | Type to add | What it's for | Page |
 |---|---|---|---|
 | Betrayer **GS4** | `betrayer` | Blood points and the Betrayer item list | [Betrayer](./betrayer.md) |
+
+### Other
+
+| Row reads | Type to add | What it's for | Page |
+|---|---|---|---|
+| Bestiary Browser **GS4** | `bestiaryview` | The bundled creature codex, as browsable pages | *(no page yet)* |
+
+**Both bestiary rows are the same feature wearing two faces**, and both read the
+same bundled codex. The **Bestiary** row under *Text Windows* is where `.bestiary`
+prints its answers — ask a question, get styled lines. This row is the browsable
+version of that codex, with pages instead of a scrollback. Place either, or both.
+
+The stream is the fallback, not the lesser option: with no bestiary window in your
+layout, `.bestiary` output lands in your main window instead.
 
 ### Not in the catalog at all
 
@@ -242,12 +259,13 @@ widget; so are `command_input` and `commandinput`, `webui` and `lichui`,
 generalize from these four.
 
 **Not every widget has a settings section.** The GUI's right-click menu grows a
-widget-specific section only for types that have their own settings. Sixteen do:
+widget-specific section only for types that have their own settings. Seventeen do:
 **Countdown, Progress, Active Effects, Room, Targets, GS4 Experience,
 Encumbrance, MiniVitals, Tabbed Text, Hotkeybar, Indicator, Map, Injury Doll,
-Compass, Hand, Dashboard**. Every other type — including Inventory, Reserve,
-Container, Players, Items, Spells, Missing Spells, Quickbar, Perception, Betrayer,
-Spacer, and the DragonRealms Experience widget — has **no widget section**, and
+Compass, Hand, Dashboard, Characters**. Every other type — including Inventory,
+Reserve, Container, Containers, Bestiary Browser, Players, Items, Spells, Missing
+Spells, Quickbar, Perception, Betrayer, Spacer, and the DragonRealms Experience
+widget — has **no widget section**, and
 that is not a bug. Their appearance and framing still live under **Appearance**;
 they have nothing else to configure.
 

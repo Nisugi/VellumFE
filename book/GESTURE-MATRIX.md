@@ -24,16 +24,15 @@
 > following. **Treat every cell below as 🕒 until its area is re-verified.**
 >
 > **Known-false claims (do not transcribe):**
-> - The **widget roster and its counts are stale.** `WidgetType` gained `Containers`,
->   `MultiAccount`, and `BestiaryView`; `CATALOG` gained `bestiary`, `pulse`, `containers`,
->   `bestiaryview`, `multiaccount`. **GS4-only is now seven keys**, not four: `pulse`,
->   `reserve`, `containers`, `bestiaryview`, `gs4_experience`, `minivitals`, `betrayer`.
->   **Seventeen widget types have a GUI section**, not sixteen — `MultiAccount` →
->   **"Characters"**. The no-section list gained `Containers` and `BestiaryView`.
-> - **`widget_section_label` moved** from `window_config.rs:140-161` to **`:194-216`**.
->   Every cite of the old range in this file is wrong.
-> - **`VALID_TYPES` moved** from `window.rs:116-148` to **`:131-170`**.
-> - **`CATALOG` line cites have all shifted** by 2–5 lines (new rows were inserted mid-array).
+> - ~~The **widget roster and its counts are stale.**~~ **RESOLVED 2026-08-14 (Wave 9).**
+>   Gating block, widget-section block, and `widgets/README.md` all re-verified against
+>   `6c6523f7`: **73 catalog keys, 35 valid types, 7 GS4-only, 3 DR-only, 17 GUI widget
+>   sections.** New catalog rows `bestiary`, `pulse`, `containers`, `bestiaryview`,
+>   `multiaccount` are now on the roster page.
+> - ~~**`widget_section_label` moved**~~ **RESOLVED** — all cites now `:194-216`.
+> - ~~**`VALID_TYPES` moved**~~ **RESOLVED** — cite now `window.rs:131-167`.
+> - **`CATALOG` line cites elsewhere in this file have shifted** by 2–5 lines (new rows were
+>   inserted mid-array). The gating block is re-cited; other blocks are not.
 > - **There are now TWO container widgets.** `container` (per-bag, ephemeral, opt-in) is what
 >   `widgets/containers.md` documents; **`containers`** is a *different* widget — the
 >   extended-feed managed-inventory tree, catalog-placeable, titled **"Containers"**. The
@@ -111,7 +110,7 @@
 | **Perception `stream` + `buffer_size` authored but never read** | TUI, GUI | **[repair?]** | Preset ships `stream="percWindow"`, `buffer_size=100` (`presets.rs:1599-1600`); the flush path reads neither (`buffers.rs:187-255`). Both editors deliberately omit them. Same shape as the Inventory `buffer_size` row. |
 | **MiniVitals GUI settings are GLOBAL, not per-window** | GUI | **[repair?]** | `window_config.rs:351-353` reads one `ui_settings.vitals` for every MiniVitals window; `SetVitals` writes it back globally (`:668-673`). **Two MiniVitals windows cannot differ in the GUI.** The TUI stores per window in `layout.toml`, and the two frontends share no fields at all. |
 | **MiniVitals: GUI draws 8 bar kinds, TUI accepts 4** | TUI | **[repair?]** | `VitalKind` (`gui/persistence.rs:166-178`) adds Mind, Encumbrance, NextLevel, Blood. `tui/minivitals.rs:190-218` accepts only `health\|mana\|concentration\|stamina\|spirit` and **silently drops** the rest via `filter_map`. A GUI-authored layout renders in the TUI with bars missing, not an error. |
-| **Betrayer has no GUI widget section** | GUI | **[repair?]** | `widget_section_label` returns `None` for `W::Betrayer` (`window_config.rs:140-161`), so `show_items` and `bar_color` are TUI-only authoring. The GUI honors `show_items` from the layout but hardcodes the bar to `#cd4d4d` (`panels.rs:316-322`), never reading `bar_color`. |
+| **Betrayer has no GUI widget section** | GUI | **[repair?]** | `widget_section_label` returns `None` for `W::Betrayer` (`window_config.rs:194-216`), so `show_items` and `bar_color` are TUI-only authoring. The GUI honors `show_items` from the layout but hardcodes the bar to `#cd4d4d` (`panels.rs:316-322`), never reading `bar_color`. |
 | **Encumbrance color bands differ and only the TUI can author them** | GUI | **[repair?]** | TUI: four bands 0–20/21–50/51–80/81–100 with user colors (`tui/encumbrance.rs:146-153`). GUI: three fixed bands 0–33/34–66/67+ hardcoded, reading none of the four color fields (`panels.rs:282-286`). Each frontend also offers one toggle the other lacks (`show_bar` GUI-only, band colors TUI-only). |
 | **Custom quickbars have no in-app editor** | TUI, GUI, Mobile | **[repair?]** | `[[quickbars.custom]]` is TOML-only (`config/widgets.rs:940-973`, applied `state.rs:1061-1165`); no `.quickbars` command, and `quickbars` sits in `EXEMPT_PREFIXES` (`config/registry.rs:141`). The one live violation of "every feature ships its editor". |
 | **Quickbar is `Tab`-unreachable by default** | TUI | **[repair?]** | Arrow/Enter navigation needs focus (`input_handlers.rs:148-177`), but `"quickbar"` ships in `default_focus_exclude` (`src/config.rs:392`). Mouse clicking works regardless; the keyboard path is dead until the user edits `[ui.focus] exclude`. |
@@ -561,7 +560,7 @@ window** — a different name gives you two windows on one bag. `find_container`
 exact, then substring, then article-stripped (`core/game_objects/mod.rs:470-492`).
 
 **Neither Inventory nor Container gets a GUI widget section** —
-`widget_section_label` returns `None` for both (`window_config.rs:140-161`). The
+`widget_section_label` returns `None` for both (`window_config.rs:194-216`). The
 `menus.rs:967-977` type list gates **Appearance ▸ Text ▸ Word wrap + content
 alignment** only. TUI editor: Inventory/Reserve expose Streams, Buffer size, Wordwrap
 (no Timestamps); **Container exposes NOTHING** (`construction.rs:289-291`).
@@ -578,12 +577,14 @@ until the game re-sent the list). Document ONE behavior across frontends.
 
 ### Game-type gating — which windows exist for which game (added 2026-08-11)
 
-Gating lives in ONE table: `CATALOG` in `src/config/presets.rs:132-201`, as
-`(key, Option<GameType>)`. `None` = both games.
+Gating lives in ONE table: `CATALOG` in `src/config/presets.rs:132-206`, as
+`(key, Option<GameType>)`. `None` = both games. **73 keys** (re-counted 2026-08-14;
+an earlier audit's "74" was wrong).
 
-**GS4-only:** `reserve` (`:185`), `gs4_experience` (`:197`), `minivitals` (`:199`),
-`betrayer` (`:200`). **DR-only:** `concentration` (`:137`), `perception` (`:195`),
-`experience` (`:196`).
+**GS4-only — SEVEN keys** (re-verified 2026-08-14): `pulse` (`:176`), `reserve`
+(`:187`), `containers` (`:191`), `bestiaryview` (`:192`), `gs4_experience` (`:201`),
+`minivitals` (`:203`), `betrayer` (`:204`). **DR-only — THREE:** `concentration`
+(`:137`), `perception` (`:199`), `experience` (`:200`).
 
 **⚠️ The trap: `GameType::from_game_string` NEVER returns `None`** — it returns `DR`
 only when the game string starts with `dr` (case-insensitive) and **defaults to GS4 for
@@ -595,6 +596,26 @@ So "GS4-gated" means **hidden from DR characters**, not "requires you to set the
 and the bare-`.addwindow` picker (`state/menus.rs:573` → `addable_by_category`). **NOT
 gated:** the six-argument `.addwindow` form — `commands.rs:2295-2317` calls `add_window`
 with no game check. A DR player can force a `reserve` window; it renders empty.
+
+### Bestiary — one feature, two surfaces (added 2026-08-14)
+
+**Owner correction 2026-08-14:** the catalog's two bestiary rows are NOT unrelated. Both
+read the same bundled codex (`defaults/bestiary.json`, loaded by `src/core/bestiary.rs`;
+the file is baked offline by the `extract-bestiary` subcommand from lich-5 creature
+templates joined to Saga spawn tables — the runtime only ever reads the baked JSON).
+
+- **`bestiary`** (catalog key, `presets.rs:1325`, `WindowDef::Text`, title **Bestiary**) is
+  the **stream** `.bestiary` prints its styled answers to (`commands.rs:2068-2141`).
+- **`bestiaryview`** (`presets.rs:1676`, title **Bestiary Browser**, GS4-gated) is the
+  **GUI widget** — app-style browsable pages over that same codex.
+
+**Fallback:** with no bestiary-subscribed window in the layout, `.bestiary` output goes to
+the **main** window and keeps its scrollback; subscribed windows CLEAR per navigation step
+(`commands.rs:2140-2141`, `state/streams.rs:9`). Any page framing these as "live game feed
+vs static reference" is wrong — the stream is codex output too.
+
+**`bestiaryview` falls through `WidgetCategory::from_widget_type` to `Other`**
+(`config.rs:188-207` — no arm). Open product question, deliberately unfixed.
 
 ### Map and travel (added 2026-08-11)
 
@@ -784,8 +805,14 @@ drops the row** (`sync.rs:2366-2369`).
 
 ### Widget-section coverage (added 2026-08-11)
 
+**SEVENTEEN types have a GUI widget section** (re-verified 2026-08-14,
+`gui/app/window_config.rs:194-216`): Countdown, Progress, ActiveEffects, Room, Targets,
+GS4Experience, Encumbrance, MiniVitals, TabbedText, Hotkeybar, Indicator, Map, InjuryDoll,
+Compass, Hand, Dashboard, and **MultiAccount → "Characters"** (`:213`, new since the
+multiaccount merge — the count was sixteen before it).
+
 `widget_section_label` returns `None` for **Perception, Quickbar, MissingSpells, Betrayer,
-Inventory, Container, Experience (DR)** (`gui/app/window_config.rs:140-161`) — none has a GUI
+Inventory, Container, Containers, BestiaryView, Experience (DR)** — none has a GUI
 widget section. In the TUI editor, `Quickbar` and `MissingSpells` push **zero** fields
 (`construction.rs:206-207`); `Perception` pushes exactly three (`:296-301`).
 
@@ -1040,4 +1067,4 @@ pipeline — the intended way to prove a rule without waiting for a mob.
 - **Dot-command dispatcher:** `commands.rs` between `=== COMMAND ARMS BEGIN ===` (`:1820`) and `END` (`:2664`)
 - **Help table (tripwire-tested to match dispatcher):** `command_help.rs`
 - **UiAction protocol:** `data/ui_action.rs`
-- **Valid widget types:** `WidgetType::VALID_TYPES`, `src/data/window.rs:116-148`
+- **Valid widget types:** `WidgetType::VALID_TYPES`, `src/data/window.rs:131-167` (35 types)
