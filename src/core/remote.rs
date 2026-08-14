@@ -434,6 +434,9 @@ pub enum RemoteDelta {
     },
     /// The targetable-creature list changed.
     Targets(Vec<RemoteTarget>),
+    /// The creature field changed: placement, statuses, or the selected
+    /// target. Host-placed cards in draw order (see RemoteFieldCard).
+    Field(Vec<RemoteFieldCard>),
     /// The room entity lists (interact mode) changed.
     Entities(RemoteRoomEntities),
     /// The room's portal list (dynamic portals wheel) changed.
@@ -831,6 +834,10 @@ pub struct RemoteStateSnapshot {
     pub map_scene: RemoteMapSceneRef,
     /// Per-step map position/ghost state, paired with `map_scene`.
     pub map_state: RemoteMapState,
+    /// Creature-field cards, host-placed on the virtual stage in draw
+    /// order. Overlaid by AppCore::flush_remote_state (the solver state
+    /// lives on AppCore, not GameState).
+    pub field: Vec<RemoteFieldCard>,
     /// Active doll variant name from the skin's `[[injury_doll.variants]]`
     /// (host-resolved; None = the default set). Overlaid by
     /// AppCore::flush_remote_state.
@@ -865,6 +872,42 @@ pub struct RemoteRoomEntity {
 fn entity_noun(noun: Option<&str>, name: &str) -> String {
     noun.map(str::to_string)
         .unwrap_or_else(|| name.rsplit(' ').next().unwrap_or(name).to_string())
+}
+
+/// One creature card on the creature field, fully placed host-side: the
+/// browser draws rects on the solver's fixed 880x470 virtual stage and
+/// scales to its canvas — no solver, no condition logic client-side.
+/// Cards arrive in draw order (farthest first), so the client paints the
+/// list as-is.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteFieldCard {
+    /// Exist id without the leading '#'.
+    pub id: String,
+    pub noun: String,
+    pub name: String,
+    /// Card rect on the virtual stage: [x0, y0, x1, y1].
+    pub rect: [f32; 4],
+    /// Foot point (shadow centre) on the virtual stage.
+    pub foot: [f32; 2],
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default)]
+    pub dead: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default)]
+    pub boss: bool,
+    /// Currently selected target.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default)]
+    pub current: bool,
+    /// Active transient statuses (open vocabulary, feed order).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub statuses: Vec<String>,
+    /// Airborne screen lift as a fraction of card height (negative = up);
+    /// the shadow stays at `foot` and softens.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub lift: Option<f32>,
 }
 
 /// A targetable creature in the room, for the status drawer's tap-to-
@@ -1287,6 +1330,8 @@ impl RemoteStateSnapshot {
             // AppCore's doll_rules cache, not GameState).
             doll_variant: None,
             doll_hidden: Vec::new(),
+            // Overlaid from AppCore.creature_field.
+            field: Vec::new(),
         }
     }
 }
@@ -1770,6 +1815,9 @@ impl RemoteSink {
                 variant: snap.doll_variant.clone(),
                 hidden: snap.doll_hidden.clone(),
             });
+        }
+        if snap.field != self.last.field {
+            let _ = self.delta_tx.send(RemoteDelta::Field(snap.field.clone()));
         }
         if snap.targets != self.last.targets {
             let _ = self

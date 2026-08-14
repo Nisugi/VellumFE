@@ -24,8 +24,6 @@
 //! space relationship the solver guarantees is invariant under that
 //! scale, so widget resizes never re-solve anything.
 
-use std::collections::HashMap;
-
 /// Virtual stage the solver measures in. Renderers scale to their rect.
 pub const STAGE_W: f32 = 880.0;
 pub const STAGE_H: f32 = 470.0;
