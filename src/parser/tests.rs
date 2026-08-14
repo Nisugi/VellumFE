@@ -2995,6 +2995,25 @@ fn test_stream_window_room() {
     assert_eq!(subtitle.as_deref(), Some(" - Emberthorn Refuge, Bowery"));
 }
 
+/// Simu double-encodes some window titles on the wire; a single decode
+/// left "Friends &amp;&amp; Enemies" in the Windows menu. Display titles
+/// decode until stable.
+#[test]
+fn test_stream_window_title_double_encoded() {
+    let mut parser = test_parser();
+    let elements = parser.parse_line(
+        "<streamWindow id='friends' title='Friends &amp;amp;&amp;amp; Enemies'/>",
+    );
+    let title = elements
+        .iter()
+        .find_map(|e| match e {
+            ParsedElement::StreamWindow { title, .. } => title.clone(),
+            _ => None,
+        })
+        .expect("streamWindow with a title");
+    assert_eq!(title, "Friends && Enemies");
+}
+
 // ==================== Nav/RoomId Parsing ====================
 
 #[test]

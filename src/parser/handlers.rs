@@ -517,10 +517,14 @@ impl XmlParser {
         // Extract id and subtitle. Subtitles carry entity-escaped room
         // names (e.g. Scrivener&apos;s) - decode like text content.
         if let Some(id) = Self::extract_attribute(tag, "id") {
-            // extract_attribute now entity-decodes, so no extra decode here
-            // (double-decoding would collapse a literal `&amp;` in a title).
-            let subtitle = Self::extract_attribute(tag, "subtitle");
-            let title = Self::extract_attribute(tag, "title");
+            // extract_attribute entity-decodes once; titles are sometimes
+            // DOUBLE-encoded on the wire ("Friends &amp;amp;&amp;amp;
+            // Enemies"), so decode display titles until stable like the
+            // dialog/quickbar titles.
+            let subtitle =
+                Self::extract_attribute(tag, "subtitle").map(Self::decode_entities_stable);
+            let title =
+                Self::extract_attribute(tag, "title").map(Self::decode_entities_stable);
             elements.push(ParsedElement::StreamWindow {
                 id,
                 subtitle,

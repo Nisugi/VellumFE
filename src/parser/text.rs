@@ -122,6 +122,21 @@ impl XmlParser {
         }
     }
 
+    /// Decode entities repeatedly until stable. Simu double-encodes some
+    /// display titles ("Friends &amp;amp;&amp;amp; Enemies" on the wire),
+    /// so a single pass leaves "&amp;" in the human string. Only for
+    /// display-title attributes — game TEXT must decode exactly once, or a
+    /// literal "&amp;" someone typed would collapse.
+    pub(super) fn decode_entities_stable(mut text: String) -> String {
+        loop {
+            let decoded = Self::decode_entities(text.clone());
+            if decoded == text {
+                break text;
+            }
+            text = decoded;
+        }
+    }
+
     pub(super) fn decode_entities(text: String) -> String {
         // Fast path: most game text has no entities at all
         if !text.contains('&') {
