@@ -1055,6 +1055,17 @@ impl VellumGuiApp {
                         .and_then(parse_hex_color)
                     {
                         RichText::new(display_text).color(color)
+                    } else if let Some(color) = app_core
+                        .config
+                        .colors
+                        .presets
+                        .get("monsterbold")
+                        .and_then(|preset| preset.fg.as_deref())
+                        .and_then(parse_hex_color)
+                    {
+                        // Creatures are monsterbold text everywhere else in
+                        // the client; the list wears the same preset.
+                        RichText::new(display_text).color(color)
                     } else {
                         RichText::new(display_text)
                     };
