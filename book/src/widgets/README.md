@@ -105,7 +105,7 @@ string, four presets.
 |---|---|---|---|
 | Inventory | `inventory` | What you're carrying | [Inventory](./inventory.md) |
 | Containers **GS4** | `containers` | Your whole inventory as one tree, bags and all | [Containers Window](./containers-window.md) |
-| Characters | `multiaccount` | Your other logged-in characters, at a glance | *(no page yet)* |
+| Characters | `multiaccount` | Your other logged-in characters, at a glance | [Characters](./characters.md) |
 | Reserve **GS4** | `reserve` | What the game is holding aside for you | [Reserve](./reserve.md) |
 | Spells | `spells` | Your known-spells snapshot from login | [Spells](./spells.md) |
 | Missing Spells | `missingspells` | Watched spells that are *not* currently up | [Missing Spells](./missing-spells.md) |
@@ -161,7 +161,7 @@ no `container` row in a fresh catalog.
 
 | Row reads | Type to add | What it's for | Page |
 |---|---|---|---|
-| Bestiary Browser **GS4** | `bestiaryview` | The bundled creature codex, as browsable pages | *(no page yet)* |
+| Bestiary Browser **GS4** | `bestiaryview` | The bundled creature codex, as browsable pages | [Bestiary](../features/bestiary.md) |
 
 **Both bestiary rows are the same feature wearing two faces**, and both read the
 same bundled codex. The **Bestiary** row under *Text Windows* is where `.bestiary`

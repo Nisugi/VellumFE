@@ -155,6 +155,77 @@ including its id, location, and edge count. On connections that never report a r
 falls back to matching title, description, and exits — and only trusts an unambiguous match,
 holding in place otherwise.
 
+## Curated maps, satellites, and `.mappromote`
+
+Two kinds of map exist behind the picture described above, and knowing which one you are
+looking at explains why some places are laid out beautifully and others merely correctly.
+
+**Curated base maps** are the hand-drawn spine of the world — the street grid of Wehnimer's
+Landing, a major outdoor area. VellumFE ships a roster of which rooms belong to which base map,
+embedded in the build; no external install is needed to get them. What ships is *membership
+only*: the list of rooms that form "the town". **No coordinates are ever imported.** The client's
+own layout engine places every room from scratch, every time. That is why a curated map still
+reflows sensibly when the map database gains rooms, instead of drifting away from a frozen
+picture someone else drew.
+
+**Satellite maps** are the automatic remainder. Anything mappable that no base map claims gets
+split into connected chunks of the room graph, and each chunk becomes its own map — a bank
+interior, a treehouse, an entire hunting ground nobody has curated yet. Nothing about a satellite
+is authored. When curation grows, the split recomputes and satellites shrink or disappear on their
+own. Components smaller than two rooms are not minted as maps at all; they annotate the room you
+enter them from instead.
+
+**What you see:** a curated location and a satellite both draw as an ordinary map and both appear
+in the Map Explorer's location picker. The practical difference is editorial quality — a base map
+was scoped by a person, a satellite is whatever the graph handed it — and the fact that satellite
+names are generated defaults rather than chosen ones.
+
+### `.mappromote` is a contributor tool
+
+> ⚠️ **Most players never run this.** `.mappromote` exists to move map layout edits *out* of your
+> personal file and into a staging export intended to be merged into the project and shipped to
+> everyone. If you only want your own map to look right, the Explorer's **Edit** toggle already
+> does that permanently — stop there.
+
+The pipeline it serves: you tidy a map in the Map Explorer, those drags save as personal
+override diffs, and `.mappromote` hands you a file you can contribute upstream.
+
+Three forms:
+
+| Command | What it promotes |
+|---|---|
+| `.mappromote` | The map you are currently standing on. |
+| `.mappromote <map-key>` | One named map, whether or not you are in it. |
+| `.mappromote all` | Every map that has personal edits. |
+
+With no map resolved yet and no argument, it declines rather than guessing:
+`No current map; .mappromote <map-key> or .mappromote all`. Anything that goes wrong past that
+point reports as `mappromote: <reason>` — a map key with no personal edits, for instance.
+
+On success it prints the number of maps promoted, the file it wrote, and their keys, followed by
+`Ship it: merge that file into defaults/map_overrides.json and commit.`
+
+**Where the file lands:** `map_overrides_promoted.json`, written beside your personal
+`map_overrides.json` in the VellumFE config directory (`~/.vellum-fe/`, or wherever
+`VELLUM_FE_DIR` points).
+
+**Promotion is not a one-way trip out of your client.** The staging file loads back every session
+as a community layer stacked over the shipped curation, so a promoted map keeps looking the way
+you left it on this machine immediately and across restarts. Merging it into the project is only
+what shares it with everyone else. Your personal layer is emptied for the promoted maps, by
+design — the edits reach you through the community layer now, and leaving them in both places
+would apply group offsets twice.
+
+> ⚠️ **Running `.mappromote` twice is safe now, and used to not be.** A second promotion **merges**
+> into the existing staging entry rather than replacing it, so a small nudge made after your first
+> promotion no longer discards everything else you had staged. If you are on a build older than
+> this fix, promote once per map and check the staging file before promoting again.
+
+<figure class="shot" data-shot="widgets/map-curation-mappromote-output">
+  <div class="shot-ph">📷 screenshot pending</div>
+  <figcaption>The system messages after a successful <code>.mappromote</code>: the promoted map keys, the path to <code>map_overrides_promoted.json</code>, and the "Ship it" follow-up line.</figcaption>
+</figure>
+
 ## See also
 
 - [Travel (.go2)](./travel.md) — the commands behind every map click

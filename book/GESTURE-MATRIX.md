@@ -39,13 +39,15 @@
 > - ~~The **inventory/containers section predates the extended feed.**~~ **RESOLVED (Wave 10)** —
 >   `features/inventory-tools.md` gained an extended-feed section covering `.invsync`, `.find`,
 >   `.viewitem`, and `.drag`, led by the WRAYTH-banner prerequisite.
-> - **Undocumented commands:** `.bestiary`, `.mappromote`, `.emptyhands`/`.eh`,
->   `.fillhands`/`.fh`, `.viewitem`/`.inspect`, `.find`, `.drag`, `.invsync`. Three of them
->   need the **WRAYTH banner** (direct mode or Lich) — a prerequisite the book never states.
-> - **Undocumented features with no page:** bestiary codex + browser, managed-inventory tree,
->   multi-account **Characters** widget and `/characters` wall, split-screen scrollback (GUI),
->   pinned map service tags, map curation (`.mappromote`, curated bases, satellites), the
->   **Pulse** countdown.
+> - **Undocumented commands — REMAINING:** `.emptyhands`/`.eh`, `.fillhands`/`.fh`. Documented
+>   in Waves 10–11: `.invsync`, `.find`, `.viewitem`/`.inspect`, `.drag` (inventory-tools),
+>   `.bestiary` (features/bestiary.md), `.mappromote` (widgets/map.md). The WRAYTH-banner
+>   prerequisite is now stated in `features/inventory-tools.md`.
+> - **Undocumented features — REMAINING:** split-screen scrollback (GUI), the **Pulse**
+>   countdown row, creature HP in targets. Documented in Waves 10–11: the managed-inventory
+>   tree, bestiary codex + browser, multi-account **Characters** + `/characters` wall, map
+>   curation. **"Pinned map service tags" was struck — verified NOT to exist** (see the map
+>   curation block below).
 >
 > **Not audited, assume stale:** every cite into `commands.rs`, `state.rs` (+988 lines),
 > `element.rs`, `parser/handlers.rs` (+252), and `app.js`.
@@ -637,6 +639,56 @@ error. The GUI empty state says so in the window (`containers.rs:88-101`).
   confirm).` / `FAILED: {reason}`. One move at a time.
 
 **Mobile has NO containers surface** — only the `inv` stream chip and a touch-wheel Inventory slice.
+
+### Multi-account "Characters" (added 2026-08-14, Wave 11)
+
+Catalog key `multiaccount`, **NOT game-gated**, `WidgetCategory::Character`, template
+`presets.rs:1632` (title "Characters", 12x46, min 6x24). **HAS a GUI widget section** labelled
+"Characters" (`window_config.rs:213`) — the 17th, and the reason Wave 9's count moved.
+
+**Discovery is same-machine only and needs NO enabling.** Every instance already registers at
+`~/.vellum-fe/web-sessions/<pid>.json` and serves the same websocket the phone uses; the hub is
+purely a CONSUMER, re-reading the registry every 5s and dialing `ws://127.0.0.1:{port}/ws` with
+`subscribe {mode:"watch"}` so peers send status only, not six full text feeds
+(`core/multiaccount/hub.rs:1-14,104-148`). **Own PID deliberately not dialed** (`:12-14`).
+`web.multiaccount` defaults **true**; with the phone server off the sidecar still forces a
+loopback bind, so this cannot expose a session to the LAN.
+
+**Freshness:** connected ⇒ Live regardless of quiet (updates are on-change, so silence ≠ stale).
+Disconnected ⇒ Stale (dim + amber `●`, keeps last known values), dropped after
+`DROP_AFTER_MS = 120_000` (`core/multiaccount/mod.rs:26,176-204`).
+
+**Honesty strings** — the widget refuses to present guesses as fact: `roster unconfirmed`,
+`⚑ grouped` (grouped but no roster parsed), `(not yours)`, and `Stance —` with "Not reported by
+this character yet" rather than a misleading 0% (`core/multiaccount/mod.rs:222-241`).
+
+**TUI renders a note, not cards** (verbatim, `tui/frontend_impl.rs:426-439`):
+"Multi-account cards are available in the GUI frontend." A TUI session still PUBLISHES its card.
+
+**Web `/characters` wall** — route `web/server.rs:230`, serves `assets/characters.html` (`:407`).
+Reached by following "All characters at a glance →" from the sessions page `.webinfo` prints.
+
+### Map curation — `.mappromote` (added 2026-08-14, Wave 11)
+
+**Contributor tool, not an everyday command.** Moves personal map edits into a staging export
+intended for upstream merge. Dispatch `commands.rs:2288-2317`, help `command_help.rs:91-95`.
+Three forms: bare (current map), `<map-key>`, `all`. No current map + no arg ⇒
+`No current map; .mappromote <map-key> or .mappromote all` (`:2295`). Errors print as
+`mappromote: {e}` (`:2315`). Success prints `Promoted {n} map(s) to {path}: {keys}` then
+`Ship it: merge that file into defaults/map_overrides.json and commit.` (`:2305-2313`).
+File: `map_overrides_promoted.json` beside personal `map_overrides.json` in the config dir.
+**Second promote MERGES** (`map_service.rs:801-840`) — it used to clobber; fixed in `e0eaee2b`.
+
+**Curated vs satellite:** curated membership = uid rosters, **coordinates NEVER imported**
+(`core/curated_maps.rs:1-20,84-122`) — the layout engine places every room from scratch, which is
+why curated maps reflow instead of drifting. Satellites are the automatic remainder, keyed
+`sat-<uid>`, with a 2-room floor; smaller components annotate their portal room instead
+(`core/satellites.rs:1-23,41-49`, `core/membership.rs:100-127`).
+
+**⚠️ NEGATIVE, verified:** there is **no "pinned service tag"** concept in curation. `pin` hits
+are unrelated (harmony color pins; layout-engine room pins in Explorer drag-editing).
+`.go2 targets` is built from **mapdb room tags**, not curated maps (`commands.rs:1389-1417`).
+Do not document pinned service tags — they do not exist.
 
 ### Bestiary — one feature, two surfaces (added 2026-08-14)
 
