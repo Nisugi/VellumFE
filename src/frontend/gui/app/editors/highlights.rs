@@ -33,6 +33,7 @@ struct HighlightFormState {
     bold: bool,
     color_entire_line: bool,
     fast_parse: bool,
+    case_insensitive: bool,
     sound: String,
     sound_volume: String,
     rumble: String,
@@ -235,6 +236,7 @@ impl HighlightFormState {
             bold: false,
             color_entire_line: false,
             fast_parse: false,
+            case_insensitive: false,
             sound: String::new(),
             sound_volume: String::new(),
             rumble: String::new(),
@@ -284,6 +286,7 @@ impl HighlightFormState {
             bold: pattern.bold,
             color_entire_line: pattern.color_entire_line,
             fast_parse: pattern.fast_parse,
+            case_insensitive: pattern.case_insensitive,
             sound: pattern.sound.clone().unwrap_or_default(),
             sound_volume: pattern
                 .sound_volume
@@ -385,7 +388,10 @@ impl HighlightFormState {
         // compiles fine but matches every line, so it must reach the engine
         // as "no text trigger" rather than as a catch-all rule.
         if !self.fast_parse && !pattern_text.is_empty() {
-            regex::Regex::new(&pattern_text).map_err(|err| format!("Invalid regex: {}", err))?;
+            regex::RegexBuilder::new(&pattern_text)
+                .case_insensitive(self.case_insensitive)
+                .build()
+                .map_err(|err| format!("Invalid regex: {}", err))?;
         }
         let sound_volume = match self.sound_volume.trim() {
             "" => None,
@@ -413,6 +419,7 @@ impl HighlightFormState {
                 bold: self.bold,
                 color_entire_line: self.color_entire_line,
                 fast_parse: self.fast_parse,
+                case_insensitive: self.case_insensitive,
                 sound: opt(&self.sound),
                 sound_volume,
                 rumble: opt(&self.rumble),
@@ -959,6 +966,10 @@ impl VellumGuiApp {
                                 ui.checkbox(&mut form.bold, "Bold");
                                 ui.checkbox(&mut form.color_entire_line, "Entire line");
                                 ui.checkbox(&mut form.fast_parse, "Fast parse");
+                                ui.checkbox(&mut form.case_insensitive, "Ignore case")
+                                    .on_hover_text(
+                                        "Match regardless of capitalization. Works for both                                          literal (fast parse) and regex rules.",
+                                    );
                                 ui.checkbox(&mut form.squelch, "Squelch");
                                 ui.checkbox(&mut form.silent_prompt, "Silent prompt");
                                 ui.checkbox(&mut form.redirect_copy, "Redirect copies");

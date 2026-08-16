@@ -2551,6 +2551,7 @@ fn make_highlight_pattern(
         bold,
         color_entire_line,
         fast_parse,
+        case_insensitive: false,
         sound: None,
         sound_volume: None,
         rumble: None,

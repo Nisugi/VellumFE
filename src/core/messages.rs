@@ -250,6 +250,9 @@ pub struct MessageProcessor {
     room_image_index: crate::config::room_images::RoomImageIndex,
 
     squelch_matcher: Option<aho_corasick::AhoCorasick>,
+    /// Case-insensitive squelch literals (separate automaton: the
+    /// insensitivity flag is builder-wide, so rules opt in individually).
+    squelch_matcher_ci: Option<aho_corasick::AhoCorasick>,
     squelch_regexes: Vec<regex::Regex>,
 
     /// Redirect cache: true if any highlights have redirect_to configured (lazy check optimization)
@@ -395,6 +398,7 @@ impl MessageProcessor {
             pending_room_art: Vec::new(),
             room_image_index: Default::default(),
             squelch_matcher: None,
+            squelch_matcher_ci: None,
             squelch_regexes: Vec::new(),
             has_redirect_highlights: false,
             redirect_matcher: None,

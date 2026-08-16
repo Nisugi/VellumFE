@@ -85,6 +85,8 @@ pub struct HighlightFormWidget {
     bold: bool,
     color_entire_line: bool,
     fast_parse: bool,
+    /// Match without regard to case (both literal and regex rules).
+    case_insensitive: bool,
     squelch: bool,
     silent_prompt: bool,
 
@@ -265,6 +267,7 @@ impl HighlightFormWidget {
             bold: false,
             color_entire_line: false,
             fast_parse: false,
+            case_insensitive: false,
             squelch: false,
             silent_prompt: false,
             focused_field: 0,
@@ -351,6 +354,7 @@ impl HighlightFormWidget {
         form.bold = pattern.bold;
         form.color_entire_line = pattern.color_entire_line;
         form.fast_parse = pattern.fast_parse;
+        form.case_insensitive = pattern.case_insensitive;
         form.squelch = pattern.squelch;
         form.silent_prompt = pattern.silent_prompt;
 
@@ -506,15 +510,18 @@ impl HighlightFormWidget {
 
     /// Move focus to next field
     pub fn focus_next(&mut self) {
-        // 0-29 (19 = rumble picklist, 20-22 = custom-status actions,
-        // 23-29 = overlay alert; 27 = anchor picklist)
-        self.focused_field = (self.focused_field + 1) % 30;
+        // 0-30 (19 = rumble picklist, 20-22 = custom-status actions,
+        // 23-29 = overlay alert; 27 = anchor picklist; 30 = ignore case).
+        // New fields append at the end: the indices below are referenced by
+        // the hand-placed cell renderer and the mouse row map, so inserting
+        // in the middle would mean renumbering both.
+        self.focused_field = (self.focused_field + 1) % 31;
     }
 
     /// Move focus to previous field
     pub fn focus_prev(&mut self) {
         self.focused_field = if self.focused_field == 0 {
-            29
+            30
         } else {
             self.focused_field - 1
         };
@@ -681,6 +688,7 @@ impl HighlightFormWidget {
                     10 => self.bold = !self.bold,
                     11 => self.color_entire_line = !self.color_entire_line,
                     12 => self.fast_parse = !self.fast_parse,
+                    30 => self.case_insensitive = !self.case_insensitive,
                     13 => self.squelch = !self.squelch,
                     14 => self.silent_prompt = !self.silent_prompt,
                     15 => self.is_global = true, // Select "Global" scope
@@ -832,6 +840,7 @@ impl HighlightFormWidget {
             bold: self.bold,
             color_entire_line: self.color_entire_line,
             fast_parse: self.fast_parse,
+            case_insensitive: self.case_insensitive,
             squelch: self.squelch,
             silent_prompt: self.silent_prompt,
             sound,
@@ -1370,6 +1379,37 @@ impl HighlightFormWidget {
                     },
                 ))
                 .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        }
+
+        // Field 30: Ignore case — shares the Fast parse ROW (to its right)
+        // rather than taking a new one, so every row index below here (and
+        // the mouse map that mirrors them) stays exactly as it was.
+        {
+            let ci_x = x + 5 + fp_label.chars().count() as u16 + 3;
+            let focused = self.focused_field == 30;
+            let color = crossterm_bridge::to_ratatui_color(if focused {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            });
+            let bg = crossterm_bridge::to_ratatui_color(theme.browser_background);
+            let cells = [
+                ('[', 0u16),
+                (if self.case_insensitive { '✓' } else { ' ' }, 1),
+                (']', 2),
+            ];
+            for (ch, offset) in cells {
+                buf[(ci_x + offset, current_y)]
+                    .set_char(ch)
+                    .set_fg(color)
+                    .set_bg(bg);
+            }
+            for (i, ch) in " Ignore case".chars().enumerate() {
+                buf[(ci_x + 3 + i as u16, current_y)]
+                    .set_char(ch)
+                    .set_fg(color)
+                    .set_bg(bg);
+            }
         }
 
         current_y += 1;
@@ -2196,9 +2236,18 @@ impl HighlightFormWidget {
             self.color_entire_line = !self.color_entire_line;
             return HighlightFormMouseAction::None;
         } else if row == field_y + 13 {
-            // Fast parse checkbox
-            self.focused_field = 12;
-            self.fast_parse = !self.fast_parse;
+            // This row carries TWO checkboxes: Fast parse on the left and
+            // Ignore case to its right (see render_fields). Split on the
+            // column where the second one starts — " Fast parse" is 11 wide
+            // from x+5, plus the 3-cell gap.
+            let ignore_case_x = self.popup_x + 5 + 11 + 3;
+            if col >= ignore_case_x {
+                self.focused_field = 30;
+                self.case_insensitive = !self.case_insensitive;
+            } else {
+                self.focused_field = 12;
+                self.fast_parse = !self.fast_parse;
+            }
             return HighlightFormMouseAction::None;
         } else if row == field_y + 14 {
             // Squelch checkbox
@@ -2384,6 +2433,7 @@ mod tests {
             bold: false,
             color_entire_line: false,
             fast_parse: false,
+            case_insensitive: false,
             sound: None,
             sound_volume: None,
             rumble: None,

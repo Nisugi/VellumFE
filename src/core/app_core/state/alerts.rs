@@ -558,6 +558,7 @@ mod alert_condition_tests {
             bold: false,
             color_entire_line: false,
             fast_parse: false,
+            case_insensitive: false,
             sound: None,
             sound_volume: None,
             rumble: None,

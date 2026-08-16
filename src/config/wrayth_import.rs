@@ -34,6 +34,10 @@ struct RawHighlight {
     bgcolor: Option<String>,
     whole_line: bool,
     sound: Option<String>,
+    /// Wrayth's `case="y"` means case-SENSITIVE. Wrayth's default (absent
+    /// attribute) is case-insensitive, so this starts false and maps to
+    /// our `case_insensitive: !case_sensitive`.
+    case_sensitive: bool,
 }
 
 /// Result of importing a Wrayth settings file.
@@ -85,7 +89,8 @@ pub fn import_wrayth_settings(xml: &str) -> Result<WraythImport> {
 
     // <names>: merge into one fast_parse pattern per distinct style, since
     // hundreds of names typically share a single color pair.
-    let mut name_groups: Vec<((Option<String>, Option<String>, bool), Vec<String>)> = Vec::new();
+    let mut name_groups: Vec<((Option<String>, Option<String>, bool, bool), Vec<String>)> =
+        Vec::new();
     let mut name_count = 0usize;
     for raw in &names {
         if raw.text.trim().is_empty() {
@@ -95,14 +100,17 @@ pub fn import_wrayth_settings(xml: &str) -> Result<WraythImport> {
         name_count += 1;
         let fg = resolve_color(raw.color.as_deref(), &palette, &mut palette_misses);
         let bg = resolve_color(raw.bgcolor.as_deref(), &palette, &mut palette_misses);
-        let style = (fg, bg, raw.whole_line);
+        // Case sensitivity joins the grouping key: two names that differ
+        // only in it must not be merged into one pattern, since the flag
+        // applies to the whole rule.
+        let style = (fg, bg, raw.whole_line, raw.case_sensitive);
         match name_groups.iter_mut().find(|(s, _)| *s == style) {
             Some((_, texts)) => texts.push(raw.text.clone()),
             None => name_groups.push((style, vec![raw.text.clone()])),
         }
     }
     let name_group_count = name_groups.len();
-    for (i, ((fg, bg, whole_line), texts)) in name_groups.into_iter().enumerate() {
+    for (i, ((fg, bg, whole_line, case_sensitive), texts)) in name_groups.into_iter().enumerate() {
         let pattern = HighlightPattern {
             pattern: texts.join("|"),
             fg,
@@ -110,6 +118,7 @@ pub fn import_wrayth_settings(xml: &str) -> Result<WraythImport> {
             bold: false,
             color_entire_line: whole_line,
             fast_parse: true,
+            case_insensitive: !case_sensitive,
             sound: None,
             sound_volume: None,
             rumble: None,
@@ -208,6 +217,7 @@ fn parse_sections(
                             bgcolor: None,
                             whole_line: false,
                             sound: None,
+                            case_sensitive: false,
                         };
                         for attr in e.attributes().flatten() {
                             let value = attr.unescape_value()?.into_owned();
@@ -216,6 +226,7 @@ fn parse_sections(
                                 b"color" => raw.color = Some(value),
                                 b"bgcolor" => raw.bgcolor = Some(value),
                                 b"line" => raw.whole_line = value == "y",
+                                b"case" => raw.case_sensitive = value == "y",
                                 b"sound" if !value.is_empty() => raw.sound = Some(value),
                                 _ => {}
                             }
@@ -262,6 +273,7 @@ fn convert_entry(
         bold: false,
         color_entire_line: raw.whole_line,
         fast_parse,
+        case_insensitive: !raw.case_sensitive,
         sound: raw.sound.as_deref().map(sound_basename),
         sound_volume: None,
         rumble: None,
@@ -395,6 +407,47 @@ mod tests {
 
         let help = find(&result, "wrayth_help");
         assert!(help.color_entire_line);
+    }
+
+
+    #[test]
+    fn wrayth_case_attribute_maps_to_case_insensitive() {
+        let result = import_wrayth_settings(SAMPLE).unwrap();
+        // Wrayth's `case="y"` means case-SENSITIVE, so it must import as
+        // case_insensitive: false. Getting this backwards would silently
+        // widen every imported name rule.
+        let bastique = result
+            .highlights
+            .iter()
+            .find(|(_, p)| p.pattern.contains("Bastique"))
+            .map(|(_, p)| p)
+            .expect("name group with case=\"y\"");
+        assert!(
+            !bastique.case_insensitive,
+            "case=\"y\" is case-sensitive in Wrayth"
+        );
+
+        // A `<h>` with no case attribute is case-insensitive in Wrayth, and
+        // must import that way rather than silently becoming exact-match.
+        let nisugi = result
+            .highlights
+            .iter()
+            .find(|(_, p)| p.pattern.contains("Nisugi"))
+            .map(|(_, p)| p)
+            .expect("name group without a case attribute");
+        assert!(
+            nisugi.case_insensitive,
+            "absent case attribute means case-insensitive"
+        );
+
+        // Sensitivity is part of the grouping key: the two case="y" names
+        // merged together, and the insensitive one stayed separate.
+        assert!(
+            bastique.pattern.contains("Goblyn"),
+            "same-style case-sensitive names merge: {}",
+            bastique.pattern
+        );
+        assert!(!bastique.pattern.contains("Nisugi"));
     }
 
     #[test]

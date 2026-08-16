@@ -132,32 +132,50 @@ impl MessageProcessor {
             .filter(|pattern| pattern.squelch)
             .collect();
 
-        // Build Aho-Corasick for fast_parse patterns
+        // Build Aho-Corasick for fast_parse patterns. Case-insensitive rules
+        // need their own automaton (the flag is builder-wide, not per
+        // pattern), so squelch keeps a second matcher exactly like the
+        // highlight engine does.
         let mut fast_patterns = Vec::new();
+        let mut fast_patterns_ci = Vec::new();
         for pattern in squelch_patterns.iter().filter(|p| p.fast_parse) {
+            let bucket = if pattern.case_insensitive {
+                &mut fast_patterns_ci
+            } else {
+                &mut fast_patterns
+            };
             // Split pattern on | for literal matching
             for literal in pattern.pattern.split('|') {
                 let trimmed = literal.trim();
                 if !trimmed.is_empty() {
-                    fast_patterns.push(trimmed.to_string());
+                    bucket.push(trimmed.to_string());
                 }
             }
         }
 
-        if !fast_patterns.is_empty() {
-            self.squelch_matcher = aho_corasick::AhoCorasickBuilder::new()
+        let build = |patterns: &[String], insensitive: bool| {
+            if patterns.is_empty() {
+                return None;
+            }
+            aho_corasick::AhoCorasickBuilder::new()
                 .match_kind(aho_corasick::MatchKind::Standard)
-                .build(&fast_patterns)
-                .ok();
-        } else {
-            self.squelch_matcher = None;
-        }
+                .ascii_case_insensitive(insensitive)
+                .build(patterns)
+                .ok()
+        };
+        self.squelch_matcher = build(&fast_patterns, false);
+        self.squelch_matcher_ci = build(&fast_patterns_ci, true);
 
-        // Compile regex patterns
+        // Compile regex patterns, honoring each rule's case_insensitive flag.
         self.squelch_regexes = squelch_patterns
             .iter()
             .filter(|p| !p.fast_parse)
-            .filter_map(|p| regex::Regex::new(&p.pattern).ok())
+            .filter_map(|p| {
+                regex::RegexBuilder::new(&p.pattern)
+                    .case_insensitive(p.case_insensitive)
+                    .build()
+                    .ok()
+            })
             .collect();
 
         tracing::debug!(
@@ -459,10 +477,12 @@ impl MessageProcessor {
 
     /// Check if a line should be squelched (ignored/filtered)
     pub(super) fn should_squelch_line(&self, text: &str) -> bool {
-        // Check Aho-Corasick fast patterns
-        if let Some(ref matcher) = self.squelch_matcher {
-            if matcher.is_match(text) {
-                return true;
+        // Check Aho-Corasick fast patterns (case-sensitive, then not)
+        for matcher in [self.squelch_matcher.as_ref(), self.squelch_matcher_ci.as_ref()] {
+            if let Some(matcher) = matcher {
+                if matcher.is_match(text) {
+                    return true;
+                }
             }
         }
 

@@ -167,6 +167,13 @@ pub struct HighlightPattern {
     pub color_entire_line: bool, // If true, apply colors to entire line, not just matched text
     #[serde(default, skip_serializing_if = "is_false")]
     pub fast_parse: bool, // If true, split pattern on | and use Aho-Corasick for literal matching
+    /// Match without regard to case. Applies to BOTH rule kinds: literal
+    /// (`fast_parse`) rules join a second, case-insensitive Aho-Corasick
+    /// automaton, and regex rules compile with the `i` flag. Default false,
+    /// so every existing rule keeps its exact current behavior — including
+    /// regexes that already carry an inline `(?i)`, which still works.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub case_insensitive: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sound: Option<String>, // Sound file to play when pattern matches
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -484,8 +491,14 @@ impl Config {
                 continue;
             }
             if !pattern.fast_parse {
-                // Only compile regex for non-fast_parse patterns
-                match regex::Regex::new(&pattern.pattern) {
+                // Only compile regex for non-fast_parse patterns. The rule's
+                // case_insensitive flag becomes the `i` flag; an inline
+                // `(?i)` in the pattern still works and simply wins on its
+                // own scope.
+                match regex::RegexBuilder::new(&pattern.pattern)
+                    .case_insensitive(pattern.case_insensitive)
+                    .build()
+                {
                     Ok(regex) => {
                         pattern.compiled_regex = Some(regex);
                     }
@@ -866,6 +879,7 @@ mod tests {
             bold: false,
             color_entire_line: false,
             fast_parse: false,
+            case_insensitive: false,
             sound: None,
             sound_volume: None,
             rumble: None,
@@ -899,6 +913,7 @@ mod tests {
             bold: true,
             color_entire_line: true,
             fast_parse: false,
+            case_insensitive: false,
             sound: Some("damage.wav".to_string()),
             sound_volume: Some(0.8),
             rumble: None,
@@ -935,6 +950,7 @@ mod tests {
             bold: false,
             color_entire_line: false,
             fast_parse: false,
+            case_insensitive: false,
             sound: None,
             sound_volume: None,
             rumble: None,
@@ -960,6 +976,7 @@ mod tests {
     fn test_highlight_pattern_fast_parse() {
         let pattern = HighlightPattern {
             pattern: "word1|word2|word3".to_string(),
+            case_insensitive: false,
             fg: Some("#00FF00".to_string()),
             bg: None,
             bold: false,
@@ -995,6 +1012,7 @@ mod tests {
             bold: true,
             color_entire_line: false,
             fast_parse: false,
+            case_insensitive: false,
             sound: None,
             sound_volume: None,
             rumble: None,
@@ -1164,6 +1182,7 @@ mod tests {
             bold: true,
             color_entire_line: false,
             fast_parse: false,
+            case_insensitive: false,
             sound: None,
             sound_volume: None,
             rumble: None,
@@ -1215,6 +1234,7 @@ mod tests {
             bold: false,
             color_entire_line: false,
             fast_parse: false,
+            case_insensitive: false,
             sound: None,
             sound_volume: None,
             rumble: None,
@@ -1273,6 +1293,7 @@ mod tests {
             bold: false,
             color_entire_line: false,
             fast_parse: false,
+            case_insensitive: false,
             sound: None,
             sound_volume: None,
             rumble: None,

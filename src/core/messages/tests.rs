@@ -119,6 +119,7 @@ fn make_redirect_pattern(pattern: &str) -> crate::config::HighlightPattern {
         bold: false,
         color_entire_line: false,
         fast_parse: true,
+        case_insensitive: false,
         sound: None,
         sound_volume: None,
         rumble: None,

@@ -111,8 +111,15 @@ struct MatchInfo {
 pub struct CoreHighlightEngine {
     highlights: Vec<HighlightPattern>,
     highlight_regexes: Vec<Option<Regex>>,
+    /// Case-SENSITIVE literal automaton, and the map from its pattern ids
+    /// back to highlight indices.
     fast_matcher: Option<AhoCorasick>,
     fast_pattern_map: Vec<usize>,
+    /// Case-INSENSITIVE literal automaton. A separate automaton because
+    /// `ascii_case_insensitive` is a builder-wide flag, not per pattern —
+    /// rules opt in individually, so they can't share one matcher.
+    fast_matcher_ci: Option<AhoCorasick>,
+    fast_pattern_map_ci: Vec<usize>,
     replace_enabled: bool,
     /// Hash of the highlights for change detection (see update_if_changed)
     highlights_hash: u64,
@@ -131,6 +138,7 @@ impl CoreHighlightEngine {
             h.bg.hash(&mut hasher);
             h.bold.hash(&mut hasher);
             h.fast_parse.hash(&mut hasher);
+            h.case_insensitive.hash(&mut hasher);
             h.color_entire_line.hash(&mut hasher);
             h.replace.hash(&mut hasher);
             // Every field apply_highlights reads must be hashed, or an edit
@@ -179,9 +187,13 @@ impl CoreHighlightEngine {
     ///
     /// This compiles regexes and builds the Aho-Corasick automaton for fast matching.
     pub fn new(highlights: Vec<HighlightPattern>) -> Self {
-        // Separate fast_parse patterns from regex patterns
+        // Separate fast_parse patterns from regex patterns. Literals split
+        // by case sensitivity: one automaton each, since the insensitivity
+        // flag is builder-wide.
         let mut fast_patterns: Vec<String> = Vec::new();
         let mut fast_map: Vec<usize> = Vec::new();
+        let mut fast_patterns_ci: Vec<String> = Vec::new();
+        let mut fast_map_ci: Vec<usize> = Vec::new();
 
         // Build regex list and collect fast_parse patterns
         let highlight_regexes = highlights
@@ -189,12 +201,17 @@ impl CoreHighlightEngine {
             .enumerate()
             .map(|(i, h)| {
                 if h.fast_parse {
-                    // Split pattern on | and add to Aho-Corasick
+                    // Split pattern on | and add to the matching automaton
+                    let (patterns, map) = if h.case_insensitive {
+                        (&mut fast_patterns_ci, &mut fast_map_ci)
+                    } else {
+                        (&mut fast_patterns, &mut fast_map)
+                    };
                     for literal in h.pattern.split('|') {
                         let literal = literal.trim();
                         if !literal.is_empty() {
-                            fast_patterns.push(literal.to_string());
-                            fast_map.push(i); // Map this pattern back to highlight index
+                            patterns.push(literal.to_string());
+                            map.push(i); // Map this pattern back to highlight index
                         }
                     }
                     None // Don't compile as regex
@@ -204,25 +221,38 @@ impl CoreHighlightEngine {
                     // — this rule has no text trigger at all.
                     None
                 } else {
-                    // Regular regex pattern (reuse compiled regex when available)
+                    // Regular regex pattern (reuse compiled regex when
+                    // available — it was built with this rule's
+                    // case_insensitive flag already applied).
                     if let Some(regex) = h.compiled_regex.clone() {
                         Some(regex)
                     } else {
-                        Regex::new(&h.pattern).ok()
+                        regex::RegexBuilder::new(&h.pattern)
+                            .case_insensitive(h.case_insensitive)
+                            .build()
+                            .ok()
                     }
                 }
             })
             .collect();
 
-        // Build Aho-Corasick matcher for fast_parse patterns
-        let (fast_matcher, fast_pattern_map) = if !fast_patterns.is_empty() {
-            let matcher = AhoCorasickBuilder::new()
+        // Build Aho-Corasick matchers for fast_parse patterns
+        let build = |patterns: &[String], insensitive: bool| {
+            AhoCorasickBuilder::new()
                 .match_kind(MatchKind::Standard)
-                .build(&fast_patterns)
-                .ok();
-            (matcher, fast_map)
-        } else {
+                .ascii_case_insensitive(insensitive)
+                .build(patterns)
+                .ok()
+        };
+        let (fast_matcher, fast_pattern_map) = if fast_patterns.is_empty() {
             (None, Vec::new())
+        } else {
+            (build(&fast_patterns, false), fast_map)
+        };
+        let (fast_matcher_ci, fast_pattern_map_ci) = if fast_patterns_ci.is_empty() {
+            (None, Vec::new())
+        } else {
+            (build(&fast_patterns_ci, true), fast_map_ci)
         };
 
         let highlights_hash = Self::compute_hash(&highlights);
@@ -231,6 +261,8 @@ impl CoreHighlightEngine {
             highlight_regexes,
             fast_matcher,
             fast_pattern_map,
+            fast_matcher_ci,
+            fast_pattern_map_ci,
             replace_enabled: true,
             highlights_hash,
         }
@@ -243,6 +275,8 @@ impl CoreHighlightEngine {
             highlight_regexes: Vec::new(),
             fast_matcher: None,
             fast_pattern_map: Vec::new(),
+            fast_matcher_ci: None,
+            fast_pattern_map_ci: Vec::new(),
             replace_enabled: true,
             highlights_hash: Self::compute_hash(&[]),
         }
@@ -379,8 +413,15 @@ impl CoreHighlightEngine {
             out.push(AlertTrigger { key, spec: spec.clone(), banner });
         };
 
-        // Try Aho-Corasick fast patterns (with word boundary checking)
-        if let Some(ref matcher) = self.fast_matcher {
+        // Try Aho-Corasick fast patterns (with word boundary checking).
+        // Both automata run the same body: the case-sensitive one, then the
+        // case-insensitive one, each with its own pattern-id map.
+        let fast_passes = [
+            (self.fast_matcher.as_ref(), &self.fast_pattern_map),
+            (self.fast_matcher_ci.as_ref(), &self.fast_pattern_map_ci),
+        ];
+        for (matcher, pattern_map) in fast_passes {
+            let Some(matcher) = matcher else { continue };
             for mat in matcher.find_iter(&full_text) {
                 let start = mat.start();
                 let end = mat.end();
@@ -401,7 +442,7 @@ impl CoreHighlightEngine {
                 };
 
                 if is_word_start && is_word_end {
-                    if let Some(&highlight_idx) = self.fast_pattern_map.get(mat.pattern().as_usize())
+                    if let Some(&highlight_idx) = pattern_map.get(mat.pattern().as_usize())
                     {
                         if let Some(highlight) = self.highlights.get(highlight_idx) {
                             // Check stream filter
@@ -796,8 +837,14 @@ impl CoreHighlightEngine {
             return None;
         }
 
-        // Try Aho-Corasick fast patterns first
-        if let Some(ref matcher) = self.fast_matcher {
+        // Try Aho-Corasick fast patterns first — both automata, so a
+        // case-insensitive literal colors widget rows like any other rule.
+        let fast_passes = [
+            (self.fast_matcher.as_ref(), &self.fast_pattern_map),
+            (self.fast_matcher_ci.as_ref(), &self.fast_pattern_map_ci),
+        ];
+        for (matcher, pattern_map) in fast_passes {
+            let Some(matcher) = matcher else { continue };
             for mat in matcher.find_iter(text) {
                 let start = mat.start();
                 let end = mat.end();
@@ -818,7 +865,7 @@ impl CoreHighlightEngine {
                 };
 
                 if is_word_start && is_word_end {
-                    if let Some(&highlight_idx) = self.fast_pattern_map.get(mat.pattern().as_usize())
+                    if let Some(&highlight_idx) = pattern_map.get(mat.pattern().as_usize())
                     {
                         if let Some(highlight) = self.highlights.get(highlight_idx) {
                             if let Some(ref fg) = highlight.fg {
@@ -943,6 +990,7 @@ mod tests {
             bold: false,
             color_entire_line: false,
             fast_parse: false,
+            case_insensitive: false,
             sound: None,
             sound_volume: None,
             rumble: None,
@@ -960,6 +1008,106 @@ mod tests {
             alert: None,
             compiled_regex: None,
         }
+    }
+
+
+    #[test]
+    fn case_insensitive_flag_applies_to_literal_and_regex_rules() {
+        // A literal (fast_parse) rule and a regex rule, both opting in.
+        let mut literal = make_pattern("Troll");
+        literal.fast_parse = true;
+        literal.case_insensitive = true;
+        literal.fg = Some("#ff0000".to_string());
+
+        let mut rx = make_pattern(r"gob\w+");
+        rx.case_insensitive = true;
+        rx.fg = Some("#00ff00".to_string());
+
+        let engine = CoreHighlightEngine::new(vec![literal, rx]);
+
+        // Literal matches regardless of the case the game sent.
+        assert_eq!(
+            engine.get_first_match_color("a TROLL appears"),
+            Some("#ff0000".to_string()),
+            "case-insensitive literal must match upper case"
+        );
+        assert_eq!(
+            engine.get_first_match_color("a troll appears"),
+            Some("#ff0000".to_string())
+        );
+        // Regex likewise.
+        assert_eq!(
+            engine.get_first_match_color("a GOBLIN appears"),
+            Some("#00ff00".to_string()),
+            "case-insensitive regex must match upper case"
+        );
+    }
+
+    #[test]
+    fn case_sensitive_rules_are_unchanged_by_default() {
+        // Default (flag absent) must preserve today's exact behavior, so no
+        // existing highlights.toml starts matching more than it used to.
+        let mut literal = make_pattern("Troll");
+        literal.fast_parse = true;
+        literal.fg = Some("#ff0000".to_string());
+        let mut rx = make_pattern(r"gob\w+");
+        rx.fg = Some("#00ff00".to_string());
+
+        let engine = CoreHighlightEngine::new(vec![literal, rx]);
+        assert_eq!(
+            engine.get_first_match_color("a Troll appears"),
+            Some("#ff0000".to_string()),
+            "exact case still matches"
+        );
+        assert_eq!(
+            engine.get_first_match_color("a TROLL appears"),
+            None,
+            "case-sensitive literal must NOT match a different case"
+        );
+        assert_eq!(
+            engine.get_first_match_color("a GOBLIN appears"),
+            None,
+            "case-sensitive regex must NOT match a different case"
+        );
+    }
+
+    #[test]
+    fn sensitive_and_insensitive_literals_coexist_in_one_engine() {
+        // The two automata are separate; a rule in one must not leak its
+        // case behavior into the other.
+        let mut sensitive = make_pattern("Bob");
+        sensitive.fast_parse = true;
+        sensitive.fg = Some("#111111".to_string());
+        let mut insensitive = make_pattern("kobold");
+        insensitive.fast_parse = true;
+        insensitive.case_insensitive = true;
+        insensitive.fg = Some("#222222".to_string());
+
+        let engine = CoreHighlightEngine::new(vec![sensitive, insensitive]);
+        assert_eq!(engine.get_first_match_color("bob waves"), None);
+        assert_eq!(
+            engine.get_first_match_color("Bob waves"),
+            Some("#111111".to_string())
+        );
+        assert_eq!(
+            engine.get_first_match_color("a KOBOLD lunges"),
+            Some("#222222".to_string())
+        );
+    }
+
+    #[test]
+    fn toggling_case_insensitive_rebuilds_the_engine() {
+        // compute_hash must cover the flag, or editing ONLY the checkbox
+        // would keep serving the stale matcher.
+        let mut rule = make_pattern("Troll");
+        rule.fast_parse = true;
+        let mut engine = CoreHighlightEngine::new(vec![rule.clone()]);
+
+        rule.case_insensitive = true;
+        assert!(
+            engine.update_if_changed(vec![rule]),
+            "flipping case_insensitive must rebuild"
+        );
     }
 
     // Helper to create a text segment
