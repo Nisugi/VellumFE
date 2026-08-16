@@ -527,6 +527,7 @@ impl VellumGuiApp {
                 self.app_core.start_search_mode();
                 self.search_bar_needs_focus = true;
                 self.search_match_index = None;
+                self.search_match_window = None;
             }
             "next_search_match" => self.step_search_match(true, ctx),
             "prev_search_match" => self.step_search_match(false, ctx),
@@ -543,11 +544,146 @@ impl VellumGuiApp {
         }
     }
 
-    /// Step search match-navigation over the CURRENT window — the same
-    /// core-owned focused window the TUI searches, chosen by
-    /// switch_current_window. Moves the match cursor forward/back (wrapping)
-    /// and queues a scroll that brings the matching line into view. No-op with
-    /// an empty query or no matches.
+    /// Every window a search can target, as `(label, scroll_id)` pairs in
+    /// display order. The label is what the Find bar shows; the scroll id is
+    /// what the scroll-pending protocol keys on (`name`, or `name::tabN` for
+    /// the active tab of a tabbed window). One list, so the dropdown can
+    /// never offer a target that match-nav can't actually search.
+    ///
+    /// Every scrollable text-ish content participates, not just plain Text:
+    /// inventory/reserve/spells windows highlight matches too, so they must
+    /// be navigable as well.
+    pub(super) fn search_targets(app_core: &AppCore) -> Vec<(String, String)> {
+        let mut targets: Vec<(String, String)> = app_core
+            .ui_state
+            .windows
+            .values()
+            .filter_map(|window| match &window.content {
+                WindowContent::Text(_)
+                | WindowContent::Inventory(_)
+                | WindowContent::Reserve(_)
+                | WindowContent::Spells(_) => {
+                    Some((window.name.clone(), window.name.clone()))
+                }
+                WindowContent::TabbedText(tabbed) => {
+                    let tab = tabbed.tabs.get(tabbed.active_tab_index)?;
+                    // Name the tab, not just the window: "thoughts" is what
+                    // the user is looking at, "tabs::tab2" is bookkeeping.
+                    Some((
+                        format!("{} ▸ {}", window.name, tab.definition.name),
+                        format!("{}::tab{}", window.name, tabbed.active_tab_index),
+                    ))
+                }
+                _ => None,
+            })
+            .collect();
+        // `windows` is a HashMap; sort so the dropdown holds still.
+        targets.sort();
+        targets
+    }
+
+    /// Resolve a scroll id to the buffer it names, following `name::tabN`
+    /// into the tab's own content.
+    pub(super) fn search_content<'a>(
+        app_core: &'a AppCore,
+        scroll_id: &str,
+    ) -> Option<&'a crate::data::TextContent> {
+        let (window_name, tab_index) = match scroll_id.split_once("::tab") {
+            Some((name, index)) => (name, index.parse::<usize>().ok()),
+            None => (scroll_id, None),
+        };
+        let window = app_core
+            .ui_state
+            .windows
+            .values()
+            .find(|window| window.name == window_name)?;
+        match (&window.content, tab_index) {
+            (WindowContent::TabbedText(tabbed), Some(index)) => {
+                Some(&tabbed.tabs.get(index)?.content)
+            }
+            (
+                WindowContent::Text(content)
+                | WindowContent::Inventory(content)
+                | WindowContent::Reserve(content)
+                | WindowContent::Spells(content),
+                _,
+            ) => Some(content),
+            _ => None,
+        }
+    }
+
+    /// Absolute line number of buffer index `index`: the value `generation`
+    /// held when that line was appended. Stable as the ring buffer drops
+    /// lines off the front, which plain indices are not.
+    pub(super) fn absolute_line(content: &crate::data::TextContent, index: usize) -> u64 {
+        // The newest line (index len-1) was the `generation`-th appended.
+        content
+            .generation
+            .wrapping_sub((content.lines.len().saturating_sub(index + 1)) as u64)
+    }
+
+    /// Inverse of `absolute_line`: where that line sits in the buffer now,
+    /// or None once it has scrolled off the front.
+    pub(super) fn line_index_of(
+        content: &crate::data::TextContent,
+        absolute: u64,
+    ) -> Option<usize> {
+        // `age` = how many lines have been appended since this one.
+        let age = content.generation.checked_sub(absolute)? as usize;
+        let len = content.lines.len();
+        // Older than the buffer keeps: it has been dropped off the front.
+        len.checked_sub(age + 1)
+    }
+
+    /// Resolve a scroll id to its buffer and the line indices matching
+    /// `query` (already lowercased). None when the id names nothing
+    /// searchable; an empty vec when it searches clean.
+    pub(super) fn search_hits_in(
+        app_core: &AppCore,
+        scroll_id: &str,
+        query: &str,
+    ) -> Option<(String, Vec<usize>)> {
+        // Split `name::tabN` back into window + tab index.
+        let (window_name, tab_index) = match scroll_id.split_once("::tab") {
+            Some((name, index)) => (name, index.parse::<usize>().ok()),
+            None => (scroll_id, None),
+        };
+        let window = app_core
+            .ui_state
+            .windows
+            .values()
+            .find(|window| window.name == window_name)?;
+        let content = match (&window.content, tab_index) {
+            (WindowContent::TabbedText(tabbed), Some(index)) => {
+                &tabbed.tabs.get(index)?.content
+            }
+            (
+                WindowContent::Text(content)
+                | WindowContent::Inventory(content)
+                | WindowContent::Reserve(content)
+                | WindowContent::Spells(content),
+                _,
+            ) => content,
+            _ => return None,
+        };
+        let hits = content
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| {
+                line.segments
+                    .iter()
+                    .any(|segment| Self::find_ascii_ci(&segment.text, query, 0).is_some())
+            })
+            .map(|(index, _)| index)
+            .collect();
+        Some((scroll_id.to_string(), hits))
+    }
+
+    /// Step search match-navigation through the window the user selected in
+    /// the Find bar (falling back to the keyboard focus until they pick).
+    /// Moves the match cursor forward/back (wrapping) and queues a scroll
+    /// that brings the matching line into view. No-op with an empty query.
     pub(super) fn step_search_match(&mut self, forward: bool, ctx: &egui::Context) {
         let query = self
             .app_core
@@ -558,40 +694,40 @@ impl VellumGuiApp {
         if query.is_empty() {
             return;
         }
-        let window_name = self.app_core.get_focused_window_name();
-        // Line indices (into the focused window's buffer) that match the query.
-        let matches: Vec<usize> = self
-            .app_core
-            .ui_state
-            .windows
-            .values()
-            .find_map(|window| match &window.content {
-                WindowContent::Text(content) if window.name == window_name => Some(content),
-                _ => None,
-            })
-            .map(|content| {
-                content
-                    .lines
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, line)| {
-                        line.segments.iter().any(|segment| {
-                            Self::find_ascii_ci(&segment.text, &query, 0).is_some()
-                        })
-                    })
-                    .map(|(i, _)| i)
-                    .collect()
-            })
-            .unwrap_or_default();
-
+        // Which window to search is the user's choice, never a guess: the
+        // search bar's target dropdown owns it (`search_target`). Until they
+        // pick, fall back to the keyboard focus if it happens to hold text —
+        // and if it doesn't (it is normally `command_input`, which has no
+        // buffer at all), leave the target unset and let the bar prompt.
+        let target = self
+            .search_target
+            .clone()
+            .unwrap_or_else(|| self.app_core.get_focused_window_name());
+        let Some((scroll_id, matches)) = Self::search_hits_in(&self.app_core, &target, &query)
+        else {
+            self.app_core.add_system_message(&format!(
+                "'{target}' has no searchable text — choose a window in the Find bar."
+            ));
+            return;
+        };
+        // The window was chosen because it has hits, so this can't be empty;
+        // guard anyway rather than indexing into nothing.
         if matches.is_empty() {
-            self.app_core
-                .add_system_message(&format!("No matches in '{}'.", window_name));
             return;
         }
+        let Some(content) = Self::search_content(&self.app_core, &scroll_id) else {
+            return;
+        };
 
-        // Advance the cursor within the match list (wrapping).
-        let next = match self.search_match_index {
+        // Where the cursor sits now, as a buffer index. The cursor is an
+        // absolute line number, so this survives lines scrolling off the
+        // top while the user pages through a live window. A cursor whose
+        // line has already scrolled away resolves to None and restarts.
+        let current_index = self
+            .search_match_index
+            .and_then(|absolute| Self::line_index_of(content, absolute));
+        // Advance within the match list (wrapping).
+        let next = match current_index {
             None => {
                 if forward {
                     0
@@ -600,30 +736,37 @@ impl VellumGuiApp {
                 }
             }
             Some(current) => {
-                let pos = matches.iter().position(|&m| m == current).unwrap_or(0);
+                // The cursor line may no longer be a match (edited buffer)
+                // or may sit between matches; land on the nearest one in the
+                // direction of travel rather than snapping to the start.
                 if forward {
-                    (pos + 1) % matches.len()
+                    matches
+                        .iter()
+                        .position(|&m| m > current)
+                        .unwrap_or(0)
                 } else {
-                    (pos + matches.len() - 1) % matches.len()
+                    matches
+                        .iter()
+                        .rposition(|&m| m < current)
+                        .unwrap_or(matches.len() - 1)
                 }
             }
         };
         let target_line = matches[next];
-        self.search_match_index = Some(target_line);
-        // Request a scroll-to-line for the focused window (its scroll_id is the
-        // window name; see the scroll-pending protocol in widgets.rs, kind 3 =
-        // absolute line index).
+        self.search_match_index = Some(Self::absolute_line(content, target_line));
+        // Request a scroll-to-line for the chosen window (see the
+        // scroll-pending protocol in widgets.rs, kind 3 = absolute line
+        // index). The scroll id is the window name, or `name::tabN`.
         ctx.data_mut(|data| {
             data.insert_temp(
-                egui::Id::new(("text_scroll_pending", window_name.as_str())),
+                egui::Id::new(("text_scroll_pending", scroll_id.as_str())),
                 (3u8, target_line as f32),
             )
         });
-        self.app_core.add_system_message(&format!(
-            "Match {} of {}",
-            next + 1,
-            matches.len()
-        ));
+        // Deliberately silent: the search bar renders "N of M in <window>"
+        // every frame, so echoing each step into the story window would
+        // bury the very text the user is searching through.
+        self.search_match_window = Some(scroll_id);
         self.app_core.needs_render = true;
     }
 
@@ -635,6 +778,7 @@ impl VellumGuiApp {
         self.app_core.cycle_focused_window();
         // Reset the match cursor: a new window means a fresh match list.
         self.search_match_index = None;
+        self.search_match_window = None;
         // Bring the focused window's tab forward, if it maps to one.
         let focused = self.app_core.get_focused_window_name();
         if let Some(key) = self

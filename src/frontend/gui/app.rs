@@ -44,6 +44,7 @@ mod interact;
 mod menus;
 mod render_settings;
 mod room_sync;
+mod search_bar;
 mod skins;
 mod snap;
 mod tabs;
@@ -552,8 +553,18 @@ pub struct VellumGuiApp {
     /// window instead of silently rebuilding (and wiping) its state.
     pending_editor_raise: Option<egui::Id>,
     search_bar_needs_focus: bool,
-    /// Cached search-bar match count: (lowercased query, content fingerprint, count).
-    search_match_cache: Option<(String, u64, usize)>,
+    /// Cached search-bar matches for the current target: (target + query
+    /// key, content fingerprint, matching line indices).
+    search_match_cache: Option<(String, u64, Vec<usize>)>,
+    /// Scroll id of the window match-nav last stepped through. The bar
+    /// reports position within THIS window, which is not necessarily the
+    /// keyboard-focused one (see `step_search_match`).
+    search_match_window: Option<String>,
+    /// Scroll id of the window the user chose to search in the Find bar.
+    /// None = not chosen yet (falls back to the keyboard focus). This is
+    /// what decouples "which window am I searching" from window focus, so a
+    /// specific tab — thoughts, speech, story — can be searched directly.
+    search_target: Option<String>,
     /// Fingerprint of the window set backing `available_tabs`; refresh is
     /// skipped while it is unchanged.
     available_tabs_fingerprint: Option<u64>,
@@ -581,10 +592,15 @@ pub struct VellumGuiApp {
     /// keybind). Deferred like `pending_zorder` because `move_to_top` needs
     /// `ctx`.
     pending_raise_tab: Option<TabKey>,
-    /// Search match-navigation cursor: which matching line in the "main" text
-    /// window is currently focused (next_search_match / prev_search_match).
-    /// Reset when the query or buffer changes. None = not yet stepped.
-    search_match_index: Option<usize>,
+    /// Search match-navigation cursor (next_search_match / prev_search_match):
+    /// the match currently focused, held as an ABSOLUTE line number — the
+    /// buffer's `generation` at the moment that line was appended — never a
+    /// buffer index. Text buffers are capped ring buffers, so once a window
+    /// fills, each new line shifts every existing index down by one; an
+    /// index cursor would silently slide onto a different line while the
+    /// user pages through matches in a live window. Reset only when the
+    /// query or the target window changes. None = not yet stepped.
+    search_match_index: Option<u64>,
     /// OS-window geometry to restore for a `.loadlayout` (saved size /
     /// position / maximized), applied in the frame loop via ViewportCommands.
     /// No settle-wait is needed: the per-frame anchor rescale tracks every
@@ -1071,6 +1087,8 @@ impl VellumGuiApp {
             pending_editor_raise: None,
             search_bar_needs_focus: false,
             search_match_cache: None,
+            search_match_window: None,
+            search_target: None,
             available_tabs_fingerprint: None,
             canonical_canvas,
             current_zorder: Vec::new(),
@@ -1203,118 +1221,6 @@ impl VellumGuiApp {
                 WindowContent::Countdown(countdown) => countdown.end_time > adjusted,
                 _ => false,
             })
-    }
-
-    /// Floating search bar shown while in Search mode (Ctrl+F). Matching
-    /// segments highlight via the theme selection color in text windows.
-    fn render_search_bar(&mut self, ctx: &egui::Context) {
-        if self.app_core.ui_state.input_mode != InputMode::Search {
-            return;
-        }
-
-        // Count matching lines across visible text content, including the
-        // active tab of tabbed windows (read-only pass before the window
-        // closure takes mutable borrows). The scan is cached: buffer
-        // generations only move when content changes, so an idle search bar
-        // costs a fingerprint pass instead of a full-buffer rescan per frame.
-        let query = self
-            .app_core
-            .ui_state
-            .search_input
-            .trim()
-            .to_ascii_lowercase();
-        let match_count = if query.is_empty() {
-            0
-        } else {
-            let contents = || {
-                self.app_core
-                    .ui_state
-                    .windows
-                    .values()
-                    .filter_map(|window| match &window.content {
-                        WindowContent::Text(content)
-                        | WindowContent::Inventory(content)
-                        | WindowContent::Reserve(content)
-                        | WindowContent::Spells(content) => Some(content),
-                        WindowContent::TabbedText(tabbed) => tabbed
-                            .tabs
-                            .get(tabbed.active_tab_index)
-                            .map(|tab| &tab.content),
-                        _ => None,
-                    })
-            };
-            // Order-independent content fingerprint (windows is a HashMap).
-            // Active tab indices are mixed in so switching tabs invalidates
-            // the cache even when two tabs share generation and length.
-            let tab_switch_salt: u64 = self
-                .app_core
-                .ui_state
-                .windows
-                .values()
-                .filter_map(|window| match &window.content {
-                    WindowContent::TabbedText(tabbed) => Some(tabbed.active_tab_index as u64),
-                    _ => None,
-                })
-                .fold(0u64, |acc, index| {
-                    acc.wrapping_add(index.wrapping_mul(0x517c_c1b7_2722_0a95))
-                });
-            let fingerprint = contents().fold(tab_switch_salt, |acc, content| {
-                acc.wrapping_add(content.generation)
-                    .wrapping_add((content.lines.len() as u64).wrapping_mul(0x9e37_79b9))
-            });
-            match &self.search_match_cache {
-                Some((cached_query, cached_fingerprint, cached_count))
-                    if *cached_query == query && *cached_fingerprint == fingerprint =>
-                {
-                    *cached_count
-                }
-                _ => {
-                    let count = contents()
-                        .flat_map(|content| content.lines.iter())
-                        .filter(|line| {
-                            line.segments.iter().any(|segment| {
-                                Self::find_ascii_ci(&segment.text, &query, 0).is_some()
-                            })
-                        })
-                        .count();
-                    self.search_match_cache = Some((query.clone(), fingerprint, count));
-                    count
-                }
-            }
-        };
-
-        let mut close = false;
-        egui::Window::new("gui_search_bar")
-            .id(egui::Id::new("gui_search_bar"))
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 36.0))
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Find:");
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.app_core.ui_state.search_input)
-                            .desired_width(200.0),
-                    );
-                    if self.search_bar_needs_focus {
-                        response.request_focus();
-                        self.search_bar_needs_focus = false;
-                    }
-                    if query.is_empty() {
-                        ui.weak("type to highlight matches");
-                    } else {
-                        ui.weak(format!("{} matching lines", match_count));
-                    }
-                    if ui.button("Close").clicked() {
-                        close = true;
-                    }
-                });
-            });
-
-        if close {
-            self.app_core.clear_search_mode();
-        }
     }
 
     fn drag_modifier_from_config(key: &str) -> egui::Modifiers {

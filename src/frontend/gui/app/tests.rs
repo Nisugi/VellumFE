@@ -1270,3 +1270,166 @@ fn dispatched_keybind_strips_leaked_text_event() {
         "unrelated pointer events must survive"
     );
 }
+
+/// Build a text window whose buffer holds `lines`, one line per entry.
+#[cfg(test)]
+fn text_window_with(name: &str, lines: &[&str]) -> crate::data::WindowState {
+    use crate::data::{StyledLine, WindowState};
+    let mut window = WindowState::new_text(name, 1000);
+    if let crate::data::WindowContent::Text(content) = &mut window.content {
+        for text in lines {
+            content.add_line(StyledLine {
+                segments: vec![TextSegment::plain(text.to_string())],
+                stream: name.to_string(),
+                timestamp: None,
+            });
+        }
+    }
+    window
+}
+
+#[test]
+fn search_targets_list_every_searchable_window_and_name_tabs() {
+    use crate::core::AppCore;
+    use crate::data::{
+        TabDefinition, TabState, TabbedTextContent, TextContent, WindowContent, WindowState,
+    };
+
+    let mut core = AppCore::new_for_test();
+    core.ui_state
+        .windows
+        .insert("main".into(), text_window_with("main", &["a gas cloud"]));
+    // A window with no text buffer at all must never be offered as a target;
+    // this is the `command_input` case that made match-nav dead on arrival.
+    core.ui_state.windows.insert(
+        "command_input".into(),
+        WindowState::new_command_input("command_input"),
+    );
+    let mut tabbed = WindowState::new_text("tabs", 100);
+    tabbed.widget_type = crate::data::WidgetType::TabbedText;
+    let tab_of = |name: &str| TabState {
+        definition: TabDefinition {
+            name: name.to_string(),
+            streams: vec![name.to_string()],
+            show_timestamps: false,
+            ignore_activity: false,
+            timestamp_position: Default::default(),
+        },
+        content: TextContent::new(name, 100),
+        has_unread: false,
+    };
+    tabbed.content = WindowContent::TabbedText(TabbedTextContent {
+        tabs: vec![tab_of("story"), tab_of("thoughts")],
+        active_tab_index: 1,
+    });
+    core.ui_state.windows.insert("tabs".into(), tabbed);
+
+    let targets = VellumGuiApp::search_targets(&core);
+    let ids: Vec<&str> = targets.iter().map(|(_, id)| id.as_str()).collect();
+    assert!(ids.contains(&"main"), "text window is a target: {ids:?}");
+    assert!(
+        !ids.iter().any(|id| id.starts_with("command_input")),
+        "command_input has no buffer and must not be offered: {ids:?}"
+    );
+    // The ACTIVE tab is the target, addressed by its scroll id, and labeled
+    // by the tab's own name so the dropdown reads "tabs ▸ thoughts".
+    assert!(ids.contains(&"tabs::tab1"), "active tab is a target: {ids:?}");
+    let label = targets
+        .iter()
+        .find(|(_, id)| id == "tabs::tab1")
+        .map(|(label, _)| label.as_str())
+        .unwrap();
+    assert!(label.contains("thoughts"), "tab labeled by name: {label}");
+}
+
+#[test]
+fn search_hits_are_scoped_to_the_chosen_target() {
+    use crate::core::AppCore;
+
+    let mut core = AppCore::new_for_test();
+    core.ui_state.windows.insert(
+        "main".into(),
+        text_window_with("main", &["a gas cloud", "no match", "more gas"]),
+    );
+    core.ui_state
+        .windows
+        .insert("thoughts".into(), text_window_with("thoughts", &["gas"]));
+
+    // Searching "main" sees only main's hits — never the other window's,
+    // which is the whole point of decoupling the target from focus.
+    let (id, hits) = VellumGuiApp::search_hits_in(&core, "main", "gas").expect("main searchable");
+    assert_eq!(id, "main");
+    assert_eq!(hits, vec![0, 2], "line indices into main's buffer");
+
+    let (_, hits) =
+        VellumGuiApp::search_hits_in(&core, "thoughts", "gas").expect("thoughts searchable");
+    assert_eq!(hits, vec![0]);
+
+    // A clean search resolves, but with nothing to cycle.
+    let (_, hits) = VellumGuiApp::search_hits_in(&core, "main", "zzz").expect("resolves");
+    assert!(hits.is_empty());
+
+    // A window with no buffer resolves to None, so the caller can say so
+    // instead of silently doing nothing.
+    assert!(VellumGuiApp::search_hits_in(&core, "nonexistent", "gas").is_none());
+}
+
+#[test]
+fn match_cursor_survives_lines_scrolling_off_a_full_buffer() {
+    use crate::core::AppCore;
+    use crate::data::{StyledLine, WindowContent, WindowState};
+
+    // A buffer capped at 4 lines: adding a 5th drops the oldest, shifting
+    // every surviving index down by one. This is the live-window case where
+    // an index-based cursor silently slides onto a different line.
+    let mut core = AppCore::new_for_test();
+    let mut window = WindowState::new_text("main", 4);
+    let push = |content: &mut crate::data::TextContent, text: &str| {
+        content.add_line(StyledLine {
+            segments: vec![TextSegment::plain(text.to_string())],
+            stream: "main".into(),
+            timestamp: None,
+        });
+    };
+    if let WindowContent::Text(content) = &mut window.content {
+        push(content, "a troll appears");   // index 0
+        push(content, "filler one");        // index 1
+        push(content, "another troll");     // index 2
+        push(content, "filler two");        // index 3
+    }
+    core.ui_state.windows.insert("main".into(), window);
+
+    let content = VellumGuiApp::search_content(&core, "main").expect("buffer");
+    let (_, hits) = VellumGuiApp::search_hits_in(&core, "main", "troll").unwrap();
+    assert_eq!(hits, vec![0, 2]);
+    // Pin the cursor to the SECOND match ("another troll", index 2).
+    let cursor = VellumGuiApp::absolute_line(content, 2);
+    assert_eq!(VellumGuiApp::line_index_of(content, cursor), Some(2));
+
+    // One new line arrives: the buffer is full, so everything shifts down.
+    if let Some(WindowContent::Text(content)) =
+        core.ui_state.windows.get_mut("main").map(|w| &mut w.content)
+    {
+        push(content, "a new line");
+    }
+    let content = VellumGuiApp::search_content(&core, "main").expect("buffer");
+    let (_, hits) = VellumGuiApp::search_hits_in(&core, "main", "troll").unwrap();
+    // "a troll appears" fell off the front; "another troll" moved 2 -> 1.
+    assert_eq!(hits, vec![1]);
+    assert_eq!(
+        VellumGuiApp::line_index_of(content, cursor),
+        Some(1),
+        "the cursor still names the same LINE, at its new index"
+    );
+
+    // Once the cursor's own line scrolls away, it resolves to None so the
+    // caller restarts cleanly instead of pointing at a stranger's line.
+    if let Some(WindowContent::Text(content)) =
+        core.ui_state.windows.get_mut("main").map(|w| &mut w.content)
+    {
+        push(content, "x");
+        push(content, "y");
+    }
+    let content = VellumGuiApp::search_content(&core, "main").expect("buffer");
+    assert_eq!(VellumGuiApp::line_index_of(content, cursor), None);
+}
