@@ -191,6 +191,74 @@ pub fn card_size_for(c: &crate::core::state::Creature) -> solver::CardSize {
     }
 }
 
+/// Throttled camera loader: the skin's `[creature_field.camera]`, applied
+/// to the live field and refreshed when the skin selection or skin.toml
+/// changes. Mirrors `DollRulesCache` — one evaluator in core, so the
+/// phone's projected cards use the same camera the GUI draws with, and
+/// tuning rides the skin hot-reload instead of a restart.
+#[derive(Debug, Default)]
+pub struct FieldCameraCache {
+    cached: Option<CachedCamera>,
+}
+
+#[derive(Debug)]
+struct CachedCamera {
+    active_skin: Option<String>,
+    mtime: Option<std::time::SystemTime>,
+    checked: std::time::Instant,
+}
+
+const CAMERA_RECHECK: std::time::Duration = std::time::Duration::from_secs(2);
+
+impl FieldCameraCache {
+    /// Re-apply the skin camera to `field` when the skin or its mtime
+    /// changed. Cheap (one throttled `stat`) on the steady-state frame.
+    pub fn sync(&mut self, field: &mut solver::CreatureField, active_skin: Option<&str>) {
+        let fresh_enough = self.cached.as_ref().is_some_and(|c| {
+            c.active_skin.as_deref() == active_skin && c.checked.elapsed() < CAMERA_RECHECK
+        });
+        if fresh_enough {
+            return;
+        }
+        let mtime = active_skin.and_then(|name| {
+            let path = crate::config::Config::skins_dir()
+                .ok()?
+                .join(name)
+                .join("skin.toml");
+            std::fs::metadata(path).ok()?.modified().ok()
+        });
+        let unchanged = self.cached.as_ref().is_some_and(|c| {
+            c.active_skin.as_deref() == active_skin && c.mtime == mtime
+        });
+        if unchanged {
+            if let Some(c) = self.cached.as_mut() {
+                c.checked = std::time::Instant::now();
+            }
+            return;
+        }
+        // Always rebuild from defaults so removing a key in skin.toml (or
+        // switching to a skin without the section) reverts cleanly rather
+        // than leaving the last-applied value stuck.
+        let mut params = solver::FieldParams::default();
+        if let Some(name) = active_skin {
+            if let Ok((manifest, _)) = skins::load_manifest(name) {
+                params.apply_camera(&manifest.creature_field.camera);
+            }
+        }
+        if field.params != params {
+            field.params = params;
+            // Renderers cache quads against the generation; a camera change
+            // repositions every drawn card.
+            field.generation = field.generation.wrapping_add(1);
+        }
+        self.cached = Some(CachedCamera {
+            active_skin: active_skin.map(str::to_owned),
+            mtime,
+            checked: std::time::Instant::now(),
+        });
+    }
+}
+
 /// Event-driven roster sync: diff the field's units against the room's
 /// creatures. Arrivals place (permanently), departures free their square.
 /// Cheap no-op while the roster generation is unchanged, so calling it

@@ -83,6 +83,13 @@ pub struct SkinManifest {
     /// from the resolve cascade, per-creature state from `<crtrStatus>`.
     #[serde(default)]
     pub creature_card: CreatureCardSkin,
+    /// Creature field ground-plane tuning: the solver's camera. Every field
+    /// optional; unset values keep the built-in defaults, out-of-range
+    /// values clamp with a warning (a bad focal degrades, never drops the
+    /// widget). Lives in the skin so art can ship a matched camera, and so
+    /// tuning rides the skin hot-reload instead of restart-per-guess.
+    #[serde(default)]
+    pub creature_field: CreatureFieldSkin,
     /// Editor/menu color palette. Every field is optional: unset colors are
     /// auto-derived from the skin's art at load, and any `[ui]` entry
     /// overrides its derived default. This is what makes config editors,
@@ -302,6 +309,41 @@ pub struct CreatureCardSkin {
     /// tables (scar keys dropped at load).
     #[serde(flatten)]
     pub parts: HashMap<String, DollPartSpec>,
+}
+
+/// `[creature_field]` — ground-plane tuning for the creaturefield solver.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CreatureFieldSkin {
+    #[serde(default)]
+    pub camera: CreatureFieldCamera,
+}
+
+/// `[creature_field.camera]` — the six ground-plane parameters. All
+/// optional; `None` keeps the solver's built-in default. Names here are
+/// the authoring vocabulary and deliberately read plainer than the
+/// solver's short field names (`eye_height` → `cam_h`, etc.).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CreatureFieldCamera {
+    /// Lens; larger = flatter, less convergence. Default 420.
+    #[serde(default)]
+    pub focal: Option<f32>,
+    /// Camera height in card-heights above the plane. Default 1.6.
+    #[serde(default)]
+    pub eye_height: Option<f32>,
+    /// Distance to the front row. Default 2.4.
+    #[serde(default)]
+    pub near_depth: Option<f32>,
+    /// Spacing between rows. Default 1.5.
+    #[serde(default)]
+    pub row_depth: Option<f32>,
+    /// Vanishing line, px from stage top. Default 96.
+    #[serde(default)]
+    pub horizon: Option<f32>,
+    /// Lateral column spacing. Default 1.15. Note this one is not purely a
+    /// camera value — it also feeds placement scoring, so changing it
+    /// affects how future arrivals fit, never where placed units stand.
+    #[serde(default)]
+    pub cell_width: Option<f32>,
 }
 
 /// One status/effect layer on the card.
@@ -960,6 +1002,20 @@ description = ""
 # ]
 # [creature_card.variants.skin]
 # lift = { offset_y = -0.22, shadow_scale = 0.55, shadow_opacity = 0.4 }
+
+# Creature field ground plane — the camera the floor is projected with.
+# Every key is optional and falls back to the value shown; out-of-range
+# values clamp with a warning rather than dropping the widget. Edits
+# hot-reload with the rest of the skin, so tuning is live.
+#
+# [creature_field.camera]
+# focal      = 420    # lens; larger = flatter, less convergence
+# eye_height = 1.6    # camera height in card-heights above the plane
+# near_depth = 2.4    # distance to the front row
+# row_depth  = 1.5    # spacing between rows
+# horizon    = 96     # vanishing line, px from stage top
+# cell_width = 1.15   # lateral column spacing (also affects how future
+#                     # arrivals fit; placed creatures never move)
 "##;
 
 /// Create `skins/<name>/` with the commented starter skin.toml. Refuses to

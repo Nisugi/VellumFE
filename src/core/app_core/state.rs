@@ -96,6 +96,8 @@ pub struct AppCore {
     pub creature_field: crate::core::creature_cards::solver::CreatureField,
     /// Roster generation the field was last synced against.
     pub creature_field_synced_gen: u64,
+    /// Skin-supplied ground-plane camera for the field, mtime-throttled.
+    pub creature_field_camera: crate::core::creature_cards::FieldCameraCache,
 
     /// Performance statistics tracking
     pub perf_stats: PerformanceStats,
@@ -487,6 +489,7 @@ impl AppCore {
             last_link_click_pos: None,
             creature_field: Default::default(),
             creature_field_synced_gen: 0,
+            creature_field_camera: Default::default(),
             perf_stats: PerformanceStats::new(),
             show_perf_stats: false,
             sound_player: None,
@@ -693,6 +696,7 @@ impl AppCore {
             last_link_click_pos: None,
             creature_field: Default::default(),
             creature_field_synced_gen: 0,
+            creature_field_camera: Default::default(),
             perf_stats: PerformanceStats::new(),
             show_perf_stats: false,
             sound_player,
@@ -999,6 +1003,13 @@ impl AppCore {
                 chrono::Utc::now().timestamp() + self.message_processor.server_time_offset;
             self.game_state.tick_creature_effects(now_server);
         }
+        // Skin camera for the field (throttled stat; hot-reloads with the
+        // skin). Runs before the roster diff so arrivals this frame fit
+        // against the current cell width.
+        self.creature_field_camera.sync(
+            &mut self.creature_field,
+            self.config.active_skin.as_deref(),
+        );
         // Creature-field roster diff (no-op while the generation matches).
         crate::core::creature_cards::sync_field(
             &mut self.creature_field,

@@ -157,6 +157,36 @@ impl Default for CreatureField {
     }
 }
 
+impl FieldParams {
+    /// Overlay a skin's `[creature_field.camera]` onto these params. Unset
+    /// keys keep their current value; out-of-range values clamp to the
+    /// nearest sane bound and log — a bad focal degrades the camera, it
+    /// never drops the widget.
+    pub fn apply_camera(&mut self, cam: &crate::config::skins::CreatureFieldCamera) {
+        /// Clamp with a warning naming the offending key.
+        fn take(slot: &mut f32, value: Option<f32>, key: &str, lo: f32, hi: f32) {
+            let Some(v) = value else { return };
+            if !v.is_finite() {
+                tracing::warn!("[creature_field.camera] {key} is not a number; keeping {slot}");
+                return;
+            }
+            let c = v.clamp(lo, hi);
+            if c != v {
+                tracing::warn!(
+                    "[creature_field.camera] {key} = {v} out of range {lo}..={hi}; using {c}"
+                );
+            }
+            *slot = c;
+        }
+        take(&mut self.focal, cam.focal, "focal", 60.0, 4000.0);
+        take(&mut self.cam_h, cam.eye_height, "eye_height", 0.1, 20.0);
+        take(&mut self.z0, cam.near_depth, "near_depth", 0.1, 50.0);
+        take(&mut self.dz, cam.row_depth, "row_depth", 0.05, 20.0);
+        take(&mut self.horizon, cam.horizon, "horizon", -500.0, 2000.0);
+        take(&mut self.cell_w, cam.cell_width, "cell_width", 0.1, 10.0);
+    }
+}
+
 impl CreatureField {
     pub fn new(params: FieldParams) -> Self {
         Self {
@@ -999,5 +1029,49 @@ mod tests {
         for u in f.units() {
             assert!(u.ci > lo && u.ci < hi);
         }
+    }
+
+    #[test]
+    fn skin_camera_overlays_defaults_and_clamps_bad_values() {
+        use crate::config::skins::CreatureFieldCamera;
+        let d = FieldParams::default();
+
+        // Unset keys keep the built-in defaults.
+        let mut p = FieldParams::default();
+        p.apply_camera(&CreatureFieldCamera::default());
+        assert_eq!(p, d);
+
+        // Set keys land on the right solver fields (the TOML vocabulary
+        // deliberately differs from the short field names).
+        let mut p = FieldParams::default();
+        p.apply_camera(&CreatureFieldCamera {
+            focal: Some(300.0),
+            eye_height: Some(2.0),
+            near_depth: Some(3.0),
+            row_depth: Some(1.0),
+            horizon: Some(120.0),
+            cell_width: Some(1.4),
+        });
+        assert_eq!(
+            (p.focal, p.cam_h, p.z0, p.dz, p.horizon, p.cell_w),
+            (300.0, 2.0, 3.0, 1.0, 120.0, 1.4)
+        );
+
+        // A garbage focal degrades to the nearest bound, never panics and
+        // never leaves the field unusable.
+        let mut p = FieldParams::default();
+        p.apply_camera(&CreatureFieldCamera {
+            focal: Some(0.0),
+            ..Default::default()
+        });
+        assert!(p.focal >= 60.0, "focal clamped up, got {}", p.focal);
+
+        // NaN is ignored outright rather than poisoning the projection.
+        let mut p = FieldParams::default();
+        p.apply_camera(&CreatureFieldCamera {
+            eye_height: Some(f32::NAN),
+            ..Default::default()
+        });
+        assert_eq!(p.cam_h, d.cam_h);
     }
 }
