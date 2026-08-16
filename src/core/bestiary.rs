@@ -862,6 +862,35 @@ pub mod format {
         lines
     }
 
+    /// Room-id array for one spawn table, appended below an entry card
+    /// (the caller deliberately does NOT clear the stream first). One
+    /// wrapped `[id, id, …]` array meant for copy/paste into scripts.
+    /// `resolve` maps a game uid to a Lich room id — the mapdb lookup
+    /// stays with the caller so this module keeps zero map dependencies;
+    /// unresolved uids fall back to `u<uid>`.
+    pub fn rooms_lines(
+        map_name: &str,
+        ranges: &[(u64, u64)],
+        resolve: impl Fn(u64) -> Option<u32>,
+    ) -> Vec<StyledLine> {
+        let ids: Vec<String> = ranges
+            .iter()
+            .flat_map(|&(lo, hi)| lo..=hi)
+            .map(|uid| {
+                resolve(uid)
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| format!("u{uid}"))
+            })
+            .collect();
+        let array = format!("[{}]", ids.join(", "));
+        let mut out = vec![section(&format!("Rooms — {map_name}"))];
+        for l in wrap(&array, WIDTH - 6) {
+            out.push(boxed(vec![seg(format!("  {l}"))]));
+        }
+        out.push(rule('='));
+        out
+    }
+
     /// The full entry box.
     pub fn entry_lines(e: &CreatureEntry) -> Vec<StyledLine> {
         let mut out = vec![rule('=')];
@@ -907,10 +936,23 @@ pub mod format {
             for spawn in &e.spawns {
                 if let Some(map) = &spawn.map {
                     let rooms: u64 = spawn.uids.iter().map(|(lo, hi)| hi - lo + 1).sum();
+                    // Ranges ride in the command so the room list needs no
+                    // creature lookup; it appends below the card (no clear).
+                    let spec: String = spawn
+                        .uids
+                        .iter()
+                        .map(|(lo, hi)| format!("{lo}-{hi}"))
+                        .collect::<Vec<_>>()
+                        .join(",");
                     let mut segs = vec![
                         seg("  "),
                         link(map.clone(), format!(".bestiary area {map}")),
-                        seg(format!(" ({rooms} rooms)  ")),
+                        seg(" ("),
+                        link(
+                            format!("{rooms} rooms"),
+                            format!(".bestiary rooms {map}|{spec}"),
+                        ),
+                        seg(")  "),
                     ];
                     if let Some((lo, _)) = spawn.uids.first() {
                         // Native pathing straight to the hunting ground.

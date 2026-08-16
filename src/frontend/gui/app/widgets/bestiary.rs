@@ -21,10 +21,45 @@ struct BestiaryViewState {
     undead_only: bool,
     /// Entry page when set (entry name); browse page when None.
     selected: Option<String>,
+    /// Spawn index whose room list is expanded inline on the entry page.
+    expanded_spawn: Option<usize>,
 }
 
 fn state_id(window: &str) -> egui::Id {
     egui::Id::new(("bestiary_view_state", window.to_string()))
+}
+
+/// Label/section accent, matching the TUI card's gold field labels.
+const LABEL_GOLD: egui::Color32 = egui::Color32::from_rgb(222, 184, 96);
+
+/// Gold section header with a hairline rule under it, the GUI analog of the
+/// TUI card's `--- Offense ---` dashed separators.
+fn section_header(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(2.0);
+    ui.label(
+        egui::RichText::new(title.to_uppercase())
+            .size(11.0)
+            .strong()
+            .color(LABEL_GOLD),
+    );
+    let rect = ui
+        .allocate_space(egui::vec2(ui.available_width(), 1.0))
+        .1;
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        egui::Stroke::new(1.0, LABEL_GOLD.gamma_multiply(0.35)),
+    );
+    ui.add_space(4.0);
+}
+
+/// Bullet line with a gold key: `• Special: Dizzying Swing`.
+fn keyed_bullet(ui: &mut egui::Ui, key: &str, value: &str) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.label(egui::RichText::new(format!("• {key}:")).color(LABEL_GOLD));
+        ui.label(value);
+    });
 }
 
 impl VellumGuiApp {
@@ -161,6 +196,7 @@ impl VellumGuiApp {
                             );
                             if ui.link(&e.name).clicked() {
                                 state.selected = Some(e.name.clone());
+                                state.expanded_spawn = None;
                             }
                             if let Some(f) = &e.family {
                                 if ui.link(f).clicked() {
@@ -179,7 +215,7 @@ impl VellumGuiApp {
     }
 
     fn bestiary_entry_page(
-        _app_core: &AppCore,
+        app_core: &AppCore,
         ui: &mut egui::Ui,
         entry: &CreatureEntry,
         state: &mut BestiaryViewState,
@@ -240,7 +276,7 @@ impl VellumGuiApp {
                                 ui.label(
                                     egui::RichText::new(label.to_uppercase())
                                         .size(9.5)
-                                        .weak(),
+                                        .color(LABEL_GOLD),
                                 );
                                 ui.label(
                                     egui::RichText::new(value).strong().size(15.0),
@@ -285,68 +321,62 @@ impl VellumGuiApp {
                         attacks.push((format!("{} CS", a.name), v.display()));
                     }
                 }
-                if !primary.is_empty() || !attacks.is_empty() {
-                    ui.horizontal_wrapped(|ui| {
-                        for (label, value) in primary.iter().chain(attacks.iter()) {
-                            chip(ui, label, value);
-                        }
-                    });
-                }
+                // TDs join the same chip row: one chip when all circles
+                // match, otherwise one per circle.
+                let mut tds: Vec<(String, String)> = Vec::new();
                 if let Some(d) = &entry.defense {
                     if !d.td.is_empty() {
                         let values: Vec<String> =
                             d.td.values().map(|v| v.display()).collect();
-                        let all_same =
-                            values.len() > 1 && values.iter().all(|v| v == &values[0]);
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(egui::RichText::new("TD").size(9.5).weak());
-                            if all_same {
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "all circles {}",
-                                        values[0]
-                                    ))
-                                    .strong(),
-                                );
-                            } else {
-                                let parts: Vec<String> =
-                                    d.td.iter()
-                                        .map(|(k, v)| {
-                                            format!(
-                                                "{} {}",
-                                                k.to_uppercase(),
-                                                v.display()
-                                            )
-                                        })
-                                        .collect();
-                                ui.label(
-                                    egui::RichText::new(parts.join("  ·  ")).strong(),
-                                );
+                        if values.len() > 1 && values.iter().all(|v| v == &values[0]) {
+                            tds.push(("TD (all)".into(), values[0].clone()));
+                        } else {
+                            for (k, v) in &d.td {
+                                tds.push((
+                                    format!("TD {}", k.to_uppercase()),
+                                    v.display(),
+                                ));
                             }
-                        });
+                        }
                     }
                 }
-                if !primary.is_empty()
-                    || !attacks.is_empty()
-                    || entry.defense.as_ref().is_some_and(|d| !d.td.is_empty())
-                {
-                    ui.separator();
+                if !primary.is_empty() || !attacks.is_empty() || !tds.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, value) in
+                            primary.iter().chain(attacks.iter()).chain(tds.iter())
+                        {
+                            chip(ui, label, value);
+                        }
+                    });
+                    ui.add_space(4.0);
                 }
 
                 if let Some(desc) = &entry.description {
-                    ui.label(egui::RichText::new(desc).italics().weak());
+                    ui.label(egui::RichText::new(desc).weak());
                     ui.add_space(6.0);
                 }
 
                 // ---- Locations ------------------------------------------
                 if !entry.spawns.is_empty() || !entry.areas.is_empty() {
-                    ui.label(egui::RichText::new("Locations").strong());
-                    for spawn in &entry.spawns {
+                    section_header(ui, "Locations");
+                    for (si, spawn) in entry.spawns.iter().enumerate() {
                         ui.horizontal(|ui| {
                             let label = spawn.map.clone().unwrap_or_else(|| "?".into());
                             let rooms: u64 =
                                 spawn.uids.iter().map(|(lo, hi)| hi - lo + 1).sum();
-                            ui.label(format!("• {label} ({rooms} rooms)"));
+                            ui.label(format!("• {label}"));
+                            let expanded = state.expanded_spawn == Some(si);
+                            if ui
+                                .link(format!(
+                                    "({rooms} rooms) {}",
+                                    if expanded { "▾" } else { "▸" }
+                                ))
+                                .on_hover_text("Show the individual rooms")
+                                .clicked()
+                            {
+                                state.expanded_spawn =
+                                    if expanded { None } else { Some(si) };
+                            }
                             if let Some((lo, _)) = spawn.uids.first() {
                                 if ui.small_button("go2").clicked() {
                                     clicked = Some(GuiLinkClick {
@@ -362,6 +392,43 @@ impl VellumGuiApp {
                                 }
                             }
                         });
+                        if state.expanded_spawn == Some(si) {
+                            // One copy/paste-able `[id, id, …]` array of Lich
+                            // room ids (uids fall back to `u<uid>` when the
+                            // mapdb doesn't place them). Read-only TextEdit so
+                            // the text is selectable.
+                            let mapdb = app_core.map.mapdb();
+                            let ids: Vec<String> = spawn
+                                .uids
+                                .iter()
+                                .flat_map(|&(lo, hi)| lo..=hi)
+                                .map(|uid| {
+                                    mapdb
+                                        .and_then(|db| db.room_id_of_uid(uid as i64))
+                                        .map(|id| id.to_string())
+                                        .unwrap_or_else(|| format!("u{uid}"))
+                                })
+                                .collect();
+                            let array = format!("[{}]", ids.join(", "));
+                            ui.indent(("bestiary_rooms", si), |ui| {
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .small_button("copy")
+                                        .on_hover_text("Copy the room list")
+                                        .clicked()
+                                    {
+                                        ui.ctx().copy_text(array.clone());
+                                    }
+                                });
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut array.as_str())
+                                        .desired_width(f32::INFINITY)
+                                        .desired_rows(2)
+                                        .font(egui::TextStyle::Monospace),
+                                );
+                            });
+                            ui.add_space(2.0);
+                        }
                     }
                     for area in &entry.areas {
                         if !entry
@@ -376,39 +443,54 @@ impl VellumGuiApp {
                 }
 
                 // ---- Offense extras -------------------------------------
-                let extras: Vec<String> = entry
+                let extras: Vec<(String, String)> = entry
                     .offense
                     .spells
                     .iter()
-                    .map(|s| format!("Spell: {s}"))
-                    .chain(entry.offense.maneuvers.iter().map(|m| format!("Maneuver: {m}")))
+                    .map(|s| ("Spell".to_string(), s.clone()))
+                    .chain(
+                        entry
+                            .offense
+                            .maneuvers
+                            .iter()
+                            .map(|m| ("Maneuver".to_string(), m.clone())),
+                    )
                     .chain(entry.offense.specials.iter().map(|s| {
-                        match &s.note {
-                            Some(n) => format!("Special: {} — {n}", s.name),
-                            None => format!("Special: {}", s.name),
-                        }
+                        let value = match &s.note {
+                            Some(n) => format!("{} — {n}", s.name),
+                            None => s.name.clone(),
+                        };
+                        ("Special".to_string(), value)
                     }))
                     .collect();
                 if !extras.is_empty() {
-                    ui.label(egui::RichText::new("Offense").strong());
-                    for line in extras {
-                        ui.label(format!("• {line}"));
+                    section_header(ui, "Offense");
+                    for (key, value) in &extras {
+                        keyed_bullet(ui, key, value);
                     }
                     ui.add_space(6.0);
                 }
                 if let Some(d) = &entry.defense {
-                    let extras: Vec<String> = d
+                    let extras: Vec<(String, String)> = d
                         .immunities
                         .iter()
-                        .map(|s| format!("Immune: {s}"))
-                        .chain(d.spells.iter().map(|s| format!("Spell: {s}")))
-                        .chain(d.abilities.iter().map(|s| format!("Ability: {s}")))
-                        .chain(d.specials.iter().map(|s| format!("Special: {s}")))
+                        .map(|s| ("Immune".to_string(), s.clone()))
+                        .chain(d.spells.iter().map(|s| ("Spell".to_string(), s.clone())))
+                        .chain(
+                            d.abilities
+                                .iter()
+                                .map(|s| ("Ability".to_string(), s.clone())),
+                        )
+                        .chain(
+                            d.specials
+                                .iter()
+                                .map(|s| ("Special".to_string(), s.clone())),
+                        )
                         .collect();
                     if !extras.is_empty() {
-                        ui.label(egui::RichText::new("Defense").strong());
-                        for line in extras {
-                            ui.label(format!("• {line}"));
+                        section_header(ui, "Defense");
+                        for (key, value) in &extras {
+                            keyed_bullet(ui, key, value);
                         }
                         ui.add_space(6.0);
                     }
@@ -416,7 +498,7 @@ impl VellumGuiApp {
 
                 // ---- Treasure & notes -----------------------------------
                 if !entry.treasure.is_empty() {
-                    ui.label(egui::RichText::new("Treasure").strong());
+                    section_header(ui, "Treasure");
                     let mut items: Vec<String> = Vec::new();
                     if entry.treasure.coins {
                         items.push("coins".into());
@@ -440,7 +522,7 @@ impl VellumGuiApp {
                     ui.add_space(6.0);
                 }
                 if let Some(notes) = &entry.notes {
-                    ui.label(egui::RichText::new("Notes").strong());
+                    section_header(ui, "Notes");
                     ui.label(notes);
                 }
             });

@@ -2116,6 +2116,32 @@ impl AppCore {
                 let q = args[1..].join(" ");
                 format::table_lines(&db.by_family(&q), &format!("Family '{q}'"))
             }
+            // `.bestiary rooms <map>|<lo>-<hi>[,<lo>-<hi>…]` — expand one
+            // spawn table into per-room lines. Unlike every other page,
+            // this APPENDS below the current card (no clear): it's a
+            // drill-down of what's on screen, not a navigation step.
+            Some("rooms") => {
+                let raw = args[1..].join(" ");
+                let (map_name, spec) = raw.split_once('|').unwrap_or(("?", raw.as_str()));
+                let ranges: Vec<(u64, u64)> = spec
+                    .split(',')
+                    .filter_map(|r| {
+                        let (lo, hi) = r.split_once('-')?;
+                        Some((lo.trim().parse().ok()?, hi.trim().parse().ok()?))
+                    })
+                    .filter(|(lo, hi)| lo <= hi)
+                    .collect();
+                if ranges.is_empty() {
+                    self.add_system_message("Usage: .bestiary rooms <map>|<lo>-<hi>[,…]");
+                    return;
+                }
+                let mapdb = self.map.mapdb().cloned();
+                let lines = format::rooms_lines(map_name, &ranges, |uid| {
+                    mapdb.as_ref().and_then(|db| db.room_id_of_uid(uid as i64))
+                });
+                self.add_client_lines_to_stream(format::STREAM, lines);
+                return;
+            }
             Some("undead") => format::table_lines(&db.undead(), "Undead"),
             Some("search") => {
                 let q = args[1..].join(" ");
