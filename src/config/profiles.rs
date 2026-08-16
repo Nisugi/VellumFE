@@ -40,6 +40,12 @@ pub mod help {
         "Character name to log in as; also selects the character's saved layout and settings";
     pub const HOST: &str = "Host where Lich is listening (default: 127.0.0.1)";
     pub const PORT: &str = "Port of Lich's detachable client (default: 8000)";
+    pub const CUSTOM_LAUNCH: &str =
+        "Optional: the command that starts Lich (e.g. `rubyw lich.rbw --login NAME --detachable-client=8000`). \
+         When set, connecting first checks whether the port is already open; if not, Vellum runs this, \
+         waits for the port, then attaches. If Host is localhost/127.0.0.1 the command runs on this machine \
+         directly; any other host runs it over SSH (set the SSH user and key with .launcher). \
+         Leave blank to attach only.";
     pub const FRONTEND: &str =
         "GUI opens a native window; Terminal runs the text interface in its own console window";
     pub const WEB_PORT: &str =

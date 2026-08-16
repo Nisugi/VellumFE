@@ -15,6 +15,7 @@
 use anyhow::{anyhow, Context, Result};
 use eframe::egui;
 use std::process::Command;
+use tokio::sync::mpsc;
 
 use crate::config::profiles::{
     self, help, LaunchFrontend, LaunchMode, LauncherProfile, LauncherStore, GAME_CHOICES,
@@ -58,6 +59,8 @@ struct EditForm {
     web_port_text: String,
     web_bind_text: String,
     port_text: String,
+    /// Lich launch command, edited as plain text; empty commits as None.
+    custom_launch_text: String,
     error: Option<String>,
 }
 
@@ -75,6 +78,7 @@ impl EditForm {
             web_port_text: "8484".to_string(),
             web_bind_text: "127.0.0.1".to_string(),
             port_text: "8000".to_string(),
+            custom_launch_text: String::new(),
             error: None,
         }
     }
@@ -94,6 +98,7 @@ impl EditForm {
                 .clone()
                 .unwrap_or_else(|| "127.0.0.1".to_string()),
             port_text: profile.port.to_string(),
+            custom_launch_text: profile.custom_launch.clone().unwrap_or_default(),
             profile,
             error: None,
         }
@@ -114,6 +119,10 @@ pub struct LauncherApp {
     password_prompt: Option<PasswordPrompt>,
     confirm_delete: Option<String>,
     status: Option<Status>,
+    /// In-flight SSH launch (Lich profiles with a launch command): progress
+    /// from the flow thread, plus the profile to spawn once the port is up.
+    launch_progress_rx: Option<mpsc::UnboundedReceiver<crate::launcher::flow::LaunchProgress>>,
+    pending_launch: Option<LauncherProfile>,
 }
 
 impl LauncherApp {
@@ -135,6 +144,8 @@ impl LauncherApp {
             password_prompt: None,
             confirm_delete: None,
             status,
+            launch_progress_rx: None,
+            pending_launch: None,
         }
     }
 
@@ -175,7 +186,158 @@ impl LauncherApp {
                     }
                 }
             }
-            LaunchMode::Lich => self.spawn(&profile, None),
+            LaunchMode::Lich => match profile.custom_launch.as_deref() {
+                // Attach-only: Lich is expected to be up already.
+                None => self.spawn(&profile, None),
+                // Launch-capable: probe the port, SSH-start Lich if it's
+                // down, wait for it, then spawn the session. The probe lives
+                // inside the flow, so an already-running Lich costs one
+                // short connect attempt before AlreadyRunning fires.
+                Some(command) => self.start_ssh_launch(&profile, command),
+            },
+        }
+    }
+
+    /// Kick off the probe → SSH → wait-for-port flow on its own thread and
+    /// remember which profile to spawn when it reports Ready.
+    fn start_ssh_launch(&mut self, profile: &LauncherProfile, command: &str) {
+        if self.launch_progress_rx.is_some() {
+            self.status = Some(Status::error(
+                "A launch is already in progress; wait for it to finish.".to_string(),
+            ));
+            return;
+        }
+        // SSH settings are only REQUIRED for a remote launch. A same-machine
+        // profile (loopback host) spawns directly, so a missing or unreadable
+        // ssh-launcher.toml must not block it — that file is exactly what a
+        // single-PC user has never created.
+        let local = crate::launcher::flow::is_local_host(&profile.host);
+        let ssh = match crate::launcher::config::LauncherConfig::load() {
+            Ok(config) => config.ssh,
+            Err(_) if local => Default::default(),
+            Err(err) => {
+                self.status = Some(Status::error(format!(
+                    "Could not read the SSH launcher settings: {err:#}. Configure them with .launcher."
+                )));
+                return;
+            }
+        };
+        let spec = crate::launcher::flow::LaunchSpec::from_command(
+            command,
+            &profile.host,
+            profile.port,
+            &profile.character,
+            &ssh,
+        );
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.launch_progress_rx = Some(rx);
+        self.pending_launch = Some(profile.clone());
+        self.status = Some(Status::ok(format!("Starting Lich for {}…", profile.name)));
+        // Same constraint as the in-session launcher: russh's Handle isn't
+        // provably Send across awaits, so this needs its own current-thread
+        // runtime rather than the shared pool.
+        std::thread::Builder::new()
+            .name("ssh-launcher".into())
+            .spawn(move || {
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(err) => {
+                        let _ = tx.send(crate::launcher::flow::LaunchProgress::Failed {
+                            reason: format!("Could not start launcher runtime: {err}"),
+                        });
+                        return;
+                    }
+                };
+                rt.block_on(async move {
+                    let tx_progress = tx.clone();
+                    let result = crate::launcher::flow::launch_spec(
+                        &spec,
+                        crate::launcher::flow::HostKeyTrust::AutoPinFirstUse,
+                        |p| {
+                            let _ = tx_progress.send(p);
+                        },
+                    )
+                    .await;
+                    // `launch_spec` reports failures through progress only in
+                    // some paths; make sure a hard error always lands.
+                    if let Err(err) = result {
+                        let _ = tx.send(crate::launcher::flow::LaunchProgress::Failed {
+                            reason: format!("{err:#}"),
+                        });
+                    }
+                });
+            })
+            .ok();
+    }
+
+    /// Drain SSH-launch progress into the status line; spawn the session
+    /// once the port is up. Called once per frame.
+    fn pump_launch_progress(&mut self, ctx: &egui::Context) {
+        use crate::launcher::flow::LaunchProgress as LP;
+        let mut ready = false;
+        let mut finished = false;
+        if let Some(rx) = self.launch_progress_rx.as_mut() {
+            while let Ok(progress) = rx.try_recv() {
+                match progress {
+                    LP::Resolving { character } => {
+                        self.status = Some(Status::ok(format!("Resolving {character}…")))
+                    }
+                    LP::AlreadyRunning { host, port } => {
+                        self.status = Some(Status::ok(format!(
+                            "Lich already running at {host}:{port} — attaching."
+                        )))
+                    }
+                    LP::Connecting { host, port } => {
+                        self.status =
+                            Some(Status::ok(format!("Connecting to {host}:{port} over SSH…")))
+                    }
+                    LP::HostKeyPrompt { fingerprint } => {
+                        self.status = Some(Status::ok(format!(
+                            "Pinned new host key {fingerprint} (first use)."
+                        )))
+                    }
+                    LP::HostKeyChanged => {
+                        self.status = Some(Status::error(
+                            "Host key CHANGED — refusing to connect (possible MITM)."
+                                .to_string(),
+                        ));
+                        finished = true;
+                    }
+                    LP::Spawning { character } => {
+                        self.status =
+                            Some(Status::ok(format!("Starting Lich for {character}…")))
+                    }
+                    LP::WaitingForPort { host, port } => {
+                        self.status =
+                            Some(Status::ok(format!("Waiting for Lich on {host}:{port}…")))
+                    }
+                    LP::Ready { .. } => {
+                        ready = true;
+                        finished = true;
+                    }
+                    LP::Failed { reason } => {
+                        self.status = Some(Status::error(format!("Launch failed: {reason}")));
+                        finished = true;
+                    }
+                }
+            }
+        }
+        if ready {
+            if let Some(profile) = self.pending_launch.clone() {
+                self.spawn(&profile, None);
+            }
+        }
+        if finished {
+            self.launch_progress_rx = None;
+            self.pending_launch = None;
+        }
+        // A launch in flight produces progress from another thread; keep the
+        // UI repainting so the status line actually advances.
+        if self.launch_progress_rx.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
     }
 
@@ -263,6 +425,14 @@ impl LauncherApp {
             form.profile.web_port = None;
             form.profile.web_bind = None;
         }
+        // Lich-only, and blank means "attach only" — never persist an empty
+        // string, which would read as a launch command that does nothing.
+        form.profile.custom_launch = if form.profile.mode == LaunchMode::Lich {
+            let cmd = form.custom_launch_text.trim();
+            (!cmd.is_empty()).then(|| cmd.to_string())
+        } else {
+            None
+        };
 
         let mut form = self.edit.take().expect("edit form present");
         form.profile.name = form.profile.name.trim().to_string();
@@ -510,6 +680,35 @@ impl LauncherApp {
 
                             ui.label("Character").on_hover_text(help::CHARACTER);
                             ui.add(egui::TextEdit::singleline(&mut profile.character));
+                            ui.end_row();
+
+                            // Same-machine profiles skip SSH entirely, so the
+                            // hint below should not send the user off to
+                            // configure a key they don't need.
+                            let profile_is_local =
+                                crate::launcher::flow::is_local_host(&profile.host);
+                            ui.label("Launch command")
+                                .on_hover_text(help::CUSTOM_LAUNCH);
+                            ui.vertical(|ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut form.custom_launch_text)
+                                        .desired_rows(2)
+                                        .hint_text(
+                                            "rubyw lich.rbw --login NAME --detachable-client=8000",
+                                        ),
+                                );
+                                ui.label(
+                                    egui::RichText::new(if profile_is_local {
+                                        "Optional. If set, Vellum runs this on THIS machine when \
+                                         the port isn't already open. No SSH needed."
+                                    } else {
+                                        "Optional. If set, Vellum starts Lich over SSH when the \
+                                         port isn't already open. SSH user/key: .launcher"
+                                    })
+                                    .small()
+                                    .weak(),
+                                );
+                            });
                             ui.end_row();
                         }
                     }
@@ -780,6 +979,8 @@ impl eframe::App for LauncherApp {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
         let ctx = &ctx;
+        // Advance any in-flight SSH launch before painting this frame.
+        self.pump_launch_progress(ctx);
         egui::CentralPanel::default().show(root, |ui| {
             if self.edit.is_some() {
                 self.show_edit_form(ui);
