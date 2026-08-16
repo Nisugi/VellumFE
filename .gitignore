@@ -27,6 +27,10 @@ dist/
 /apple_dev.md
 # Local protocol reference notes (copied wiki page)
 /WraythProtocol-Wiki.txt
+# Unpacked Saga client (third-party, proprietary). READ-ONLY reference for
+# protocol/behavior study only — never copy code from here into this GPL
+# repo, and never commit it.
+/saga-unpacked/
 *.backup/
 build/
 coverage.json
