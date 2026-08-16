@@ -327,6 +327,23 @@ pub(super) struct ShellLayoutSnapshot {
     pub(super) footer_mode: ZoneDisplayMode,
     pub(super) left_sidebar_mode: ZoneDisplayMode,
     pub(super) right_sidebar_mode: ZoneDisplayMode,
+    // Backdrop opacity for a zone in OVERLAY mode: 1.0 = today's solid
+    // panel, 0.0 = fully see-through so the drawer reads as a HUD over the
+    // center pane. Ignored in Reserve mode, where there is nothing behind
+    // the zone to reveal. serde default (= 1.0) keeps every existing layout
+    // pixel-identical.
+    #[serde(default = "serde_default_opacity")]
+    pub(super) header_opacity: f32,
+    #[serde(default = "serde_default_opacity")]
+    pub(super) footer_opacity: f32,
+    #[serde(default = "serde_default_opacity")]
+    pub(super) left_sidebar_opacity: f32,
+    #[serde(default = "serde_default_opacity")]
+    pub(super) right_sidebar_opacity: f32,
+}
+
+const fn serde_default_opacity() -> f32 {
+    1.0
 }
 
 const fn serde_default_true() -> bool {
@@ -349,6 +366,10 @@ impl Default for ShellLayoutSnapshot {
             footer_mode: ZoneDisplayMode::default(),
             left_sidebar_mode: ZoneDisplayMode::default(),
             right_sidebar_mode: ZoneDisplayMode::default(),
+            header_opacity: 1.0,
+            footer_opacity: 1.0,
+            left_sidebar_opacity: 1.0,
+            right_sidebar_opacity: 1.0,
         }
     }
 }
@@ -378,6 +399,40 @@ impl ShellLayoutSnapshot {
             GuiShellZone::LeftSidebar => self.left_sidebar_mode,
             GuiShellZone::RightSidebar => self.right_sidebar_mode,
             GuiShellZone::Center => ZoneDisplayMode::Reserve,
+        }
+    }
+
+    /// Overlay backdrop opacity for a zone, clamped to a sane range. The
+    /// center is the reserved surface and always paints solid.
+    pub(super) fn zone_opacity(&self, zone: GuiShellZone) -> f32 {
+        let raw = match zone {
+            GuiShellZone::Header => self.header_opacity,
+            GuiShellZone::Footer => self.footer_opacity,
+            GuiShellZone::LeftSidebar => self.left_sidebar_opacity,
+            GuiShellZone::RightSidebar => self.right_sidebar_opacity,
+            GuiShellZone::Center => 1.0,
+        };
+        // A NaN or out-of-range value from a hand-edited layout must not
+        // make a zone invisible-and-unrecoverable; fall back to solid.
+        if raw.is_finite() {
+            raw.clamp(0.0, 1.0)
+        } else {
+            1.0
+        }
+    }
+
+    pub(super) fn set_zone_opacity(&mut self, zone: GuiShellZone, opacity: f32) {
+        let opacity = if opacity.is_finite() {
+            opacity.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        match zone {
+            GuiShellZone::Header => self.header_opacity = opacity,
+            GuiShellZone::Footer => self.footer_opacity = opacity,
+            GuiShellZone::LeftSidebar => self.left_sidebar_opacity = opacity,
+            GuiShellZone::RightSidebar => self.right_sidebar_opacity = opacity,
+            GuiShellZone::Center => {}
         }
     }
 
@@ -1344,9 +1399,17 @@ impl VellumGuiApp {
         zone: GuiShellZone,
         rect: Rect,
     ) {
+        // Overlay drawers can fade to a HUD over the center pane. The
+        // backdrop fill AND the zone's inner edge both scale by it —
+        // fading only the fill would leave a hairline floating in space.
+        let opacity = self.shell_layout.zone_opacity(zone);
         let inner_stroke = egui::Stroke::new(
             1.5,
-            ctx.global_style().visuals.window_stroke.color,
+            ctx.global_style()
+                .visuals
+                .window_stroke
+                .color
+                .gamma_multiply(opacity),
         );
         egui::Area::new(egui::Id::new(("gui_overlay_backdrop", zone.label())))
             .order(egui::Order::Foreground)
@@ -1354,8 +1417,15 @@ impl VellumGuiApp {
             .show(ctx, |ui| {
                 let (alloc, _response) =
                     ui.allocate_exact_size(rect.size(), egui::Sense::click_and_drag());
-                ui.painter()
-                    .rect_filled(alloc, 0.0, ui.style().visuals.panel_fill);
+                // Still allocated with a click_and_drag sense above even at
+                // zero opacity: the drawer must keep swallowing clicks so
+                // they don't fall through to the center text underneath.
+                // Transparent means see-through, not click-through.
+                ui.painter().rect_filled(
+                    alloc,
+                    0.0,
+                    ui.style().visuals.panel_fill.gamma_multiply(opacity),
+                );
                 let painter = ui.painter();
                 match zone {
                     GuiShellZone::Header => {
@@ -2236,6 +2306,57 @@ impl VellumGuiApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zone_opacity_defaults_solid_and_survives_round_trip() {
+        // A pre-opacity snapshot must load fully opaque, so no existing
+        // layout suddenly goes see-through on upgrade.
+        let legacy: ShellLayoutSnapshot = serde_json::from_str(
+            r#"{"header_height":140.0,"footer_height":180.0,
+                "left_sidebar_width":300.0,"right_sidebar_width":300.0,
+                "header_visible":true,"footer_visible":false,
+                "left_sidebar_collapsed":false,"right_sidebar_collapsed":true}"#,
+        )
+        .expect("legacy snapshot loads");
+        for zone in [
+            GuiShellZone::Header,
+            GuiShellZone::Footer,
+            GuiShellZone::LeftSidebar,
+            GuiShellZone::RightSidebar,
+        ] {
+            assert_eq!(legacy.zone_opacity(zone), 1.0, "{zone:?} defaults solid");
+        }
+
+        let mut layout = legacy.clone();
+        layout.set_zone_opacity(GuiShellZone::LeftSidebar, 0.35);
+        let json = serde_json::to_string(&layout).expect("serialize");
+        let restored: ShellLayoutSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.zone_opacity(GuiShellZone::LeftSidebar), 0.35);
+        // Untouched zones stay solid.
+        assert_eq!(restored.zone_opacity(GuiShellZone::RightSidebar), 1.0);
+
+        // The center IS the reserved surface: it always reads solid and
+        // setting it is a no-op, mirroring set_zone_mode.
+        layout.set_zone_opacity(GuiShellZone::Center, 0.0);
+        assert_eq!(layout.zone_opacity(GuiShellZone::Center), 1.0);
+    }
+
+    #[test]
+    fn zone_opacity_clamps_hand_edited_garbage_to_something_recoverable() {
+        let mut layout = ShellLayoutSnapshot::default();
+        // Out of range clamps rather than wrapping or panicking.
+        layout.set_zone_opacity(GuiShellZone::Header, 4.0);
+        assert_eq!(layout.zone_opacity(GuiShellZone::Header), 1.0);
+        layout.set_zone_opacity(GuiShellZone::Footer, -2.0);
+        assert_eq!(layout.zone_opacity(GuiShellZone::Footer), 0.0);
+
+        // NaN from a hand-edited layout must fall back to SOLID, not to an
+        // invisible zone the user cannot find to fix.
+        layout.left_sidebar_opacity = f32::NAN;
+        assert_eq!(layout.zone_opacity(GuiShellZone::LeftSidebar), 1.0);
+        layout.set_zone_opacity(GuiShellZone::RightSidebar, f32::NAN);
+        assert_eq!(layout.zone_opacity(GuiShellZone::RightSidebar), 1.0);
+    }
 
     #[test]
     fn zone_display_modes_default_reserve_and_round_trip() {

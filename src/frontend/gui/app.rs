@@ -2440,6 +2440,34 @@ impl eframe::App for VellumGuiApp {
                                     app.layout_dirty = true;
                                 }
                             });
+                            // Backdrop opacity, overlay-only: in Reserve mode
+                            // there is nothing behind the zone to reveal, so
+                            // the control would be a no-op knob.
+                            if app.shell_layout.zone_mode(zone)
+                                == zones::ZoneDisplayMode::Overlay
+                            {
+                                ui.horizontal(|ui| {
+                                    ui.add_space(8.0);
+                                    let mut opacity = app.shell_layout.zone_opacity(zone);
+                                    if ui
+                                        .add(
+                                            egui::Slider::new(&mut opacity, 0.0..=1.0)
+                                                .text("Opacity")
+                                                .fixed_decimals(2),
+                                        )
+                                        .on_hover_text(
+                                            "Backdrop opacity for this drawer. 1.00 is a \
+                                             solid panel; lower values let the center pane \
+                                             show through so the bar reads as a HUD. \
+                                             Clicks are still caught either way.",
+                                        )
+                                        .changed()
+                                    {
+                                        app.shell_layout.set_zone_opacity(zone, opacity);
+                                        app.layout_dirty = true;
+                                    }
+                                });
+                            }
                         };
                         zone_row(
                             self,
