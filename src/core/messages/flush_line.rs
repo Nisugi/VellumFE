@@ -392,7 +392,31 @@ impl MessageProcessor {
 
         // Familiar text since the last prompt: the next prompt echoes into
         // the familiar window as a separator (arena-spectate parity).
-        if self.current_stream == "familiar" && !highlight_result.line_is_silent {
+        if self.current_stream == "familiar"
+            && !highlight_result.line_is_silent
+            && !self.emitting_familiar_separator
+        {
+            // A redirect script that moves whole lines carries the game's
+            // prompt into the stream as PLAIN text — uncolored and missing
+            // the roundtime R the real prompt shows. Drop it: the prompt
+            // echo below supplies the styled separator, so keeping the
+            // moved copy would double it (and with worse rendering).
+            let plain: String = line
+                .segments
+                .iter()
+                .map(|seg| seg.text.as_str())
+                .collect::<String>()
+                .trim()
+                .to_string();
+            let is_moved_prompt = !plain.is_empty()
+                && plain.len() <= 4
+                && plain.ends_with('>')
+                && plain
+                    .chars()
+                    .all(|c| c == '>' || c.is_ascii_alphanumeric() || "!?*@#$%&".contains(c));
+            if is_moved_prompt {
+                return;
+            }
             self.chunk_has_familiar_text = true;
         }
 

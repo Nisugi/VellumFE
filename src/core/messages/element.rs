@@ -503,6 +503,9 @@ impl MessageProcessor {
                 // main, whose own prompt logic above already covers it —
                 // echoing too would double the separator there.
                 if self.chunk_has_familiar_text {
+                    // (Prompt lines a redirect script moved into the stream
+                    // as plain text are dropped at flush time — this echo is
+                    // the single styled separator.)
                     if !text.trim().is_empty()
                         && self.stream_has_target_window(ui_state, "familiar")
                     {
@@ -526,8 +529,12 @@ impl MessageProcessor {
                                 inline_image: None,
                             });
                         }
-                        // A bare separator: no TTS.
+                        // A bare separator: no TTS. The flag exempts this
+                        // internally-built line from the moved-prompt strip
+                        // (it is itself prompt-shaped).
+                        self.emitting_familiar_separator = true;
                         self.flush_current_stream_with_tts(ui_state, None);
+                        self.emitting_familiar_separator = false;
                         self.current_stream = original_stream;
                     }
                     // Reset AFTER the echo: the echoed line flows through the

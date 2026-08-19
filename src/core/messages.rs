@@ -181,6 +181,9 @@ pub struct MessageProcessor {
     /// Familiar-stream text arrived since the last prompt. Drives the prompt
     /// echo into the familiar window (arena-spectate round separators).
     chunk_has_familiar_text: bool,
+    /// True only while flushing the internally-built familiar prompt echo,
+    /// exempting it from the moved-prompt strip (it is prompt-shaped too).
+    emitting_familiar_separator: bool,
 
     /// Track if chunk (since last prompt) has silent updates
     pub chunk_has_silent_updates: bool,
@@ -384,6 +387,7 @@ impl MessageProcessor {
             pending_client_commands: Vec::new(),
             chunk_has_main_text: false,
             chunk_has_familiar_text: false,
+            emitting_familiar_separator: false,
             chunk_has_silent_updates: false,
             discard_current_stream: false,
             tts_windows: std::collections::HashSet::new(),

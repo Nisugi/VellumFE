@@ -4297,3 +4297,97 @@ fn prompts_echo_into_familiar_window_after_familiar_text() {
     assert_eq!(fam[2], "Round 2 carnage!");
     assert_eq!(fam[3], ">");
 }
+
+/// A redirect script that moves whole lines carries the game's prompt into
+/// the familiar stream as plain text — uncolored and missing the roundtime
+/// marker. Those moved prompt lines are STRIPPED; the prompt echo is the
+/// single styled separator (owner decision 2026-08-19: strip the moved
+/// copy, keep the echo — it has coloring and the R).
+#[test]
+fn familiar_stream_strips_moved_prompts_keeping_the_styled_echo() {
+    let mut processor = create_test_processor();
+    let mut ui_state = UiState::new();
+    ui_state
+        .windows
+        .insert("main".to_string(), make_text_window("main", &["main"]));
+    ui_state.windows.insert(
+        "familiar".to_string(),
+        make_text_window("familiar", &["familiar"]),
+    );
+    processor.update_text_stream_subscribers(&ui_state);
+
+    let mut game_state = crate::core::state::GameState::new();
+    let mut room_components = std::collections::HashMap::new();
+    let mut current_room_component = None;
+    let mut room_window_dirty = false;
+
+    use crate::parser::ParsedElement as E;
+    let make_text = |t: &str| E::Text {
+        content: t.to_string(),
+        stream: String::new(),
+        fg_color: None,
+        bg_color: None,
+        bold: false,
+        mono: false,
+        span_type: crate::parser::SpanType::Normal,
+        link_data: None,
+    };
+    let elements = [
+        // Redirected chunk: the script moved the text AND the prompt line.
+        E::StreamPush {
+            id: "familiar".to_string(),
+        },
+        make_text("A caustic melody ushers in the arrival of a troll wraith."),
+        E::StreamPop,
+        E::StreamPush {
+            id: "familiar".to_string(),
+        },
+        make_text(">"),
+        E::StreamPop,
+        // The real prompt carries roundtime — the echo shows it, the
+        // stripped moved copy never could.
+        E::Prompt {
+            time: "1".to_string(),
+            text: "R>".to_string(),
+        },
+        // Spectate-style chunk WITHOUT an embedded prompt: echo still fires.
+        E::StreamPush {
+            id: "familiar".to_string(),
+        },
+        make_text("The troll wraith looks miffed."),
+        E::StreamPop,
+        E::Prompt {
+            time: "2".to_string(),
+            text: ">".to_string(),
+        },
+    ];
+    for e in &elements {
+        processor.process_element(
+            e,
+            &mut game_state,
+            &mut ui_state,
+            &mut room_components,
+            &mut current_room_component,
+            &mut room_window_dirty,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+    }
+
+    let fam: Vec<String> = text_lines(&ui_state, "familiar")
+        .iter()
+        .map(|l| l.segments.iter().map(|s| s.text.as_str()).collect())
+        .collect();
+    assert_eq!(
+        fam,
+        vec![
+            "A caustic melody ushers in the arrival of a troll wraith.".to_string(),
+            "R>".to_string(), // the styled echo, WITH the roundtime marker
+            "The troll wraith looks miffed.".to_string(),
+            ">".to_string(), // spectate echo still fires without a moved prompt
+        ],
+        "moved prompt stripped, styled echo kept; familiar lines: {fam:?}"
+    );
+}
