@@ -260,6 +260,9 @@ impl VellumGuiApp {
                     _ => (true, true, true, true),
                 };
                 let interact_focus = app_core.interact_focus_exist_id();
+                // The room name renders with the roomName preset (same
+                // styling the story window's title line gets).
+                let name_preset = app_core.config.colors.presets.get("roomName").cloned();
                 Self::render_room_content(
                     ui,
                     room,
@@ -268,6 +271,7 @@ impl VellumGuiApp {
                     text_size,
                     &font_id,
                     interact_focus.as_deref(),
+                    name_preset.as_ref(),
                 )
             }
             WindowContent::ActiveEffects(content) => {

@@ -632,6 +632,7 @@ impl VellumGuiApp {
         text_size: f32,
         font_id: &egui::FontId,
         interact_focus: Option<&str>, // exist id to draw the focus ring on
+        name_preset: Option<&crate::config::PresetColor>, // roomName styling
     ) -> Option<GuiLinkClick> {
         // Cheap Arc clone; deep-cloning Visuals per window per frame is not.
         let style = ui.style().clone();
@@ -651,6 +652,10 @@ impl VellumGuiApp {
                 segments: vec![TextSegment {
                     text: room.name.clone(),
                     bold: true,
+                    // roomName preset: the same fg/bg plate the story
+                    // window's title line renders with.
+                    fg: name_preset.and_then(|preset| preset.fg.clone()),
+                    bg: name_preset.and_then(|preset| preset.bg.clone()),
                     span_type: crate::data::SpanType::Normal,
                     ..Default::default()
                 }],
