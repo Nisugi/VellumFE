@@ -254,8 +254,7 @@ impl AppCore {
         // Pass 1: evaluate every gate while `game_state` and the config are
         // borrowed immutably. Nothing here touches alert state.
         let mut evaluated: Vec<(String, bool, f32, crate::config::AlertSpec)> = Vec::new();
-        let mut live_keys: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut live_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for (name, pattern) in self.config.highlights.iter() {
             let Some(spec) = pattern.alert.as_ref() else {
@@ -279,10 +278,7 @@ impl AppCore {
                 continue;
             }
 
-            let key = spec
-                .id
-                .clone()
-                .unwrap_or_else(|| format!("cond:{name}"));
+            let key = spec.id.clone().unwrap_or_else(|| format!("cond:{name}"));
             live_keys.insert(key.clone());
 
             let gate = crate::core::conditions::eval_condition(
@@ -336,7 +332,6 @@ impl AppCore {
     }
 }
 
-
 impl AppCore {
     /// `.alertpacks` — list installed packs, toggle them, and work the trust
     /// gate. Text-driven for now; a browser UI is a separate piece of work,
@@ -374,9 +369,7 @@ impl AppCore {
                         pack.rules.len()
                     ));
                 }
-                self.add_system_message(
-                    "Use: .alertpacks <on|off|show|approve|revoke> <name>",
-                );
+                self.add_system_message("Use: .alertpacks <on|off|show|approve|revoke> <name>");
             }
             Some("on") | Some("off") => {
                 let on = parts[1].eq_ignore_ascii_case("on");
@@ -398,9 +391,7 @@ impl AppCore {
                 // pack they just enabled isn't fully working.
                 if on {
                     if let Some(pack) = packs.iter().find(|p| p.name == *name) {
-                        if pack.needs_approval()
-                            && !approvals.is_approved(&pack.name, &pack.hash)
-                        {
+                        if pack.needs_approval() && !approvals.is_approved(&pack.name, &pack.hash) {
                             self.add_system_message(&format!(
                                 "  '{name}' contains replace/redirect rules, withheld until \
                                  you review them: .alertpacks show {name}"
@@ -519,9 +510,7 @@ impl AppCore {
 
 #[cfg(test)]
 mod alert_condition_tests {
-    use crate::config::{
-        AlertSpec, Cmp, Condition, HighlightPattern, VitalKind, VitalUnit,
-    };
+    use crate::config::{AlertSpec, Cmp, Condition, HighlightPattern, VitalKind, VitalUnit};
     use crate::core::AppCore;
 
     /// A pattern-less highlight whose alert is gated on health < 30%.
@@ -678,14 +667,18 @@ mod alert_condition_tests {
         // the guard it would fire the moment it was saved and keep firing.
         let mut core = AppCore::new_for_test();
         let mut rule = low_health_rule();
-        rule.alert.as_mut().expect("alert").when =
-            Some(Condition::All { conditions: Vec::new() });
+        rule.alert.as_mut().expect("alert").when = Some(Condition::All {
+            conditions: Vec::new(),
+        });
         core.config.highlights.insert("empty".to_string(), rule);
 
         for _ in 0..10 {
             core.tick_alert_conditions();
         }
-        assert!(core.alerts.is_empty(), "an empty gate states no requirement");
+        assert!(
+            core.alerts.is_empty(),
+            "an empty gate states no requirement"
+        );
     }
 
     #[test]
@@ -694,8 +687,12 @@ mod alert_condition_tests {
         let mut rule = low_health_rule();
         rule.alert.as_mut().expect("alert").when = Some(Condition::All {
             conditions: vec![
-                Condition::Any { conditions: Vec::new() },
-                Condition::All { conditions: Vec::new() },
+                Condition::Any {
+                    conditions: Vec::new(),
+                },
+                Condition::All {
+                    conditions: Vec::new(),
+                },
             ],
         });
         core.config.highlights.insert("nested".to_string(), rule);
@@ -780,8 +777,7 @@ mod alert_condition_tests {
         core.tick_alert_conditions();
         core.game_state.vitals.health = 20;
         core.tick_alert_conditions();
-        let first_expiry = core.game_state.effects
-            [crate::core::alert_timers::TIMERS_CATEGORY]
+        let first_expiry = core.game_state.effects[crate::core::alert_timers::TIMERS_CATEGORY]
             .effects[0]
             .expires_at;
 
@@ -921,19 +917,13 @@ mod alert_condition_tests {
 
         core.game_state.room_meta.realm = Some(1);
         core.rearm_alert_packs();
-        assert_eq!(
-            core.last_pack_scope.as_ref().and_then(|s| s.realm),
-            Some(1)
-        );
+        assert_eq!(core.last_pack_scope.as_ref().and_then(|s| s.realm), Some(1));
 
         // Walking into a different realm is a scope change even with no
         // mapdb data at all — that is what zone scoping buys.
         core.game_state.room_meta.realm = Some(2);
         core.rearm_alert_packs();
-        assert_eq!(
-            core.last_pack_scope.as_ref().and_then(|s| s.realm),
-            Some(2)
-        );
+        assert_eq!(core.last_pack_scope.as_ref().and_then(|s| s.realm), Some(2));
     }
 
     #[test]

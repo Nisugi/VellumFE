@@ -1,7 +1,7 @@
 use crate::config::{Config, IndicatorTemplateEntry, IndicatorTemplateStore};
 use crate::data::input::{KeyCode, KeyModifiers};
-use crate::theme::AppTheme;
 use crate::frontend::tui::crossterm_bridge;
+use crate::theme::AppTheme;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -164,16 +164,14 @@ impl IndicatorTemplateEditor {
                     self.delete_selected();
                 }
                 KeyCode::Esc => return EditorAction::Close,
-                KeyCode::Char('s') if modifiers.ctrl => {
-                    match self.save_store() {
-                        Ok(_) => {
-                            self.status = "Templates saved".to_string();
-                        }
-                        Err(e) => {
-                            self.status = format!("Failed to save: {}", e);
-                        }
+                KeyCode::Char('s') if modifiers.ctrl => match self.save_store() {
+                    Ok(_) => {
+                        self.status = "Templates saved".to_string();
                     }
-                }
+                    Err(e) => {
+                        self.status = format!("Failed to save: {}", e);
+                    }
+                },
                 _ => {}
             },
             EditorMode::Form => match code {
@@ -188,8 +186,10 @@ impl IndicatorTemplateEditor {
                 KeyCode::Char('s') if modifiers.ctrl => self.save_form(),
                 _ => {
                     // Delegate editing to the current field
-                    let ct_code = crate::frontend::tui::crossterm_bridge::to_crossterm_keycode(code);
-                    let ct_mods = crate::frontend::tui::crossterm_bridge::to_crossterm_modifiers(modifiers);
+                    let ct_code =
+                        crate::frontend::tui::crossterm_bridge::to_crossterm_keycode(code);
+                    let ct_mods =
+                        crate::frontend::tui::crossterm_bridge::to_crossterm_modifiers(modifiers);
                     let key_event = crossterm::event::KeyEvent::new(ct_code, ct_mods);
                     let input = crate::frontend::tui::textarea_bridge::to_textarea_event(key_event);
                     let _ = self.current_field().input(input);
@@ -394,7 +394,12 @@ impl IndicatorTemplateEditor {
         self.popup_width = width;
         self.popup_height = height;
 
-        let popup_area = Rect { x, y, width, height };
+        let popup_area = Rect {
+            x,
+            y,
+            width,
+            height,
+        };
         Clear.render(popup_area, buf);
 
         // Background
@@ -473,7 +478,9 @@ impl IndicatorTemplateEditor {
 
         let normal = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.editor_label));
         let selected = Style::default()
-            .fg(crossterm_bridge::to_ratatui_color(theme.editor_label_focused))
+            .fg(crossterm_bridge::to_ratatui_color(
+                theme.editor_label_focused,
+            ))
             .add_modifier(Modifier::BOLD);
 
         for row in 0..list_height {
@@ -504,7 +511,11 @@ impl IndicatorTemplateEditor {
                 "?".to_string()
             };
             let line = format!("{} {}", icon, tpl.id);
-            let style = if idx == self.selected { selected } else { normal };
+            let style = if idx == self.selected {
+                selected
+            } else {
+                normal
+            };
             buf.set_string(list_x, list_y + idx as u16, line, style);
         }
     }
@@ -582,9 +593,9 @@ impl IndicatorTemplateEditor {
                 .min(self.popup_x + self.popup_width.saturating_sub(2));
             let preview_y = self.popup_y + 4;
             if preview_x < buf.area().width && preview_y < buf.area().height {
-                buf[(preview_x, preview_y)].set_char(icon_char).set_fg(
-                    crossterm_bridge::to_ratatui_color(theme.editor_text),
-                );
+                buf[(preview_x, preview_y)]
+                    .set_char(icon_char)
+                    .set_fg(crossterm_bridge::to_ratatui_color(theme.editor_text));
             }
         }
     }
@@ -619,36 +630,49 @@ impl IndicatorTemplateEditor {
         };
         let truncated: String = raw_value.chars().take(width).collect();
         let padded = format!("{:<width$}", truncated, width = width);
-        buf.set_string(x + label.len() as u16 + 1, y, padded, Style::default().fg(text_color));
+        buf.set_string(
+            x + label.len() as u16 + 1,
+            y,
+            padded,
+            Style::default().fg(text_color),
+        );
     }
 
-    fn draw_border(&self, area: &Rect, buf: &mut Buffer, color: ratatui::style::Color, bg: ratatui::style::Color) {
-        let Rect { x, y, width, height } = *area;
+    fn draw_border(
+        &self,
+        area: &Rect,
+        buf: &mut Buffer,
+        color: ratatui::style::Color,
+        bg: ratatui::style::Color,
+    ) {
+        let Rect {
+            x,
+            y,
+            width,
+            height,
+        } = *area;
         if width < 2 || height < 2 {
             return;
         }
         for dx in 1..width - 1 {
-            buf[(x + dx, y)]
-                .set_char('─')
-                .set_fg(color)
-                .set_bg(bg);
+            buf[(x + dx, y)].set_char('─').set_fg(color).set_bg(bg);
             buf[(x + dx, y + height - 1)]
                 .set_char('─')
                 .set_fg(color)
                 .set_bg(bg);
         }
         for dy in 1..height - 1 {
-            buf[(x, y + dy)]
-                .set_char('│')
-                .set_fg(color)
-                .set_bg(bg);
+            buf[(x, y + dy)].set_char('│').set_fg(color).set_bg(bg);
             buf[(x + width - 1, y + dy)]
                 .set_char('│')
                 .set_fg(color)
                 .set_bg(bg);
         }
         buf[(x, y)].set_char('┌').set_fg(color).set_bg(bg);
-        buf[(x + width - 1, y)].set_char('┐').set_fg(color).set_bg(bg);
+        buf[(x + width - 1, y)]
+            .set_char('┐')
+            .set_fg(color)
+            .set_bg(bg);
         buf[(x, y + height - 1)]
             .set_char('└')
             .set_fg(color)

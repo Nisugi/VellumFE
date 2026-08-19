@@ -91,8 +91,9 @@ pub fn resolve(spec: &AssetSpec, lich_dir: Option<&str>) -> ResolvedAsset {
         }
         match std::fs::read_to_string(&path) {
             Ok(content) => {
-                let modified =
-                    std::fs::metadata(&path).and_then(|meta| meta.modified()).ok();
+                let modified = std::fs::metadata(&path)
+                    .and_then(|meta| meta.modified())
+                    .ok();
                 return ResolvedAsset {
                     content: Cow::Owned(content),
                     source,

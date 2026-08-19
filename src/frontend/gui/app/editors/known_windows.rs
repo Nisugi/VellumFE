@@ -96,7 +96,11 @@ impl VellumGuiApp {
                 }
             })
             .collect();
-        rows.sort_by(|a, b| a.title.to_ascii_lowercase().cmp(&b.title.to_ascii_lowercase()));
+        rows.sort_by(|a, b| {
+            a.title
+                .to_ascii_lowercase()
+                .cmp(&b.title.to_ascii_lowercase())
+        });
 
         // Window groups (locked-together windows rendered as one). Resolve
         // each group to its member window names in render order so the Groups
@@ -209,10 +213,12 @@ impl VellumGuiApp {
                                         for (member_index, name) in
                                             group.member_names.iter().enumerate()
                                         {
-                                            if let Some(row) =
-                                                rows.iter().find(|r| &r.name == name)
+                                            if let Some(row) = rows.iter().find(|r| &r.name == name)
                                             {
-                                                Self::known_window_row(ui, member_index, row,
+                                                Self::known_window_row(
+                                                    ui,
+                                                    member_index,
+                                                    row,
                                                     &mut toggle,
                                                     &mut zone_change,
                                                 );
@@ -246,7 +252,10 @@ impl VellumGuiApp {
                                             && r.widget_type == "indicator"
                                     });
                                 for (row_index, row) in plain.iter().enumerate() {
-                                    Self::known_window_row(ui, row_index, row,
+                                    Self::known_window_row(
+                                        ui,
+                                        row_index,
+                                        row,
                                         &mut toggle,
                                         &mut zone_change,
                                     );
@@ -256,10 +265,11 @@ impl VellumGuiApp {
                                         .id_salt("known_windows_indicators")
                                         .default_open(false)
                                         .show(ui, |ui| {
-                                            for (row_index, row) in
-                                                indicators.iter().enumerate()
-                                            {
-                                                Self::known_window_row(ui, row_index, row,
+                                            for (row_index, row) in indicators.iter().enumerate() {
+                                                Self::known_window_row(
+                                                    ui,
+                                                    row_index,
+                                                    row,
                                                     &mut toggle,
                                                     &mut zone_change,
                                                 );

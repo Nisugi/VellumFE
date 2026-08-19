@@ -36,9 +36,8 @@ impl ContainersWindow {
         snapshot: Option<&ManagedInventoryState>,
         current_room_uid: Option<u64>,
     ) -> bool {
-        let room_stale = snapshot.is_some_and(|s| {
-            current_room_uid.is_some_and(|uid| uid.to_string() != s.room)
-        });
+        let room_stale =
+            snapshot.is_some_and(|s| current_room_uid.is_some_and(|uid| uid.to_string() != s.room));
         let key = snapshot.map(|s| (s.token.clone(), s.generation, room_stale));
         if self.cache == key {
             return false;
@@ -161,7 +160,11 @@ impl ContainersWindow {
             let count = if item.is_locked() {
                 "locked".to_string()
             } else {
-                counts.get(item.id.as_str()).copied().unwrap_or(0).to_string()
+                counts
+                    .get(item.id.as_str())
+                    .copied()
+                    .unwrap_or(0)
+                    .to_string()
             };
             let bd = weights.get(item.id.as_str()).copied().unwrap_or_default();
             let capacity = match item.in_capacity() {

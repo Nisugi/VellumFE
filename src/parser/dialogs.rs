@@ -174,7 +174,11 @@ impl XmlParser {
                         .unwrap_or(false);
                     let dropdowns = Self::parse_dialog_dropdowns(tag);
                     if !dropdowns.is_empty() {
-                        elements.push(ParsedElement::DialogDropDowns { id, clear, dropdowns });
+                        elements.push(ParsedElement::DialogDropDowns {
+                            id,
+                            clear,
+                            dropdowns,
+                        });
                     }
                 }
             }
@@ -505,7 +509,12 @@ impl XmlParser {
                     });
                 } else {
                     let location = Self::extract_attribute(tag_head, "location");
-                    tracing::debug!("Parser emitting DialogOpen: id={}, title={:?}, save={}", id, title, save_position);
+                    tracing::debug!(
+                        "Parser emitting DialogOpen: id={}, title={:?}, save={}",
+                        id,
+                        title,
+                        save_position
+                    );
                     elements.push(ParsedElement::DialogOpen {
                         id,
                         title,
@@ -534,7 +543,11 @@ impl XmlParser {
     }
 
     /// Extract progressBar and other widget data from embedded dialogData in resident dialogs
-    pub(super) fn handle_embedded_resident_dialog_data(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+    pub(super) fn handle_embedded_resident_dialog_data(
+        &mut self,
+        tag: &str,
+        elements: &mut Vec<ParsedElement>,
+    ) {
         let mut remaining = tag;
         let end_pattern = "</dialogData>";
 
@@ -577,7 +590,11 @@ impl XmlParser {
         }
     }
 
-    pub(super) fn handle_embedded_quickbar_dialog_data(&self, tag: &str, elements: &mut Vec<ParsedElement>) {
+    pub(super) fn handle_embedded_quickbar_dialog_data(
+        &self,
+        tag: &str,
+        elements: &mut Vec<ParsedElement>,
+    ) {
         let mut remaining = tag;
         let end_pattern = "</dialogData>";
 
@@ -609,7 +626,11 @@ impl XmlParser {
     /// Emit DialogControls (links/images/spinboxes) for dialogData blocks
     /// embedded in an openDialog tag — combat's login-time icon+configure
     /// chunk arrives this way (mirrors handle_embedded_dialog_dropdowns).
-    pub(super) fn handle_embedded_dialog_controls(&self, tag: &str, elements: &mut Vec<ParsedElement>) {
+    pub(super) fn handle_embedded_dialog_controls(
+        &self,
+        tag: &str,
+        elements: &mut Vec<ParsedElement>,
+    ) {
         let mut remaining = tag;
         let end_pattern = "</dialogData>";
         while let Some(start) = remaining.find("<dialogData") {
@@ -637,8 +658,7 @@ impl XmlParser {
                                 || value.eq_ignore_ascii_case("true")
                         })
                         .unwrap_or(false);
-                    let (links, images, spinboxes, skins) =
-                        Self::parse_dialog_controls(dialog_tag);
+                    let (links, images, spinboxes, skins) = Self::parse_dialog_controls(dialog_tag);
                     if !links.is_empty()
                         || !images.is_empty()
                         || !spinboxes.is_empty()
@@ -661,7 +681,11 @@ impl XmlParser {
 
     /// Emit DialogDropDowns for dropDownBoxes inside dialogData blocks
     /// embedded in an openDialog tag (mirrors handle_embedded_dialog_buttons).
-    pub(super) fn handle_embedded_dialog_dropdowns(&self, tag: &str, elements: &mut Vec<ParsedElement>) {
+    pub(super) fn handle_embedded_dialog_dropdowns(
+        &self,
+        tag: &str,
+        elements: &mut Vec<ParsedElement>,
+    ) {
         let mut remaining = tag;
         let end_pattern = "</dialogData>";
 
@@ -688,7 +712,11 @@ impl XmlParser {
                         .unwrap_or(false);
                     let dropdowns = Self::parse_dialog_dropdowns(dialog_tag);
                     if !dropdowns.is_empty() {
-                        elements.push(ParsedElement::DialogDropDowns { id, clear, dropdowns });
+                        elements.push(ParsedElement::DialogDropDowns {
+                            id,
+                            clear,
+                            dropdowns,
+                        });
                     }
                 }
             }
@@ -697,7 +725,11 @@ impl XmlParser {
         }
     }
 
-    pub(super) fn handle_embedded_dialog_buttons(&self, tag: &str, elements: &mut Vec<ParsedElement>) {
+    pub(super) fn handle_embedded_dialog_buttons(
+        &self,
+        tag: &str,
+        elements: &mut Vec<ParsedElement>,
+    ) {
         let mut remaining = tag;
         let end_pattern = "</dialogData>";
 
@@ -734,7 +766,11 @@ impl XmlParser {
         }
     }
 
-    pub(super) fn handle_embedded_dialog_fields(&self, tag: &str, elements: &mut Vec<ParsedElement>) {
+    pub(super) fn handle_embedded_dialog_fields(
+        &self,
+        tag: &str,
+        elements: &mut Vec<ParsedElement>,
+    ) {
         let mut remaining = tag;
         let end_pattern = "</dialogData>";
 
@@ -785,7 +821,11 @@ impl XmlParser {
     }
 
     /// Extract progressBar elements from embedded dialogData for non-resident dialogs (popups)
-    pub(super) fn handle_embedded_dialog_progress_bars(&self, tag: &str, elements: &mut Vec<ParsedElement>) {
+    pub(super) fn handle_embedded_dialog_progress_bars(
+        &self,
+        tag: &str,
+        elements: &mut Vec<ParsedElement>,
+    ) {
         let mut remaining = tag;
         let end_pattern = "</dialogData>";
 
@@ -848,7 +888,12 @@ impl XmlParser {
                 let text = Self::extract_attribute(pb_tag, "text").unwrap_or_default();
                 let layout = Self::parse_control_layout(pb_tag);
 
-                progress_bars.push(DialogProgressBarSpec { id, value, text, layout });
+                progress_bars.push(DialogProgressBarSpec {
+                    id,
+                    value,
+                    text,
+                    layout,
+                });
             }
 
             remaining = &remaining[pb_end..];
@@ -1058,7 +1103,9 @@ impl XmlParser {
 
     /// Pull the pixel layout hints (top/left/size/align/anchors) off a
     /// dialog control tag. None when the tag carries none.
-    pub(super) fn parse_control_layout(tag_slice: &str) -> Option<crate::data::DialogControlLayout> {
+    pub(super) fn parse_control_layout(
+        tag_slice: &str,
+    ) -> Option<crate::data::DialogControlLayout> {
         let layout = crate::data::DialogControlLayout {
             top: Self::extract_attribute(tag_slice, "top").and_then(|v| v.parse().ok()),
             left: Self::extract_attribute(tag_slice, "left").and_then(|v| v.parse().ok()),
@@ -1094,7 +1141,9 @@ impl XmlParser {
         let mut remaining = tag;
         while let Some(start) = remaining.find("<link ") {
             remaining = &remaining[start..];
-            let Some(end) = Self::self_closing_end(remaining) else { break };
+            let Some(end) = Self::self_closing_end(remaining) else {
+                break;
+            };
             let slice = &remaining[..end];
             if let Some(id) = Self::extract_attribute(slice, "id") {
                 links.push(crate::data::DialogLink {
@@ -1110,7 +1159,9 @@ impl XmlParser {
         let mut remaining = tag;
         while let Some(start) = remaining.find("<image ") {
             remaining = &remaining[start..];
-            let Some(end) = Self::self_closing_end(remaining) else { break };
+            let Some(end) = Self::self_closing_end(remaining) else {
+                break;
+            };
             let slice = &remaining[..end];
             if let Some(id) = Self::extract_attribute(slice, "id") {
                 images.push(crate::data::DialogImage {
@@ -1127,7 +1178,9 @@ impl XmlParser {
         let mut remaining = tag;
         while let Some(start) = remaining.find("<upDownEditBox ") {
             remaining = &remaining[start..];
-            let Some(end) = Self::self_closing_end(remaining) else { break };
+            let Some(end) = Self::self_closing_end(remaining) else {
+                break;
+            };
             let slice = &remaining[..end];
             if let Some(id) = Self::extract_attribute(slice, "id") {
                 spinboxes.push(crate::data::DialogSpinBox {
@@ -1150,7 +1203,9 @@ impl XmlParser {
         let mut remaining = tag;
         while let Some(start) = remaining.find("<skin ") {
             remaining = &remaining[start..];
-            let Some(end) = Self::self_closing_end(remaining) else { break };
+            let Some(end) = Self::self_closing_end(remaining) else {
+                break;
+            };
             let slice = &remaining[..end];
             if let Some(id) = Self::extract_attribute(slice, "id") {
                 let name = Self::extract_attribute(slice, "name").unwrap_or_default();
@@ -1178,7 +1233,9 @@ impl XmlParser {
     /// End offset (exclusive) of a self-closing or open tag at the start
     /// of `s`: prefers `/>`, falls back to `>`.
     pub(super) fn self_closing_end(s: &str) -> Option<usize> {
-        s.find("/>").map(|e| e + 2).or_else(|| s.find('>').map(|e| e + 1))
+        s.find("/>")
+            .map(|e| e + 2)
+            .or_else(|| s.find('>').map(|e| e + 1))
     }
 
     /// Parse every `<dropDownBox>` in a dialogData chunk into option
@@ -1189,9 +1246,11 @@ impl XmlParser {
         let mut remaining = tag;
         while let Some(start) = remaining.find("<dropDownBox") {
             remaining = &remaining[start..];
-            let Some(end) = remaining.find("/>").map(|e| e + 2).or_else(|| {
-                remaining.find('>').map(|e| e + 1)
-            }) else {
+            let Some(end) = remaining
+                .find("/>")
+                .map(|e| e + 2)
+                .or_else(|| remaining.find('>').map(|e| e + 1))
+            else {
                 break;
             };
             let tag_slice = &remaining[..end];
@@ -1283,7 +1342,12 @@ impl XmlParser {
                 let layout = Self::parse_control_layout(tag_slice);
                 let justify =
                     Self::extract_attribute(tag_slice, "justify").and_then(|v| v.parse().ok());
-                labels.push(DialogLabelSpec { id, value, layout, justify });
+                labels.push(DialogLabelSpec {
+                    id,
+                    value,
+                    layout,
+                    justify,
+                });
             }
 
             remaining = &remaining[advance_by..];
@@ -1299,13 +1363,10 @@ impl XmlParser {
         // `"` (it used to be the literal `&quot;`); truncate at either form so
         // this is robust regardless of decode timing.
         let mut cleaned = value.to_string();
-        let cut = cleaned
-            .find('"')
-            .or_else(|| cleaned.find("&quot;"));
+        let cut = cleaned.find('"').or_else(|| cleaned.find("&quot;"));
         if let Some(pos) = cut {
             cleaned.truncate(pos);
         }
         cleaned.trim().to_string()
     }
-
 }

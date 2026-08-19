@@ -77,13 +77,24 @@ impl ButtonForm {
             area
         };
         let (countdown_kind, effect_category, effect_name, name_match) = match &button.countdown {
-            None => (0, EffectCategory::Cooldowns, String::new(), NameMatch::Exact),
-            Some(HotbarCountdownSource::Roundtime) => {
-                (1, EffectCategory::Cooldowns, String::new(), NameMatch::Exact)
-            }
-            Some(HotbarCountdownSource::Casttime) => {
-                (2, EffectCategory::Cooldowns, String::new(), NameMatch::Exact)
-            }
+            None => (
+                0,
+                EffectCategory::Cooldowns,
+                String::new(),
+                NameMatch::Exact,
+            ),
+            Some(HotbarCountdownSource::Roundtime) => (
+                1,
+                EffectCategory::Cooldowns,
+                String::new(),
+                NameMatch::Exact,
+            ),
+            Some(HotbarCountdownSource::Casttime) => (
+                2,
+                EffectCategory::Cooldowns,
+                String::new(),
+                NameMatch::Exact,
+            ),
             Some(HotbarCountdownSource::Effect {
                 category,
                 name,
@@ -470,8 +481,7 @@ impl HotbarEditor {
                                 self.form = None;
                                 self.level = Level::Buttons;
                                 self.dirty = true;
-                                self.status =
-                                    "Button updated - Ctrl+S to save the bar".to_string();
+                                self.status = "Button updated - Ctrl+S to save the bar".to_string();
                             }
                             Err(err) => form.error = Some(err),
                         }
@@ -622,7 +632,9 @@ impl HotbarEditor {
             );
             return;
         }
-        let start = self.selected_bar.saturating_sub(list_height.saturating_sub(1));
+        let start = self
+            .selected_bar
+            .saturating_sub(list_height.saturating_sub(1));
         let entries: Vec<(usize, String)> = self
             .bars
             .iter()
@@ -637,10 +649,7 @@ impl HotbarEditor {
                 };
                 (
                     idx,
-                    format!(
-                        "{} {}  ({} buttons)",
-                        scope, entry.name, entry.button_count
-                    ),
+                    format!("{} {}  ({} buttons)", scope, entry.name, entry.button_count),
                 )
             })
             .collect();
@@ -701,10 +710,8 @@ impl HotbarEditor {
                 } else {
                     format!("  {{{} states}}", button.states.len())
                 };
-                let mut text = format!(
-                    "{}  ({}){}{}",
-                    button.label, button.command, hotkey, states
-                );
+                let mut text =
+                    format!("{}  ({}){}{}", button.label, button.command, hotkey, states);
                 if text.len() > max_width {
                     text.truncate(max_width.saturating_sub(3));
                     text.push_str("...");
@@ -766,7 +773,14 @@ impl HotbarEditor {
                 EffectCategory::ActiveSpells => "Active Spells",
             };
             self.render_field_row(
-                x, current_y, "Eff cat:", cat_value, focused_cat, true, buf, theme,
+                x,
+                current_y,
+                "Eff cat:",
+                cat_value,
+                focused_cat,
+                true,
+                buf,
+                theme,
             );
             current_y += 2;
 
@@ -781,7 +795,14 @@ impl HotbarEditor {
                 match_label
             );
             self.render_field_row(
-                x, current_y, "Eff name:", &value, focused_name, false, buf, theme,
+                x,
+                current_y,
+                "Eff name:",
+                &value,
+                focused_name,
+                false,
+                buf,
+                theme,
             );
             current_y += 2;
         }

@@ -101,7 +101,9 @@ pub fn resolve_card<'a>(
     gameobj: Option<&GameObjData>,
 ) -> ResolvedCard<'a> {
     let variant = skin.variants.iter().position(|v| {
-        crate::core::conditions::eval_condition_for_creature(&v.when, gs, now_server, gameobj, flags)
+        crate::core::conditions::eval_condition_for_creature(
+            &v.when, gs, now_server, gameobj, flags,
+        )
     });
     let overlays = skin
         .overlays
@@ -123,7 +125,11 @@ pub fn resolve_card<'a>(
 /// `{noun}` and `{family}`; a candidate whose placeholder can't be filled
 /// is skipped, so a family-less creature just falls through to the next
 /// tier. The manifest's `base` rides at the end as the final fallback.
-pub fn base_candidates(skin: &CreatureCardSkin, noun: Option<&str>, family: Option<&str>) -> Vec<String> {
+pub fn base_candidates(
+    skin: &CreatureCardSkin,
+    noun: Option<&str>,
+    family: Option<&str>,
+) -> Vec<String> {
     let cascade: Vec<&str> = if skin.resolve.is_empty() {
         CREATURE_RESOLVE_DEFAULT.to_vec()
     } else {
@@ -227,9 +233,10 @@ impl FieldCameraCache {
                 .join("skin.toml");
             std::fs::metadata(path).ok()?.modified().ok()
         });
-        let unchanged = self.cached.as_ref().is_some_and(|c| {
-            c.active_skin.as_deref() == active_skin && c.mtime == mtime
-        });
+        let unchanged = self
+            .cached
+            .as_ref()
+            .is_some_and(|c| c.active_skin.as_deref() == active_skin && c.mtime == mtime);
         if unchanged {
             if let Some(c) = self.cached.as_mut() {
                 c.checked = std::time::Instant::now();
@@ -320,7 +327,7 @@ pub fn canonical_part(name: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod card_tests {
     use super::*;
-    use crate::config::skins::{AnimateKind, OverlaySpace, OverlaySource, SkinManifest};
+    use crate::config::skins::{AnimateKind, OverlaySource, OverlaySpace, SkinManifest};
 
     /// The plan's reference manifest, parsed for real: cascade, anchors,
     /// wound art, a feed overlay, a screen-space animated overlay, a
@@ -382,7 +389,9 @@ mod card_tests {
     "#;
 
     fn card() -> CreatureCardSkin {
-        toml::from_str::<SkinManifest>(MANIFEST).unwrap().creature_card
+        toml::from_str::<SkinManifest>(MANIFEST)
+            .unwrap()
+            .creature_card
     }
 
     fn flags(attrs: &[(&str, &str)]) -> CreatureFlags {
@@ -421,7 +430,15 @@ mod card_tests {
     #[test]
     fn matching_overlays_stack_while_variants_pick_first() {
         let skin = card();
-        let r = resolve(&skin, &flags(&[("webbed", "1"), ("stunned", "1"), ("prone", "1"), ("hovering", "1")]));
+        let r = resolve(
+            &skin,
+            &flags(&[
+                ("webbed", "1"),
+                ("stunned", "1"),
+                ("prone", "1"),
+                ("hovering", "1"),
+            ]),
+        );
         // Both status overlays active, in declaration order.
         assert_eq!(r.overlays.len(), 2);
         assert_eq!(r.overlays[0].image, "fx/webbed.png");
@@ -437,7 +454,11 @@ mod card_tests {
         let skin = card();
         let r = resolve(&skin, &flags(&[("flying", "1")]));
         assert_eq!(r.variant_name(), Some("airborne"));
-        assert_eq!(r.base_override(), None, "no base: cascade's ground pose is kept");
+        assert_eq!(
+            r.base_override(),
+            None,
+            "no base: cascade's ground pose is kept"
+        );
         let lift = r.lift().unwrap();
         assert_eq!(lift.offset_y, -0.22);
         assert_eq!(lift.shadow_scale, 0.55);
@@ -467,7 +488,11 @@ mod card_tests {
         let r = resolve(&skin, &flags(&[]));
         assert_eq!(r.part_overlay("head", 1), Some("creatures/fx/head_i1.png"));
         assert_eq!(r.part_overlay("HEAD", 1), Some("creatures/fx/head_i1.png"));
-        assert_eq!(r.part_overlay("head", 4), None, "scar1 authored but must not resolve");
+        assert_eq!(
+            r.part_overlay("head", 4),
+            None,
+            "scar1 authored but must not resolve"
+        );
         assert_eq!(r.part_overlay("head", 2), None);
         assert_eq!(r.part_overlay("chest", 1), None);
     }
@@ -517,10 +542,7 @@ mod card_tests {
 
     #[test]
     fn resolve_base_image_finds_first_existing_candidate() {
-        let dir = std::env::temp_dir().join(format!(
-            "vellum_cc_test_{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("vellum_cc_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(dir.join("creatures"));
         std::fs::write(dir.join("creatures/default.png"), b"png").unwrap();
         std::fs::write(dir.join("creatures/troll.png"), b"png").unwrap();
@@ -593,8 +615,21 @@ mod tests {
     #[test]
     fn adapter_is_total_over_creaturebar_vocabulary() {
         for part in [
-            "abdomen", "back", "chest", "head", "leftArm", "leftEye", "leftFoot", "leftHand",
-            "leftLeg", "neck", "nerves", "rightArm", "rightEye", "rightFoot", "rightHand",
+            "abdomen",
+            "back",
+            "chest",
+            "head",
+            "leftArm",
+            "leftEye",
+            "leftFoot",
+            "leftHand",
+            "leftLeg",
+            "neck",
+            "nerves",
+            "rightArm",
+            "rightEye",
+            "rightFoot",
+            "rightHand",
             "rightLeg",
         ] {
             assert!(

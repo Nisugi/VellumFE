@@ -331,7 +331,10 @@ mod tests {
             matches: assets
                 .into_iter()
                 .map(|asset| Match {
-                    repo: RepoSource { name: "r".into(), url: "http://x".into() },
+                    repo: RepoSource {
+                        name: "r".into(),
+                        url: "http://x".into(),
+                    },
                     asset,
                 })
                 .collect(),
@@ -416,7 +419,12 @@ mod tests {
         let only = candidate(
             "compass",
             Some("stormfront"),
-            vec![set_asset("/stormfront/ne.png", "compass", "compass", "stormfront")],
+            vec![set_asset(
+                "/stormfront/ne.png",
+                "compass",
+                "compass",
+                "stormfront",
+            )],
         );
         let picked = pick_candidate(vec![only], "stormfront").unwrap();
         assert_eq!(picked.len(), 1);

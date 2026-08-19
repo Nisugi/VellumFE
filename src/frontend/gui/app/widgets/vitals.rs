@@ -76,7 +76,10 @@ impl VellumGuiApp {
     }
 
     // Visibility: tested from app/tests.rs.
-    pub(in crate::frontend::gui::app) fn status_abbreviation(status: &str, target_cfg: &TargetListConfig) -> String {
+    pub(in crate::frontend::gui::app) fn status_abbreviation(
+        status: &str,
+        target_cfg: &TargetListConfig,
+    ) -> String {
         let status_lower = status.to_ascii_lowercase();
         target_cfg
             .status_abbrev
@@ -255,7 +258,11 @@ impl VellumGuiApp {
                             true,
                         )
                     } else {
-                        (fallback_pct.min(100) as f32 / 100.0, fallback_pct.min(100), false)
+                        (
+                            fallback_pct.min(100) as f32 / 100.0,
+                            fallback_pct.min(100),
+                            false,
+                        )
                     };
                     let text = Self::vital_bar_text(
                         config.text_format,
@@ -361,9 +368,13 @@ impl VellumGuiApp {
                         }
                         let fraction = Self::animated_fraction(column, id, fraction);
                         let bar = Self::styled_progress_bar(column, settings, fraction, fill, text);
-                        let resp = column
-                            .add_sized([column.available_width().max(40.0), bar_height], bar);
-                        Self::overlay_progress_frame(column, resp.rect, settings.skin_art.as_deref());
+                        let resp =
+                            column.add_sized([column.available_width().max(40.0), bar_height], bar);
+                        Self::overlay_progress_frame(
+                            column,
+                            resp.rect,
+                            settings.skin_art.as_deref(),
+                        );
                     }
                 });
             }
@@ -488,5 +499,4 @@ impl VellumGuiApp {
         let bar = Self::styled_progress_bar(ui, settings, fraction, fill, text);
         ui.add_sized([bar_width, bar_height], bar);
     }
-
 }

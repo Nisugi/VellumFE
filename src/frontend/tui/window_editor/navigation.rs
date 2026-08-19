@@ -42,7 +42,12 @@ impl WindowEditor {
     }
 
     pub fn is_sub_editor_active(&self) -> bool {
-        self.tab_editor.is_some() || self.indicator_editor.is_some() || self.performance_metrics_editor.is_some() || self.text_replacements_editor.is_some() || self.bar_order_editor.is_some() || self.stream_picker.is_some()
+        self.tab_editor.is_some()
+            || self.indicator_editor.is_some()
+            || self.performance_metrics_editor.is_some()
+            || self.text_replacements_editor.is_some()
+            || self.bar_order_editor.is_some()
+            || self.stream_picker.is_some()
     }
 
     pub(super) fn footer_help_text(&self) -> &str {
@@ -77,8 +82,7 @@ impl WindowEditor {
         if let WindowDef::TabbedText { data, .. } = &self.window_def {
             self.tab_editor = Some(TabEditor::from_tabs(&data.tabs));
         } else {
-            self.status_message =
-                "Tab editor only available for TabbedText windows".to_string();
+            self.status_message = "Tab editor only available for TabbedText windows".to_string();
         }
     }
 
@@ -87,8 +91,10 @@ impl WindowEditor {
             self.available_indicators = Self::indicator_templates();
         }
         if let WindowDef::Dashboard { data, .. } = &self.window_def {
-            self.indicator_editor =
-                Some(IndicatorEditor::from_defs(&data.indicators, self.available_indicators.clone()));
+            self.indicator_editor = Some(IndicatorEditor::from_defs(
+                &data.indicators,
+                self.available_indicators.clone(),
+            ));
         } else {
             self.status_message =
                 "Indicator editor only available for Dashboard windows".to_string();
@@ -110,8 +116,7 @@ impl WindowEditor {
     /// no streams have been observed yet (the caller surfaces a status message).
     pub fn open_stream_picker(&mut self) -> bool {
         if self.seen_streams.is_empty() {
-            self.status_message =
-                "No custom streams seen yet this session.".to_string();
+            self.status_message = "No custom streams seen yet this session.".to_string();
             return false;
         }
         self.stream_picker = Some(StreamPicker::new(self.seen_streams.clone()));
@@ -154,8 +159,9 @@ impl WindowEditor {
 
     pub(super) fn open_perception_replacements_editor(&mut self) {
         if let WindowDef::Perception { data, .. } = &self.window_def {
-            self.text_replacements_editor =
-                Some(TextReplacementsEditor::from_replacements(&data.text_replacements));
+            self.text_replacements_editor = Some(TextReplacementsEditor::from_replacements(
+                &data.text_replacements,
+            ));
         } else {
             self.status_message =
                 "Text replacements editor only available for Perception windows".to_string();
@@ -476,22 +482,34 @@ impl WindowEditor {
 
     /// Check if the current field is the Edit Bar Order button
     pub fn is_on_edit_bar_order(&self) -> bool {
-        matches!(self.current_field_ref(), Some(FieldRef::MiniVitalsEditBarOrder))
+        matches!(
+            self.current_field_ref(),
+            Some(FieldRef::MiniVitalsEditBarOrder)
+        )
     }
 
     /// Check if the current field is the Perception Sort Direction dropdown
     pub fn is_on_perception_sort_direction(&self) -> bool {
-        matches!(self.current_field_ref(), Some(FieldRef::PerceptionSortDirection))
+        matches!(
+            self.current_field_ref(),
+            Some(FieldRef::PerceptionSortDirection)
+        )
     }
 
     /// Check if the current field is the Perception Text Replacements button
     pub fn is_on_perception_replacements(&self) -> bool {
-        matches!(self.current_field_ref(), Some(FieldRef::PerceptionTextReplacements))
+        matches!(
+            self.current_field_ref(),
+            Some(FieldRef::PerceptionTextReplacements)
+        )
     }
 
     /// Check if the current field is the Perception Short Spell Names checkbox
     pub fn is_on_perception_short_spell_names(&self) -> bool {
-        matches!(self.current_field_ref(), Some(FieldRef::PerceptionUseShortSpellNames))
+        matches!(
+            self.current_field_ref(),
+            Some(FieldRef::PerceptionUseShortSpellNames)
+        )
     }
 
     /// Toggle the perception short spell names setting
@@ -647,5 +665,4 @@ impl WindowEditor {
         ta.insert_str(new_value);
         self.perception_sort_direction_input = ta;
     }
-
 }

@@ -188,13 +188,14 @@ impl super::VellumGuiApp {
         // Reduce-motion turns art into its banner text; if the alert had no
         // banner, its art name stands in so the user still learns something
         // fired rather than getting silence.
-        let art = (!settings.reduce_motion).then_some(alert.art.as_deref()).flatten();
+        let art = (!settings.reduce_motion)
+            .then_some(alert.art.as_deref())
+            .flatten();
 
         if let Some(art_name) = art {
             if let Some(natural) = custom_emoji_render::alert_art_size(ctx, art_name) {
                 let size = Self::fit_art(natural, viewport);
-                let rect =
-                    anchored_rect(alert.anchor, viewport, size, alert.offset, stack_depth);
+                let rect = anchored_rect(alert.anchor, viewport, size, alert.offset, stack_depth);
                 let tint = with_alpha(egui::Color32::WHITE, alpha);
                 if custom_emoji_render::paint_alert_art(
                     ctx,
@@ -365,11 +366,17 @@ mod tests {
 
         let top_first = anchored_rect(AlertAnchor::TopCenter, vp, size, (0.0, 0.0), 0.0);
         let top_second = anchored_rect(AlertAnchor::TopCenter, vp, size, (0.0, 0.0), 60.0);
-        assert!(top_second.min.y > top_first.min.y, "top stack grows downward");
+        assert!(
+            top_second.min.y > top_first.min.y,
+            "top stack grows downward"
+        );
 
         let bot_first = anchored_rect(AlertAnchor::BottomCenter, vp, size, (0.0, 0.0), 0.0);
         let bot_second = anchored_rect(AlertAnchor::BottomCenter, vp, size, (0.0, 0.0), 60.0);
-        assert!(bot_second.min.y < bot_first.min.y, "bottom stack grows upward");
+        assert!(
+            bot_second.min.y < bot_first.min.y,
+            "bottom stack grows upward"
+        );
     }
 
     #[test]
@@ -411,6 +418,10 @@ mod tests {
         let c = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200);
         assert_eq!(with_alpha(c, 0.0).a(), 0);
         assert_eq!(with_alpha(c, 1.0).a(), 200);
-        assert_eq!(with_alpha(c, 5.0).a(), 200, "never exceeds the source alpha");
+        assert_eq!(
+            with_alpha(c, 5.0).a(),
+            200,
+            "never exceeds the source alpha"
+        );
     }
 }

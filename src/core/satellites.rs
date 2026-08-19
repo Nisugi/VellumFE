@@ -155,11 +155,20 @@ impl SatelliteIndex {
             let tiny = members.len() < min_rooms;
             satellites.insert(
                 key.clone(),
-                Satellite { key, name, room_ids: members, portals, tiny },
+                Satellite {
+                    key,
+                    name,
+                    room_ids: members,
+                    portals,
+                    tiny,
+                },
             );
         }
 
-        Self { satellites, map_of_room }
+        Self {
+            satellites,
+            map_of_room,
+        }
     }
 }
 
@@ -189,7 +198,9 @@ fn satellite_name(db: &MapDb, members: &[u32]) -> String {
             *counts.entry(location).or_default() += 1;
         }
     }
-    let Some((&location, _)) = counts.iter().max_by_key(|(loc, n)| (**n, std::cmp::Reverse(*loc)))
+    let Some((&location, _)) = counts
+        .iter()
+        .max_by_key(|(loc, n)| (**n, std::cmp::Reverse(*loc)))
     else {
         return format!("Satellite {}", members.first().copied().unwrap_or(0));
     };
@@ -263,7 +274,11 @@ mod tests {
         assert_eq!(well.name, "Town: Town, Well Top");
         assert_eq!(
             well.portals,
-            vec![Portal { inside: 10, outside: 1, base_map: Some("town".into()) }]
+            vec![Portal {
+                inside: 10,
+                outside: 1,
+                base_map: Some("town".into())
+            }]
         );
 
         let closet = index.get("sat-300").expect("closet satellite");
@@ -281,13 +296,24 @@ mod tests {
         // Reverse the well entrance to one-way (only street -> well): the
         // well must still form a component, discovered via the undirected
         // adjacency.
-        let world = WORLD.replace(r#""wayto": {"1": "out", "11": "down"}"#, r#""wayto": {"11": "down"}"#);
+        let world = WORLD.replace(
+            r#""wayto": {"1": "out", "11": "down"}"#,
+            r#""wayto": {"11": "down"}"#,
+        );
         let db = MapDb::from_json(&world).unwrap();
         let index = SatelliteIndex::build(&db, &curated(), DEFAULT_MIN_ROOMS);
         assert_eq!(index.satellite_of_room(11), Some("sat-200"));
-        assert_eq!(index.satellite_of_room(1), None, "covered rooms belong to base maps");
+        assert_eq!(
+            index.satellite_of_room(1),
+            None,
+            "covered rooms belong to base maps"
+        );
         let well = index.get("sat-200").unwrap();
-        assert_eq!(well.portals.len(), 1, "inbound-only edge still yields a portal");
+        assert_eq!(
+            well.portals.len(),
+            1,
+            "inbound-only edge still yields a portal"
+        );
     }
 
     /// Real-world decomposition report. Ignored by default; run with
@@ -301,8 +327,8 @@ mod tests {
             eprintln!("set VELLUM_MAPDB to a Lich map-*.json");
             return;
         };
-        let layouts = crate::core::curated_maps::find_saga_layouts(None)
-            .expect("no Saga install found");
+        let layouts =
+            crate::core::curated_maps::find_saga_layouts(None).expect("no Saga install found");
         let curated = crate::core::curated_maps::extract_from_saga(&layouts).unwrap();
         let db = MapDb::load(std::path::Path::new(&mapdb_path)).unwrap();
         let index = SatelliteIndex::build(&db, &curated, DEFAULT_MIN_ROOMS);
@@ -342,7 +368,15 @@ mod tests {
                 .values()
                 .filter(|s| s.room_ids.len() > last && s.room_ids.len() <= cap)
                 .count();
-            println!("  size {:>4}..{:<10} {n}", last + 1, if cap == usize::MAX { "up".into() } else { cap.to_string() });
+            println!(
+                "  size {:>4}..{:<10} {n}",
+                last + 1,
+                if cap == usize::MAX {
+                    "up".into()
+                } else {
+                    cap.to_string()
+                }
+            );
             last = cap;
         }
     }

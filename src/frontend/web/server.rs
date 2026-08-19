@@ -458,10 +458,7 @@ async fn sessions_json(
 /// Health check. CORS-open so the dashboard (served from one port) can
 /// probe sibling instances on other ports from the browser.
 async fn health() -> impl IntoResponse {
-    (
-        [(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
-        "ok",
-    )
+    ([(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], "ok")
 }
 
 /// Serve a sound file from the shared sounds directory for client-side
@@ -480,15 +477,27 @@ async fn sound_file(
         .get("token")
         .is_some_and(|t| token_matches(t, &state.auth_token))
     {
-        return (StatusCode::FORBIDDEN, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+        return (
+            StatusCode::FORBIDDEN,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        );
     }
     // ':' rejected too: on Windows, joining "c:name" replaces the whole
     // path prefix (drive-relative), escaping the sounds dir
     if name.contains(['/', '\\', ':']) || name.contains("..") || name.is_empty() {
-        return (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        );
     }
     let Ok(sounds_dir) = crate::config::Config::sounds_dir() else {
-        return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+        return (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        );
     };
 
     let mut path = sounds_dir.join(&name);
@@ -503,7 +512,11 @@ async fn sound_file(
             }
         }
         if !found {
-            return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+            return (
+                StatusCode::NOT_FOUND,
+                [(header::CONTENT_TYPE, "text/plain")],
+                Vec::new(),
+            );
         }
     }
 
@@ -515,8 +528,16 @@ async fn sound_file(
         _ => "application/octet-stream",
     };
     match std::fs::read(&path) {
-        Ok(bytes) => (StatusCode::OK, [(header::CONTENT_TYPE, content_type)], bytes),
-        Err(_) => (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new()),
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, content_type)],
+            bytes,
+        ),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        ),
     }
 }
 
@@ -576,17 +597,37 @@ async fn emoji_file(
         .get("token")
         .is_some_and(|t| token_matches(t, &state.auth_token))
     {
-        return (StatusCode::FORBIDDEN, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+        return (
+            StatusCode::FORBIDDEN,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        );
     }
     if !is_emoji_shortcode(&name) {
-        return (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        );
     }
     let Some(emoji) = crate::core::custom_emoji::get(&name) else {
-        return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+        return (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        );
     };
     match std::fs::read(&emoji.path) {
-        Ok(bytes) => (StatusCode::OK, [(header::CONTENT_TYPE, emoji.format.mime())], bytes),
-        Err(_) => (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new()),
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, emoji.format.mime())],
+            bytes,
+        ),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        ),
     }
 }
 
@@ -606,17 +647,37 @@ async fn inline_image_file(
         .get("token")
         .is_some_and(|t| token_matches(t, &state.auth_token))
     {
-        return (StatusCode::FORBIDDEN, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+        return (
+            StatusCode::FORBIDDEN,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        );
     }
     if !is_emoji_shortcode(&name) {
-        return (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        );
     }
     let Some(image) = crate::core::inline_image::get(&name) else {
-        return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+        return (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        );
     };
     match std::fs::read(&image.path) {
-        Ok(bytes) => (StatusCode::OK, [(header::CONTENT_TYPE, image.format.mime())], bytes),
-        Err(_) => (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new()),
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, image.format.mime())],
+            bytes,
+        ),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        ),
     }
 }
 
@@ -670,14 +731,22 @@ async fn doll_image(
         .get("token")
         .is_some_and(|t| token_matches(t, &state.auth_token))
     {
-        return (StatusCode::FORBIDDEN, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+        return (
+            StatusCode::FORBIDDEN,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        );
     }
     let kind = params.get("kind").map(String::as_str).unwrap_or("base");
     let part = params.get("part").map(String::as_str);
     let level = params.get("level").and_then(|l| l.parse::<u8>().ok());
     let variant = params.get("variant").map(String::as_str);
     let Some(path) = super::doll::image_path(kind, part, level, variant) else {
-        return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+        return (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        );
     };
     let content_type = match path
         .extension()
@@ -693,8 +762,16 @@ async fn doll_image(
         _ => "application/octet-stream",
     };
     match std::fs::read(&path) {
-        Ok(bytes) => (StatusCode::OK, [(header::CONTENT_TYPE, content_type)], bytes),
-        Err(_) => (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new()),
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, content_type)],
+            bytes,
+        ),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            Vec::new(),
+        ),
     }
 }
 
@@ -744,11 +821,7 @@ fn gather_snapshot(state: &WebState) -> (Vec<String>, Vec<RemoteLine>, u64) {
 
 /// Build the snapshot reply for a `resume { seq }` request. Locks the
 /// buffer briefly; never holds it across an await.
-fn build_resume_reply(
-    state: &WebState,
-    resume_seq: u64,
-    sub: protocol::SubscribeMode,
-) -> String {
+fn build_resume_reply(state: &WebState, resume_seq: u64, sub: protocol::SubscribeMode) -> String {
     let buffer = state
         .handles
         .buffer
@@ -761,11 +834,17 @@ fn build_resume_reply(
     let (mode, lines) = if sub == protocol::SubscribeMode::Watch {
         (SnapshotMode::Full, Vec::new())
     } else if resume_seq == 0 {
-        (SnapshotMode::Full, buffer.snapshot_tail(SNAPSHOT_LINES_PER_STREAM))
+        (
+            SnapshotMode::Full,
+            buffer.snapshot_tail(SNAPSHOT_LINES_PER_STREAM),
+        )
     } else {
         match buffer.lines_since(resume_seq) {
             Some(lines) => (SnapshotMode::Resume, lines),
-            None => (SnapshotMode::Gap, buffer.snapshot_tail(SNAPSHOT_LINES_PER_STREAM)),
+            None => (
+                SnapshotMode::Gap,
+                buffer.snapshot_tail(SNAPSHOT_LINES_PER_STREAM),
+            ),
         }
     };
     drop(buffer);
@@ -1297,14 +1376,8 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                         continue;
                     }
                     Some(msg) => {
-                        if !handle_client_message(
-                            &mut socket,
-                            &state,
-                            client_id,
-                            msg,
-                            &mut sub,
-                        )
-                        .await
+                        if !handle_client_message(&mut socket, &state, client_id, msg, &mut sub)
+                            .await
                         {
                             return;
                         }

@@ -109,9 +109,10 @@ pub fn handle_ui_action(
                 "Adopting a saved layout's geometry (.resize <name>)",
             )
         }
-        UiAction::SaveSkin(_) => {
-            gui_only(app_core, "Saving a skin from the current appearance (.saveskin)")
-        }
+        UiAction::SaveSkin(_) => gui_only(
+            app_core,
+            "Saving a skin from the current appearance (.saveskin)",
+        ),
         UiAction::AnchorInfer => {
             // Snap anchors are pixel-geometry docking; the TUI cell grid
             // has no equivalent.
@@ -423,8 +424,7 @@ pub fn handle_ui_action(
         UiAction::Keybinds => {
             // Open keybind browser with source tracking ([G]/[C] indicators)
             // Load global and character keybinds separately to show their origin
-            let global_keybinds =
-                crate::config::Config::load_common_keybinds().unwrap_or_default();
+            let global_keybinds = crate::config::Config::load_common_keybinds().unwrap_or_default();
             let character_keybinds = crate::config::Config::load_character_keybinds_only(
                 app_core.config.character.as_deref(),
             )
@@ -494,9 +494,9 @@ pub fn handle_ui_action(
         }
         UiAction::Hotbars => {
             // Open the hotbar editor (bars -> buttons -> button form)
-            frontend.hotbar_editor = Some(
-                crate::frontend::tui::hotbar_editor::HotbarEditor::new(&app_core.config),
-            );
+            frontend.hotbar_editor = Some(crate::frontend::tui::hotbar_editor::HotbarEditor::new(
+                &app_core.config,
+            ));
             close_all_menus(&mut app_core.ui_state);
             app_core.ui_state.input_mode = InputMode::HotbarEditor;
         }
@@ -531,8 +531,7 @@ pub fn handle_ui_action(
         }
         UiAction::AddColor => {
             // Open color form for creating new palette color
-            frontend.color_form =
-                Some(crate::frontend::tui::color_form::ColorForm::new_create());
+            frontend.color_form = Some(crate::frontend::tui::color_form::ColorForm::new_create());
             close_all_menus(&mut app_core.ui_state);
             app_core.ui_state.input_mode = InputMode::ColorForm;
         }
@@ -592,19 +591,16 @@ pub fn handle_ui_action(
                     close_all_menus(&mut app_core.ui_state);
                     app_core.ui_state.input_mode = InputMode::PackEditor;
                 }
-                Err(e) => {
-                    app_core.add_system_message(&format!("Pack editor unavailable: {e}"))
-                }
+                Err(e) => app_core.add_system_message(&format!("Pack editor unavailable: {e}")),
             }
             app_core.needs_render = true;
         }
         UiAction::Themes => {
             // Open theme browser (includes built-in and custom themes)
-            frontend.theme_browser =
-                Some(crate::frontend::tui::theme_browser::ThemeBrowser::new(
-                    app_core.config.active_theme.clone(),
-                    app_core.config.character.as_deref(),
-                ));
+            frontend.theme_browser = Some(crate::frontend::tui::theme_browser::ThemeBrowser::new(
+                app_core.config.active_theme.clone(),
+                app_core.config.character.as_deref(),
+            ));
             close_all_menus(&mut app_core.ui_state);
             app_core.ui_state.input_mode = InputMode::ThemeBrowser;
         }
@@ -613,13 +609,16 @@ pub fn handle_ui_action(
             // it. Previously this fetched get_theme() (which reads the CURRENT
             // active_theme) and cached that unchanged theme under the new id —
             // so `.settheme X` was a no-op that never switched anything.
-            let presets = crate::theme::ThemePresets::all_with_custom(
-                app_core.config.character.as_deref(),
-            );
+            let presets =
+                crate::theme::ThemePresets::all_with_custom(app_core.config.character.as_deref());
             if !presets.contains_key(&theme_id) {
                 let mut names: Vec<&String> = presets.keys().collect();
                 names.sort();
-                let list = names.iter().map(|n| n.as_str()).collect::<Vec<_>>().join(", ");
+                let list = names
+                    .iter()
+                    .map(|n| n.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 app_core.add_system_message(&format!(
                     "Unknown theme '{}'. Available: {}",
                     theme_id, list
@@ -689,10 +688,8 @@ pub fn handle_ui_action(
                     .iter()
                     .filter(|c| c.slot.is_some())
                     .count();
-                app_core.add_system_message(&format!(
-                    "Loaded {} colors into terminal palette",
-                    count
-                ));
+                app_core
+                    .add_system_message(&format!("Loaded {} colors into terminal palette", count));
             }
             app_core.needs_render = true;
         }
@@ -752,9 +749,10 @@ pub fn handle_ui_action(
         // Deliberately GUI-only surfaces — say so instead of the old
         // silent log (four commands died unnoticed behind that silence).
         UiAction::Controller => gui_only(app_core, "The controller editor"),
-        UiAction::JinxPanel => {
-            gui_only(app_core, "The Jinx asset panel (.jinx gui) — use .jinx list/install in the TUI")
-        }
+        UiAction::JinxPanel => gui_only(
+            app_core,
+            "The Jinx asset panel (.jinx gui) — use .jinx list/install in the TUI",
+        ),
         UiAction::WebUiPicker | UiAction::WebUiOff | UiAction::WebUiOpen(_) => {
             gui_only(app_core, "The Lich WebUI bridge (.webui)")
         }

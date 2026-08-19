@@ -254,10 +254,10 @@ impl VellumGuiApp {
 
             ui.horizontal_top(|ui| {
                 for port in &cluster.members {
-                    let Some(peer) = peers.get(port) else { continue };
-                    Self::render_peer_card(
-                        ui, settings, data, peer, now_ms, now_server, my_room,
-                    );
+                    let Some(peer) = peers.get(port) else {
+                        continue;
+                    };
+                    Self::render_peer_card(ui, settings, data, peer, now_ms, now_server, my_room);
                 }
             });
         };
@@ -274,16 +274,19 @@ impl VellumGuiApp {
             );
         } else {
             ui.allocate_ui(
-                egui::vec2(card_span(cluster.members.len()) + 12.0, ui.available_height()),
+                egui::vec2(
+                    card_span(cluster.members.len()) + 12.0,
+                    ui.available_height(),
+                ),
                 |ui| {
                     let accent = widget_accent(ui.ctx(), ui.visuals());
                     egui::Frame::group(ui.style())
                         .stroke(egui::Stroke::new(1.5, accent))
                         .show(ui, |ui| {
-                        ui.push_id(("multiaccount_cluster", cluster_idx), |ui| {
-                            ui.vertical(draw_cards);
+                            ui.push_id(("multiaccount_cluster", cluster_idx), |ui| {
+                                ui.vertical(draw_cards);
+                            });
                         });
-                    });
                 },
             );
         }
@@ -315,15 +318,9 @@ impl VellumGuiApp {
             // Gold marks "this is you" -- the reference point the other cards
             // are read against. Takes precedence over the different-room
             // stroke: you are never in a different room from yourself.
-            frame = frame.stroke(egui::Stroke::new(
-                2.0,
-                Color32::from_rgb(0xFF, 0xD7, 0x00),
-            ));
+            frame = frame.stroke(egui::Stroke::new(2.0, Color32::from_rgb(0xFF, 0xD7, 0x00)));
         } else if elsewhere {
-            frame = frame.stroke(egui::Stroke::new(
-                1.5,
-                Color32::from_rgb(0xFF, 0x44, 0x44),
-            ));
+            frame = frame.stroke(egui::Stroke::new(1.5, Color32::from_rgb(0xFF, 0x44, 0x44)));
         }
 
         frame.show(ui, |ui| {
@@ -391,11 +388,12 @@ impl VellumGuiApp {
                                         // Name but no id (direct connect
                                         // without Lich): a marker beats a
                                         // blank corner; the name is on hover.
-                                        ui.label(RichText::new("?").weak().small())
-                                            .on_hover_text(format!(
+                                        ui.label(RichText::new("?").weak().small()).on_hover_text(
+                                            format!(
                                                 "{} \u{2014} room id unknown",
                                                 peer.room_name.as_deref().unwrap_or("")
-                                            ));
+                                            ),
+                                        );
                                     }
                                 },
                             );
@@ -411,34 +409,27 @@ impl VellumGuiApp {
                     let weights = data.column_weights();
                     if let [_] = weights[..] {
                         for line in data.row_lines(0) {
-                            Self::render_row_line(
-                                ui, settings, data, peer, &line, now_server,
-                            );
+                            Self::render_row_line(ui, settings, data, peer, &line, now_server);
                         }
                     } else {
                         let total: f32 = weights.iter().sum();
-                        let gaps = ui.spacing().item_spacing.x
-                            * (weights.len() - 1) as f32;
+                        let gaps = ui.spacing().item_spacing.x * (weights.len() - 1) as f32;
                         let avail = (ui.available_width() - gaps).max(40.0);
                         ui.horizontal_top(|ui| {
                             for (col, weight) in weights.iter().enumerate() {
                                 let col_w = (avail * weight / total).max(28.0);
-                                ui.allocate_ui(
-                                    egui::vec2(col_w, ui.available_height()),
-                                    |ui| {
-                                        // allocate_ui inherits the horizontal
-                                        // layout; the column must stack.
-                                        ui.vertical(|ui| {
-                                            ui.set_width(col_w);
-                                            for line in data.row_lines(col) {
-                                                Self::render_row_line(
-                                                    ui, settings, data, peer,
-                                                    &line, now_server,
-                                                );
-                                            }
-                                        });
-                                    },
-                                );
+                                ui.allocate_ui(egui::vec2(col_w, ui.available_height()), |ui| {
+                                    // allocate_ui inherits the horizontal
+                                    // layout; the column must stack.
+                                    ui.vertical(|ui| {
+                                        ui.set_width(col_w);
+                                        for line in data.row_lines(col) {
+                                            Self::render_row_line(
+                                                ui, settings, data, peer, &line, now_server,
+                                            );
+                                        }
+                                    });
+                                });
                             }
                         });
                     }
@@ -476,24 +467,17 @@ impl VellumGuiApp {
             for row in line {
                 let row = *row;
                 if row.stretches() {
-                    ui.allocate_ui(
-                        egui::vec2(share, ui.available_height()),
-                        |ui| {
-                            // allocate_ui inherits the line's horizontal
-                            // layout; without this gauge bars fan out side
-                            // by side instead of filling their share.
-                            ui.vertical(|ui| {
-                                ui.set_width(share);
-                                Self::render_card_row(
-                                    ui, settings, data, peer, row, now_server,
-                                );
-                            });
-                        },
-                    );
+                    ui.allocate_ui(egui::vec2(share, ui.available_height()), |ui| {
+                        // allocate_ui inherits the line's horizontal
+                        // layout; without this gauge bars fan out side
+                        // by side instead of filling their share.
+                        ui.vertical(|ui| {
+                            ui.set_width(share);
+                            Self::render_card_row(ui, settings, data, peer, row, now_server);
+                        });
+                    });
                 } else {
-                    Self::render_card_row(
-                        ui, settings, data, peer, row, now_server,
-                    );
+                    Self::render_card_row(ui, settings, data, peer, row, now_server);
                 }
             }
         });
@@ -513,9 +497,7 @@ impl VellumGuiApp {
         // Visibility was already filtered by row_lines().
         match row {
             R::Status => Self::render_status_glyphs(ui, settings, peer),
-            R::Vitals => {
-                Self::render_peer_vitals(ui, settings, peer, data.show_absolute_vitals)
-            }
+            R::Vitals => Self::render_peer_vitals(ui, settings, peer, data.show_absolute_vitals),
             R::Rt => Self::render_peer_rt(ui, settings, peer, now_server),
             R::Hands => Self::render_peer_hands(ui, peer),
             R::Effects => Self::render_peer_effects(ui, data, peer, now_server),
@@ -556,6 +538,7 @@ impl VellumGuiApp {
                         settings.skin_art.as_deref(),
                         None,
                         &Default::default(),
+                        None,
                         false,
                         &Self::default_injury_palette(),
                     );
@@ -564,7 +547,6 @@ impl VellumGuiApp {
         }
     }
 
-
     /// Active conditions as icons, falling back to a letter for ids nothing
     /// covers.
     ///
@@ -572,17 +554,11 @@ impl VellumGuiApp {
     /// installed skin's id-keyed sprite first, then the built-in pictogram,
     /// then the authored letter -- so a condition looks the same wherever
     /// it appears, skinned or not.
-    fn render_status_glyphs(
-        ui: &mut egui::Ui,
-        settings: &WidgetRenderSettings,
-        peer: &PeerStatus,
-    ) {
+    fn render_status_glyphs(ui: &mut egui::Ui, settings: &WidgetRenderSettings, peer: &PeerStatus) {
         let active: Vec<(&str, &str, Color32)> = STATUS_GLYPHS
             .iter()
             .filter(|(id, _, _)| peer.indicators.get(id))
-            .map(|(id, glyph, color)| {
-                (*id, *glyph, template_color(id).unwrap_or(*color))
-            })
+            .map(|(id, glyph, color)| (*id, *glyph, template_color(id).unwrap_or(*color)))
             .collect();
 
         // Anything the game reports that has no glyph of its own. StatusInfo
@@ -617,13 +593,9 @@ impl VellumGuiApp {
                     // The installed skin's sprite first -- the art the user
                     // actually chose -- exactly as the indicator windows
                     // resolve it. Sprites carry their own colors.
-                    if let Some(sprite) = settings
-                        .skin_art
-                        .as_deref()
-                        .and_then(|art| art.icon(id))
+                    if let Some(sprite) = settings.skin_art.as_deref().and_then(|art| art.icon(id))
                     {
-                        let dest =
-                            crate::frontend::gui::skin::icon_dest(&sprite, rect);
+                        let dest = crate::frontend::gui::skin::icon_dest(&sprite, rect);
                         crate::frontend::gui::skin::paint_icon(
                             ui.painter(),
                             dest,
@@ -650,9 +622,7 @@ impl VellumGuiApp {
                         );
                     }
                 }
-                response.on_hover_text(
-                    crate::frontend::gui::app::status_icons::display_name(id),
-                );
+                response.on_hover_text(crate::frontend::gui::app::status_icons::display_name(id));
             }
             for id in unknown.iter() {
                 let (rect, response) =
@@ -694,8 +664,18 @@ impl VellumGuiApp {
         let bars = [
             ("hp", "health", v.health, health_color(v.health)),
             ("mp", "mana", v.mana, Self::vital_fill(VitalKind::Mana)),
-            ("st", "stamina", v.stamina, Self::vital_fill(VitalKind::Stamina)),
-            ("sp", "spirit", v.spirit, Self::vital_fill(VitalKind::Spirit)),
+            (
+                "st",
+                "stamina",
+                v.stamina,
+                Self::vital_fill(VitalKind::Stamina),
+            ),
+            (
+                "sp",
+                "spirit",
+                v.spirit,
+                Self::vital_fill(VitalKind::Spirit),
+            ),
         ];
         for (label, id, percent, fill) in bars {
             // Absolute numbers when the peer reported them; percentages are
@@ -866,13 +846,8 @@ impl VellumGuiApp {
         } else {
             Color32::from_rgb(0xFF, 0xD7, 0x00)
         };
-        let bar = Self::styled_progress_bar(
-            ui,
-            settings,
-            fraction,
-            fill,
-            format!("FXP {value}/{max}"),
-        );
+        let bar =
+            Self::styled_progress_bar(ui, settings, fraction, fill, format!("FXP {value}/{max}"));
         let resp = ui.add_sized([ui.available_width().max(40.0), 12.0], bar);
         Self::overlay_progress_frame(ui, resp.rect, settings.skin_art.as_deref());
         if fraction >= 0.95 {

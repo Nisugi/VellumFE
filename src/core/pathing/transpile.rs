@@ -464,7 +464,10 @@ re!(
     LOOP_TRY_EXITS,
     r"(?s)^loop \{ (?:move '[^']+'; break if Room\.current\.id != \d+; ?)+\}$"
 );
-re!(LOOP_TRY_EXITS_STEP, r"move '([^']+)'; break if Room\.current\.id != (\d+)");
+re!(
+    LOOP_TRY_EXITS_STEP,
+    r"move '([^']+)'; break if Room\.current\.id != (\d+)"
+);
 // `loop { ...; break unless checkpaths == [ 'out' ] }` — the spike-trap
 // chute: exits changing means we fell through.
 re!(
@@ -601,13 +604,25 @@ re!(COND_KNEELING, r"^(?:kneeling\?|checkkneeling)$");
 re!(COND_SITTING, r"^(?:sitting\?|checksitting)$");
 re!(COND_HIDDEN, r"^(?:hidden|invisible)\?$");
 re!(COND_CHECKSPELL_NUM, r"^checkspell\s*\(?\s*(\d+)\s*\)?$");
-re!(COND_CHECKSPELL_NAME, r#"^checkspell\s*\(?\s*['"]([^'"]+)['"]\s*\)?$"#);
+re!(
+    COND_CHECKSPELL_NAME,
+    r#"^checkspell\s*\(?\s*['"]([^'"]+)['"]\s*\)?$"#
+);
 re!(COND_SPELL_ACTIVE, r"^Spell\[(\d+)\]\.active\?$");
-re!(COND_HANDS_FULL, r"^GameObj\.(?:right|left)_hand\.id(?:\s+or\s+GameObj\.(?:right|left)_hand\.id)?$");
-re!(COND_CHECKLOOT, r#"^checkloot\.include\?\s*\(?\s*['"]([^'"]+)['"]\s*\)?$"#);
+re!(
+    COND_HANDS_FULL,
+    r"^GameObj\.(?:right|left)_hand\.id(?:\s+or\s+GameObj\.(?:right|left)_hand\.id)?$"
+);
+re!(
+    COND_CHECKLOOT,
+    r#"^checkloot\.include\?\s*\(?\s*['"]([^'"]+)['"]\s*\)?$"#
+);
 re!(COND_IN_ROOM, r"^Room\.current\.id\s*(==|!=)\s*(\d+)$");
 re!(COND_ROOM_OBJ, r"^Room\.current\s*(==|!=)\s*Room\[(\d+)\]$");
-re!(COND_CHECKPATHS, r#"^checkpaths\.include\?\s*\(\s*['"]([^'"]+)['"]\s*\)$"#);
+re!(
+    COND_CHECKPATHS,
+    r#"^checkpaths\.include\?\s*\(\s*['"]([^'"]+)['"]\s*\)$"#
+);
 re!(
     COND_LOOT_FIND,
     r#"^GameObj\.loot\.find\s*\{\s*\|\w+\|\s*\w+\.(?:name|noun)\s*==\s*['"]([^'"]+)['"]\s*\}$"#
@@ -618,12 +633,12 @@ re!(
 );
 // `2.times{ fput 'ask sailor about boat' }` — a bounded repeat of a known
 // statement, with no loop condition to interpret.
-re!(
-    STMT_TIMES,
-    r"^(\d+)\s*\.\s*times\s*\{\s*(.+?)\s*;?\s*\}$"
-);
+re!(STMT_TIMES, r"^(\d+)\s*\.\s*times\s*\{\s*(.+?)\s*;?\s*\}$");
 re!(STMT_MOVE, r#"^move\s*\(?\s*(['"][^'"]+['"])\s*\)?$"#);
-re!(STMT_FPUT, r#"^(?:fput|put)\s*\(?\s*(['"][^'"]+['"])\s*\)?$"#);
+re!(
+    STMT_FPUT,
+    r#"^(?:fput|put)\s*\(?\s*(['"][^'"]+['"])\s*\)?$"#
+);
 re!(STMT_MULTIFPUT, r#"^multifput\s*\(?\s*(['"].*['"])\s*\)?$"#);
 // `waitfor 'a'` and `waitfor 'a','b','c'` alike: Lich's waitfor takes any
 // number of alternatives and returns on the first to appear. The single-arg
@@ -637,7 +652,10 @@ re!(STMT_FILL_HANDS, r"^fill_hands?(?:\s*\(\s*\))?$");
 // 1x directly (plus 29 delegations to it): the Isle of Four Winds trinket
 // portal. Matched by its distinctive UserVar rather than the whole ~1.5KB
 // body, which is inventory-link scraping we replace with registry lookups.
-re!(FWI_TRINKET, r"^;e\s+worn\s*=\s*!GameObj\[UserVars\.mapdb_fwi_trinket\]");
+re!(
+    FWI_TRINKET,
+    r"^;e\s+worn\s*=\s*!GameObj\[UserVars\.mapdb_fwi_trinket\]"
+);
 
 // 27x: try a move; if the room didn't change, fix something and retry. The
 // trailing `$go2_restart` is optional (it splits the family in the residue
@@ -700,7 +718,10 @@ re!(
 );
 // Landmark nouns in the `until` clause: `checkloot.include?('door') or
 // checkloot.include?('mirror')`.
-re!(CHECKLOOT_NOUN, r#"checkloot\.include\?\(['"]([^'"]+)['"]\)"#);
+re!(
+    CHECKLOOT_NOUN,
+    r#"checkloot\.include\?\(['"]([^'"]+)['"]\)"#
+);
 // The enter command(s) after the walk. Either a bare `move 'go door'` or a
 // branch picking per landmark: `if checkloot.include?('door'); move 'go
 // door'; elsif ...`.
@@ -756,11 +777,7 @@ fn name_first_group(pattern: &str, name: &str) -> Option<String> {
                     i += 1;
                     continue;
                 }
-                return Some(format!(
-                    "{}(?P<{name}>{}",
-                    &pattern[..i],
-                    &pattern[i + 1..]
-                ));
+                return Some(format!("{}(?P<{name}>{}", &pattern[..i], &pattern[i + 1..]));
             }
             _ => i += 1,
         }
@@ -919,9 +936,7 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
             cmd: Some(go.clone()),
             // Either response ends the wait; which one decides whether we
             // must accept an invitation.
-            pattern: Box::new(AwaitPattern::new(
-                r"head over to|invites you|inviting you",
-            )?),
+            pattern: Box::new(AwaitPattern::new(r"head over to|invites you|inviting you")?),
             timeout: TABLE_JOIN_TIMEOUT_SECS,
             // Missing the line means we never sat down; the crossing failed.
             on_timeout: OnTimeout::Fail,
@@ -1233,9 +1248,7 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
         return Some(vec![WalkAction::Repeat {
             body: vec![WalkAction::StepMove(c[1].to_string())],
             // Stop once the exit we were following is gone.
-            until: RepeatUntil::Cond(Cond::Not(Box::new(Cond::PathAvailable(
-                c[2].to_string(),
-            )))),
+            until: RepeatUntil::Cond(Cond::Not(Box::new(Cond::PathAvailable(c[2].to_string())))),
             max: MAX_RETRY_LOOP,
         }]);
     }
@@ -1655,8 +1668,7 @@ fn transpile_block_families(body: &str) -> Option<Vec<WalkAction>> {
             return None;
         }
         let max: u32 = c[1].parse().ok()?;
-        let mut actions =
-            search_until_line(&c[3], &c[7], c[4].parse().ok()?, max, Vec::new())?;
+        let mut actions = search_until_line(&c[3], &c[7], c[4].parse().ok()?, max, Vec::new())?;
         actions.push(WalkAction::Move(c[8].to_string()));
         return Some(actions);
     }
@@ -1757,8 +1769,7 @@ fn transpile_block_families(body: &str) -> Option<Vec<WalkAction>> {
         if c[2] != c[3] {
             return None;
         }
-        let mut actions =
-            search_until_line(&c[1], &c[4], 10.0, MAX_RETRY_LOOP, Vec::new())?;
+        let mut actions = search_until_line(&c[1], &c[4], 10.0, MAX_RETRY_LOOP, Vec::new())?;
         actions.push(WalkAction::Move(c[5].to_string()));
         return Some(actions);
     }
@@ -1800,27 +1811,26 @@ fn transpile_block_families(body: &str) -> Option<Vec<WalkAction>> {
         if c[1] != c[5] {
             return None;
         }
-        return Some(vec![
-            WalkAction::Put("lie".into()),
-            WalkAction::WaitRt,
-        ]
-        .into_iter()
-        .chain(search_until_line(
-            &c[2],
-            &c[4],
-            c[3].parse().ok()?,
-            MAX_RETRY_LOOP,
-            Vec::new(),
-        )?)
-        .chain([
-            WalkAction::If {
-                cond: Cond::Not(Box::new(Cond::Standing)),
-                then: vec![WalkAction::Put("stand".into()), WalkAction::WaitRt],
-                els: Vec::new(),
-            },
-            WalkAction::Move(format!("go {}", &c[6])),
-        ])
-        .collect());
+        return Some(
+            vec![WalkAction::Put("lie".into()), WalkAction::WaitRt]
+                .into_iter()
+                .chain(search_until_line(
+                    &c[2],
+                    &c[4],
+                    c[3].parse().ok()?,
+                    MAX_RETRY_LOOP,
+                    Vec::new(),
+                )?)
+                .chain([
+                    WalkAction::If {
+                        cond: Cond::Not(Box::new(Cond::Standing)),
+                        then: vec![WalkAction::Put("stand".into()), WalkAction::WaitRt],
+                        els: Vec::new(),
+                    },
+                    WalkAction::Move(format!("go {}", &c[6])),
+                ])
+                .collect(),
+        );
     }
     // Citadel ledge: offensive stance, climb until it takes. We can't read
     // the previous stance, so restore to defensive — the safe traveling
@@ -2122,9 +2132,7 @@ fn transpile_block_families(body: &str) -> Option<Vec<WalkAction>> {
                 then: vec![
                     WalkAction::Await {
                         cmd: Some("close dam".into()),
-                        pattern: Box::new(AwaitPattern::new(
-                            "slides closed|already closed",
-                        )?),
+                        pattern: Box::new(AwaitPattern::new("slides closed|already closed")?),
                         timeout: 5.0,
                         on_timeout: OnTimeout::Retry,
                         if_match: None,
@@ -2623,7 +2631,10 @@ fn transpile_edge_depth(db: &MapDb, source: &str, depth: u8) -> Option<Vec<WalkA
 // --- timeto cost procs ---
 
 // 957× ";e Map[N].timeto['M'].call;"
-re!(TIMETO_DELEGATE, r"^;e\s+Map\[(\d+)\]\.timeto\['(\d+)'\]\.call;?$");
+re!(
+    TIMETO_DELEGATE,
+    r"^;e\s+Map\[(\d+)\]\.timeto\['(\d+)'\]\.call;?$"
+);
 // 83× ";e checksitting && Room.current.climate == '...' ? 30 : 0.2"
 re!(
     TIMETO_TERNARY,
@@ -2721,8 +2732,7 @@ re!(
 );
 
 /// Whether portmaster edges are routable (Lich's `UserVars.mapdb_use_portmasters`).
-static USE_PORTMASTERS: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static USE_PORTMASTERS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Enable/disable portmaster routing.
 pub fn set_use_portmasters(enable: bool) {
@@ -2875,7 +2885,10 @@ fn resolve_timeto_depth(db: &MapDb, timeto: &TimeTo, depth: u8) -> Option<f64> {
                 // the silver cost the funding routine covers.
                 return use_portmasters().then(|| c[1].parse().ok()).flatten();
             }
-            if let Some(c) = TIMETO_URCHIN.captures(src).or_else(|| TIMETO_URCHIN_RUNNING.captures(src)) {
+            if let Some(c) = TIMETO_URCHIN
+                .captures(src)
+                .or_else(|| TIMETO_URCHIN_RUNNING.captures(src))
+            {
                 // Routable only when urchin travel is currently valid (enabled,
                 // access not expired, not hidden/invisible).
                 return urchins_valid().then(|| c[1].parse().ok()).flatten();
@@ -2962,7 +2975,10 @@ mod tests {
                  $go2_restart=true"
             )
             .as_deref(),
-            Some([Repeat { until: RepeatUntil::RoomChanged, .. }])
+            Some([Repeat {
+                until: RepeatUntil::RoomChanged,
+                ..
+            }])
         ));
         assert_eq!(
             transpile(";e fput 'pull lever';fput 'open gate';move 'go gate'"),
@@ -3245,8 +3261,7 @@ mod tests {
                     "the escaped quote in the table name is unescaped"
                 );
                 assert!(pattern.is_match("You head over to the table."));
-                let (branch_pat, steps) =
-                    if_match.as_ref().expect("an invitation branch exists");
+                let (branch_pat, steps) = if_match.as_ref().expect("an invitation branch exists");
                 assert!(
                     branch_pat.is_match("A dwarf waves at you, inviting you to join"),
                     "an invitation triggers the branch"
@@ -3288,7 +3303,11 @@ mod tests {
                     &[12095, 12096, u32::MAX, 12097],
                     "nil keeps its slot as an unmatchable sentinel"
                 );
-                assert_eq!(dirs.len(), 5, "dirs is its own cycle, longer than start_room");
+                assert_eq!(
+                    dirs.len(),
+                    5,
+                    "dirs is its own cycle, longer than start_room"
+                );
                 assert_eq!(dirs[0], "southwest");
                 assert_eq!(
                     landmarks,
@@ -3398,10 +3417,8 @@ mod tests {
         // the crew lowers the gangplank, `move` disembarks. Transpiling this
         // as fput+move (which the plain FPUT_MOVE shape would do) walks off
         // the pier before the boat arrives.
-        let got = transpile(
-            ";e fput 'go gangplank'; waitfor 'lowers the gangplank'; move 'out'",
-        )
-        .expect("ferry idiom transpiles");
+        let got = transpile(";e fput 'go gangplank'; waitfor 'lowers the gangplank'; move 'out'")
+            .expect("ferry idiom transpiles");
         assert_eq!(got.len(), 2, "an await and the disembark: {got:?}");
         match &got[0] {
             WalkAction::Await {
@@ -3430,8 +3447,7 @@ mod tests {
     fn waitfor_text_is_escaped_not_treated_as_a_pattern() {
         // waitfor takes a literal string. Regex metacharacters in it (periods
         // especially) must match literally, or the pattern silently over-matches.
-        let got = transpile(";e waitfor 'the gate. opens'; move 'go gate'")
-            .expect("transpiles");
+        let got = transpile(";e waitfor 'the gate. opens'; move 'go gate'").expect("transpiles");
         match &got[0] {
             WalkAction::Await { pattern, .. } => {
                 assert!(pattern.is_match("the gate. opens"), "literal text matches");
@@ -3447,8 +3463,7 @@ mod tests {
     #[test]
     fn retry_until_room_change_becomes_a_bounded_repeat() {
         // The Red Forest family: keep sending until the room changes.
-        let got = transpile(";e fput 'go fog' while Room.current.id == 24675")
-            .expect("transpiles");
+        let got = transpile(";e fput 'go fog' while Room.current.id == 24675").expect("transpiles");
         assert_eq!(got.len(), 1);
         match &got[0] {
             WalkAction::Repeat { body, until, max } => {
@@ -3483,7 +3498,10 @@ mod tests {
             transpile(";e move 'climb rope'; waitrt?"),
             Some(vec![Move("climb rope".into()), WaitRt])
         );
-        assert_eq!(transpile(";e move 'go door'"), Some(vec![Move("go door".into())]));
+        assert_eq!(
+            transpile(";e move 'go door'"),
+            Some(vec![Move("go door".into())])
+        );
         assert_eq!(
             transpile(";e if checkspell(103) then move 'go mist' else move 'go arch' end; waitrt?"),
             Some(vec![If {
@@ -3524,11 +3542,7 @@ mod tests {
         );
         assert_eq!(
             transpile(";e pause 0.5; waitrt?; fput 'go turnstile'"),
-            Some(vec![
-                Sleep(0.5),
-                WaitRt,
-                Move("go turnstile".into())
-            ])
+            Some(vec![Sleep(0.5), WaitRt, Move("go turnstile".into())])
         );
         assert_eq!(
             transpile(
@@ -3560,7 +3574,10 @@ mod tests {
             transpile(";e $mapdb_confluence_target = 123; Room[456].wayto['789'].call"),
             None
         );
-        assert_eq!(transpile(";e target_room_id = 5; maze_rooms = [1, 2]"), None);
+        assert_eq!(
+            transpile(";e target_room_id = 5; maze_rooms = [1, 2]"),
+            None
+        );
     }
 
     #[test]
@@ -3590,12 +3607,7 @@ mod tests {
         // no-semicolon spacing variant.
         assert_eq!(
             transpile(";e empty_hands move 'go boat' waitrt? fill_hands"),
-            Some(vec![
-                EmptyHands,
-                Move("go boat".into()),
-                WaitRt,
-                FillHands
-            ])
+            Some(vec![EmptyHands, Move("go boat".into()), WaitRt, FillHands])
         );
         // move then $go2_restart.
         assert_eq!(
@@ -3614,7 +3626,10 @@ mod tests {
         // dquote fput+move.
         assert_eq!(
             transpile(r#";e fput "search"; move "go wooden trapdoor""#),
-            Some(vec![Put("search".into()), Move("go wooden trapdoor".into())])
+            Some(vec![
+                Put("search".into()),
+                Move("go wooden trapdoor".into())
+            ])
         );
         // bare fput (a lever/button).
         assert_eq!(transpile(";e fput 'jump'"), Some(vec![Put("jump".into())]));
@@ -3686,7 +3701,11 @@ mod tests {
         let _g = GATE_LOCK.lock().unwrap();
         set_use_portmasters(false);
         assert_eq!(resolve_timeto(&db, r1, 2), Some(40.5), "delegation follows");
-        assert_eq!(resolve_timeto(&db, r2, 3), Some(30.0), "ternary takes the max");
+        assert_eq!(
+            resolve_timeto(&db, r2, 3),
+            Some(30.0),
+            "ternary takes the max"
+        );
         assert_eq!(resolve_timeto(&db, r2, 4), None, "portmasters default off");
         assert_eq!(resolve_timeto(&db, r2, 1), Some(40.5));
     }
@@ -3751,7 +3770,11 @@ mod tests {
         set_use_portmasters(false);
         assert_eq!(resolve_timeto(&db, r1, 2), None, "off by default");
         set_use_portmasters(true);
-        assert_eq!(resolve_timeto(&db, r1, 2), Some(1200.0), "routes when enabled");
+        assert_eq!(
+            resolve_timeto(&db, r1, 2),
+            Some(1200.0),
+            "routes when enabled"
+        );
         set_use_portmasters(false);
     }
 
@@ -3801,10 +3824,18 @@ mod tests {
         // The exact pair routable at 0.8 (a held pass). Proves the mixed-quote
         // parse (the live bug: single-quoted Icemule wasn't matching).
         set_day_pass_routable(&[(("Wehnimer's Landing".into(), "Icemule Trace".into()), 0.8)]);
-        assert_eq!(resolve_timeto(&db, r1, 2), Some(0.8), "routes the held pair");
+        assert_eq!(
+            resolve_timeto(&db, r1, 2),
+            Some(0.8),
+            "routes the held pair"
+        );
         // Reverse order still matches (order-independent key).
         set_day_pass_routable(&[(("Icemule Trace".into(), "Wehnimer's Landing".into()), 4.4)]);
-        assert_eq!(resolve_timeto(&db, r1, 2), Some(4.4), "reverse pair + buy cost");
+        assert_eq!(
+            resolve_timeto(&db, r1, 2),
+            Some(4.4),
+            "reverse pair + buy cost"
+        );
         // A different pair → nil.
         set_day_pass_routable(&[(("Solhaven".into(), "Icemule Trace".into()), 0.8)]);
         assert_eq!(resolve_timeto(&db, r1, 2), None, "other pairs stay off");
@@ -3925,15 +3956,9 @@ mod tests {
                 Move("north".into()),
             ])
         );
-        assert_eq!(
-            transpile(";e move 'n' if x; else; move 's'; end"),
-            None
-        );
+        assert_eq!(transpile(";e move 'n' if x; else; move 's'; end"), None);
         // A loop whose exit condition we cannot evaluate stays refused.
-        assert_eq!(
-            transpile(";e loop { move 'north' }; move 'east'"),
-            None
-        );
+        assert_eq!(transpile(";e loop { move 'north' }; move 'east'"), None);
         // ...but a bounded `.times` is just an unrolled repeat, with no
         // condition to lose.
         assert_eq!(
@@ -4024,7 +4049,10 @@ mod tests {
         // Escaped quotes do not end the string.
         assert_eq!(
             split_statements(r#"fput "say \"x;y\""; move 'north'"#),
-            vec![r#"fput "say \"x;y\"""#.to_string(), "move 'north'".to_string()]
+            vec![
+                r#"fput "say \"x;y\"""#.to_string(),
+                "move 'north'".to_string()
+            ]
         );
     }
 
@@ -4082,7 +4110,10 @@ mod tests {
         use WalkAction::*;
         assert_eq!(
             transpile(";e fput 'say meet me if you can'; move 'north'"),
-            Some(vec![Put("say meet me if you can".into()), Move("north".into())])
+            Some(vec![
+                Put("say meet me if you can".into()),
+                Move("north".into())
+            ])
         );
     }
 
@@ -4096,7 +4127,13 @@ mod tests {
             panic!("expected a transpile");
         };
         assert_eq!(actions.len(), 1);
-        let WalkAction::Await { cmd, pattern, on_timeout, .. } = &actions[0] else {
+        let WalkAction::Await {
+            cmd,
+            pattern,
+            on_timeout,
+            ..
+        } = &actions[0]
+        else {
             panic!("expected an await, got {:?}", actions[0]);
         };
         assert_eq!(*cmd, None);
@@ -4157,10 +4194,7 @@ mod tests {
         // move and wait out roundtime — are the crossing; a native walker
         // does not escort groups.
         let body = r#";e group_members = nil; clear.reverse.each { |line| if line =~ /^Obvious (paths|exits)/; break; elsif line =~ /^([A-Za-z ,]+) followed\.$/; group_members = $1.split(/, | and /); group_members.delete_if { |m| m =~ /^[Yy]our / }; group_members = nil if group_members.empty?; break; end }; move 'go pile'; if group_members; echo "Waiting for your group... "; begin; if get =~ /^(You reach out and hold )?([A-z][a-z]+)('s hand| joins your group)\.$/; group_members.delete $2; end; end while group_members.length > 0; end; waitrt?"#;
-        assert_eq!(
-            transpile(body),
-            Some(vec![Move("go pile".into()), WaitRt])
-        );
+        assert_eq!(transpile(body), Some(vec![Move("go pile".into()), WaitRt]));
     }
 
     #[test]
@@ -4255,10 +4289,14 @@ mod tests {
         // kept searching after a find.
         assert_eq!(*until, RepeatUntil::Count);
         assert_eq!(*max, 10);
-        let Await { pattern, if_match, .. } = &body[0] else {
+        let Await {
+            pattern, if_match, ..
+        } = &body[0]
+        else {
             panic!("expected an await, got {:?}", body[0]);
         };
-        assert!(pattern.is_match("You make a careful search of the area and discover a small footpath!"));
+        assert!(pattern
+            .is_match("You make a careful search of the area and discover a small footpath!"));
         let (_, on_found) = if_match.as_ref().expect("break on found");
         assert!(on_found.contains(&Break));
         assert_eq!(actions[1], Move("go footpath".into()));
@@ -4308,7 +4346,13 @@ mod tests {
         let Some(actions) = transpile(body) else {
             panic!("expected a transpile");
         };
-        let Await { cmd, pattern, on_timeout, .. } = &actions[0] else {
+        let Await {
+            cmd,
+            pattern,
+            on_timeout,
+            ..
+        } = &actions[0]
+        else {
             panic!("expected an await, got {:?}", actions[0]);
         };
         assert_eq!(cmd.as_deref(), Some("open rolaren gate"));
@@ -4318,7 +4362,9 @@ mod tests {
         assert_eq!(actions[1], Move("go rolaren gate".into()));
         // Mismatched variables are not the idiom.
         assert_eq!(
-            transpile(";e r = dothistimeout 'open gate', 10, /x/; if q =~ /x/; move 'go gate'; else; end"),
+            transpile(
+                ";e r = dothistimeout 'open gate', 10, /x/; if q =~ /x/; move 'go gate'; else; end"
+            ),
             None
         );
     }
@@ -4330,11 +4376,20 @@ mod tests {
         let Some(actions) = transpile(body) else {
             panic!("expected a transpile");
         };
-        let Repeat { body: inner, until, .. } = &actions[0] else {
+        let Repeat {
+            body: inner, until, ..
+        } = &actions[0]
+        else {
             panic!("expected a repeat, got {:?}", actions[0]);
         };
         assert_eq!(*until, RepeatUntil::Count);
-        let Await { cmd, pattern, if_match, .. } = &inner[0] else {
+        let Await {
+            cmd,
+            pattern,
+            if_match,
+            ..
+        } = &inner[0]
+        else {
             panic!("expected an await, got {:?}", inner[0]);
         };
         assert_eq!(cmd.as_deref(), Some("search"));
@@ -4353,7 +4408,10 @@ mod tests {
         let Some(actions) = transpile(body) else {
             panic!("expected a transpile");
         };
-        let Repeat { body: inner, until, .. } = &actions[0] else {
+        let Repeat {
+            body: inner, until, ..
+        } = &actions[0]
+        else {
             panic!("expected a repeat, got {:?}", actions[0]);
         };
         assert_eq!(*until, RepeatUntil::RoomChanged);
@@ -4377,10 +4435,7 @@ mod tests {
             "control character hiding in IGNORABLE_STATEMENT"
         );
         let actions = transpile(body);
-        assert!(
-            actions.is_some(),
-            "cab exit should transpile, got None"
-        );
+        assert!(actions.is_some(), "cab exit should transpile, got None");
     }
 
     #[test]

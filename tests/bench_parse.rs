@@ -104,7 +104,10 @@ fn load_corpus() -> (Vec<String>, String) {
             for _ in 0..200 {
                 lines.extend(fixture.lines().map(str::to_string));
             }
-            (lines, "tests/fixtures/session_start.xml x200 (fallback)".to_string())
+            (
+                lines,
+                "tests/fixtures/session_start.xml x200 (fallback)".to_string(),
+            )
         }
     }
 }

@@ -151,8 +151,14 @@ pub enum UiAction {
     // Stream routing menu entries (TUI `.streams` menu)
     StreamActions(String),
     StreamPickWindow(String),
-    StreamRoute { kind: String, stream: String },
-    StreamSubscribe { window: String, stream: String },
+    StreamRoute {
+        kind: String,
+        stream: String,
+    },
+    StreamSubscribe {
+        window: String,
+        stream: String,
+    },
     StreamNewWindow(String),
 
     // TOML (TUI) layout load, from the Layouts menu
@@ -190,7 +196,10 @@ pub enum UiAction {
     PackEditor,
 
     // GUI shell zones
-    Zone { zone: ShellZoneTarget, op: ZoneOp },
+    Zone {
+        zone: ShellZoneTarget,
+        op: ZoneOp,
+    },
 
     // Lich WebUI bridge (GUI)
     WebUiPicker,
@@ -615,7 +624,10 @@ mod tests {
     #[test]
     fn legacy_spellings_and_junk() {
         // Both historical window-list spellings parse to one variant.
-        assert_eq!(UiAction::parse("action:windows"), Some(UiAction::WindowList));
+        assert_eq!(
+            UiAction::parse("action:windows"),
+            Some(UiAction::WindowList)
+        );
         assert_eq!(
             UiAction::parse("action:listwindows"),
             Some(UiAction::WindowList)

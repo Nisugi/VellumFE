@@ -11,9 +11,7 @@ pub mod model;
 
 use std::collections::{BTreeMap, HashMap};
 
-pub use model::{
-    is_proc_command, rooms_for_location, rooms_from_array, Room, RoomTable, TimeTo,
-};
+pub use model::{is_proc_command, rooms_for_location, rooms_from_array, Room, RoomTable, TimeTo};
 
 /// Service-tag vocabulary: the mapdb room tags that mark a room as offering
 /// a service worth a map marker (`.go2 bank` destinations). Everything else
@@ -65,6 +63,27 @@ pub const SERVICE_TAGS: &[&str] = &[
     "wizardguild",
 ];
 
+/// Split a room's tags into (service/structured, forageables). The stable
+/// side is deliberately the SMALL list — service tags plus structured
+/// `x:y` tags; everything else is treated as a forageable. Herbs are the
+/// churny side (new ones get added to the mapdb often), so classifying by
+/// exclusion means new herb tags land in Forageables with no list to
+/// maintain (owner decision 2026-08-17). Misfiled oddballs are fixed by
+/// extending SERVICE_TAGS, which rarely changes.
+pub fn partition_tags(tags: &[String]) -> (Vec<&str>, Vec<&str>) {
+    let mut service = Vec::new();
+    let mut forage = Vec::new();
+    for tag in tags {
+        let t = tag.as_str();
+        if SERVICE_TAGS.contains(&t) || t.contains(':') {
+            service.push(t);
+        } else {
+            forage.push(t);
+        }
+    }
+    (service, forage)
+}
+
 /// Rooms carrying this tag are player-shop warrens — hundreds of
 /// near-identical rooms that dwarf their town on the map.
 const PLAYERSHOP_TAG: &str = "meta:playershop";
@@ -83,6 +102,7 @@ enum Slot {
     Unplaced { index: usize },
 }
 
+#[derive(Clone)]
 pub struct MapDb {
     /// Mappable rooms by location, ascending id — what the layout engine
     /// consumes.
@@ -227,7 +247,10 @@ impl MapDb {
         for rooms in locations.values_mut() {
             rooms.sort_by_key(|r| r.id);
             for (index, room) in rooms.iter().enumerate() {
-                if let Some(Slot::Placed { index: slot_index, .. }) = slots.get_mut(&room.id) {
+                if let Some(Slot::Placed {
+                    index: slot_index, ..
+                }) = slots.get_mut(&room.id)
+                {
                     *slot_index = index;
                 }
             }
@@ -240,6 +263,93 @@ impl MapDb {
             ids_of_tag,
             ids_of_title,
         })
+    }
+
+    /// Apply user room-data edits (tags, exits, description) to the loaded
+    /// db. Called once after load with the merged override layer, so
+    /// pathing, layout generation, and display all consume the edited data.
+    /// Edits are keyed by uid; a uid carried by several room ids applies to
+    /// each. The tag index rebuilds afterward (tags feed `.go2 <tag>`).
+    pub fn apply_room_edits(
+        &mut self,
+        edits: &std::collections::BTreeMap<
+            i64,
+            crate::core::layout_engine::overrides::RoomDataEdit,
+        >,
+    ) {
+        if edits.is_empty() {
+            return;
+        }
+        for (&uid, edit) in edits {
+            let ids: Vec<u32> = self.ids_of_uid(uid).to_vec();
+            for id in ids {
+                // Exit targets resolve uid → the first room id carrying it.
+                let resolved: Vec<(
+                    Option<u32>,
+                    Option<crate::core::layout_engine::overrides::WaytoEdit>,
+                )> = edit
+                    .wayto
+                    .iter()
+                    .map(|(&tuid, w)| (self.ids_of_uid(tuid).first().copied(), w.clone()))
+                    .collect();
+                let Some(room) = self.room_mut(id) else {
+                    continue;
+                };
+                for tag in &edit.add_tags {
+                    if !room.tags.contains(tag) {
+                        room.tags.push(tag.clone());
+                    }
+                }
+                room.tags.retain(|t| !edit.remove_tags.contains(t));
+                for (target_id, wayto_edit) in resolved {
+                    let Some(target_id) = target_id else { continue };
+                    match wayto_edit {
+                        Some(w) => {
+                            room.wayto.insert(target_id, w.command.clone());
+                            room.timeto.insert(target_id, TimeTo::Seconds(w.seconds));
+                        }
+                        None => {
+                            room.wayto.remove(&target_id);
+                            room.timeto.remove(&target_id);
+                            room.dirto.remove(&target_id);
+                        }
+                    }
+                }
+                if let Some(desc) = &edit.description {
+                    room.description = vec![desc.clone()];
+                }
+            }
+        }
+        // Tag edits invalidate the tag index.
+        let mut ids_of_tag: HashMap<String, Vec<u32>> = HashMap::new();
+        let all = self
+            .locations
+            .values()
+            .flat_map(|rooms| rooms.iter())
+            .chain(self.unplaced.iter());
+        for room in all {
+            for tag in &room.tags {
+                ids_of_tag.entry(tag.clone()).or_default().push(room.id);
+            }
+        }
+        for ids in ids_of_tag.values_mut() {
+            ids.sort_unstable();
+            ids.dedup();
+        }
+        self.ids_of_tag = ids_of_tag;
+    }
+
+    fn room_mut(&mut self, id: u32) -> Option<&mut Room> {
+        match self.slots.get(&id)? {
+            Slot::Placed { location, index } => {
+                let (location, index) = (location.clone(), *index);
+                self.locations.get_mut(&location)?.get_mut(index)
+            }
+            Slot::Unplaced { index } => {
+                let index = *index;
+                self.unplaced.get_mut(index)
+            }
+        }
     }
 
     /// Any room by id — placed or not. The pathing graph's node lookup.
@@ -276,7 +386,10 @@ impl MapDb {
     /// Ids of every *mappable* room whose title list contains `title`
     /// verbatim. The uid-less current-room fallback's candidate pool.
     pub fn room_ids_with_title(&self, title: &str) -> &[u32] {
-        self.ids_of_title.get(title).map(Vec::as_slice).unwrap_or(&[])
+        self.ids_of_title
+            .get(title)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     /// The *mappable* Lich room id carrying this game uid (`<nav rm='…'/>`
@@ -418,10 +531,7 @@ mod tests {
         // Build a temp mapdb-<tag>.json with an evaluate_script ref, and a
         // matching stringprocs-<tag>/wayto/*.rb sidecar; loading should inline
         // the ref to `;e <body>`.
-        let tmp = std::env::temp_dir().join(format!(
-            "vellum_carto_test_{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("vellum_carto_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join("stringprocs-v9.9.9/wayto")).unwrap();
         std::fs::create_dir_all(tmp.join("stringprocs-v9.9.9/timeto")).unwrap();
@@ -457,8 +567,7 @@ mod tests {
         // The timeto sidecar must be inlined too, or the router can't cost it.
         match db.room(1).unwrap().timeto.get(&2).unwrap() {
             TimeTo::Proc(body) => assert_eq!(
-                body,
-                ";e UserVars.mapdb_use_urchins == true ? 0.1 : nil",
+                body, ";e UserVars.mapdb_use_urchins == true ? 0.1 : nil",
                 "timeto sidecar ref was inlined"
             ),
             other => panic!("expected an inlined proc, got {other:?}"),
@@ -489,7 +598,10 @@ mod tests {
         assert_eq!(db.room_count(), 4);
         // Layout view: only mappable rooms, per location.
         assert_eq!(db.rooms("Mist Harbor").unwrap().len(), 2);
-        assert!(db.rooms("Wehnimer's Landing").is_none(), "urchin hideout never maps");
+        assert!(
+            db.rooms("Wehnimer's Landing").is_none(),
+            "urchin hideout never maps"
+        );
         // Pathing view: everything resolves by id, including the hideout and
         // the location-less instance.
         assert!(db.room(30708).is_some());
@@ -545,5 +657,26 @@ mod tests {
         assert_eq!(db.room_ids_with_tag("meta:playershop"), &[2, 3, 4]);
         // Un-located tagged rooms stay unplaced, not invented into a location.
         assert_eq!(db.location_of_room_id(4), None);
+    }
+
+    #[test]
+    fn partition_tags_splits_service_from_forageables() {
+        let tags: Vec<String> = [
+            "bank",
+            "herbalist",
+            "meta:transport",
+            "urchin:wl",
+            "acantha leaf",
+            "wolifrew lichen",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let (service, forage) = partition_tags(&tags);
+        assert_eq!(
+            service,
+            vec!["bank", "herbalist", "meta:transport", "urchin:wl"]
+        );
+        assert_eq!(forage, vec!["acantha leaf", "wolifrew lichen"]);
     }
 }

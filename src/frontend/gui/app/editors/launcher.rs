@@ -12,9 +12,7 @@
 use eframe::egui;
 
 use super::super::VellumGuiApp;
-use crate::launcher::config::{
-    CharacterLaunch, LauncherConfig, RemoteOs, DEFAULT_KEY_ID,
-};
+use crate::launcher::config::{CharacterLaunch, LauncherConfig, RemoteOs, DEFAULT_KEY_ID};
 
 pub(in super::super) struct LauncherEditorState {
     /// Working copy of the whole config; applied to disk on Save.
@@ -213,10 +211,7 @@ impl VellumGuiApp {
                         generate_requested = true;
                     }
                     if state.working.ssh.key_saved {
-                        ui.colored_label(
-                            ui.visuals().hyperlink_color,
-                            "✓ key stored",
-                        );
+                        ui.colored_label(ui.visuals().hyperlink_color, "✓ key stored");
                     } else {
                         ui.weak("no key yet");
                     }
@@ -269,8 +264,7 @@ impl VellumGuiApp {
 
                         // Collect names first so we can mutate the map while
                         // iterating a snapshot.
-                        let names: Vec<String> =
-                            state.working.characters.keys().cloned().collect();
+                        let names: Vec<String> = state.working.characters.keys().cloned().collect();
                         for name in names {
                             ui.label(&name);
                             if let Some(entry) = state.working.characters.get_mut(&name) {
@@ -325,9 +319,7 @@ impl VellumGuiApp {
                     if save.clicked() {
                         save_requested = true;
                     }
-                    ui.weak(
-                        "Saves ssh-launcher.toml (no secrets); the key lives in the OS store.",
-                    );
+                    ui.weak("Saves ssh-launcher.toml (no secrets); the key lives in the OS store.");
                 });
             });
 
@@ -362,10 +354,7 @@ impl VellumGuiApp {
         }
 
         if generate_requested {
-            let comment = format!(
-                "vellum-launcher@{}",
-                whoami_label()
-            );
+            let comment = format!("vellum-launcher@{}", whoami_label());
             match crate::launcher::ssh::generate_keypair(&comment) {
                 Ok(key) => {
                     match crate::launcher::config::save_private_key(
@@ -405,7 +394,8 @@ impl VellumGuiApp {
                     state.dirty = false;
                     state.error = None;
                     state.status = Some("Saved.".to_string());
-                    self.app_core.add_system_message("SSH launcher config saved.");
+                    self.app_core
+                        .add_system_message("SSH launcher config saved.");
                 }
                 Err(e) => state.error = Some(format!("Save failed: {e:#}")),
             }

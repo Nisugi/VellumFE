@@ -29,6 +29,13 @@ const WINDOW_COST_STALE: Duration = Duration::from_secs(5);
 const SERIES_CAP: usize = 60;
 /// Draw-stamp retention for the draws/sec window.
 const DRAW_WINDOW: Duration = Duration::from_secs(5);
+/// Time span of the render avg/p95/max window. Time-based, not
+/// sample-count-based: frame rate varies ~100x between idle (2/s) and busy
+/// (150+/s), so a fixed sample count would summarize anywhere from half a
+/// second to a minute and the stats would jump around with cadence.
+const RENDER_STAT_WINDOW: Duration = Duration::from_secs(60);
+/// Hard cap on retained render samples (safety valve; ~166 fps sustained).
+const RENDER_STAT_CAP: usize = 10_000;
 
 /// One logged outlier: when it happened, what was slow, and what the client
 /// was doing at that moment.
@@ -96,7 +103,7 @@ pub struct PerformanceStats {
 
     // Render timing: total pass ("render") and widget-only pass ("draw",
     // TUI: widgets before terminal flush; unused in the GUI)
-    render_times: VecDeque<Duration>,
+    render_times: VecDeque<(Instant, Duration)>,
     ui_render_times: VecDeque<Duration>,
     text_wrap_times: VecDeque<Duration>,
     max_render_samples: usize,
@@ -322,9 +329,16 @@ impl PerformanceStats {
 
     /// Record total render/paint time for a frame
     pub fn record_render_time(&mut self, duration: Duration) {
-        self.render_times.push_back(duration);
-        if self.render_times.len() > self.max_render_samples {
-            self.render_times.pop_front();
+        let now = Instant::now();
+        self.render_times.push_back((now, duration));
+        while let Some((at, _)) = self.render_times.front() {
+            if now.duration_since(*at) > RENDER_STAT_WINDOW
+                || self.render_times.len() > RENDER_STAT_CAP
+            {
+                self.render_times.pop_front();
+            } else {
+                break;
+            }
         }
         let ms = duration.as_secs_f64() * 1000.0;
         if ms > self.render_spike_threshold_ms {
@@ -422,8 +436,9 @@ impl PerformanceStats {
                 );
                 if let Some(proc) = self.sysinfo.process(pid) {
                     self.process_cpu_percent = proc.cpu_usage();
-                    self.process_rss_bytes = proc.memory() * 1024; // KiB -> bytes
-                    self.process_virt_bytes = proc.virtual_memory() * 1024; // KiB -> bytes
+                    // sysinfo 0.30+ reports bytes directly (pre-0.30 was KiB).
+                    self.process_rss_bytes = proc.memory();
+                    self.process_virt_bytes = proc.virtual_memory();
                 }
             }
         }
@@ -470,6 +485,27 @@ impl PerformanceStats {
         costs
     }
 
+    /// Per-window costs from the most recent frame: each window's LAST
+    /// sample (not the rolling average), so a one-frame blowup in a single
+    /// window is attributed to that window instead of being diluted.
+    /// Only windows rendered within the last quarter second count.
+    fn last_frame_window_costs(&self, n: usize) -> Vec<(String, f64)> {
+        let now = Instant::now();
+        let mut costs: Vec<(String, f64)> = self
+            .window_costs
+            .iter()
+            .filter(|(_, cost)| now.duration_since(cost.last_seen) < Duration::from_millis(250))
+            .filter_map(|(name, cost)| {
+                cost.samples
+                    .back()
+                    .map(|d| (name.clone(), d.as_secs_f64() * 1000.0))
+            })
+            .collect();
+        costs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        costs.truncate(n);
+        costs
+    }
+
     fn log_spike(&mut self, kind: &'static str, ms: f64) {
         let now = Instant::now();
         if let Some(last) = self.last_spike_at.get(kind) {
@@ -478,12 +514,23 @@ impl PerformanceStats {
             }
         }
         self.last_spike_at.insert(kind, now);
-        let context = format!(
+        let mut context = format!(
             "{}, {} elems, queue {}",
             format_bytes(self.bytes_received),
             self.elements_parsed,
             self.event_queue_depth_last
         );
+        if kind == "render" {
+            let culprits = self.last_frame_window_costs(3);
+            if !culprits.is_empty() {
+                let list = culprits
+                    .iter()
+                    .map(|(name, ms)| format!("{} {:.1}", name, ms))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                context.push_str(&format!(" · [{}]", list));
+            }
+        }
         self.spike_log.push_back(PerfSpike {
             at: chrono::Local::now(),
             kind,
@@ -502,20 +549,26 @@ impl PerformanceStats {
 
     // === Getters ===
 
-    /// Get average render time in milliseconds
+    /// Get average render time in milliseconds (trailing 60s)
     pub fn avg_render_time_ms(&self) -> f64 {
-        avg_us(&self.render_times) / 1000.0
+        if self.render_times.is_empty() {
+            return 0.0;
+        }
+        let total: Duration = self.render_times.iter().map(|(_, d)| *d).sum();
+        total.as_secs_f64() * 1000.0 / self.render_times.len() as f64
     }
 
-    /// 95th-percentile render time in milliseconds
+    /// 95th-percentile render time in milliseconds (trailing 60s)
     pub fn p95_render_time_ms(&self) -> f64 {
-        percentile_secs(&self.render_times, 0.95) * 1000.0
+        let samples: VecDeque<Duration> = self.render_times.iter().map(|(_, d)| *d).collect();
+        percentile_secs(&samples, 0.95) * 1000.0
     }
 
-    /// Get max render time in milliseconds
+    /// Get max render time in milliseconds (trailing 60s)
     pub fn max_render_time_ms(&self) -> f64 {
         self.render_times
             .iter()
+            .map(|(_, d)| d)
             .max()
             .map(|d| d.as_secs_f64() * 1000.0)
             .unwrap_or(0.0)
@@ -603,7 +656,7 @@ impl PerformanceStats {
     pub fn render_series_ms(&self) -> Vec<f32> {
         self.render_times
             .iter()
-            .map(|d| (d.as_secs_f64() * 1000.0) as f32)
+            .map(|(_, d)| (d.as_secs_f64() * 1000.0) as f32)
             .collect()
     }
 
@@ -727,7 +780,9 @@ pub fn sparkline_string(values: &[f32], width: usize) -> String {
     let mut out = String::with_capacity(width * 3);
     for i in 0..width {
         let start = i * values.len() / width;
-        let end = (((i + 1) * values.len()) / width).max(start + 1).min(values.len());
+        let end = (((i + 1) * values.len()) / width)
+            .max(start + 1)
+            .min(values.len());
         let slice = &values[start..end];
         let v = slice.iter().sum::<f32>() / slice.len() as f32;
         let level = if max <= 0.0 {
@@ -1094,9 +1149,16 @@ mod tests {
     fn test_render_time_recording() {
         let mut stats = PerformanceStats::new();
 
-        stats.render_times.push_back(Duration::from_millis(5));
-        stats.render_times.push_back(Duration::from_millis(10));
-        stats.render_times.push_back(Duration::from_millis(15));
+        let now = Instant::now();
+        stats
+            .render_times
+            .push_back((now, Duration::from_millis(5)));
+        stats
+            .render_times
+            .push_back((now, Duration::from_millis(10)));
+        stats
+            .render_times
+            .push_back((now, Duration::from_millis(15)));
 
         let avg = stats.avg_render_time_ms();
         assert!((avg - 10.0).abs() < 0.1, "Expected 10ms, got {}", avg);
@@ -1108,17 +1170,24 @@ mod tests {
         let mut stats = PerformanceStats::new();
         // 20 samples: 19 at 2ms, 1 at 40ms. p95 over 20 samples = rank 19
         // (ceil(0.95*20)=19) -> still 2ms; max shows the outlier.
+        let now = Instant::now();
         for _ in 0..19 {
-            stats.render_times.push_back(Duration::from_millis(2));
+            stats
+                .render_times
+                .push_back((now, Duration::from_millis(2)));
         }
-        stats.render_times.push_back(Duration::from_millis(40));
+        stats
+            .render_times
+            .push_back((now, Duration::from_millis(40)));
         let p95 = stats.p95_render_time_ms();
         assert!((p95 - 2.0).abs() < 0.01, "expected 2ms p95, got {}", p95);
         assert!((stats.max_render_time_ms() - 40.0).abs() < 0.01);
 
         // Make the tail 2/20 -> p95 rank catches it.
         stats.render_times.pop_front();
-        stats.render_times.push_back(Duration::from_millis(40));
+        stats
+            .render_times
+            .push_back((now, Duration::from_millis(40)));
         let p95 = stats.p95_render_time_ms();
         assert!((p95 - 40.0).abs() < 0.01, "expected 40ms p95, got {}", p95);
     }
@@ -1139,7 +1208,11 @@ mod tests {
         let spike = stats.spike_log().next().unwrap();
         assert_eq!(spike.kind, "render");
         assert!((spike.ms - 42.0).abs() < 0.5);
-        assert!(spike.context.contains("queue 7"), "context: {}", spike.context);
+        assert!(
+            spike.context.contains("queue 7"),
+            "context: {}",
+            spike.context
+        );
 
         // Debounce: an immediate second render spike is dropped.
         stats.record_render_time(Duration::from_millis(30));

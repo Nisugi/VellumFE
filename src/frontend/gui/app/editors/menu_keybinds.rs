@@ -6,8 +6,8 @@
 //! `Config::save_menu_keybinds` and re-validates with the shared validator.
 
 use super::super::VellumGuiApp;
-use crate::config::{Config, MenuKeybinds};
 use crate::config::menu_keybind_validator::validate_menu_keybinds;
+use crate::config::{Config, MenuKeybinds};
 use crate::data::InputMode;
 use eframe::egui;
 
@@ -150,8 +150,7 @@ impl VellumGuiApp {
                                     ui.horizontal(|ui| {
                                         let label = if armed { "…" } else { "Capture" };
                                         if ui.small_button(label).clicked() {
-                                            state.capturing =
-                                                if armed { None } else { Some(i) };
+                                            state.capturing = if armed { None } else { Some(i) };
                                         }
                                         if ui.small_button("Default").clicked() {
                                             let def = MenuKeybinds::default();
@@ -186,11 +185,8 @@ impl VellumGuiApp {
 
         if save_request {
             let character = self.app_core.config.character.clone();
-            match Config::save_menu_keybinds(
-                &state.working,
-                state.is_global,
-                character.as_deref(),
-            ) {
+            match Config::save_menu_keybinds(&state.working, state.is_global, character.as_deref())
+            {
                 Ok(()) => {
                     // Reflect the save in the live config so menus use it now.
                     self.app_core.config.menu_keybinds = state.working.clone();

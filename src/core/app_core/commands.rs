@@ -6,27 +6,81 @@ use crate::data::{CommandOutcome, ShellZoneTarget, UiAction, ZoneOp};
 /// Compass/vertical movement words — everything else in a room's wayto
 /// edges is a "portal" (go door, climb stair, enter hole, ...).
 const COMPASS_WORDS: [&str; 22] = [
-    "north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest", "up",
-    "down", "out", "n", "ne", "e", "se", "s", "sw", "w", "nw", "u", "d", "o",
+    "north",
+    "northeast",
+    "east",
+    "southeast",
+    "south",
+    "southwest",
+    "west",
+    "northwest",
+    "up",
+    "down",
+    "out",
+    "n",
+    "ne",
+    "e",
+    "se",
+    "s",
+    "sw",
+    "w",
+    "nw",
+    "u",
+    "d",
+    "o",
 ];
 
 /// The GS "interesting" mapdb tags `.go2 targets` enumerates as a shop/guild
 /// directory (Lich's `gs_interesting_tags`, go2.lic:1009). Resolution accepts
 /// any mapdb tag; this is just the advertised directory vocabulary.
 const INTERESTING_TAGS: [&str; 40] = [
-    "alchemist", "armorshop", "bakery", "bank", "bardguild", "boutique", "chronomage",
-    "clericguild", "clericshop", "cobbling", "collectibles", "consignment", "empathguild",
-    "exchange", "fletcher", "forge", "furrier", "gemshop", "general store", "grocer",
-    "herbalist", "inn", "locksmith", "mail", "npccleric", "npchealer", "pawnshop",
-    "portmaster", "postoffice", "rangerguild", "smokeshop", "sorcererguild", "sunfist",
-    "treasuremaster", "town", "voln", "warriorguild", "weaponshop", "wizardguild", "moneychanger",
+    "alchemist",
+    "armorshop",
+    "bakery",
+    "bank",
+    "bardguild",
+    "boutique",
+    "chronomage",
+    "clericguild",
+    "clericshop",
+    "cobbling",
+    "collectibles",
+    "consignment",
+    "empathguild",
+    "exchange",
+    "fletcher",
+    "forge",
+    "furrier",
+    "gemshop",
+    "general store",
+    "grocer",
+    "herbalist",
+    "inn",
+    "locksmith",
+    "mail",
+    "npccleric",
+    "npchealer",
+    "pawnshop",
+    "portmaster",
+    "postoffice",
+    "rangerguild",
+    "smokeshop",
+    "sorcererguild",
+    "sunfist",
+    "treasuremaster",
+    "town",
+    "voln",
+    "warriorguild",
+    "weaponshop",
+    "wizardguild",
+    "moneychanger",
 ];
 
 /// Room-object nouns that look like walkable portals, for the fallback
 /// when the mapdb doesn't know the current room.
 const PORTAL_NOUNS: [&str; 18] = [
-    "door", "gate", "arch", "archway", "portal", "stair", "stairs", "stairway", "steps",
-    "ladder", "trapdoor", "opening", "entrance", "path", "trail", "bridge", "ramp", "curtain",
+    "door", "gate", "arch", "archway", "portal", "stair", "stairs", "stairway", "steps", "ladder",
+    "trapdoor", "opening", "entrance", "path", "trail", "bridge", "ramp", "curtain",
 ];
 
 /// One pickable portal exit: what the user SEES (`label`, the movement) and
@@ -94,10 +148,7 @@ fn portal_candidates(
 /// The movement a StringProc edge performs, for display — the first
 /// `Move`/`Put` target in its transpiled actions (e.g. "climb footpath").
 /// `None` when the edge doesn't transpile to any movement.
-fn proc_edge_label(
-    command: &str,
-    db: &crate::core::mapdb::MapDb,
-) -> Option<String> {
+fn proc_edge_label(command: &str, db: &crate::core::mapdb::MapDb) -> Option<String> {
     use crate::core::pathing::edge::WalkAction;
     let actions = crate::core::pathing::transpile::transpile_edge(db, command)?;
     actions.into_iter().find_map(|a| match a {
@@ -155,9 +206,7 @@ fn command_rest(command: &str) -> Option<&str> {
 /// ride to the server) and the paused remainder as (cumulative delay,
 /// command) pairs. None when the string has no sleep segments — the
 /// normal send path handles it untouched.
-fn split_sleep_macro(
-    text: &str,
-) -> Option<(Option<String>, Vec<(std::time::Duration, String)>)> {
+fn split_sleep_macro(text: &str) -> Option<(Option<String>, Vec<(std::time::Duration, String)>)> {
     if !text.contains('\r') || !text.split('\r').any(|s| sleep_segment_seconds(s).is_some()) {
         return None;
     }
@@ -695,7 +744,10 @@ impl AppCore {
         let parts: Vec<String> = if args.len() > 1 {
             args[1..].iter().map(|s| s.to_lowercase()).collect()
         } else {
-            crate::core::uipack::PARTS.iter().map(|s| s.to_string()).collect()
+            crate::core::uipack::PARTS
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
         };
         self.uiexport_pack(&name, &parts, None, extra_files);
     }
@@ -812,8 +864,8 @@ impl AppCore {
 
         // `.uiimport <name> apply [parts...]` — extra args limit the
         // install to those parts.
-        let selected: Option<Vec<String>> = (args.len() > 2)
-            .then(|| args[2..].iter().map(|s| s.to_lowercase()).collect());
+        let selected: Option<Vec<String>> =
+            (args.len() > 2).then(|| args[2..].iter().map(|s| s.to_lowercase()).collect());
         self.uiimport_apply(&path, selected.as_deref())
     }
 
@@ -831,12 +883,7 @@ impl AppCore {
                 return None;
             }
         };
-        match crate::core::uipack::apply(
-            &base,
-            path,
-            self.config.character.as_deref(),
-            selected,
-        ) {
+        match crate::core::uipack::apply(&base, path, self.config.character.as_deref(), selected) {
             Ok(outcome) => {
                 for note in &outcome.notes {
                     self.add_system_message(&format!("uiimport: {note}"));
@@ -856,9 +903,8 @@ impl AppCore {
                             let _ = self.save_config();
                             self.add_system_message("Quickbars installed.");
                         }
-                        Err(e) => self.add_system_message(&format!(
-                            "Pack's quickbars did not parse: {e:#}"
-                        )),
+                        Err(e) => self
+                            .add_system_message(&format!("Pack's quickbars did not parse: {e:#}")),
                     }
                 }
                 if let Some(text) = &outcome.settings_toml {
@@ -871,9 +917,8 @@ impl AppCore {
                                 "General settings installed (connection settings are never touched; some take effect on restart).",
                             );
                         }
-                        Err(e) => self.add_system_message(&format!(
-                            "Pack's settings did not parse: {e:#}"
-                        )),
+                        Err(e) => self
+                            .add_system_message(&format!("Pack's settings did not parse: {e:#}")),
                     }
                 }
                 // Hot-reload everything the pack can touch.
@@ -892,9 +937,7 @@ impl AppCore {
                             remote.set_macros(&self.config.macros);
                         }
                     }
-                    Err(e) => {
-                        self.add_system_message(&format!("Macros did not reload: {e:#}"))
-                    }
+                    Err(e) => self.add_system_message(&format!("Macros did not reload: {e:#}")),
                 }
                 if let Some(skin) = &outcome.skin {
                     self.config.active_skin = Some(skin.clone());
@@ -1003,10 +1046,9 @@ impl AppCore {
                 }
             }
             "test" => {
-                if let Err(err) = self
-                    .tts_manager
-                    .speak_text_now("A giant rat scampers out of the shadows. Roundtime, 5 seconds.")
-                {
+                if let Err(err) = self.tts_manager.speak_text_now(
+                    "A giant rat scampers out of the shadows. Roundtime, 5 seconds.",
+                ) {
                     self.add_system_message(&format!("TTS test failed: {}", err));
                 } else {
                     self.add_system_message("Speaking test sample.");
@@ -1069,7 +1111,11 @@ impl AppCore {
                 return;
             }
         };
-        let JinxFlags { only_repo, force, dry_run } = flags;
+        let JinxFlags {
+            only_repo,
+            force,
+            dry_run,
+        } = flags;
 
         let sub = pos.first().copied().unwrap_or("help");
         match sub {
@@ -1085,9 +1131,9 @@ impl AppCore {
             }
             "search" => match pos.get(1) {
                 Some(pattern) => {
-                    let ack = self
-                        .jinx_worker
-                        .start(Request::Search { pattern: pattern.to_string() });
+                    let ack = self.jinx_worker.start(Request::Search {
+                        pattern: pattern.to_string(),
+                    });
                     self.add_system_message(&ack);
                 }
                 None => self.add_system_message("[jinx] usage: .jinx search <pattern>"),
@@ -1188,7 +1234,9 @@ impl AppCore {
             "change" => match (args.get(1), args.get(2)) {
                 (Some(name), Some(url)) => match list.change(name, url) {
                     Ok(()) => match list.save() {
-                        Ok(()) => self.add_system_message(&format!("[jinx] repo '{name}' -> {url}")),
+                        Ok(()) => {
+                            self.add_system_message(&format!("[jinx] repo '{name}' -> {url}"))
+                        }
                         Err(e) => self.add_system_message(&format!("[jinx] save failed: {e}")),
                     },
                     Err(e) => self.add_system_message(&format!("[jinx] {e}")),
@@ -1267,7 +1315,9 @@ impl AppCore {
                     self.add_system_message("[map] no repo configured (.mapdb repo <owner/repo>)");
                     return;
                 }
-                self.add_system_message(&format!("[map] checking {repo} for the latest release..."));
+                self.add_system_message(&format!(
+                    "[map] checking {repo} for the latest release..."
+                ));
                 self.start_mapdb_download(&repo);
             }
             "remove" => {
@@ -1319,8 +1369,11 @@ impl AppCore {
                 self.add_system_message("[go2] reloading the map database...");
             }
             "status" => {
-                let status = match (self.travel.task(), self.map.mapdb(), self.map.current_room_id)
-                {
+                let status = match (
+                    self.travel.task(),
+                    self.map.mapdb(),
+                    self.map.current_room_id,
+                ) {
                     (Some(task), Some(db), Some(current)) => {
                         let done = task.rooms_total() - task.rooms_remaining();
                         format!(
@@ -1331,18 +1384,24 @@ impl AppCore {
                             crate::core::travel::format_eta(task.eta_seconds(db, current))
                         )
                     }
-                    (Some(task), _, _) => format!("[go2] -> room {} (resolving...)", task.destination),
+                    (Some(task), _, _) => {
+                        format!("[go2] -> room {} (resolving...)", task.destination)
+                    }
                     _ => "[go2] not traveling.".to_string(),
                 };
                 self.add_system_message(&status);
             }
             "save" => {
                 let Some(name) = args.get(1).map(|s| s.trim()).filter(|s| !s.is_empty()) else {
-                    self.add_system_message("usage: .go2 save <name> [room id] (defaults to the current room)");
+                    self.add_system_message(
+                        "usage: .go2 save <name> [room id] (defaults to the current room)",
+                    );
                     return;
                 };
                 if name.parse::<u32>().is_ok() || name.eq_ignore_ascii_case("back") {
-                    self.add_system_message("[go2] that name would shadow a room id or keyword - pick another");
+                    self.add_system_message(
+                        "[go2] that name would shadow a room id or keyword - pick another",
+                    );
                     return;
                 }
                 let id = match args.get(2) {
@@ -1509,8 +1568,7 @@ impl AppCore {
             // (harmless — `item` is what these commands use).
             let rows: Vec<(String, String, String, String)> = match target {
                 Target::Container(query) => {
-                    let Some(container) = self.game_state.objects.find_container(query)
-                    else {
+                    let Some(container) = self.game_state.objects.find_container(query) else {
                         if *optional {
                             missing.push(query.clone());
                             continue;
@@ -1528,7 +1586,12 @@ impl AppCore {
                         } else {
                             self.add_system_message(&format!(
                                 "[foreach] tracked: {}",
-                                titles.iter().take(12).cloned().collect::<Vec<_>>().join(", ")
+                                titles
+                                    .iter()
+                                    .take(12)
+                                    .cloned()
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
                             ));
                         }
                         return;
@@ -1605,18 +1668,14 @@ impl AppCore {
             let need_scan = candidates.iter().any(|c| {
                 let type_ok = spec.value_matches_public(c);
                 let unknown = (spec.status.marked.is_some() && c.status.marked.is_none())
-                    || (spec.status.registered.is_some()
-                        && c.status.registered.is_none());
+                    || (spec.status.registered.is_some() && c.status.registered.is_none());
                 type_ok && unknown
             });
             if need_scan {
                 if let Some(cmd) = self.message_processor.start_inventory_scan() {
                     // Inject the scan command into the outbound path (zero
                     // delay = next drain).
-                    self.queue_timed_command(
-                        std::time::Duration::from_millis(0),
-                        cmd.to_string(),
-                    );
+                    self.queue_timed_command(std::time::Duration::from_millis(0), cmd.to_string());
                     self.add_system_message(
                         "[foreach] fetching item status (INVENTORY FULL) - re-run \
                          the command in a moment.",
@@ -1754,7 +1813,10 @@ impl AppCore {
         use crate::config::{ColorConfig, HarmonyRecipe};
         use crate::core::harmony::{self, Scheme};
 
-        if args.first().is_some_and(|a| a.eq_ignore_ascii_case("schemes")) {
+        if args
+            .first()
+            .is_some_and(|a| a.eq_ignore_ascii_case("schemes"))
+        {
             self.add_system_message("=== Harmony schemes ===");
             for scheme in Scheme::ALL {
                 self.add_system_message(&format!(
@@ -1866,7 +1928,9 @@ impl AppCore {
     fn handle_find(&mut self, parts: &[&str]) {
         let query = parts[1..].join(" ").trim().to_ascii_lowercase();
         if query.is_empty() {
-            self.add_system_message("Usage: .find <name fragment> - searches the .invsync snapshot.");
+            self.add_system_message(
+                "Usage: .find <name fragment> - searches the .invsync snapshot.",
+            );
             return;
         }
         let Some(snapshot) = self.game_state.managed_inventory.as_ref() else {
@@ -1994,10 +2058,7 @@ impl AppCore {
                     return;
                 }
                 let missing = missing_spells::missing(&self.game_state);
-                self.add_system_message(&format!(
-                    "Watched spells ({} missing):",
-                    missing.len()
-                ));
+                self.add_system_message(&format!("Watched spells ({} missing):", missing.len()));
                 for &number in &watched {
                     let name = missing_spells::spell_display_name(&self.game_state, number);
                     let state = if missing.iter().any(|m| m.number == number) {
@@ -2005,10 +2066,7 @@ impl AppCore {
                     } else {
                         "active"
                     };
-                    self.add_system_message(&format!(
-                        "  {:>5}  {:<30} {}",
-                        number, name, state
-                    ));
+                    self.add_system_message(&format!("  {:>5}  {:<30} {}", number, name, state));
                 }
             }
             Some("add") if arg.eq_ignore_ascii_case("all") => {
@@ -2154,7 +2212,9 @@ impl AppCore {
                     None => {
                         let rows = db.search(&q);
                         if rows.is_empty() {
-                            self.add_system_message(&format!("[bestiary] no creature matches '{q}'."));
+                            self.add_system_message(&format!(
+                                "[bestiary] no creature matches '{q}'."
+                            ));
                             return;
                         }
                         format::table_lines(&rows, &format!("Matches for '{q}'"))
@@ -2256,7 +2316,11 @@ impl AppCore {
                     Some(other) => {
                         self.add_system_message(&format!(
                             "Usage: .sorter [on|off|edit] (currently {}), got '{}'",
-                            if self.config.sorter.enabled { "on" } else { "off" },
+                            if self.config.sorter.enabled {
+                                "on"
+                            } else {
+                                "off"
+                            },
                             other
                         ));
                         return Ok(CommandOutcome::Handled);
@@ -2269,7 +2333,8 @@ impl AppCore {
                         "Container-look sorting {}.",
                         if target { "on" } else { "off" }
                     )),
-                    Err(e) => self.add_system_message(&format!("Sorter toggle saved to session only: {e}")),
+                    Err(e) => self
+                        .add_system_message(&format!("Sorter toggle saved to session only: {e}")),
                 }
             }
 
@@ -2377,10 +2442,7 @@ impl AppCore {
                             if data.skipped.is_empty() {
                                 String::new()
                             } else {
-                                format!(
-                                    ", {} incompatible regex(es) skipped",
-                                    data.skipped.len()
-                                )
+                                format!(", {} incompatible regex(es) skipped", data.skipped.len())
                             }
                         ));
                     }
@@ -2410,8 +2472,9 @@ impl AppCore {
                             );
                             self.add_system_message(&ack);
                         }
-                        None => self
-                            .add_system_message("Usage: .data update <name> (e.g. gameobj-data.xml)"),
+                        None => self.add_system_message(
+                            "Usage: .data update <name> (e.g. gameobj-data.xml)",
+                        ),
                     },
                     _ => {
                         self.add_system_message("Usage: .data [status|reload|update <name>]");
@@ -2427,9 +2490,10 @@ impl AppCore {
                         let groups = macros.groups.len();
                         let floating = macros.floating.len();
                         self.config.macros = macros;
-                        self.config.macros_local =
-                            crate::config::MacrosConfig::load_local(self.config.character.as_deref())
-                                .unwrap_or_default();
+                        self.config.macros_local = crate::config::MacrosConfig::load_local(
+                            self.config.character.as_deref(),
+                        )
+                        .unwrap_or_default();
                         if let Some(remote) = self.message_processor.remote.as_mut() {
                             remote.set_macros(&self.config.macros);
                         }
@@ -2522,7 +2586,10 @@ impl AppCore {
                         .collect::<String>()
                         .to_ascii_lowercase();
                     if part.starts_with('-')
-                        && matches!(normalized.as_str(), "keepskin" | "keepskins" | "keepmyskins")
+                        && matches!(
+                            normalized.as_str(),
+                            "keepskin" | "keepskins" | "keepmyskins"
+                        )
                     {
                         keep_skin = true;
                     } else if name.is_none() {
@@ -2578,9 +2645,7 @@ impl AppCore {
             "webui" => match parts.get(1) {
                 None => return Ok(CommandOutcome::Ui(UiAction::WebUiPicker)),
                 Some(&"off") => return Ok(CommandOutcome::Ui(UiAction::WebUiOff)),
-                Some(page) => {
-                    return Ok(CommandOutcome::Ui(UiAction::WebUiOpen(page.to_string())))
-                }
+                Some(page) => return Ok(CommandOutcome::Ui(UiAction::WebUiOpen(page.to_string()))),
             },
             "addwindow" => {
                 if parts.len() >= 6 {
@@ -2624,8 +2689,7 @@ impl AppCore {
                         owner.desc
                     ));
                 } else {
-                    self.hand_stash =
-                        Some(crate::core::travel::stash::StashTask::empty());
+                    self.hand_stash = Some(crate::core::travel::stash::StashTask::empty());
                 }
             }
             "fillhands" | "fh" => {
@@ -2642,8 +2706,7 @@ impl AppCore {
                     );
                 } else {
                     let stack = std::mem::take(&mut self.hand_stash_stack);
-                    self.hand_stash =
-                        Some(crate::core::travel::stash::StashTask::fill(stack));
+                    self.hand_stash = Some(crate::core::travel::stash::StashTask::fill(stack));
                 }
             }
             "viewitem" | "inspect" => {
@@ -2887,9 +2950,7 @@ impl AppCore {
                 if parts.get(1).is_some_and(|s| s.eq_ignore_ascii_case("skin")) {
                     match parts.get(2) {
                         Some(name) => {
-                            return Ok(CommandOutcome::Ui(UiAction::HarmonySkin(
-                                name.to_string(),
-                            )));
+                            return Ok(CommandOutcome::Ui(UiAction::HarmonySkin(name.to_string())));
                         }
                         None => self.add_system_message(
                             "Usage: .harmony skin <name> - write a skin (panel + frame \
@@ -2984,7 +3045,10 @@ impl AppCore {
                         }));
                     }
                     Some("on") | Some("show") => {
-                        return Ok(CommandOutcome::Ui(UiAction::Zone { zone, op: ZoneOp::On }));
+                        return Ok(CommandOutcome::Ui(UiAction::Zone {
+                            zone,
+                            op: ZoneOp::On,
+                        }));
                     }
                     Some("off") | Some("hide") => {
                         return Ok(CommandOutcome::Ui(UiAction::Zone {
@@ -3057,8 +3121,8 @@ impl AppCore {
                         _ => None, // bare = toggle
                     }
                 };
-                let new_state = forced
-                    .unwrap_or_else(|| !self.layout.windows.iter().any(|w| w.base().locked));
+                let new_state =
+                    forced.unwrap_or_else(|| !self.layout.windows.iter().any(|w| w.base().locked));
                 for window in &mut self.layout.windows {
                     window.base_mut().locked = new_state;
                 }
@@ -3170,7 +3234,11 @@ impl AppCore {
         let sub = parts.get(1).map(|s| s.to_lowercase());
         match sub.as_deref() {
             None => {
-                let state = if self.config.room_images.enabled { "on" } else { "off" };
+                let state = if self.config.room_images.enabled {
+                    "on"
+                } else {
+                    "off"
+                };
                 let uid_now = self.message_processor.current_room_uid();
                 let store = self.room_images_store().clone();
                 let mapped: usize = store.images.iter().map(|i| i.rooms.len()).sum();
@@ -3181,25 +3249,20 @@ impl AppCore {
                         .find(|i| i.rooms.contains(&uid))
                         .map(|i| (uid, i.name.clone()))
                 });
-                self.add_system_message(&format!(
-                    "Room images {state} — {mapped} room(s) mapped."
-                ));
+                self.add_system_message(&format!("Room images {state} — {mapped} room(s) mapped."));
                 match here {
-                    Some((uid, image)) => self.add_system_message(&format!(
-                        "This room ({uid}) shows '{image}'."
-                    )),
+                    Some((uid, image)) => {
+                        self.add_system_message(&format!("This room ({uid}) shows '{image}'."))
+                    }
                     None => match uid_now {
                         Some(uid) => self.add_system_message(&format!(
                             "This room ({uid}) has no art. Use .roomimages set <image>."
                         )),
-                        None => self.add_system_message(
-                            "Room id unknown yet — move once, then try again.",
-                        ),
+                        None => self
+                            .add_system_message("Room id unknown yet — move once, then try again."),
                     },
                 }
-                self.add_system_message(
-                    "Usage: .roomimages [on|off|set <image>|clear|list|edit]",
-                );
+                self.add_system_message("Usage: .roomimages [on|off|set <image>|clear|list|edit]");
             }
             Some("on") | Some("off") => {
                 let target = sub.as_deref() == Some("on");
@@ -3245,9 +3308,7 @@ impl AppCore {
                 };
                 let image = image.to_string();
                 let Some(uid) = self.message_processor.current_room_uid() else {
-                    self.add_system_message(
-                        "Room id unknown yet — move once, then try again.",
-                    );
+                    self.add_system_message("Room id unknown yet — move once, then try again.");
                     return Ok(CommandOutcome::Handled);
                 };
                 if !crate::core::inline_image::contains(&image) {
@@ -3283,7 +3344,12 @@ impl AppCore {
                         variants: Vec::new(),
                     }),
                 }
-                if let Some(name) = self.game_state.room_name.clone().or_else(|| self.room_subtitle.clone()) {
+                if let Some(name) = self
+                    .game_state
+                    .room_name
+                    .clone()
+                    .or_else(|| self.room_subtitle.clone())
+                {
                     store.names.insert(uid.to_string(), name);
                 }
                 self.commit_room_images(store);
@@ -3291,9 +3357,7 @@ impl AppCore {
                     Some(old) => self.add_system_message(&format!(
                         "Room {uid} moved from '{old}' to '{image}'."
                     )),
-                    None => self.add_system_message(&format!(
-                        "Room {uid} now shows '{image}'."
-                    )),
+                    None => self.add_system_message(&format!("Room {uid} now shows '{image}'.")),
                 }
                 if !self.config.room_images.enabled {
                     self.add_system_message(
@@ -3303,9 +3367,7 @@ impl AppCore {
             }
             Some("clear") => {
                 let Some(uid) = self.message_processor.current_room_uid() else {
-                    self.add_system_message(
-                        "Room id unknown yet — move once, then try again.",
-                    );
+                    self.add_system_message("Room id unknown yet — move once, then try again.");
                     return Ok(CommandOutcome::Handled);
                 };
                 let mut store = self.room_images_store().clone();
@@ -3321,12 +3383,9 @@ impl AppCore {
                     Some(name) => {
                         store.names.remove(&uid.to_string());
                         self.commit_room_images(store);
-                        self.add_system_message(&format!(
-                            "Room {uid} no longer shows '{name}'."
-                        ));
+                        self.add_system_message(&format!("Room {uid} no longer shows '{name}'."));
                     }
-                    None => self
-                        .add_system_message(&format!("Room {uid} has no art mapped.")),
+                    None => self.add_system_message(&format!("Room {uid} has no art mapped.")),
                 }
             }
             Some(other) => {
@@ -3360,10 +3419,9 @@ impl AppCore {
         use crate::config::room_images::RoomImageIndex;
         self.message_processor
             .set_room_image_index(RoomImageIndex::build(&store));
-        if let Err(e) = crate::config::Config::save_room_images_split(
-            &store,
-            self.config.character.as_deref(),
-        ) {
+        if let Err(e) =
+            crate::config::Config::save_room_images_split(&store, self.config.character.as_deref())
+        {
             self.add_system_message(&format!("Room art saved to session only: {e}"));
         }
         self.room_images = Some(store);
@@ -3418,9 +3476,7 @@ fn parse_jinx_flags(args: &[String]) -> Result<(JinxFlags, Vec<&str>), String> {
 /// A free function so it's unit-testable without an `AppCore`.
 fn jinx_install_target(pos: &[&str]) -> Option<(Option<String>, String)> {
     match (pos.get(1), pos.get(2)) {
-        (Some(category), Some(name)) => {
-            Some((Some(category.to_string()), name.to_string()))
-        }
+        (Some(category), Some(name)) => Some((Some(category.to_string()), name.to_string())),
         (Some(name), None) => Some((None, name.to_string())),
         _ => None,
     }
@@ -3521,7 +3577,9 @@ mod command_echo_tests {
         if let WindowContent::Text(content) = &mut main_window.content {
             content.streams = vec!["main".to_string()];
         }
-        core.ui_state.windows.insert("main".to_string(), main_window);
+        core.ui_state
+            .windows
+            .insert("main".to_string(), main_window);
         core.message_processor
             .update_text_stream_subscribers(&core.ui_state);
 
@@ -3586,10 +3644,19 @@ mod portal_tests {
         assert_eq!(
             got,
             vec![
-                PortalCandidate { label: "go door".into(), command: "go door".into() },
-                PortalCandidate { label: "climb stair".into(), command: "climb stair".into() },
+                PortalCandidate {
+                    label: "go door".into(),
+                    command: "go door".into()
+                },
+                PortalCandidate {
+                    label: "climb stair".into(),
+                    command: "climb stair".into()
+                },
                 // The proc footpath shows its movement, runs .go2 to room 5.
-                PortalCandidate { label: "climb footpath".into(), command: ".go2 5".into() },
+                PortalCandidate {
+                    label: "climb footpath".into(),
+                    command: ".go2 5".into()
+                },
                 // The un-interpretable proc is a REAL exit the router can plan
                 // through, so it stays listed - named by its destination.
                 PortalCandidate {
@@ -3616,7 +3683,10 @@ mod portal_tests {
         let got = portal_candidates(db.room(1).unwrap(), &db);
         assert_eq!(
             got,
-            vec![PortalCandidate { label: "room 7".into(), command: ".go2 7".into() }],
+            vec![PortalCandidate {
+                label: "room 7".into(),
+                command: ".go2 7".into()
+            }],
             "falls back to the bare room id rather than dropping the exit"
         );
     }
@@ -3786,7 +3856,10 @@ mod portal_tests {
         assert_eq!(slices[0].command, "go door");
         assert!(!slices[0].is_folder());
 
-        assert_eq!(core.wheel_pick_command("portals", &[1]), Some("go arch".into()));
+        assert_eq!(
+            core.wheel_pick_command("portals", &[1]),
+            Some("go arch".into())
+        );
         // Flat wheel: folder paths and out-of-range indexes resolve to
         // nothing.
         assert_eq!(core.wheel_slices("portals", &[0]), None);
@@ -3802,7 +3875,10 @@ mod portal_tests {
                 ..Default::default()
             }],
         );
-        assert_eq!(core.wheel_pick_command("spells", &[0]), Some("prep 101".into()));
+        assert_eq!(
+            core.wheel_pick_command("spells", &[0]),
+            Some("prep 101".into())
+        );
     }
 
     #[test]
@@ -3822,7 +3898,11 @@ mod portal_tests {
         ];
         // Ambiguous with no pick: opens the local picker menu, sends nothing.
         assert_eq!(core.handle_portal_command(&[]), None);
-        let menu = core.ui_state.popup_menu.as_ref().expect("portal picker menu");
+        let menu = core
+            .ui_state
+            .popup_menu
+            .as_ref()
+            .expect("portal picker menu");
         assert_eq!(menu.get_items().len(), 2);
         assert_eq!(menu.get_items()[0].command, "go door");
         assert_eq!(
@@ -3856,11 +3936,17 @@ mod tests {
         // The bug: `command.find("test")` matched inside ".testline" itself, so
         // `.testline test rat` injected "testline test rat". command_rest
         // slices past the word.
-        assert_eq!(command_rest(".testline test rat appears"), Some("test rat appears"));
+        assert_eq!(
+            command_rest(".testline test rat appears"),
+            Some("test rat appears")
+        );
         assert_eq!(command_rest(".testline line two"), Some("line two"));
         assert_eq!(command_rest(".testline t"), Some("t"));
         // Leading/interior arguments kept verbatim (no trimming of the rest).
-        assert_eq!(command_rest(".testline  double space"), Some(" double space"));
+        assert_eq!(
+            command_rest(".testline  double space"),
+            Some(" double space")
+        );
         // No argument.
         assert_eq!(command_rest(".testline"), None);
         assert_eq!(command_rest(".testline "), None);
@@ -3872,7 +3958,7 @@ mod tests {
         assert_eq!(sleep_segment_seconds("s0.1"), Some(0.1));
         assert_eq!(sleep_segment_seconds(" s3.2 "), Some(3.2)); // spaces ok
         assert_eq!(sleep_segment_seconds("s90"), Some(90.0)); // no max
-        // Game commands stay game commands.
+                                                              // Game commands stay game commands.
         assert_eq!(sleep_segment_seconds("s"), None); // south
         assert_eq!(sleep_segment_seconds("sw"), None);
         assert_eq!(sleep_segment_seconds("stance defensive"), None);
@@ -4242,9 +4328,15 @@ mod tests {
             (".gonew", UiAction::NextUnread),
             (".nextunread", UiAction::NextUnread),
             (".settings", UiAction::Settings),
-            (".editwindow main", UiAction::EditWindow(Some("main".into()))),
+            (
+                ".editwindow main",
+                UiAction::EditWindow(Some("main".into())),
+            ),
             (".editwindow", UiAction::EditWindow(None)),
-            (".hidewindow main", UiAction::HideWindow(Some("main".into()))),
+            (
+                ".hidewindow main",
+                UiAction::HideWindow(Some("main".into())),
+            ),
             (".hidewindow", UiAction::HideWindow(None)),
             (".hidewin main", UiAction::HideWindow(Some("main".into()))),
             (".addwindow", UiAction::AddWindowPicker),
@@ -4440,7 +4532,11 @@ mod foreach_tests {
         use crate::core::game_objects::GameItem;
         let mut core = AppCore::new_for_test();
         let objects = &mut core.game_state.objects;
-        objects.register_container("77".to_string(), "Bandolier".to_string(), Some("#77".to_string()));
+        objects.register_container(
+            "77".to_string(),
+            "Bandolier".to_string(),
+            Some("#77".to_string()),
+        );
         objects.add_container_item("77", GameItem::new("101", "crystal", "quartz crystal"));
         objects.add_container_item("77", GameItem::new("102", "sword", "slim short sword"));
         core
@@ -4496,8 +4592,7 @@ mod foreach_tests {
                 "My Shroud".to_string(),
                 Some("#225766691".to_string()),
             );
-            objects
-                .add_container_item("stow", GameItem::new("333", "crystal", "quartz crystal"));
+            objects.add_container_item("stow", GameItem::new("333", "crystal", "quartz crystal"));
         }
         // 'container' must substitute to the object id, never "#stow".
         let _ = core.handle_dot_command(".foreach gem in shroud; put item in container");
@@ -4542,9 +4637,16 @@ mod foreach_tests {
         let mut core = AppCore::new_for_test();
         {
             let o = &mut core.game_state.objects;
-            o.register_container("77".to_string(), "Bandolier".to_string(), Some("#77".to_string()));
+            o.register_container(
+                "77".to_string(),
+                "Bandolier".to_string(),
+                Some("#77".to_string()),
+            );
             o.add_container_item("77", GameItem::new("101", "crystal", "quartz crystal"));
-            o.add_container_item("77", GameItem::new("102", "crystal", "smoky quartz crystal"));
+            o.add_container_item(
+                "77",
+                GameItem::new("102", "crystal", "smoky quartz crystal"),
+            );
         }
 
         // Status unknown → the filter triggers an INVENTORY FULL scan and
@@ -4556,11 +4658,17 @@ mod foreach_tests {
         // Simulate the scan result landing on the registry.
         core.game_state.objects.set_status(
             "101".to_string(),
-            ItemStatus { marked: Some(true), registered: Some(false) },
+            ItemStatus {
+                marked: Some(true),
+                registered: Some(false),
+            },
         );
         core.game_state.objects.set_status(
             "102".to_string(),
-            ItemStatus { marked: Some(false), registered: Some(false) },
+            ItemStatus {
+                marked: Some(false),
+                registered: Some(false),
+            },
         );
 
         // Re-run: now status is known, only the marked gem runs.
@@ -4573,16 +4681,21 @@ mod foreach_tests {
     fn emptyhands_stows_then_fillhands_replays() {
         use crate::core::game_objects::{GameItem, Hand};
         let mut core = core_with_bandolier();
-        core.game_state
-            .objects
-            .set_hand(Hand::Right, Some(GameItem::new("777", "sword", "a short sword")));
+        core.game_state.objects.set_hand(
+            Hand::Right,
+            Some(GameItem::new("777", "sword", "a short sword")),
+        );
 
         let _ = core.handle_dot_command(".emptyhands");
         assert!(core.hand_stash.is_some());
         core.tick_hand_stash();
         let sent = core.take_outbound();
         assert_eq!(sent.len(), 1, "one stow command for the held item");
-        assert!(sent[0].contains("#777"), "targets the held item: {}", sent[0]);
+        assert!(
+            sent[0].contains("#777"),
+            "targets the held item: {}",
+            sent[0]
+        );
 
         // The hand clearing confirms the stow; the task finishes and the
         // stack remembers the item for .fillhands.
@@ -4598,9 +4711,10 @@ mod foreach_tests {
         assert_eq!(sent, vec!["get #777".to_string()]);
 
         // Item back in hand completes the fill and clears the memory.
-        core.game_state
-            .objects
-            .set_hand(Hand::Right, Some(GameItem::new("777", "sword", "a short sword")));
+        core.game_state.objects.set_hand(
+            Hand::Right,
+            Some(GameItem::new("777", "sword", "a short sword")),
+        );
         core.tick_hand_stash();
         assert!(core.hand_stash.is_none(), "fill finished");
         assert!(core.hand_stash_stack.is_empty());
@@ -4614,7 +4728,10 @@ mod foreach_tests {
     fn foreach_rejects_unknown_container_and_dry_runs() {
         let mut core = core_with_bandolier();
         let _ = core.handle_dot_command(".foreach gem in knapsack; sell item");
-        assert!(!core.foreach.is_running(), "unknown container must not start");
+        assert!(
+            !core.foreach.is_running(),
+            "unknown container must not start"
+        );
 
         // Dry run (no commands) lists matches without starting anything.
         let _ = core.handle_dot_command(".foreach in bandolier");
@@ -4661,13 +4778,19 @@ mod room_images_command_tests {
             format: EmojiFormat::Png,
         });
         crate::core::inline_image::set_for_test(registry);
-        ArtTestEnv { _art: guard, _dir_lock: dir_lock, _dir: dir }
+        ArtTestEnv {
+            _art: guard,
+            _dir_lock: dir_lock,
+            _dir: dir,
+        }
     }
 
     /// Put the core "in" a room the way <nav rm=> does.
     fn enter(core: &mut AppCore, uid: &str) {
         core.message_processor.process_element(
-            &crate::parser::ParsedElement::RoomId { id: uid.to_string() },
+            &crate::parser::ParsedElement::RoomId {
+                id: uid.to_string(),
+            },
             &mut core.game_state,
             &mut core.ui_state,
             &mut core.room_components,

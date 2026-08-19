@@ -75,12 +75,12 @@ fn positioned_band_cells(dialog: &DialogState) -> Option<Vec<Vec<BandCell>>> {
     for control in controls {
         use crate::data::ui_state::PositionedControlKind;
         let cell = match control.kind {
-            PositionedControlKind::Button(index) => dialog.buttons.get(index).map(|b| {
-                BandCell::Button {
+            PositionedControlKind::Button(index) => {
+                dialog.buttons.get(index).map(|b| BandCell::Button {
                     index,
                     text: display_label(b),
-                }
-            }),
+                })
+            }
             PositionedControlKind::DropDown(index) => dialog.dropdowns.get(index).map(|d| {
                 let shown = d
                     .options
@@ -93,24 +93,28 @@ fn positioned_band_cells(dialog: &DialogState) -> Option<Vec<Vec<BandCell>>> {
                     text: format!("[{} ▼]", shown),
                 }
             }),
-            PositionedControlKind::ProgressBar(index) => {
-                dialog.progress_bars.get(index).map(|_| BandCell::Progress { index })
-            }
-            PositionedControlKind::Label(index) => dialog
-                .display_labels
+            PositionedControlKind::ProgressBar(index) => dialog
+                .progress_bars
                 .get(index)
-                .map(|l| BandCell::Label { text: l.value.clone() }),
+                .map(|_| BandCell::Progress { index }),
+            PositionedControlKind::Label(index) => {
+                dialog.display_labels.get(index).map(|l| BandCell::Label {
+                    text: l.value.clone(),
+                })
+            }
             // Links/spinboxes surface read-only in the banded TUI view
             // (activation stays with the GUI panel; the TUI popup path
             // keeps its own focus flow).
-            PositionedControlKind::Link(index) => dialog
-                .links
-                .get(index)
-                .map(|l| BandCell::Label { text: format!("[{}]", l.label) }),
-            PositionedControlKind::SpinBox(index) => dialog
-                .spinboxes
-                .get(index)
-                .map(|s| BandCell::Label { text: format!("<{}>", s.value) }),
+            PositionedControlKind::Link(index) => {
+                dialog.links.get(index).map(|l| BandCell::Label {
+                    text: format!("[{}]", l.label),
+                })
+            }
+            PositionedControlKind::SpinBox(index) => {
+                dialog.spinboxes.get(index).map(|s| BandCell::Label {
+                    text: format!("<{}>", s.value),
+                })
+            }
             // Skins + anchor-only images have no TUI representation.
             PositionedControlKind::Skin(_) | PositionedControlKind::Image(_) => None,
         };
@@ -1176,9 +1180,7 @@ pub fn render_dialog(
             .border_style(
                 Style::default().fg(crossterm_bridge::to_ratatui_color(theme.menu_border)),
             )
-            .style(
-                Style::default().bg(crossterm_bridge::to_ratatui_color(theme.menu_background)),
-            );
+            .style(Style::default().bg(crossterm_bridge::to_ratatui_color(theme.menu_background)));
         Paragraph::new(lines).block(block).render(layout.area, buf);
         return;
     }
@@ -1398,7 +1400,11 @@ pub fn render_dialog_panel(
                 }
                 match cell {
                     BandCell::Button { index, text } => {
-                        let style = if *index == dialog.selected { selected } else { normal };
+                        let style = if *index == dialog.selected {
+                            selected
+                        } else {
+                            normal
+                        };
                         spans.push(Span::styled(text.clone(), style));
                     }
                     BandCell::DropDown { text, .. } => {

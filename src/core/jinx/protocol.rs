@@ -209,7 +209,10 @@ mod tests {
     fn digest_matches_jinx_ruby_sha1_base64() {
         // `printf '<xml>gameobj</xml>'` — the data-file vector from the
         // generator self-test.
-        assert_eq!(digest_b64(b"<xml>gameobj</xml>"), "7qt1tdPIzApVUQB0BpOKxeV3X4w=");
+        assert_eq!(
+            digest_b64(b"<xml>gameobj</xml>"),
+            "7qt1tdPIzApVUQB0BpOKxeV3X4w="
+        );
         // The empty input is a stable, well-known SHA1-b64 constant.
         assert_eq!(digest_b64(b""), "2jmj7l5rSw0yVb/vlWAYkK/YBwk=");
     }
@@ -232,7 +235,10 @@ mod tests {
         assert_eq!(m.available[0].kind(), "script"); // missing type -> script
         assert!(m.available[0].vellum.is_none());
         assert_eq!(m.available[1].kind(), "data");
-        assert_eq!(m.available[1].header.as_deref(), Some("/effect-list.header"));
+        assert_eq!(
+            m.available[1].header.as_deref(),
+            Some("/effect-list.header")
+        );
     }
 
     #[test]
@@ -276,7 +282,7 @@ mod tests {
         // The map database itself is installable (goes to the map dir).
         assert!(mk("/mapdb.json", "data").is_installable());
         assert!(mk("/MapDb.JSON", "data").is_installable()); // case-insensitive
-        // Deprecated / not-consumed data files: hidden.
+                                                             // Deprecated / not-consumed data files: hidden.
         assert!(!mk("/data/spell-list.xml", "data").is_installable());
         assert!(!mk("/sloot.ui", "data").is_installable());
         assert!(!mk("/lockpicks.yaml", "data").is_installable());
@@ -315,7 +321,10 @@ mod tests {
         // A future category the client has never heard of: installable via
         // its pool tag, and the pool folder is exposed for the installer.
         assert!(mk("banner", Some("banners")).is_installable());
-        assert_eq!(mk("banner", Some("banners")).pool_category(), Some("banners"));
+        assert_eq!(
+            mk("banner", Some("banners")).pool_category(),
+            Some("banners")
+        );
         // Unknown kind without a pool tag stays hidden.
         assert!(!mk("banner", None).is_installable());
         // Unsafe pool names are rejected wholesale.

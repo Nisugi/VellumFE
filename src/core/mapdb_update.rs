@@ -239,8 +239,7 @@ impl MapDbUpdater {
 }
 
 fn agent() -> Result<ureq::Agent, String> {
-    let connector =
-        native_tls::TlsConnector::new().map_err(|e| format!("TLS init failed: {e}"))?;
+    let connector = native_tls::TlsConnector::new().map_err(|e| format!("TLS init failed: {e}"))?;
     Ok(ureq::AgentBuilder::new()
         .tls_connector(std::sync::Arc::new(connector))
         .timeout_connect(Duration::from_secs(15))
@@ -332,11 +331,9 @@ fn check_and_download(
         .find(|a| a.name == STRINGPROCS_ASSET_NAME)
     {
         let sp_dir = stringprocs_dir(dir, &tag);
-        if let Err(e) = download_and_extract_stringprocs(
-            &agent,
-            &sp_asset.browser_download_url,
-            &sp_dir,
-        ) {
+        if let Err(e) =
+            download_and_extract_stringprocs(&agent, &sp_asset.browser_download_url, &sp_dir)
+        {
             let _ = std::fs::remove_file(&mapdb_path);
             let _ = std::fs::remove_file(dir.join(format!("overrides-{tag}.json")));
             let _ = std::fs::remove_dir_all(&sp_dir);
@@ -382,8 +379,7 @@ fn download_and_extract_stringprocs(
 
     // Fresh extract: drop any stale version first.
     let _ = std::fs::remove_dir_all(dest);
-    std::fs::create_dir_all(dest)
-        .map_err(|e| format!("create {} failed: {e}", dest.display()))?;
+    std::fs::create_dir_all(dest).map_err(|e| format!("create {} failed: {e}", dest.display()))?;
 
     let decoder = flate2::read::GzDecoder::new(&gz[..]);
     let mut archive = tar::Archive::new(decoder);
@@ -706,7 +702,10 @@ mod tests {
                 tag: "v0.4.0".into()
             }
         );
-        assert!(matches!(seen.first(), Some(UpdateStatus::Downloading { .. })));
+        assert!(matches!(
+            seen.first(),
+            Some(UpdateStatus::Downloading { .. })
+        ));
         let (tag, path) = latest_downloaded(dir.path()).unwrap();
         assert_eq!(tag, "v0.4.0");
         assert_eq!(std::fs::read(path).unwrap(), mapdb);

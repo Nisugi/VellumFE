@@ -203,10 +203,12 @@ impl VellumGuiApp {
                 .filter(|_| self.app_core.config.ui.history_suggestions)
                 .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
                 .filter(|window| window.widget_type == WidgetType::CommandInput)
-                .and_then(|_| crate::frontend::common::find_history_completion(
-                    &self.command_input,
-                    &self.command_history,
-                )),
+                .and_then(|_| {
+                    crate::frontend::common::find_history_completion(
+                        &self.command_input,
+                        &self.command_history,
+                    )
+                }),
             command_input_drag_gutter: self
                 .available_tabs
                 .get(key)
@@ -217,11 +219,13 @@ impl VellumGuiApp {
             gray_inactive_icons: self.ui_settings.status_icons.gray_inactive,
             gray_icon_overrides: self.ui_settings.status_icons.gray_overrides.clone(),
             doll_grayscale: self.ui_settings.doll_grayscale,
-            effect_countdown_now: self.app_core.config.ui.effect_countdown.then(|| {
-                chrono::Utc::now().timestamp() + self.app_core.server_time_offset
-            }),
+            effect_countdown_now: self
+                .app_core
+                .config
+                .ui
+                .effect_countdown
+                .then(|| chrono::Utc::now().timestamp() + self.app_core.server_time_offset),
             multiaccount_peers: self.multiaccount_peers.clone(),
         }
     }
-
 }

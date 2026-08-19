@@ -317,7 +317,6 @@ impl ProgressBar {
             }
         }
     }
-
 }
 
 #[cfg(test)]

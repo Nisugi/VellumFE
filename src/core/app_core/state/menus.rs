@@ -6,7 +6,9 @@ use super::*;
 
 impl AppCore {
     /// Build main menu for .menu command
-    pub(in crate::core::app_core) fn build_main_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
+    pub(in crate::core::app_core) fn build_main_menu(
+        &self,
+    ) -> Vec<crate::data::ui_state::PopupMenuItem> {
         vec![
             crate::data::ui_state::PopupMenuItem {
                 text: "Colors >".to_string(),
@@ -90,7 +92,9 @@ impl AppCore {
     }
 
     /// Build highlights submenu
-    pub(in crate::core::app_core) fn build_highlights_submenu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
+    pub(in crate::core::app_core) fn build_highlights_submenu(
+        &self,
+    ) -> Vec<crate::data::ui_state::PopupMenuItem> {
         vec![
             crate::data::ui_state::PopupMenuItem {
                 text: "Add".to_string(),
@@ -231,7 +235,11 @@ impl AppCore {
     }
 
     /// Handle menu response from server
-    pub(super) fn handle_menu_response(&mut self, counter: &str, coords: &[(String, Option<String>)]) {
+    pub(super) fn handle_menu_response(
+        &mut self,
+        counter: &str,
+        coords: &[(String, Option<String>)],
+    ) {
         // Look up the pending request
         let pending = match self.pending_menu_requests.remove(counter) {
             Some(p) => p,
@@ -269,14 +277,13 @@ impl AppCore {
                     .filter(|value| !value.trim().is_empty())
                     .unwrap_or(cmd)
                     .to_string();
-                categories
-                    .entry("0".to_string())
-                    .or_default()
-                    .push(crate::data::ui_state::PopupMenuItem {
+                categories.entry("0".to_string()).or_default().push(
+                    crate::data::ui_state::PopupMenuItem {
                         text: menu_text,
                         command: cmd.to_string(),
                         disabled: false,
-                    });
+                    },
+                );
                 continue;
             }
 
@@ -321,14 +328,13 @@ impl AppCore {
             .by_noun(&pending.noun)
             .is_empty()
         {
-            categories
-                .entry("0".to_string())
-                .or_default()
-                .push(crate::data::ui_state::PopupMenuItem {
+            categories.entry("0".to_string()).or_default().push(
+                crate::data::ui_state::PopupMenuItem {
                     text: "Bestiary".to_string(),
                     command: format!(".bestiary {}", pending.noun),
                     disabled: false,
-                });
+                },
+            );
         }
 
         if categories.is_empty() {
@@ -371,13 +377,15 @@ impl AppCore {
                         disabled: true,
                     });
                 }
-                items.extend(cat_items.iter().map(|item| {
-                    crate::core::remote::RemoteMenuItem {
-                        text: item.text.clone(),
-                        command: item.command.clone(),
-                        disabled: item.disabled,
-                    }
-                }));
+                items.extend(
+                    cat_items
+                        .iter()
+                        .map(|item| crate::core::remote::RemoteMenuItem {
+                            text: item.text.clone(),
+                            command: item.command.clone(),
+                            disabled: item.disabled,
+                        }),
+                );
             }
             if let Some(remote) = self.message_processor.remote.as_mut() {
                 remote.push_menu(client_id, request_id, pending.noun.clone(), items);
@@ -513,7 +521,10 @@ impl AppCore {
             // Web link: frontends open the URL on their own side (browser on
             // desktop, window.open on the phone). Never a game command, and
             // never a _menu request for a fake exist id.
-            tracing::debug!("URL link activation reached core (frontend opens it): {}", link.noun);
+            tracing::debug!(
+                "URL link activation reached core (frontend opens it): {}",
+                link.noun
+            );
             return None;
         }
 
@@ -539,12 +550,8 @@ impl AppCore {
                 tracing::warn!("Coord {} not found in cmdlist for '{}'", coord, link.text);
                 return None;
             };
-            let command = CmdList::substitute_command(
-                &entry.command,
-                &link.noun,
-                &link.exist_id,
-                None,
-            );
+            let command =
+                CmdList::substitute_command(&entry.command, &link.noun, &link.exist_id, None);
             tracing::info!(
                 "Executing cmdlist command for '{}' (coord: {}): {}",
                 link.text,
@@ -588,7 +595,8 @@ impl AppCore {
 
     /// Build the top-level "Add Window" menu showing widget categories
     pub fn build_add_window_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
-        let categories_map = crate::core::local_catalog::addable_by_category(&self.layout, self.game_type());
+        let categories_map =
+            crate::core::local_catalog::addable_by_category(&self.layout, self.game_type());
 
         // Sort categories for consistent display
         let mut categories: Vec<_> = categories_map.into_iter().collect();
@@ -610,10 +618,8 @@ impl AppCore {
     /// `(category display name, [(template name, display name)])`, for
     /// frontends that render native menus instead of the popup-menu stack.
     pub fn addable_window_templates(&self) -> Vec<(String, Vec<(String, String)>)> {
-        let categories_map = crate::core::local_catalog::addable_by_category(
-            &self.layout,
-            self.game_type(),
-        );
+        let categories_map =
+            crate::core::local_catalog::addable_by_category(&self.layout, self.game_type());
         let mut categories: Vec<_> = categories_map.into_iter().collect();
         categories.sort_by_key(|(category, _)| category.clone());
         categories
@@ -644,7 +650,8 @@ impl AppCore {
         &self,
         category: &crate::config::WidgetCategory,
     ) -> Vec<crate::data::ui_state::PopupMenuItem> {
-        let categories_map = crate::core::local_catalog::addable_by_category(&self.layout, self.game_type());
+        let categories_map =
+            crate::core::local_catalog::addable_by_category(&self.layout, self.game_type());
 
         if let Some(templates) = categories_map.get(category) {
             // Filter out templates already present in the layout (so they disappear once added)
@@ -692,8 +699,8 @@ impl AppCore {
                 .any(|name| name.ends_with("_custom"));
             if allow_custom && !has_explicit_custom {
                 if let Some(first) = available_templates.first() {
-                    if let Some(widget_type) = crate::core::local_catalog::seed(first)
-                        .map(|t| t.widget_type().to_string())
+                    if let Some(widget_type) =
+                        crate::core::local_catalog::seed(first).map(|t| t.widget_type().to_string())
                     {
                         items.push(crate::data::ui_state::PopupMenuItem {
                             text: "Custom (blank)".to_string(),
@@ -760,12 +767,8 @@ impl AppCore {
                 continue;
             };
             let (kind, wt) = match win.widget_type {
-                crate::data::WidgetType::Container => {
-                    (KnownWindowKind::Container, "container")
-                }
-                crate::data::WidgetType::DialogPanel => {
-                    (KnownWindowKind::Dialog, "dialogpanel")
-                }
+                crate::data::WidgetType::Container => (KnownWindowKind::Container, "container"),
+                crate::data::WidgetType::DialogPanel => (KnownWindowKind::Dialog, "dialogpanel"),
                 _ => (KnownWindowKind::Layout, "text"),
             };
             let title = match &win.content {
@@ -812,17 +815,14 @@ impl AppCore {
         // has no template and is covered by the layout pass above.
         let existing: std::collections::HashSet<String> =
             out.iter().map(|k| k.name.to_ascii_lowercase()).collect();
-        for template_name in
-            crate::core::local_catalog::creatable_for_game(self.game_type())
-        {
+        for template_name in crate::core::local_catalog::creatable_for_game(self.game_type()) {
             if template_name == "spacer" || template_name.ends_with("_custom") {
                 continue;
             }
             if existing.contains(&template_name.to_ascii_lowercase()) {
                 continue;
             }
-            let Some(template) = crate::core::local_catalog::seed(&template_name)
-            else {
+            let Some(template) = crate::core::local_catalog::seed(&template_name) else {
                 continue;
             };
             out.push(KnownWindow {
@@ -917,7 +917,11 @@ impl AppCore {
             if group.is_empty() {
                 continue;
             }
-            group.sort_by(|a, b| a.title.to_ascii_lowercase().cmp(&b.title.to_ascii_lowercase()));
+            group.sort_by(|a, b| {
+                a.title
+                    .to_ascii_lowercase()
+                    .cmp(&b.title.to_ascii_lowercase())
+            });
             items.push(crate::data::ui_state::PopupMenuItem {
                 text: format!("── {} ──", category.display_name()),
                 command: String::new(),
@@ -952,7 +956,6 @@ impl AppCore {
         self.set_known_window_shown(name, !currently_shown, w, h);
     }
 
-
     pub fn build_hide_window_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
         let categories_map = crate::core::local_catalog::visible_by_category(&self.layout, true);
 
@@ -977,8 +980,7 @@ impl AppCore {
         &self,
         category: &crate::config::WidgetCategory,
     ) -> Vec<crate::data::ui_state::PopupMenuItem> {
-        let categories_map =
-            crate::core::local_catalog::visible_by_category(&self.layout, true);
+        let categories_map = crate::core::local_catalog::visible_by_category(&self.layout, true);
 
         if let Some(templates) = categories_map.get(category) {
             // Special handling for Status: Dashboard item + Indicators submenu
@@ -1049,7 +1051,11 @@ impl AppCore {
         }
 
         // Append remaining templates alphabetically
-        templates.sort_by(|a, b| a.title_or_id().to_lowercase().cmp(&b.title_or_id().to_lowercase()));
+        templates.sort_by(|a, b| {
+            a.title_or_id()
+                .to_lowercase()
+                .cmp(&b.title_or_id().to_lowercase())
+        });
         for tpl in templates {
             items.push(crate::data::ui_state::PopupMenuItem {
                 text: tpl.title_or_id(),

@@ -77,8 +77,7 @@ impl VellumGuiApp {
             return;
         }
         let height = ui.text_style_height(&egui::TextStyle::Monospace).max(8.0);
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(64.0, height), egui::Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(64.0, height), egui::Sense::hover());
         let max = values.iter().cloned().fold(0.0f32, f32::max);
         if max <= 0.0 {
             return;
@@ -187,7 +186,12 @@ impl VellumGuiApp {
                 .unwrap_or_default();
             let visible = !hide_inactive || value > 0 || resolved.state_matched;
             let stack = stack_of(&id);
-            let layer = Layer { id, value, resolved, visible };
+            let layer = Layer {
+                id,
+                value,
+                resolved,
+                visible,
+            };
             // Merge into an existing stack cell of the same (non-empty) name;
             // otherwise open a new cell.
             match cells
@@ -195,7 +199,10 @@ impl VellumGuiApp {
                 .find(|c| !stack.is_empty() && c.stack.eq_ignore_ascii_case(&stack))
             {
                 Some(cell) => cell.layers.push(layer),
-                None => cells.push(Cell { stack, layers: vec![layer] }),
+                None => cells.push(Cell {
+                    stack,
+                    layers: vec![layer],
+                }),
             }
         }
         // Drop cells with no visible layer.
@@ -214,7 +221,9 @@ impl VellumGuiApp {
         // a stack can fall back to a text label only when nothing drew).
         let paint_layer = |ui: &mut egui::Ui, rect: Rect, layer: &Layer| -> bool {
             let id = layer.id.as_str();
-            let value = layer.value.max(if layer.resolved.state_matched { 1 } else { 0 });
+            let value = layer
+                .value
+                .max(if layer.resolved.state_matched { 1 } else { 0 });
             let color = layer
                 .resolved
                 .color
@@ -234,7 +243,13 @@ impl VellumGuiApp {
                 crate::frontend::gui::skin::paint_icon(ui.painter(), dest, &sprite, Color32::WHITE);
                 true
             } else if super::status_icons::supported(id) {
-                super::status_icons::paint(ui.painter(), rect, id, color, ui.visuals().window_fill());
+                super::status_icons::paint(
+                    ui.painter(),
+                    rect,
+                    id,
+                    color,
+                    ui.visuals().window_fill(),
+                );
                 true
             } else {
                 false
@@ -260,7 +275,9 @@ impl VellumGuiApp {
                 // No art resolved for any layer: text label of the first
                 // visible layer's id (single-status cells keep the old look).
                 if let Some(first) = visible_layers.first() {
-                    let value = first.value.max(if first.resolved.state_matched { 1 } else { 0 });
+                    let value = first
+                        .value
+                        .max(if first.resolved.state_matched { 1 } else { 0 });
                     let color = first
                         .resolved
                         .color
@@ -464,7 +481,13 @@ impl VellumGuiApp {
                         ui.set_width(text_w);
                         if let Some(lead) = &lead_line {
                             if let Some(link) = Self::render_styled_line(
-                                ui, lead, visuals, None, font_for(index), true, None,
+                                ui,
+                                lead,
+                                visuals,
+                                None,
+                                font_for(index),
+                                true,
+                                None,
                             ) {
                                 clicked_link = Some(link);
                             }
@@ -712,9 +735,9 @@ impl VellumGuiApp {
             .min_scrolled_height(max_height)
             .max_height(max_height)
             .show(ui, |ui| {
-                if let Some(link) =
-                    Self::render_lines_with_floats(ui, &body, visuals, font_id, text_size, name_line)
-                {
+                if let Some(link) = Self::render_lines_with_floats(
+                    ui, &body, visuals, font_id, text_size, name_line,
+                ) {
                     clicked_link = Some(link);
                 }
             });
@@ -866,11 +889,8 @@ impl VellumGuiApp {
                         name_clip.max.x =
                             (rect.right() - 8.0 - time_galley.size().x).max(name_clip.min.x);
                     }
-                    let name_galley = painter.layout_no_wrap(
-                        effect.text.clone(),
-                        font,
-                        Color32::PLACEHOLDER,
-                    );
+                    let name_galley =
+                        painter.layout_no_wrap(effect.text.clone(), font, Color32::PLACEHOLDER);
                     let name_pos = Pos2::new(
                         name_clip.min.x,
                         rect.center().y - name_galley.size().y / 2.0,
@@ -910,9 +930,10 @@ impl VellumGuiApp {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| u64::from(d.subsec_millis()))
                 .unwrap_or(0);
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(
-                (1000 - ms_into_second).max(50),
-            ));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(
+                    (1000 - ms_into_second).max(50),
+                ));
         }
     }
 
@@ -953,7 +974,10 @@ impl VellumGuiApp {
         let mut statuses = Vec::new();
         // Dead marker leads (reads "Name [ded] [prn]"), via the same abbrev map.
         if player.dead {
-            statuses.push(format!("[{}]", Self::status_abbreviation("dead", target_cfg)));
+            statuses.push(format!(
+                "[{}]",
+                Self::status_abbreviation("dead", target_cfg)
+            ));
         }
         if let Some(primary) = player.primary_status.as_deref() {
             statuses.push(format!(
@@ -1088,7 +1112,10 @@ impl VellumGuiApp {
         clicked_link
     }
 
-    pub(super) fn render_players_content(app_core: &AppCore, ui: &mut egui::Ui) -> Option<GuiLinkClick> {
+    pub(super) fn render_players_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+    ) -> Option<GuiLinkClick> {
         let mut clicked_link = None;
         let target_cfg = &app_core.config.target_list;
 

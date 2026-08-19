@@ -3,7 +3,9 @@
 
 use std::path::PathBuf;
 
-use vellum_fe::core::layout_engine::{generate_layout, rooms_content_hash, CacheOutcome, LayoutCache};
+use vellum_fe::core::layout_engine::{
+    generate_layout, rooms_content_hash, CacheOutcome, LayoutCache,
+};
 use vellum_fe::core::mapdb::{self, Room};
 
 fn load_rooms(file: &str) -> Vec<Room> {
@@ -111,7 +113,10 @@ fn corrupt_or_stale_entries_regenerate() {
         vellum_fe::core::layout_engine::cache::ENGINE_VERSION
     );
     let json = std::fs::read_to_string(&entry).unwrap();
-    assert!(json.contains(&current), "test setup: version marker present");
+    assert!(
+        json.contains(&current),
+        "test setup: version marker present"
+    );
     std::fs::write(&entry, json.replace(&current, "\"engine_version\":0")).unwrap();
     let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms, &Default::default());
     assert_eq!(outcome, CacheOutcome::Generated, "version mismatch → miss");
@@ -225,10 +230,8 @@ fn overrides_shift_groups_pin_rooms_and_skip_orphans() {
     let before = group.final_cell(room_id);
 
     let mut ov = LocationOverrides::default();
-    ov.group_offsets.insert(
-        anchor,
-        vellum_fe::core::layout_engine::Cell { x: 5, y: -3 },
-    );
+    ov.group_offsets
+        .insert(anchor, vellum_fe::core::layout_engine::Cell { x: 5, y: -3 });
     ov.names.insert(anchor, "Curated Name".into());
     // Orphaned entries: anchors that resolve to nothing must be skipped.
     ov.group_offsets.insert(

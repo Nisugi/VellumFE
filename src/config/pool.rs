@@ -241,7 +241,9 @@ pub fn set_members(category: &str, set: &str) -> HashMap<String, String> {
         if image.set.is_some() {
             members.insert(role, image.pool_path.clone());
         } else {
-            members.entry(role).or_insert_with(|| image.pool_path.clone());
+            members
+                .entry(role)
+                .or_insert_with(|| image.pool_path.clone());
         }
     }
     members
@@ -624,9 +626,9 @@ mod tests {
             "runic_stunned.png",
             "runic_hidden.png",
             "flat_stunned.png",
-            "notes.txt",       // not an image
+            "notes.txt",          // not an image
             "runic_stunned.toml", // sidecar, not an image
-            "plain.png",       // no set prefix
+            "plain.png",          // no set prefix
         ] {
             std::fs::write(cat.join(name), b"x").unwrap();
         }
@@ -635,7 +637,12 @@ mod tests {
         let names: Vec<&str> = images.iter().map(|i| i.file_name.as_str()).collect();
         assert_eq!(
             names,
-            ["flat_stunned.png", "plain.png", "runic_hidden.png", "runic_stunned.png"]
+            [
+                "flat_stunned.png",
+                "plain.png",
+                "runic_hidden.png",
+                "runic_stunned.png"
+            ]
         );
         assert_eq!(images[0].pool_path, "statusicons/flat_stunned.png");
         assert_eq!(images[0].stem(), "flat_stunned");
@@ -742,7 +749,10 @@ mod tests {
         // A single-piece set resolves fine; nothing demands completeness.
         let meteor = set_members("hands", "meteor");
         assert_eq!(meteor.len(), 1);
-        assert_eq!(meteor.get("spellhand").unwrap(), "hands/meteor/spellhand.png");
+        assert_eq!(
+            meteor.get("spellhand").unwrap(),
+            "hands/meteor/spellhand.png"
+        );
 
         // Same bare role name in another set stays distinct — the folder is
         // what keeps forty sets' "lefthand.png" apart.
@@ -783,9 +793,15 @@ mod tests {
 
         assert!(cat.join("stormfront/ne.png").is_file());
         assert!(cat.join("stormfront/rose.png").is_file());
-        assert!(cat.join("stormfront/rose.toml").is_file(), "sidecar follows its image");
+        assert!(
+            cat.join("stormfront/rose.toml").is_file(),
+            "sidecar follows its image"
+        );
         assert!(!cat.join("stormfront_ne.png").exists());
-        assert!(cat.join("plain.png").is_file(), "non-set art stays at the root");
+        assert!(
+            cat.join("plain.png").is_file(),
+            "non-set art stays at the root"
+        );
 
         // The backup keeps the originals recoverable.
         let backup = cat.with_file_name("compass.pre-sets.bak");
@@ -808,7 +824,10 @@ mod tests {
         // restart can't re-migrate or clobber the backup.
         std::fs::write(cat.join("later_n.png"), b"n").unwrap();
         invalidate_cache();
-        assert!(migrate_sets().is_empty(), "second run must not move anything");
+        assert!(
+            migrate_sets().is_empty(),
+            "second run must not move anything"
+        );
         assert!(cat.join("later_n.png").is_file());
 
         std::env::remove_var("VELLUM_FE_DIR");

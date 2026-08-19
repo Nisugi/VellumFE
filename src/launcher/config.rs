@@ -139,7 +139,11 @@ impl SshConfig {
     /// split keeps the quote characters inside the token, the detach wrapper
     /// then escapes them for real, and Ruby fails with
     /// `Invalid argument -- "C:/..." (LoadError)`.
-    pub fn resolve_command(&self, character: &str, launch: &CharacterLaunch) -> Result<(String, Vec<String>)> {
+    pub fn resolve_command(
+        &self,
+        character: &str,
+        launch: &CharacterLaunch,
+    ) -> Result<(String, Vec<String>)> {
         if self.lich_command.trim().is_empty() {
             bail!("Launch command template is empty — set it in the launcher editor");
         }
@@ -542,7 +546,8 @@ mod tests {
         std::env::set_var("VELLUM_FE_DIR", dir.path());
 
         let id = "default";
-        let pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nmobilekeydata\n-----END OPENSSH PRIVATE KEY-----";
+        let pem =
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nmobilekeydata\n-----END OPENSSH PRIVATE KEY-----";
         assert!(load_private_key(id).is_none(), "empty store starts empty");
         save_private_key(id, pem).expect("save to mobile store");
         assert_eq!(load_private_key(id).as_deref(), Some(pem));

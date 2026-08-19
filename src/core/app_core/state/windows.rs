@@ -8,11 +8,8 @@ impl AppCore {
     /// Initialize windows based on current layout
     pub fn init_windows(&mut self, terminal_width: u16, terminal_height: u16) {
         // Preserve command history from existing command_input window
-        let preserved_history: Option<Vec<String>> = self
-            .ui_state
-            .windows
-            .get("command_input")
-            .and_then(|w| {
+        let preserved_history: Option<Vec<String>> =
+            self.ui_state.windows.get("command_input").and_then(|w| {
                 if let WindowContent::CommandInput { history, .. } = &w.content {
                     Some(history.clone())
                 } else {
@@ -24,18 +21,25 @@ impl AppCore {
         let positions = self.calculate_window_positions(terminal_width, terminal_height);
 
         // Log all widget types being loaded for debugging
-        let widget_types: Vec<_> = self.layout.windows.iter()
+        let widget_types: Vec<_> = self
+            .layout
+            .windows
+            .iter()
             .map(|w| format!("{}:{}", w.name(), w.widget_type()))
             .collect();
-        tracing::info!("init_windows: Loading {} windows: {:?}", widget_types.len(), widget_types);
+        tracing::info!(
+            "init_windows: Loading {} windows: {:?}",
+            widget_types.len(),
+            widget_types
+        );
 
         // Create windows based on layout (only visible ones)
         for window_def in &self.layout.windows {
             // Skip hidden windows (except command_input under the TUI
             // force-show rule — the TUI has no fallback input bar).
             if !window_def.base().visibility.is_shown() {
-                let force = self.force_show_command_input
-                    && window_def.widget_type() == "command_input";
+                let force =
+                    self.force_show_command_input && window_def.widget_type() == "command_input";
                 if !force {
                     tracing::debug!("Skipping hidden window '{}' during init", window_def.name());
                     continue;
@@ -73,7 +77,13 @@ impl AppCore {
                                     .unwrap_or(self.config.ui.timestamp_position),
                             )
                         } else {
-                            (1000, vec![], false, false, self.config.ui.timestamp_position)
+                            (
+                                1000,
+                                vec![],
+                                false,
+                                false,
+                                self.config.ui.timestamp_position,
+                            )
                         };
                     let mut text_content = TextContent::new(title, buffer_size);
                     text_content.streams = streams.clone();
@@ -82,30 +92,44 @@ impl AppCore {
                     text_content.timestamp_position = ts_pos;
 
                     // Pre-populate bounty window with cached data on reload
-                    if window_def.name().eq_ignore_ascii_case("bounty") && self.game_state.bounty.has_data() {
+                    if window_def.name().eq_ignore_ascii_case("bounty")
+                        && self.game_state.bounty.has_data()
+                    {
                         let lines = if compact {
                             &self.game_state.bounty.compact_lines
                         } else {
                             std::slice::from_ref(&self.game_state.bounty.raw_text)
                         };
                         for line_text in lines {
-                            text_content.add_line(crate::data::widget::StyledLine::from_text_with_stream(
-                                line_text.clone(),
-                                "bounty",
-                            ));
+                            text_content.add_line(
+                                crate::data::widget::StyledLine::from_text_with_stream(
+                                    line_text.clone(),
+                                    "bounty",
+                                ),
+                            );
                         }
-                        tracing::info!("Pre-populated bounty window with {} cached lines", lines.len());
+                        tracing::info!(
+                            "Pre-populated bounty window with {} cached lines",
+                            lines.len()
+                        );
                     }
 
                     // Pre-populate society window with cached data on reload
-                    if streams.iter().any(|s| s.eq_ignore_ascii_case("society")) && self.game_state.society.has_data() {
+                    if streams.iter().any(|s| s.eq_ignore_ascii_case("society"))
+                        && self.game_state.society.has_data()
+                    {
                         for line_text in &self.game_state.society.lines {
-                            text_content.add_line(crate::data::widget::StyledLine::from_text_with_stream(
-                                line_text.clone(),
-                                "society",
-                            ));
+                            text_content.add_line(
+                                crate::data::widget::StyledLine::from_text_with_stream(
+                                    line_text.clone(),
+                                    "society",
+                                ),
+                            );
                         }
-                        tracing::info!("Pre-populated society window with {} cached lines", self.game_state.society.lines.len());
+                        tracing::info!(
+                            "Pre-populated society window with {} cached lines",
+                            self.game_state.society.lines.len()
+                        );
                     }
 
                     WindowContent::Text(text_content)
@@ -114,7 +138,13 @@ impl AppCore {
                     // Extract tab definitions and buffer size from window def
                     if let crate::config::WindowDef::TabbedText { data, .. } = window_def {
                         let global_ts_pos = self.config.ui.timestamp_position;
-                        let tabs: Vec<(String, Vec<String>, bool, bool, crate::config::TimestampPosition)> = data
+                        let tabs: Vec<(
+                            String,
+                            Vec<String>,
+                            bool,
+                            bool,
+                            crate::config::TimestampPosition,
+                        )> = data
                             .tabs
                             .iter()
                             .map(|tab| {
@@ -184,9 +214,7 @@ impl AppCore {
                     let (label, countdown_id, color, show_when_zero, count_past_zero) =
                         if let crate::config::WindowDef::Countdown { data, .. } = window_def {
                             (
-                                data.label
-                                    .clone()
-                                    .unwrap_or_else(|| title.to_string()),
+                                data.label.clone().unwrap_or_else(|| title.to_string()),
                                 data.id
                                     .clone()
                                     .unwrap_or_else(|| window_def.name().to_string()),
@@ -214,7 +242,7 @@ impl AppCore {
                     })
                 }
                 WidgetType::Map => WindowContent::Map(crate::data::MapData::default()),
-            WidgetType::Compass => WindowContent::Compass(CompassData {
+                WidgetType::Compass => WindowContent::Compass(CompassData {
                     directions: Vec::new(),
                 }),
                 WidgetType::InjuryDoll => WindowContent::InjuryDoll(InjuryDollData::new()),
@@ -261,7 +289,11 @@ impl AppCore {
                 WidgetType::Spells => {
                     let mut content = TextContent::new(title, 10000);
                     content.streams = vec!["Spells".to_string()];
-                    tracing::debug!("init_windows: Creating Spells window '{}' with streams={:?}", title, content.streams);
+                    tracing::debug!(
+                        "init_windows: Creating Spells window '{}' with streams={:?}",
+                        title,
+                        content.streams
+                    );
                     WindowContent::Spells(content)
                 }
                 WidgetType::ActiveEffects => {
@@ -288,11 +320,12 @@ impl AppCore {
                 WidgetType::Items => WindowContent::Items,
                 WidgetType::Container => {
                     // Get container_title from window def if available
-                    let container_title = if let crate::config::WindowDef::Container { data, .. } = window_def {
-                        data.container_title.clone()
-                    } else {
-                        String::new()
-                    };
+                    let container_title =
+                        if let crate::config::WindowDef::Container { data, .. } = window_def {
+                            data.container_title.clone()
+                        } else {
+                            String::new()
+                        };
                     WindowContent::Container { container_title }
                 }
                 WidgetType::Dashboard => WindowContent::Dashboard {
@@ -436,11 +469,7 @@ impl AppCore {
 
         let widget_type = WidgetType::from_str(window_def.widget_type());
 
-        let title = window_def
-            .base()
-            .title
-            .as_deref()
-            .unwrap_or("");
+        let title = window_def.base().title.as_deref().unwrap_or("");
 
         let content = match widget_type {
             WidgetType::Text => {
@@ -455,7 +484,13 @@ impl AppCore {
                                 .unwrap_or(self.config.ui.timestamp_position),
                         )
                     } else {
-                        (1000, vec![], false, false, self.config.ui.timestamp_position)
+                        (
+                            1000,
+                            vec![],
+                            false,
+                            false,
+                            self.config.ui.timestamp_position,
+                        )
                     };
                 let mut text_content = TextContent::new(title, buffer_size);
                 text_content.streams = streams;
@@ -464,7 +499,9 @@ impl AppCore {
                 text_content.timestamp_position = ts_pos;
 
                 // For bounty windows: pre-populate with buffered bounty data if available
-                if window_def.name().eq_ignore_ascii_case("bounty") && self.game_state.bounty.has_data() {
+                if window_def.name().eq_ignore_ascii_case("bounty")
+                    && self.game_state.bounty.has_data()
+                {
                     // Use compact lines if window is in compact mode, otherwise raw text
                     let lines = if compact {
                         &self.game_state.bounty.compact_lines
@@ -474,10 +511,12 @@ impl AppCore {
                     };
 
                     for line_text in lines {
-                        text_content.add_line(crate::data::widget::StyledLine::from_text_with_stream(
-                            line_text.clone(),
-                            "bounty",
-                        ));
+                        text_content.add_line(
+                            crate::data::widget::StyledLine::from_text_with_stream(
+                                line_text.clone(),
+                                "bounty",
+                            ),
+                        );
                     }
                     tracing::info!(
                         "Pre-populated bounty window with {} buffered lines",
@@ -491,7 +530,13 @@ impl AppCore {
                 // Extract tab definitions and buffer size from window def
                 if let crate::config::WindowDef::TabbedText { data, .. } = window_def {
                     let global_ts_pos = self.config.ui.timestamp_position;
-                    let tabs: Vec<(String, Vec<String>, bool, bool, crate::config::TimestampPosition)> = data
+                    let tabs: Vec<(
+                        String,
+                        Vec<String>,
+                        bool,
+                        bool,
+                        crate::config::TimestampPosition,
+                    )> = data
                         .tabs
                         .iter()
                         .map(|tab| {
@@ -657,7 +702,7 @@ impl AppCore {
                 })
             }
             WidgetType::Targets => WindowContent::Targets,
-                WidgetType::CreatureField => WindowContent::CreatureField,
+            WidgetType::CreatureField => WindowContent::CreatureField,
             WidgetType::Players => WindowContent::Players,
             WidgetType::MissingSpells => WindowContent::MissingSpells,
             WidgetType::Containers => WindowContent::Containers,
@@ -666,11 +711,12 @@ impl AppCore {
             WidgetType::Items => WindowContent::Items,
             WidgetType::Container => {
                 // Get container_title from window def if available
-                let container_title = if let crate::config::WindowDef::Container { data, .. } = window_def {
-                    data.container_title.clone()
-                } else {
-                    String::new()
-                };
+                let container_title =
+                    if let crate::config::WindowDef::Container { data, .. } = window_def {
+                        data.container_title.clone()
+                    } else {
+                        String::new()
+                    };
                 WindowContent::Container { container_title }
             }
             WidgetType::Dashboard => WindowContent::Dashboard {

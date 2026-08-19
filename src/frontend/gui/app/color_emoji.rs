@@ -266,7 +266,10 @@ mod tests {
     fn asset_names_are_lowercase_hex_without_leading_zeros() {
         assert_eq!(asset_name('\u{1F601}', None), "1f601.png");
         assert_eq!(asset_name('\u{2764}', None), "2764.png");
-        assert_eq!(asset_name('\u{1F44D}', Some('\u{1F3FB}')), "1f44d-1f3fb.png");
+        assert_eq!(
+            asset_name('\u{1F44D}', Some('\u{1F3FB}')),
+            "1f44d-1f3fb.png"
+        );
     }
 
     #[test]
@@ -320,7 +323,9 @@ mod tests {
     fn may_have_emoji_predicate() {
         assert!(!may_have_emoji("plain prose, punctuation: 12:30!"));
         // Smart quotes (U+201C/201D) sit below the U+203C floor.
-        assert!(!may_have_emoji("smart quotes \u{201C}hi\u{201D} stay cheap"));
+        assert!(!may_have_emoji(
+            "smart quotes \u{201C}hi\u{201D} stay cheap"
+        ));
         assert!(may_have_emoji("You \u{1F601} broadly."));
         assert!(may_have_emoji("\u{2764}\u{FE0F}"));
         // False positives are allowed (it is only an early-out), e.g. ‼

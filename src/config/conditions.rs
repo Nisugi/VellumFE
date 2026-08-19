@@ -68,7 +68,9 @@ pub enum Condition {
     /// this spell number and current absolute vitals cover them. Fails
     /// closed: unknown numbers, formula costs, and missing vitals data
     /// all evaluate false. No Lich required.
-    SpellAffordable { number: u16 },
+    SpellAffordable {
+        number: u16,
+    },
     /// The phase of the in-game day (dawn/day/dusk/night).
     ///
     /// Elanthian time runs on US Eastern, so this is computed from the
@@ -163,8 +165,20 @@ impl Condition {
 /// canonical list the parser emits on a full clear; editors offer these in a
 /// dropdown for `Condition::Injury.area`.
 pub const INJURY_AREAS: &[&str] = &[
-    "head", "neck", "chest", "abdomen", "back", "leftArm", "rightArm", "leftHand", "rightHand",
-    "leftLeg", "rightLeg", "leftEye", "rightEye", "nsys",
+    "head",
+    "neck",
+    "chest",
+    "abdomen",
+    "back",
+    "leftArm",
+    "rightArm",
+    "leftHand",
+    "rightHand",
+    "leftLeg",
+    "rightLeg",
+    "leftEye",
+    "rightEye",
+    "nsys",
 ];
 
 /// Which hand a hand condition inspects.
@@ -284,7 +298,10 @@ mod tests {
     use super::*;
 
     fn indicator(id: &str) -> Condition {
-        Condition::Indicator { id: id.to_string(), active: true }
+        Condition::Indicator {
+            id: id.to_string(),
+            active: true,
+        }
     }
 
     #[test]

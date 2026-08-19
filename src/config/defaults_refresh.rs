@@ -105,7 +105,9 @@ fn refresh_named_tables(
     seen: Option<&BTreeSet<String>>,
 ) -> Result<RefreshOutcome> {
     let mut user_doc: DocumentMut = user.parse().context("user file did not parse")?;
-    let embedded_doc: DocumentMut = embedded.parse().context("embedded defaults did not parse")?;
+    let embedded_doc: DocumentMut = embedded
+        .parse()
+        .context("embedded defaults did not parse")?;
 
     let embedded_keys: BTreeSet<String> = embedded_doc
         .as_table()
@@ -173,7 +175,11 @@ fn refresh_tables(
         let to_add = keys_to_add(&embedded_tbl_keys, &on_disk_tbl_keys, seen);
 
         if !to_add.is_empty() {
-            if user_doc.get(table).and_then(|item| item.as_table()).is_none() {
+            if user_doc
+                .get(table)
+                .and_then(|item| item.as_table())
+                .is_none()
+            {
                 user_doc
                     .as_table_mut()
                     .insert(table, toml_edit::Item::Table(toml_edit::Table::new()));
@@ -377,11 +383,33 @@ pub(super) fn refresh_shipped_defaults() -> Result<()> {
         }
     }
 
-    let collections: [(&str, &str, fn(&str, &str, Option<&BTreeSet<String>>) -> Result<RefreshOutcome>, fn(&mut SeenDefaults) -> &mut Option<BTreeSet<String>>); 4] = [
-        ("highlights.toml", super::DEFAULT_HIGHLIGHTS, refresh_named_tables, |s| &mut s.highlights),
-        ("keybinds.toml", super::DEFAULT_KEYBINDS, refresh_user_keybinds, |s| &mut s.user_keybinds),
-        ("controller.toml", super::DEFAULT_CONTROLLER, refresh_controller, |s| &mut s.controller),
-        ("hotbars.toml", super::DEFAULT_HOTBARS, refresh_bars, |s| &mut s.hotbars),
+    let collections: [(
+        &str,
+        &str,
+        fn(&str, &str, Option<&BTreeSet<String>>) -> Result<RefreshOutcome>,
+        fn(&mut SeenDefaults) -> &mut Option<BTreeSet<String>>,
+    ); 4] = [
+        (
+            "highlights.toml",
+            super::DEFAULT_HIGHLIGHTS,
+            refresh_named_tables,
+            |s| &mut s.highlights,
+        ),
+        (
+            "keybinds.toml",
+            super::DEFAULT_KEYBINDS,
+            refresh_user_keybinds,
+            |s| &mut s.user_keybinds,
+        ),
+        (
+            "controller.toml",
+            super::DEFAULT_CONTROLLER,
+            refresh_controller,
+            |s| &mut s.controller,
+        ),
+        ("hotbars.toml", super::DEFAULT_HOTBARS, refresh_bars, |s| {
+            &mut s.hotbars
+        }),
     ];
 
     for (file_name, embedded, refresh, seen_slot) in collections {
@@ -525,7 +553,8 @@ mod tests {
 
     #[test]
     fn controller_shift_table_refreshes_with_prefixed_seen_keys() {
-        let embedded = "[controller]\nstart = \"interact_mode\"\n\n[controller_shift]\nsouth = \"tts_stop\"\n";
+        let embedded =
+            "[controller]\nstart = \"interact_mode\"\n\n[controller_shift]\nsouth = \"tts_stop\"\n";
         let user = "[controller]\nstart = \"interact_mode\"\n";
         let seen: BTreeSet<String> = ["controller/start".to_string()].into();
         let outcome = refresh_controller(user, embedded, Some(&seen)).unwrap();
@@ -538,8 +567,11 @@ mod tests {
     fn deleted_controller_bind_stays_deleted() {
         let embedded = "[controller]\nstart = \"interact_mode\"\nsouth = \"look\"\n";
         let user = "[controller]\nsouth = \"look\"\n";
-        let seen: BTreeSet<String> =
-            ["controller/start".to_string(), "controller/south".to_string()].into();
+        let seen: BTreeSet<String> = [
+            "controller/start".to_string(),
+            "controller/south".to_string(),
+        ]
+        .into();
         let outcome = refresh_controller(user, embedded, Some(&seen)).unwrap();
         assert!(
             outcome.updated_file.is_none(),

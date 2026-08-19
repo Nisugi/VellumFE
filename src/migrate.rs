@@ -819,7 +819,9 @@ visible = false
 "#;
         let val: Value = toml::from_str(toml).unwrap();
         let table = Value::Table(val.as_table().unwrap().clone());
-        let out = convert_window(table, false).unwrap().expect("window converts");
+        let out = convert_window(table, false)
+            .unwrap()
+            .expect("window converts");
         assert!(
             !out.base().visibility.is_shown(),
             "legacy visible=false must migrate to Hidden"
@@ -835,7 +837,9 @@ visible = true
 "#;
         let val: Value = toml::from_str(toml).unwrap();
         let table = Value::Table(val.as_table().unwrap().clone());
-        let out = convert_window(table, false).unwrap().expect("window converts");
+        let out = convert_window(table, false)
+            .unwrap()
+            .expect("window converts");
         assert!(out.base().visibility.is_shown());
     }
 
@@ -1381,7 +1385,10 @@ cols = 40
             verbose: false,
         };
         let result = run_migration(&options).unwrap();
-        assert_eq!(result.skipped, 1, "a current-format layout must be skipped, not re-converted");
+        assert_eq!(
+            result.skipped, 1,
+            "a current-format layout must be skipped, not re-converted"
+        );
         assert_eq!(result.succeeded, 0);
     }
 
@@ -1417,4 +1424,3 @@ cols = 1
         assert!(!out.join("old_layout.toml").exists());
     }
 }
-

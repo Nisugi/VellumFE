@@ -56,10 +56,9 @@ pub fn resolve_bar(
             let default_style = button.default_style.as_ref();
             let style = matched.map(|s| &s.style);
 
-            let pick =
-                |f: fn(&crate::config::HotbarStyle) -> Option<String>| -> Option<String> {
-                    style.and_then(f).or_else(|| default_style.and_then(f))
-                };
+            let pick = |f: fn(&crate::config::HotbarStyle) -> Option<String>| -> Option<String> {
+                style.and_then(f).or_else(|| default_style.and_then(f))
+            };
 
             ResolvedHotbarButton {
                 id: button.id.clone(),
@@ -93,11 +92,7 @@ pub fn resolve_bar(
 }
 
 /// Seconds remaining for a countdown source; None when idle/absent.
-fn countdown_secs(
-    src: &HotbarCountdownSource,
-    gs: &GameState,
-    now_server: i64,
-) -> Option<i64> {
+fn countdown_secs(src: &HotbarCountdownSource, gs: &GameState, now_server: i64) -> Option<i64> {
     let end = match src {
         HotbarCountdownSource::Effect {
             category,
@@ -156,7 +151,11 @@ mod tests {
     fn effect_active_exact_and_contains_case_insensitive() {
         let gs = gs_with_effect("Buffs", "Strength of the Bull", Some(NOW + 600));
         assert!(eval_condition(
-            &effect_active(EffectCategory::Buffs, "strength of the bull", NameMatch::Exact),
+            &effect_active(
+                EffectCategory::Buffs,
+                "strength of the bull",
+                NameMatch::Exact
+            ),
             &gs,
             NOW,
             None
@@ -175,7 +174,11 @@ mod tests {
         ));
         // Wrong category
         assert!(!eval_condition(
-            &effect_active(EffectCategory::Cooldowns, "Strength of the Bull", NameMatch::Exact),
+            &effect_active(
+                EffectCategory::Cooldowns,
+                "Strength of the Bull",
+                NameMatch::Exact
+            ),
             &gs,
             NOW,
             None
@@ -270,7 +273,8 @@ mod tests {
     fn vitals_percent_and_absolute() {
         let mut gs = GameState::new();
         gs.vitals.stamina = 15;
-        gs.minivitals.update_vital("mana", 8, 100, "mana 8/100".to_string());
+        gs.minivitals
+            .update_vital("mana", 8, 100, "mana 8/100".to_string());
 
         let low_stamina = Condition::Vital {
             vital: VitalKind::Stamina,
@@ -471,11 +475,13 @@ mod tests {
         assert!(!eval_condition(&cond, &gs, NOW, None));
 
         // Enough mana: affordable.
-        gs.minivitals.update_vital("mana", 8, 54, "mana 8/54".to_string());
+        gs.minivitals
+            .update_vital("mana", 8, 54, "mana 8/54".to_string());
         assert!(eval_condition(&cond, &gs, NOW, None));
 
         // Not enough mana.
-        gs.minivitals.update_vital("mana", 0, 54, "mana 0/54".to_string());
+        gs.minivitals
+            .update_vital("mana", 0, 54, "mana 0/54".to_string());
         assert!(!eval_condition(&cond, &gs, NOW, None));
 
         // Unknown spell number: fail closed.
@@ -579,9 +585,15 @@ mod tests {
     #[test]
     fn hand_empty_per_slot_and_literal_empty() {
         let gs = gs_with_hands(Some(("a rusty sword", "sword")), None);
-        let right = Condition::HandEmpty { hand: HandSlot::Right };
-        let left = Condition::HandEmpty { hand: HandSlot::Left };
-        let either = Condition::HandEmpty { hand: HandSlot::Either };
+        let right = Condition::HandEmpty {
+            hand: HandSlot::Right,
+        };
+        let left = Condition::HandEmpty {
+            hand: HandSlot::Left,
+        };
+        let either = Condition::HandEmpty {
+            hand: HandSlot::Either,
+        };
         assert!(!eval_condition(&right, &gs, NOW, None));
         assert!(eval_condition(&left, &gs, NOW, None));
         assert!(eval_condition(&either, &gs, NOW, None));
@@ -593,7 +605,9 @@ mod tests {
         assert!(eval_condition(&right, &gs, NOW, None));
 
         // Spell slot: "None" counts as nothing prepared.
-        let spell_empty = Condition::HandEmpty { hand: HandSlot::Spell };
+        let spell_empty = Condition::HandEmpty {
+            hand: HandSlot::Spell,
+        };
         assert!(eval_condition(&spell_empty, &gs, NOW, None));
         gs.spell = Some("Minor Shock".to_string());
         assert!(!eval_condition(&spell_empty, &gs, NOW, None));
@@ -613,11 +627,31 @@ mod tests {
             name: None,
             name_match: NameMatch::Contains,
         };
-        assert!(eval_condition(&holds_weapon(HandSlot::Right), &gs, NOW, Some(&data)));
-        assert!(!eval_condition(&holds_weapon(HandSlot::Left), &gs, NOW, Some(&data)));
-        assert!(eval_condition(&holds_weapon(HandSlot::Either), &gs, NOW, Some(&data)));
+        assert!(eval_condition(
+            &holds_weapon(HandSlot::Right),
+            &gs,
+            NOW,
+            Some(&data)
+        ));
+        assert!(!eval_condition(
+            &holds_weapon(HandSlot::Left),
+            &gs,
+            NOW,
+            Some(&data)
+        ));
+        assert!(eval_condition(
+            &holds_weapon(HandSlot::Either),
+            &gs,
+            NOW,
+            Some(&data)
+        ));
         // Type tests fail closed without the classifier.
-        assert!(!eval_condition(&holds_weapon(HandSlot::Right), &gs, NOW, None));
+        assert!(!eval_condition(
+            &holds_weapon(HandSlot::Right),
+            &gs,
+            NOW,
+            None
+        ));
 
         // "Shield" via armor type + name match (no shield type exists).
         let holds_shield = Condition::HandHolds {
@@ -690,7 +724,9 @@ mod tests {
                     icon_color: None,
                 },
                 crate::config::HandIconState {
-                    when: Condition::HandEmpty { hand: HandSlot::Right },
+                    when: Condition::HandEmpty {
+                        hand: HandSlot::Right,
+                    },
                     icon: Some(crate::data::IconRef::None),
                     text: Some("R-".to_string()),
                     icon_color: None,
@@ -703,7 +739,9 @@ mod tests {
         let resolved = resolve_hand(&hand_data, &gs, NOW, Some(&data));
         assert_eq!(
             resolved.icon,
-            Some(crate::data::IconRef::Image { path: "hands/sword.png".to_string() })
+            Some(crate::data::IconRef::Image {
+                path: "hands/sword.png".to_string()
+            })
         );
         assert_eq!(resolved.text.as_deref(), Some("R⚔"));
 

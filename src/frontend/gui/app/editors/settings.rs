@@ -105,10 +105,7 @@ fn value_from_draft(kind: &SettingKind, draft: &DraftValue) -> SettingValue {
 
 /// Keys whose draft differs from the live config value (sorted, because the
 /// registry itself is key-sorted).
-fn changed_keys(
-    config: &Config,
-    drafts: &HashMap<&'static str, DraftValue>,
-) -> Vec<&'static str> {
+fn changed_keys(config: &Config, drafts: &HashMap<&'static str, DraftValue>) -> Vec<&'static str> {
     registry::registry()
         .iter()
         .filter_map(|def| {
@@ -495,278 +492,284 @@ fn render_gui_section(
         "Sizing applies to the GUI only and is saved per character. \
          Ctrl+= / Ctrl+- / Ctrl+0 also adjust zoom anytime.",
     );
-    egui::Grid::new("settings_gui_grid").num_columns(2).show(ui, |ui| {
-        ui.label("UI zoom");
-        ui.add(egui::Slider::new(&mut gui_settings.zoom_factor, 0.5..=3.0).step_by(0.05));
-        ui.end_row();
-        ui.label("Text size");
-        ui.add(egui::Slider::new(&mut gui_settings.text_size, 8.0..=32.0).step_by(0.5));
-        ui.end_row();
-        ui.label("Title bar size");
-        ui.add(egui::Slider::new(&mut gui_settings.title_font_size, 8.0..=40.0).step_by(0.5))
-            .on_hover_text("Title text size in points.");
-        ui.end_row();
-        ui.label("Title bar height");
-        ui.add(egui::Slider::new(&mut gui_settings.title_bar_height, 0.0..=32.0).step_by(1.0))
-            .on_hover_text(
-                "Exact title bar height for game windows; the title text \
+    egui::Grid::new("settings_gui_grid")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("UI zoom");
+            ui.add(egui::Slider::new(&mut gui_settings.zoom_factor, 0.5..=3.0).step_by(0.05));
+            ui.end_row();
+            ui.label("Text size");
+            ui.add(egui::Slider::new(&mut gui_settings.text_size, 8.0..=32.0).step_by(0.5));
+            ui.end_row();
+            ui.label("Title bar size");
+            ui.add(egui::Slider::new(&mut gui_settings.title_font_size, 8.0..=40.0).step_by(0.5))
+                .on_hover_text("Title text size in points.");
+            ui.end_row();
+            ui.label("Title bar height");
+            ui.add(egui::Slider::new(&mut gui_settings.title_bar_height, 0.0..=32.0).step_by(1.0))
+                .on_hover_text(
+                    "Exact title bar height for game windows; the title text \
                  keeps its own size and is vertically centered. \
                  0 = follow the title text size.",
-            );
-        ui.end_row();
-        ui.label("Title alignment");
-        egui::ComboBox::from_id_salt("settings_title_bar_align")
-            .selected_text(match gui_settings.title_bar_align.as_str() {
-                "left" => "Left",
-                "right" => "Right",
-                _ => "Center",
-            })
-            .show_ui(ui, |ui| {
-                for (value, label) in
-                    [("left", "Left"), ("center", "Center"), ("right", "Right")]
-                {
-                    if ui
-                        .selectable_label(gui_settings.title_bar_align == value, label)
-                        .clicked()
+                );
+            ui.end_row();
+            ui.label("Title alignment");
+            egui::ComboBox::from_id_salt("settings_title_bar_align")
+                .selected_text(match gui_settings.title_bar_align.as_str() {
+                    "left" => "Left",
+                    "right" => "Right",
+                    _ => "Center",
+                })
+                .show_ui(ui, |ui| {
+                    for (value, label) in
+                        [("left", "Left"), ("center", "Center"), ("right", "Right")]
                     {
-                        gui_settings.title_bar_align = value.to_string();
+                        if ui
+                            .selectable_label(gui_settings.title_bar_align == value, label)
+                            .clicked()
+                        {
+                            gui_settings.title_bar_align = value.to_string();
+                        }
                     }
-                }
-            });
-        ui.end_row();
-        ui.label("Effect bar height");
-        ui.add(egui::Slider::new(&mut gui_settings.effects_bar_height, 10.0..=60.0).step_by(1.0));
-        ui.end_row();
-        ui.label("Hand icon size");
-        ui.add(egui::Slider::new(&mut gui_settings.hand_icon_size, 16.0..=48.0).step_by(1.0))
-            .on_hover_text(
-                "Size of the left/right/spell hand icons in points. \
+                });
+            ui.end_row();
+            ui.label("Effect bar height");
+            ui.add(
+                egui::Slider::new(&mut gui_settings.effects_bar_height, 10.0..=60.0).step_by(1.0),
+            );
+            ui.end_row();
+            ui.label("Hand icon size");
+            ui.add(egui::Slider::new(&mut gui_settings.hand_icon_size, 16.0..=48.0).step_by(1.0))
+                .on_hover_text(
+                    "Size of the left/right/spell hand icons in points. \
                  Hand rows grow to fit.",
-            );
-        ui.end_row();
-        ui.label("Density");
-        ui.add(egui::Slider::new(&mut gui_settings.density, 0.5..=2.0).step_by(0.05))
-            .on_hover_text(
-                "Spacing and padding scale. Lower = denser \
+                );
+            ui.end_row();
+            ui.label("Density");
+            ui.add(egui::Slider::new(&mut gui_settings.density, 0.5..=2.0).step_by(0.05))
+                .on_hover_text(
+                    "Spacing and padding scale. Lower = denser \
                  (Wrayth-like), higher = more comfortable.",
-            );
-        ui.end_row();
-        ui.label("Bar corners");
-        ui.add(egui::Slider::new(&mut gui_settings.bar_corner_radius, 0.0..=12.0).step_by(0.5))
-            .on_hover_text(
-                "Corner radius for all progress bars. \
+                );
+            ui.end_row();
+            ui.label("Bar corners");
+            ui.add(egui::Slider::new(&mut gui_settings.bar_corner_radius, 0.0..=12.0).step_by(0.5))
+                .on_hover_text(
+                    "Corner radius for all progress bars. \
                  0 = square (Wrayth-style).",
-            );
-        ui.end_row();
-        ui.label("Window corners");
-        ui.add(egui::Slider::new(&mut gui_settings.window_corner_radius, 0.0..=12.0).step_by(0.5))
+                );
+            ui.end_row();
+            ui.label("Window corners");
+            ui.add(
+                egui::Slider::new(&mut gui_settings.window_corner_radius, 0.0..=12.0).step_by(0.5),
+            )
             .on_hover_text(
                 "Corner radius for window frames. \
                  0 = square (Wrayth-style). Windows framed by skin \
                  border art always render square.",
             );
-        ui.end_row();
-        ui.label("Bar text contrast");
-        ui.checkbox(&mut gui_settings.auto_contrast_bar_text, "Auto light/dark")
-            .on_hover_text(
-                "Switch bar text to light or dark when its \
+            ui.end_row();
+            ui.label("Bar text contrast");
+            ui.checkbox(&mut gui_settings.auto_contrast_bar_text, "Auto light/dark")
+                .on_hover_text(
+                    "Switch bar text to light or dark when its \
                  configured color would be unreadable against \
                  the bar fill.",
-            );
-        ui.end_row();
-        ui.label("Zone separators");
-        {
-            use crate::frontend::gui::persistence::ZoneSeparatorStyle;
-            const STYLES: [(ZoneSeparatorStyle, &str); 3] = [
-                (ZoneSeparatorStyle::Shown, "Shown"),
-                (ZoneSeparatorStyle::Hover, "On hover"),
-                (ZoneSeparatorStyle::Hidden, "Hidden"),
-            ];
-            let current_label = STYLES
-                .iter()
-                .find(|(style, _)| *style == gui_settings.zone_separators)
-                .map(|(_, label)| *label)
-                .unwrap_or("Shown");
-            egui::ComboBox::from_id_salt("settings_zone_separators")
-                .selected_text(current_label)
-                .show_ui(ui, |ui| {
-                    for (style, label) in STYLES {
-                        if ui
-                            .selectable_label(gui_settings.zone_separators == style, label)
-                            .clicked()
-                        {
-                            gui_settings.zone_separators = style;
+                );
+            ui.end_row();
+            ui.label("Zone separators");
+            {
+                use crate::frontend::gui::persistence::ZoneSeparatorStyle;
+                const STYLES: [(ZoneSeparatorStyle, &str); 3] = [
+                    (ZoneSeparatorStyle::Shown, "Shown"),
+                    (ZoneSeparatorStyle::Hover, "On hover"),
+                    (ZoneSeparatorStyle::Hidden, "Hidden"),
+                ];
+                let current_label = STYLES
+                    .iter()
+                    .find(|(style, _)| *style == gui_settings.zone_separators)
+                    .map(|(_, label)| *label)
+                    .unwrap_or("Shown");
+                egui::ComboBox::from_id_salt("settings_zone_separators")
+                    .selected_text(current_label)
+                    .show_ui(ui, |ui| {
+                        for (style, label) in STYLES {
+                            if ui
+                                .selectable_label(gui_settings.zone_separators == style, label)
+                                .clicked()
+                            {
+                                gui_settings.zone_separators = style;
+                            }
                         }
-                    }
-                })
-                .response
-                .on_hover_text(
-                    "Boundary lines between the header/footer/sidebar zones \
+                    })
+                    .response
+                    .on_hover_text(
+                        "Boundary lines between the header/footer/sidebar zones \
                      and the center. Hidden or hover-only keeps the edges \
                      draggable for resizing — handy when skin frames make \
                      the lines look out of place.",
-                );
-        }
-        ui.end_row();
-        ui.label("Window snapping");
-        ui.checkbox(&mut gui_settings.snap_enabled, "Snap windows to edges")
-            .on_hover_text(
-                "Windows snap to each other and to their pane's edges \
+                    );
+            }
+            ui.end_row();
+            ui.label("Window snapping");
+            ui.checkbox(&mut gui_settings.snap_enabled, "Snap windows to edges")
+                .on_hover_text(
+                    "Windows snap to each other and to their pane's edges \
                  while you drag or resize them — in the center, header, \
                  and footer alike (windows only snap against neighbors in \
                  the same pane). Hold Shift during a drag to place a \
                  window freely.",
-            );
-        ui.end_row();
-        if gui_settings.snap_enabled {
-            ui.label("Snap distance");
-            ui.add(egui::Slider::new(&mut gui_settings.snap_radius, 0.0..=24.0).step_by(1.0))
-                .on_hover_text(
-                    "How close an edge must get, in points, before it \
+                );
+            ui.end_row();
+            if gui_settings.snap_enabled {
+                ui.label("Snap distance");
+                ui.add(egui::Slider::new(&mut gui_settings.snap_radius, 0.0..=24.0).step_by(1.0))
+                    .on_hover_text(
+                        "How close an edge must get, in points, before it \
                      snaps. Trackpads and high-DPI displays usually want \
                      more than a mouse. 0 disables snapping.",
-                );
-            ui.end_row();
-            ui.label("Snap targets");
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut gui_settings.snap_to_siblings, "Other windows")
-                    .on_hover_text(
-                        "Butt two windows together or align them flush \
-                         along the same edge.",
                     );
-                ui.checkbox(&mut gui_settings.snap_to_bounds, "Pane edges");
-                ui.checkbox(&mut gui_settings.snap_to_centers, "Pane center")
-                    .on_hover_text(
-                        "The pane's horizontal and vertical center lines. \
+                ui.end_row();
+                ui.label("Snap targets");
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut gui_settings.snap_to_siblings, "Other windows")
+                        .on_hover_text(
+                            "Butt two windows together or align them flush \
+                         along the same edge.",
+                        );
+                    ui.checkbox(&mut gui_settings.snap_to_bounds, "Pane edges");
+                    ui.checkbox(&mut gui_settings.snap_to_centers, "Pane center")
+                        .on_hover_text(
+                            "The pane's horizontal and vertical center lines. \
                          Off by default: center lines close to real edge \
                          targets make snapping feel jumpy.",
-                    );
-            });
-            ui.end_row();
-            ui.label("Snap grid");
-            ui.add(egui::Slider::new(&mut gui_settings.snap_grid, 0.0..=48.0).step_by(4.0))
-                .on_hover_text(
-                    "Also snap edges to a grid of this pitch in points, \
+                        );
+                });
+                ui.end_row();
+                ui.label("Snap grid");
+                ui.add(egui::Slider::new(&mut gui_settings.snap_grid, 0.0..=48.0).step_by(4.0))
+                    .on_hover_text(
+                        "Also snap edges to a grid of this pitch in points, \
                      anchored at the pane's top-left. While you drag, the \
                      grid shows as a faint overlay. 0 = no grid.",
-                );
-            ui.end_row();
-            ui.label("Grid sizing");
-            ui.add_enabled(
-                gui_settings.snap_grid > 0.0,
-                egui::Checkbox::new(
-                    &mut gui_settings.snap_move_sizes_to_grid,
-                    "Moving also sizes to grid",
-                ),
-            )
-            .on_hover_text(
-                "With a grid set, moving a window pulls each edge to its \
+                    );
+                ui.end_row();
+                ui.label("Grid sizing");
+                ui.add_enabled(
+                    gui_settings.snap_grid > 0.0,
+                    egui::Checkbox::new(
+                        &mut gui_settings.snap_move_sizes_to_grid,
+                        "Moving also sizes to grid",
+                    ),
+                )
+                .on_hover_text(
+                    "With a grid set, moving a window pulls each edge to its \
                  nearest grid line — the window resizes to fit the grid. \
                  Off = moving only repositions.",
-            );
-            ui.end_row();
-            ui.label("Snap guides");
-            ui.checkbox(&mut gui_settings.snap_show_guides, "Show alignment guides")
-                .on_hover_text(
-                    "Draw a dashed line with the matched coordinate while \
-                     a snap is engaged.",
                 );
-            ui.end_row();
-        }
+                ui.end_row();
+                ui.label("Snap guides");
+                ui.checkbox(&mut gui_settings.snap_show_guides, "Show alignment guides")
+                    .on_hover_text(
+                        "Draw a dashed line with the matched coordinate while \
+                     a snap is engaged.",
+                    );
+                ui.end_row();
+            }
 
-        // Global appearance defaults: applied to every window without its
-        // own Appearance-menu choice (per-window picks always win).
-        ui.label("Default frame");
-        {
-            let selected = match gui_settings.default_frame.as_deref() {
-                None => "Skin default".to_string(),
-                Some(name) if name.eq_ignore_ascii_case("none") => "None".to_string(),
-                Some(name) => name.to_string(),
-            };
-            egui::ComboBox::from_id_salt("settings_default_frame")
-                .selected_text(selected)
-                .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(gui_settings.default_frame.is_none(), "Skin default")
-                        .clicked()
-                    {
-                        gui_settings.default_frame = None;
-                    }
-                    let none_active = gui_settings
-                        .default_frame
-                        .as_deref()
-                        .is_some_and(|name| name.eq_ignore_ascii_case("none"));
-                    if ui.selectable_label(none_active, "None").clicked() {
-                        gui_settings.default_frame = Some("none".to_string());
-                    }
-                    for name in frame_names {
-                        let active = gui_settings
+            // Global appearance defaults: applied to every window without its
+            // own Appearance-menu choice (per-window picks always win).
+            ui.label("Default frame");
+            {
+                let selected = match gui_settings.default_frame.as_deref() {
+                    None => "Skin default".to_string(),
+                    Some(name) if name.eq_ignore_ascii_case("none") => "None".to_string(),
+                    Some(name) => name.to_string(),
+                };
+                egui::ComboBox::from_id_salt("settings_default_frame")
+                    .selected_text(selected)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(gui_settings.default_frame.is_none(), "Skin default")
+                            .clicked()
+                        {
+                            gui_settings.default_frame = None;
+                        }
+                        let none_active = gui_settings
                             .default_frame
                             .as_deref()
-                            .is_some_and(|current| current.eq_ignore_ascii_case(name));
-                        if ui.selectable_label(active, name).clicked() {
-                            gui_settings.default_frame = Some(name.clone());
+                            .is_some_and(|name| name.eq_ignore_ascii_case("none"));
+                        if ui.selectable_label(none_active, "None").clicked() {
+                            gui_settings.default_frame = Some("none".to_string());
                         }
-                    }
-                })
-                .response
-                .on_hover_text(
-                    "Frame for every window without its own Appearance > \
+                        for name in frame_names {
+                            let active = gui_settings
+                                .default_frame
+                                .as_deref()
+                                .is_some_and(|current| current.eq_ignore_ascii_case(name));
+                            if ui.selectable_label(active, name).clicked() {
+                                gui_settings.default_frame = Some(name.clone());
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "Frame for every window without its own Appearance > \
                      Skin frame choice. None hides frames everywhere by \
                      default; per-window picks always win.",
-                );
-        }
-        ui.end_row();
+                    );
+            }
+            ui.end_row();
 
-        ui.label("Default background");
-        {
-            let selected = match gui_settings.default_background.as_deref() {
-                None => "Skin default",
-                Some(path) if path.eq_ignore_ascii_case("none") => "None",
-                Some(path) => background_images
-                    .iter()
-                    .find(|(pool_path, _)| pool_path == path)
-                    .map(|(_, stem)| stem.as_str())
-                    .unwrap_or(path),
-            };
-            egui::ComboBox::from_id_salt("settings_default_background")
-                .selected_text(selected.to_string())
-                .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(
-                            gui_settings.default_background.is_none(),
-                            "Skin default",
-                        )
-                        .clicked()
-                    {
-                        gui_settings.default_background = None;
-                    }
-                    let none_active = gui_settings
-                        .default_background
-                        .as_deref()
-                        .is_some_and(|path| path.eq_ignore_ascii_case("none"));
-                    if ui.selectable_label(none_active, "None").clicked() {
-                        gui_settings.default_background = Some("none".to_string());
-                    }
-                    for (path, stem) in background_images {
-                        let active = gui_settings
+            ui.label("Default background");
+            {
+                let selected = match gui_settings.default_background.as_deref() {
+                    None => "Skin default",
+                    Some(path) if path.eq_ignore_ascii_case("none") => "None",
+                    Some(path) => background_images
+                        .iter()
+                        .find(|(pool_path, _)| pool_path == path)
+                        .map(|(_, stem)| stem.as_str())
+                        .unwrap_or(path),
+                };
+                egui::ComboBox::from_id_salt("settings_default_background")
+                    .selected_text(selected.to_string())
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(
+                                gui_settings.default_background.is_none(),
+                                "Skin default",
+                            )
+                            .clicked()
+                        {
+                            gui_settings.default_background = None;
+                        }
+                        let none_active = gui_settings
                             .default_background
                             .as_deref()
-                            .is_some_and(|current| current == path);
-                        if ui.selectable_label(active, stem).clicked() {
-                            gui_settings.default_background = Some(path.clone());
+                            .is_some_and(|path| path.eq_ignore_ascii_case("none"));
+                        if ui.selectable_label(none_active, "None").clicked() {
+                            gui_settings.default_background = Some("none".to_string());
                         }
-                    }
-                })
-                .response
-                .on_hover_text(
-                    "Background image for every window without its own \
+                        for (path, stem) in background_images {
+                            let active = gui_settings
+                                .default_background
+                                .as_deref()
+                                .is_some_and(|current| current == path);
+                            if ui.selectable_label(active, stem).clicked() {
+                                gui_settings.default_background = Some(path.clone());
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "Background image for every window without its own \
                      Appearance > Background choice; per-window picks \
                      always win.",
-                );
-        }
-        ui.end_row();
-    });
+                    );
+            }
+            ui.end_row();
+        });
     ui.weak(
         "Vitals bar options (layout, height, text, bars shown) moved to the \
          vitals window's own editor: right-click the Vitals window and \
@@ -780,11 +783,10 @@ impl VellumGuiApp {
             self.raise_editor(egui::Id::new("gui_settings_editor"));
             return;
         }
-        let mut theme_names: Vec<String> = crate::theme::ThemePresets::all_with_custom(
-            self.app_core.config.character.as_deref(),
-        )
-        .into_keys()
-        .collect();
+        let mut theme_names: Vec<String> =
+            crate::theme::ThemePresets::all_with_custom(self.app_core.config.character.as_deref())
+                .into_keys()
+                .collect();
         theme_names.sort();
         self.settings_editor = Some(SettingsEditorState::from_config(
             &self.app_core.config,
@@ -842,9 +844,8 @@ impl VellumGuiApp {
         let updater_installed = self.app_core.map_updater.installed.clone();
         // Data-pack asset status (source tier + age), computed before the
         // UI closure borrows self immutably.
-        let data_status_lines = crate::core::data_pack::status_lines(
-            self.app_core.config.map.lich_dir.as_deref(),
-        );
+        let data_status_lines =
+            crate::core::data_pack::status_lines(self.app_core.config.map.lich_dir.as_deref());
         let updater_in_flight = self.app_core.map_updater.in_flight();
         let saved_target_count = self.app_core.config.go2.saved.len();
         egui::Window::new("Settings")
@@ -1324,7 +1325,8 @@ impl VellumGuiApp {
         }
         if map_remove_clicked {
             self.app_core.remove_downloaded_mapdb();
-            self.app_core.add_system_message("Downloaded map data removed.");
+            self.app_core
+                .add_system_message("Downloaded map data removed.");
         }
         if calibrate_doll_clicked {
             self.open_doll_calibration();
@@ -1336,9 +1338,8 @@ impl VellumGuiApp {
         }
         if data_reload_clicked {
             let types = self.app_core.reload_data_pack();
-            self.app_core.add_system_message(&format!(
-                "Data pack reloaded ({types} item types)."
-            ));
+            self.app_core
+                .add_system_message(&format!("Data pack reloaded ({types} item types)."));
         }
         if open_jinx_clicked {
             self.open_jinx_panel();
@@ -1386,11 +1387,11 @@ impl VellumGuiApp {
                 }
                 applied.push(key);
                 let is_global = state.scopes.get(key).copied().unwrap_or(false);
-                if let Err(err) = self.app_core.config.save_single_setting(
-                    key,
-                    is_global,
-                    character.as_deref(),
-                ) {
+                if let Err(err) =
+                    self.app_core
+                        .config
+                        .save_single_setting(key, is_global, character.as_deref())
+                {
                     errors.push(format!("{key}: {err}"));
                 }
             }
@@ -1422,9 +1423,7 @@ impl VellumGuiApp {
                 .status_abbrev
                 .iter()
                 .filter(|(name, _)| !name.trim().is_empty())
-                .map(|(name, abbrev)| {
-                    (name.trim().to_lowercase(), abbrev.trim().to_string())
-                })
+                .map(|(name, abbrev)| (name.trim().to_lowercase(), abbrev.trim().to_string()))
                 .collect();
             if new_abbrev != self.app_core.config.target_list.status_abbrev {
                 self.app_core.config.target_list.status_abbrev = new_abbrev;

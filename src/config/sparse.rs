@@ -48,7 +48,9 @@ pub(super) fn layer_config(global: Option<&str>, profile: Option<&str>) -> Resul
         }
     }
     scrub_cleared_options(&mut value, "");
-    value.try_into().context("Layered config did not deserialize")
+    value
+        .try_into()
+        .context("Layered config did not deserialize")
 }
 
 /// Resolves the cleared-Option sentinel at load. TOML has no null, so
@@ -191,7 +193,8 @@ fn prune_inherited(
 fn merge_items(doc: &mut toml_edit::Table, src: &toml_edit::Table) {
     for (key, item) in src.iter() {
         let recursed = match (
-            doc.get_mut(key).and_then(|existing| existing.as_table_mut()),
+            doc.get_mut(key)
+                .and_then(|existing| existing.as_table_mut()),
             item.as_table(),
         ) {
             (Some(doc_tbl), Some(src_tbl)) => {
@@ -222,9 +225,7 @@ pub(super) fn sparse_config_toml(existing: &str, config: &Config, base: &Config)
 
     if let Some(diff) = diff_value(&cfg_value, &base_value, "") {
         let rendered = toml::to_string(&diff).context("Diff must serialize")?;
-        let diff_doc: DocumentMut = rendered
-            .parse()
-            .context("Serialized diff must re-parse")?;
+        let diff_doc: DocumentMut = rendered.parse().context("Serialized diff must re-parse")?;
         merge_items(doc.as_table_mut(), diff_doc.as_table());
     }
 

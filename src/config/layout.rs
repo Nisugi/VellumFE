@@ -260,10 +260,16 @@ impl Layout {
             let old_cols = base.cols;
             let old_rows = base.rows;
 
-            base.col = crate::data::geometry::Col::new((base.col.get() as f32 * scale_x).round() as u16);
-            base.row = crate::data::geometry::Row::new((base.row.get() as f32 * scale_y).round() as u16);
-            base.cols = crate::data::geometry::Width::new((base.cols.get() as f32 * scale_x).round() as u16);
-            base.rows = crate::data::geometry::Height::new((base.rows.get() as f32 * scale_y).round() as u16);
+            base.col =
+                crate::data::geometry::Col::new((base.col.get() as f32 * scale_x).round() as u16);
+            base.row =
+                crate::data::geometry::Row::new((base.row.get() as f32 * scale_y).round() as u16);
+            base.cols = crate::data::geometry::Width::new(
+                (base.cols.get() as f32 * scale_x).round() as u16,
+            );
+            base.rows = crate::data::geometry::Height::new(
+                (base.rows.get() as f32 * scale_y).round() as u16,
+            );
 
             // Ensure minimum sizes
             if base.cols.get() < 1 {
@@ -417,7 +423,10 @@ impl Layout {
                     && data.streams[0] != "main")
                     .then(|| WindowBinding::Stream(data.streams[0].clone())),
                 WindowDef::Inventory { data, .. } => Some(WindowBinding::Stream(
-                    data.streams.first().cloned().unwrap_or_else(|| "inv".to_string()),
+                    data.streams
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "inv".to_string()),
                 )),
                 WindowDef::Reserve { data, .. } => Some(WindowBinding::Stream(
                     data.streams
@@ -441,9 +450,7 @@ impl Layout {
                     "minivitals" => Some(WindowBinding::Dialog("minivitals".to_string())),
                     "gs4_experience" => Some(WindowBinding::Dialog("expr".to_string())),
                     "encum" => Some(WindowBinding::Dialog("encum".to_string())),
-                    "betrayer" => {
-                        Some(WindowBinding::Dialog("BetrayerPanel".to_string()))
-                    }
+                    "betrayer" => Some(WindowBinding::Dialog("BetrayerPanel".to_string())),
                     _ => None,
                 },
             };
@@ -812,7 +819,9 @@ impl Layout {
             if base.rows.get() == 1 && base.cols.get() < 10 {
                 eprintln!(
                     "⚠ Warning: Window '{}' is very small ({}x{})",
-                    name, base.cols.get(), base.rows.get()
+                    name,
+                    base.cols.get(),
+                    base.rows.get()
                 );
                 warnings += 1;
             }
@@ -878,9 +887,7 @@ impl Layout {
         // Normalize widget type: lowercase and strip _custom suffix
         // This ensures "tabbedtext_custom" → "custom-tabbedtext-1" (not "custom-tabbedtext_custom-1")
         let lowercase = widget_type.to_lowercase();
-        let normalized_type = lowercase
-            .strip_suffix("_custom")
-            .unwrap_or(&lowercase);
+        let normalized_type = lowercase.strip_suffix("_custom").unwrap_or(&lowercase);
         let prefix = format!("custom-{}-", normalized_type);
 
         let max_number = self
@@ -923,7 +930,11 @@ impl Layout {
                 self.generate_widget_name(name)
             };
             window_def.base_mut().name = auto_name.clone();
-            tracing::info!("Auto-generated window name: {} for template '{}'", auto_name, name);
+            tracing::info!(
+                "Auto-generated window name: {} for template '{}'",
+                auto_name,
+                name
+            );
         }
 
         // Set visible
@@ -986,8 +997,7 @@ impl Layout {
         let mut window_def = match Config::get_window_template(template_name) {
             Some(def) => def,
             None => {
-                let base = Config::get_window_template("text_custom")
-                    .map(|d| d.base().clone())?;
+                let base = Config::get_window_template("text_custom").map(|d| d.base().clone())?;
                 crate::config::WindowDef::blank(template_name, base)?
             }
         };
@@ -1124,10 +1134,8 @@ border_color = "#807f80"
             unknown_windows: Vec::new(),
             deleted_windows: Vec::new(),
         };
-        layout
-            .register_discovered_window(WindowBinding::Stream("thoughts".into()), "text_custom");
-        layout
-            .register_discovered_window(WindowBinding::Dialog("combat".into()), "dialogpanel");
+        layout.register_discovered_window(WindowBinding::Stream("thoughts".into()), "text_custom");
+        layout.register_discovered_window(WindowBinding::Dialog("combat".into()), "dialogpanel");
         // Wire the feeds the way register_window_discovery does.
         for w in layout.windows.iter_mut() {
             match w {
@@ -1157,13 +1165,21 @@ border_color = "#807f80"
             assert_eq!(w.base().visibility, WindowVisibility::Hidden, "{id}");
         }
         // Feed wiring survived.
-        let thoughts = reloaded.windows.iter().find(|w| w.name() == "thoughts").unwrap();
+        let thoughts = reloaded
+            .windows
+            .iter()
+            .find(|w| w.name() == "thoughts")
+            .unwrap();
         if let WindowDef::Text { data, .. } = thoughts {
             assert!(data.streams.contains(&"thoughts".to_string()));
         } else {
             panic!("thoughts should be a text window");
         }
-        let combat = reloaded.windows.iter().find(|w| w.name() == "combat").unwrap();
+        let combat = reloaded
+            .windows
+            .iter()
+            .find(|w| w.name() == "combat")
+            .unwrap();
         if let WindowDef::DialogPanel { data, .. } = combat {
             assert_eq!(data.dialog_id, "combat");
         } else {
@@ -1410,11 +1426,18 @@ border_color = "#807f80"
         );
         // Geometry preserved.
         let b = healed.base();
-        assert_eq!((b.col.get(), b.row.get(), b.cols.get(), b.rows.get()), (5, 6, 40, 10));
+        assert_eq!(
+            (b.col.get(), b.row.get(), b.cols.get(), b.rows.get()),
+            (5, 6, 40, 10)
+        );
         assert_eq!(b.binding, Some(WindowBinding::Stream("Spells".to_string())));
         // Unrelated text window untouched.
         assert!(matches!(
-            layout.windows.iter().find(|w| w.base().name == "thoughts").unwrap(),
+            layout
+                .windows
+                .iter()
+                .find(|w| w.base().name == "thoughts")
+                .unwrap(),
             WindowDef::Text { .. }
         ));
 
@@ -1438,7 +1461,10 @@ border_color = "#807f80"
         layout.scale_to_terminal_size(160, 48); // 2x both axes
 
         let b = layout.windows[1].base();
-        assert_eq!((b.col.get(), b.row.get(), b.cols.get(), b.rows.get()), (80, 24, 80, 24));
+        assert_eq!(
+            (b.col.get(), b.row.get(), b.cols.get(), b.rows.get()),
+            (80, 24, 80, 24)
+        );
         assert_eq!(layout.terminal_width, Some(160));
         assert_eq!(layout.terminal_height, Some(48));
     }
@@ -1520,7 +1546,11 @@ border_color = "#807f80"
         assert_eq!(binding_of(&layout, 2), Some(B::Stream("inv".into())));
         assert_eq!(binding_of(&layout, 3), Some(B::Dialog("Buffs".into())));
         assert_eq!(binding_of(&layout, 4), Some(B::Dialog("injuries".into())));
-        assert_eq!(binding_of(&layout, 5), None, "single progress bar is a data view");
+        assert_eq!(
+            binding_of(&layout, 5),
+            None,
+            "single progress bar is a data view"
+        );
         assert_eq!(binding_of(&layout, 6), Some(B::Dialog("minivitals".into())));
         assert_eq!(binding_of(&layout, 7), None, "compass is a data view");
 
@@ -1591,8 +1621,8 @@ border_color = "#807f80"
 
     #[test]
     fn heal_drops_hidden_duplicate_so_backfill_rebinds_the_shown_survivor() {
-        use crate::config::WindowBinding as B;
         use crate::config::widgets::WindowVisibility;
+        use crate::config::WindowBinding as B;
         // The poisoned shape a pre-fix fresh install autosaved: a shown
         // unbound room (from the embedded default) plus a hidden
         // discovery-created duplicate that owns the binding.

@@ -482,10 +482,16 @@ dim = true
         } else {
             panic!("expected any group");
         }
-        assert_eq!(hide.default_style.as_ref().unwrap().fg.as_deref(), Some("#d0d0d0"));
+        assert_eq!(
+            hide.default_style.as_ref().unwrap().fg.as_deref(),
+            Some("#d0d0d0")
+        );
 
         let spell = &bar.buttons[1];
-        assert!(matches!(spell.countdown, Some(HotbarCountdownSource::Roundtime) | Some(HotbarCountdownSource::Casttime)));
+        assert!(matches!(
+            spell.countdown,
+            Some(HotbarCountdownSource::Roundtime) | Some(HotbarCountdownSource::Casttime)
+        ));
         if let Condition::All { conditions } = &spell.states[0].when {
             assert!(matches!(
                 conditions[0],
@@ -671,7 +677,10 @@ dim = true
         // name_match defaults to Exact; style defaults empty/dim=false
         assert!(matches!(
             button.states[0].when,
-            Condition::EffectActive { name_match: NameMatch::Exact, .. }
+            Condition::EffectActive {
+                name_match: NameMatch::Exact,
+                ..
+            }
         ));
         assert_eq!(button.states[0].style, HotbarStyle::default());
     }
@@ -689,10 +698,9 @@ dim = true
     #[test]
     fn hotbar_icon_reads_legacy_flat_shape_and_round_trips_modern() {
         // Legacy hotbars.toml carried flat sheet/cell fields.
-        let legacy: HotbarIcon = toml::from_str(
-            "sheet = \"runes\"\ncell = 3\ngrayscale = true\nborder = \"#ff0000\"",
-        )
-        .unwrap();
+        let legacy: HotbarIcon =
+            toml::from_str("sheet = \"runes\"\ncell = 3\ngrayscale = true\nborder = \"#ff0000\"")
+                .unwrap();
         assert_eq!(
             legacy.icon,
             crate::data::IconRef::SheetCell {

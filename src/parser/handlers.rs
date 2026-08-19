@@ -9,11 +9,19 @@ use super::*;
 impl XmlParser {
     /// The expose verbs: `<exposeDialog id='bank'/>` and kin — the game
     /// (or a lich script) saying "show this window NOW".
-    pub(super) fn handle_expose(&mut self, tag: &str, elements: &mut Vec<ParsedElement>, kind: &str) {
-        let id = Self::extract_attribute(tag, "id")
-            .or_else(|| Self::extract_attribute(tag, "name"));
+    pub(super) fn handle_expose(
+        &mut self,
+        tag: &str,
+        elements: &mut Vec<ParsedElement>,
+        kind: &str,
+    ) {
+        let id =
+            Self::extract_attribute(tag, "id").or_else(|| Self::extract_attribute(tag, "name"));
         if let Some(id) = id {
-            elements.push(ParsedElement::Expose { kind: kind.to_string(), id });
+            elements.push(ParsedElement::Expose {
+                kind: kind.to_string(),
+                id,
+            });
         }
     }
 
@@ -23,8 +31,19 @@ impl XmlParser {
     /// are emitted; nothing is emitted when none are.
     pub(super) fn emit_window_hints(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
         const HINT_ATTRS: &[&str] = &[
-            "location", "resident", "save", "scroll", "ifClosed", "appearance",
-            "target", "width", "height", "x", "y", "noResize", "noDock",
+            "location",
+            "resident",
+            "save",
+            "scroll",
+            "ifClosed",
+            "appearance",
+            "target",
+            "width",
+            "height",
+            "x",
+            "y",
+            "noResize",
+            "noDock",
             // gswiki Wrayth-protocol page: streamWindow also carries a
             // per-window timestamp toggle (wiki-attested; never appeared
             // in the 11.4 GB log sweep).
@@ -40,8 +59,8 @@ impl XmlParser {
             Some(end) => &tag[..end],
             None => tag,
         };
-        let Some(id) = Self::extract_attribute(head, "id")
-            .or_else(|| Self::extract_attribute(head, "name"))
+        let Some(id) =
+            Self::extract_attribute(head, "id").or_else(|| Self::extract_attribute(head, "name"))
         else {
             return;
         };
@@ -84,10 +103,7 @@ impl XmlParser {
         let fg = Self::extract_attribute(tag, "fg");
         let bg = Self::extract_attribute(tag, "bg");
 
-        self.color_stack.push(ColorStyle {
-            fg,
-            bg,
-        });
+        self.color_stack.push(ColorStyle { fg, bg });
     }
 
     pub(super) fn handle_color_close(&mut self) {
@@ -301,41 +317,45 @@ impl XmlParser {
                 .unwrap_or(0);
             let text = Self::extract_attribute(tag, "text").unwrap_or_default();
 
-        // Try to extract current/max from text (format: "mana 407/407" or "175/175")
-        // Also handle formats like "defensive (100%)" (label + current) and label-only strings.
-        let (value, max) = parse_progress_numbers(&text, percentage);
+            // Try to extract current/max from text (format: "mana 407/407" or "175/175")
+            // Also handle formats like "defensive (100%)" (label + current) and label-only strings.
+            let (value, max) = parse_progress_numbers(&text, percentage);
 
-        let is_mind_state = id == "mindState";
-        elements.push(ParsedElement::ProgressBar {
-            id,
-            value,
-            max,
-            text,
-        });
-
-        // The mindState bar also carries exact experience numbers and
-        // event-bonus flags. Emitted unconditionally for mindState because
-        // the bonus flags are snapshot-semantics: a bar without them means
-        // the bonus ended.
-        if is_mind_state {
-            // Single attribute scan; exact-name lookup (extract_attribute's
-            // substring probe would confuse "exp" with "field_exp")
-            let attrs = Self::extract_all_attributes(tag);
-            let get = |name: &str| attrs.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str());
-            let num = |name: &str| get(name).and_then(|v| v.parse::<u64>().ok());
-            elements.push(ParsedElement::MindStateExp {
-                field_exp: num("field_exp"),
-                max_field_exp: num("max_field_exp"),
-                exp: num("exp"),
-                ascension_exp: num("ascension_exp"),
-                until_next: num("until_next"),
-                fashlonae: get("fashlonae").and_then(|v| v.parse::<u8>().ok()),
-                lumnis: get("lumnis").and_then(|v| v.parse::<u8>().ok()),
-                rpa: get("rpa").and_then(|v| v.parse::<f32>().ok()),
+            let is_mind_state = id == "mindState";
+            elements.push(ParsedElement::ProgressBar {
+                id,
+                value,
+                max,
+                text,
             });
-        }
-    }
 
+            // The mindState bar also carries exact experience numbers and
+            // event-bonus flags. Emitted unconditionally for mindState because
+            // the bonus flags are snapshot-semantics: a bar without them means
+            // the bonus ended.
+            if is_mind_state {
+                // Single attribute scan; exact-name lookup (extract_attribute's
+                // substring probe would confuse "exp" with "field_exp")
+                let attrs = Self::extract_all_attributes(tag);
+                let get = |name: &str| {
+                    attrs
+                        .iter()
+                        .find(|(n, _)| n == name)
+                        .map(|(_, v)| v.as_str())
+                };
+                let num = |name: &str| get(name).and_then(|v| v.parse::<u64>().ok());
+                elements.push(ParsedElement::MindStateExp {
+                    field_exp: num("field_exp"),
+                    max_field_exp: num("max_field_exp"),
+                    exp: num("exp"),
+                    ascension_exp: num("ascension_exp"),
+                    until_next: num("until_next"),
+                    fashlonae: get("fashlonae").and_then(|v| v.parse::<u8>().ok()),
+                    lumnis: get("lumnis").and_then(|v| v.parse::<u8>().ok()),
+                    rpa: get("rpa").and_then(|v| v.parse::<f32>().ok()),
+                });
+            }
+        }
     }
 
     pub(super) fn handle_label(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
@@ -438,7 +458,10 @@ impl XmlParser {
             return;
         };
         if !Self::is_image_name(&src) {
-            tracing::warn!("vellumImg: rejected src '{}' (name must be alphanumeric/_+-)", src);
+            tracing::warn!(
+                "vellumImg: rejected src '{}' (name must be alphanumeric/_+-)",
+                src
+            );
             return;
         }
 
@@ -457,9 +480,7 @@ impl XmlParser {
         // align: unrecognized values fall back to Left rather than dropping
         // the image, so a typo degrades instead of vanishing.
         let align = match Self::extract_attribute(tag, "align") {
-            Some(raw) if raw.trim().eq_ignore_ascii_case("right") => {
-                crate::data::FloatAlign::Right
-            }
+            Some(raw) if raw.trim().eq_ignore_ascii_case("right") => crate::data::FloatAlign::Right,
             _ => crate::data::FloatAlign::Left,
         };
 
@@ -523,8 +544,7 @@ impl XmlParser {
             // dialog/quickbar titles.
             let subtitle =
                 Self::extract_attribute(tag, "subtitle").map(Self::decode_entities_stable);
-            let title =
-                Self::extract_attribute(tag, "title").map(Self::decode_entities_stable);
+            let title = Self::extract_attribute(tag, "title").map(Self::decode_entities_stable);
             elements.push(ParsedElement::StreamWindow {
                 id,
                 subtitle,
@@ -628,7 +648,11 @@ impl XmlParser {
         // the section text: the wire formats analyze/inspect output with
         // real lines (indented tables, blank separators), and flattening
         // them produced run-on paragraphs.
-        if self.inv_viewitem.as_ref().is_some_and(|b| b.current.is_some()) {
+        if self
+            .inv_viewitem
+            .as_ref()
+            .is_some_and(|b| b.current.is_some())
+        {
             self.viewitem_text("\n");
         }
         let mut remaining = line;
@@ -649,7 +673,9 @@ impl XmlParser {
 
             if tag.starts_with("<inventoryViewItem") {
                 if self.inv_viewitem.is_some() {
-                    tracing::warn!("inventoryViewItem opened while one was in flight; dropping stale block");
+                    tracing::warn!(
+                        "inventoryViewItem opened while one was in flight; dropping stale block"
+                    );
                 }
                 self.inv_viewitem = Some(crate::parser::InvViewItemBuilder {
                     token: Self::extract_attribute(tag, "id").unwrap_or_default(),
@@ -748,7 +774,9 @@ impl XmlParser {
         // A dangling builder means a previous block never closed (torn feed);
         // starting a new one discards it rather than merging two snapshots.
         if self.inv_manager.is_some() {
-            tracing::warn!("inventoryManager block opened while one was in flight; dropping stale block");
+            tracing::warn!(
+                "inventoryManager block opened while one was in flight; dropping stale block"
+            );
         }
         self.inv_manager = Some(crate::parser::InvManagerBuilder {
             token: Self::extract_attribute(tag, "id").unwrap_or_default(),
@@ -868,10 +896,14 @@ impl XmlParser {
                     Self::extract_attribute(tag, "content_value").unwrap_or_default();
 
                 // Split by comma to get lists
-                let targets: Vec<String> =
-                    content_text.split(',').map(|s| s.trim().to_string()).collect();
-                let target_ids: Vec<String> =
-                    content_value.split(',').map(|s| s.trim().to_string()).collect();
+                let targets: Vec<String> = content_text
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
+                let target_ids: Vec<String> = content_value
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
 
                 // Find ID of current target by matching name to content_text
                 // The first matching entry's corresponding ID is the current target

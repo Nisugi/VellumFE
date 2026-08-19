@@ -559,8 +559,8 @@ impl StatusIconSettings {
             }
             // set_members is keyed by role, so the lookup is direct — and it
             // returns the foldered path only if that art actually exists.
-            let Some(foldered) = crate::config::pool::set_members(category, set)
-                .remove(&role.to_ascii_lowercase())
+            let Some(foldered) =
+                crate::config::pool::set_members(category, set).remove(&role.to_ascii_lowercase())
             else {
                 continue;
             };
@@ -571,7 +571,6 @@ impl StatusIconSettings {
         }
         changed
     }
-
 
     /// Whether this indicator grays out when inactive: its override if it
     /// has one, else the global toggle.
@@ -1282,7 +1281,10 @@ fn move_into_pool(
         }
         return None;
     }
-    tracing::warn!("Could not find a free pool name for legacy layout {:?}", src);
+    tracing::warn!(
+        "Could not find a free pool name for legacy layout {:?}",
+        src
+    );
     None
 }
 
@@ -1291,7 +1293,11 @@ mod tests {
     use super::*;
 
     fn legacy_checkpoint(base: &std::path::Path, profile: &str, character: &str, name: &str) {
-        let dir = base.join("gui").join(profile).join(character).join("layouts");
+        let dir = base
+            .join("gui")
+            .join(profile)
+            .join(character)
+            .join("layouts");
         std::fs::create_dir_all(&dir).unwrap();
         let mut layout = GuiLayoutFileV1::new(profile, character);
         layout.saved_at_utc = format!("stamp-{profile}-{character}-{name}");

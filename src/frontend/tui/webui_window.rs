@@ -30,7 +30,10 @@ pub fn render_lines(content: &WebUiPanelContent) -> Vec<Line<'static>> {
         ));
     } else if !content.connected {
         header.push(Span::raw("  "));
-        header.push(Span::styled("[connecting…]", Style::default().fg(Color::DarkGray)));
+        header.push(Span::styled(
+            "[connecting…]",
+            Style::default().fg(Color::DarkGray),
+        ));
     }
     lines.push(Line::from(header));
 
@@ -57,7 +60,9 @@ fn dim(text: impl Into<String>) -> Span<'static> {
 fn label_span(text: impl Into<String>) -> Span<'static> {
     Span::styled(
         text.into(),
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     )
 }
 
@@ -104,10 +109,7 @@ fn render_node(node: &WebUiNode, depth: usize, lines: &mut Vec<Line<'static>>) {
             let label = node.label.clone().unwrap_or_else(|| "button".into());
             let mut spans = vec![
                 Span::raw(pad.clone()),
-                Span::styled(
-                    format!("[ {label} ]"),
-                    Style::default().fg(Color::Yellow),
-                ),
+                Span::styled(format!("[ {label} ]"), Style::default().fg(Color::Yellow)),
             ];
             if node.disabled == Some(true) {
                 spans.push(dim("  (disabled)"));
@@ -152,7 +154,11 @@ fn render_node(node: &WebUiNode, depth: usize, lines: &mut Vec<Line<'static>>) {
             }
         }
         "checkbox" => {
-            let mark = if node.checked == Some(true) { "[x]" } else { "[ ]" };
+            let mark = if node.checked == Some(true) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
             let label = node.label.clone().unwrap_or_default();
             lines.push(Line::from(Span::raw(format!("{pad}{mark} {label}"))));
         }
@@ -188,10 +194,17 @@ fn render_node(node: &WebUiNode, depth: usize, lines: &mut Vec<Line<'static>>) {
         }
         "expander" => {
             let label = node.label.clone().unwrap_or_default();
-            let marker = if node.open == Some(true) { "▾" } else { "▸" };
+            let marker = if node.open == Some(true) {
+                "▾"
+            } else {
+                "▸"
+            };
             lines.push(Line::from(vec![
                 Span::raw(pad),
-                Span::styled(format!("{marker} {label}"), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{marker} {label}"),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
             ]));
             if node.open != Some(false) {
                 for child in node.children() {
@@ -205,7 +218,9 @@ fn render_node(node: &WebUiNode, depth: usize, lines: &mut Vec<Line<'static>>) {
                 let label = tab.label.clone().unwrap_or_default();
                 lines.push(Line::from(Span::styled(
                     format!("{pad}⟨ {label} ⟩"),
-                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
                 )));
                 for child in tab.children() {
                     render_node(child, depth + 1, lines);
@@ -223,7 +238,9 @@ fn render_node(node: &WebUiNode, depth: usize, lines: &mut Vec<Line<'static>>) {
                 .clone()
                 .or_else(|| node.src.clone())
                 .unwrap_or_else(|| "image".into());
-            lines.push(Line::from(dim(format!("{pad}🖼 {alt} (image — view in the GUI)"))));
+            lines.push(Line::from(dim(format!(
+                "{pad}🖼 {alt} (image — view in the GUI)"
+            ))));
         }
         other => {
             // Unknown/unsupported node: name it and still render any children

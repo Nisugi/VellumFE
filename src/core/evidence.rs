@@ -48,8 +48,7 @@ pub struct SenseData {
 
 const FORAGE_PREFIX: &str =
     "Glancing about, you notice the immediate area should support specimens of ";
-const SENSE_PREFIX: &str =
-    "You scan your surroundings, considering the various flora and fauna";
+const SENSE_PREFIX: &str = "You scan your surroundings, considering the various flora and fauna";
 
 /// Split a natural-language listing ("a X, a Y and a Z") into items,
 /// handling both Oxford and plain "and" joins and stripping articles.
@@ -251,7 +250,10 @@ mod tests {
                 "crop-tailed coastal muzzlerat"
             ]
         );
-        assert_eq!(data.overhead.as_deref(), Some("black-billed golden caracara"));
+        assert_eq!(
+            data.overhead.as_deref(),
+            Some("black-billed golden caracara")
+        );
         assert_eq!(data.structures.len(), 5);
         assert_eq!(
             data.structures[0],
@@ -271,12 +273,7 @@ mod tests {
             1000,
         );
         // A later, sparser sense (dark room) must not blank earlier fields.
-        store.record(
-            731009,
-            None,
-            Observation::Sense(SenseData::default()),
-            2000,
-        );
+        store.record(731009, None, Observation::Sense(SenseData::default()), 2000);
         store.record(
             731009,
             None,

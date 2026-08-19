@@ -13,7 +13,10 @@ impl AppCore {
         for window in self.ui_state.windows.values_mut() {
             match &mut window.content {
                 WindowContent::Text(content)
-                    if content.streams.iter().any(|s| s.eq_ignore_ascii_case(stream)) =>
+                    if content
+                        .streams
+                        .iter()
+                        .any(|s| s.eq_ignore_ascii_case(stream)) =>
                 {
                     content.lines.clear();
                     content.generation = content.generation.wrapping_add(1);
@@ -41,7 +44,11 @@ impl AppCore {
     /// to the given stream, falling back to the main window so the output
     /// is never silently lost (ebestiary-style scroll output by default;
     /// a dedicated custom window upgrades it).
-    pub fn add_client_lines_to_stream(&mut self, stream: &str, lines: Vec<crate::data::StyledLine>) {
+    pub fn add_client_lines_to_stream(
+        &mut self,
+        stream: &str,
+        lines: Vec<crate::data::StyledLine>,
+    ) {
         use crate::data::WindowContent;
         for line in lines {
             if let Some(remote) = self.message_processor.remote.as_mut() {
@@ -51,7 +58,10 @@ impl AppCore {
             for window in self.ui_state.windows.values_mut() {
                 match &mut window.content {
                     WindowContent::Text(content)
-                        if content.streams.iter().any(|s| s.eq_ignore_ascii_case(stream)) =>
+                        if content
+                            .streams
+                            .iter()
+                            .any(|s| s.eq_ignore_ascii_case(stream)) =>
                     {
                         content.add_line(line.clone());
                         delivered = true;
@@ -85,7 +95,10 @@ impl AppCore {
                 'fallback: for window in self.ui_state.windows.values_mut() {
                     match &mut window.content {
                         WindowContent::Text(content)
-                            if content.streams.iter().any(|s| s.eq_ignore_ascii_case("main")) =>
+                            if content
+                                .streams
+                                .iter()
+                                .any(|s| s.eq_ignore_ascii_case("main")) =>
                         {
                             content.add_line(line.clone());
                             break 'fallback;

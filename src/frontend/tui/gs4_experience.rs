@@ -344,8 +344,7 @@ impl GS4Experience {
         }
 
         // Row 2: Mind state bar (if enabled)
-        if self.show_mind_bar && current_y < inner.y + inner.height && !self.mind_text.is_empty()
-        {
+        if self.show_mind_bar && current_y < inner.y + inner.height && !self.mind_text.is_empty() {
             let bar_area = Rect {
                 x: inner.x,
                 y: current_y,

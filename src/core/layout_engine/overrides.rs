@@ -11,9 +11,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::direction::Dir;
-use crate::core::mapdb::RoomTable;
 use super::positioner::{Cell, Group};
 use super::Layout;
+use crate::core::mapdb::RoomTable;
 
 /// What to do with the edge between two rooms (keyed by uid pair).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +59,94 @@ pub enum SheetChoice {
 pub struct MapOverrides {
     #[serde(default)]
     pub locations: HashMap<String, LocationOverrides>,
+    /// Membership moves: room uid → map key. Applied to the curated rosters
+    /// BEFORE the membership build, so satellites recompute around them.
+    /// A move to a curated/custom map adds the uid to that roster (and
+    /// removes it from every other); the map keys are the same opaque
+    /// strings the rest of the system uses.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub membership_moves: std::collections::BTreeMap<i64, String>,
+    /// User-created maps (the membership editor's "New map" and Purgatory):
+    /// key → display name. They join the curated set with empty rosters and
+    /// fill via `membership_moves`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub custom_maps: std::collections::BTreeMap<String, String>,
+    /// Room DATA edits (tags, wayto/timeto, description) keyed by room uid.
+    /// Applied to the loaded mapdb itself, so pathing, layout edges, and
+    /// display all see them; whole-entry per uid, personal wins.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub room_edits: std::collections::BTreeMap<i64, RoomDataEdit>,
+}
+
+/// One room's data edits, relative to the pristine mapdb record.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RoomDataEdit {
+    /// Tags added on top of the base set (deduped at apply).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub add_tags: Vec<String>,
+    /// Base tags suppressed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remove_tags: Vec<String>,
+    /// Exit edits keyed by DESTINATION room uid: `Some` sets/replaces the
+    /// wayto command and timeto seconds, `None` removes the edge entirely.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub wayto: std::collections::BTreeMap<i64, Option<WaytoEdit>>,
+    /// Full description replacement (single paragraph), display-side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WaytoEdit {
+    pub command: String,
+    pub seconds: f64,
+}
+
+impl RoomDataEdit {
+    pub fn is_empty(&self) -> bool {
+        self.add_tags.is_empty()
+            && self.remove_tags.is_empty()
+            && self.wayto.is_empty()
+            && self.description.is_none()
+    }
+}
+
+/// Merged room edits (community under personal, whole-entry per uid).
+pub fn merged_room_edits(
+    community: &MapOverrides,
+    personal: &MapOverrides,
+) -> std::collections::BTreeMap<i64, RoomDataEdit> {
+    let mut out = community.room_edits.clone();
+    for (uid, edit) in &personal.room_edits {
+        out.insert(*uid, edit.clone());
+    }
+    out
+}
+
+/// Merge the membership-editing fields of the community and personal layers:
+/// union, personal wins per key.
+pub fn merged_membership(
+    community: &MapOverrides,
+    personal: &MapOverrides,
+) -> (
+    std::collections::BTreeMap<i64, String>,
+    std::collections::BTreeMap<String, String>,
+) {
+    let mut moves = community.membership_moves.clone();
+    moves.extend(
+        personal
+            .membership_moves
+            .iter()
+            .map(|(k, v)| (*k, v.clone())),
+    );
+    let mut custom = community.custom_maps.clone();
+    custom.extend(
+        personal
+            .custom_maps
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone())),
+    );
+    (moves, custom)
 }
 
 /// Community overrides shipped with the app (defaults/map_overrides.json):
@@ -87,6 +175,9 @@ pub fn overlay(mut base: MapOverrides, top: MapOverrides) -> MapOverrides {
     for (location, entry) in top.locations {
         base.locations.insert(location, entry);
     }
+    base.membership_moves.extend(top.membership_moves);
+    base.custom_maps.extend(top.custom_maps);
+    base.room_edits.extend(top.room_edits);
     base
 }
 
@@ -338,7 +429,12 @@ mod tests {
         assert_eq!(merged.names[&100], "Community Name");
         assert_eq!(merged.edges.len(), 2);
         assert_eq!(
-            merged.edges.iter().find(|e| (e.a, e.b) == (1, 2)).unwrap().action,
+            merged
+                .edges
+                .iter()
+                .find(|e| (e.a, e.b) == (1, 2))
+                .unwrap()
+                .action,
             EdgeAction::Dash
         );
         assert_eq!(merged.sheets[&100], SheetChoice::Outdoor);

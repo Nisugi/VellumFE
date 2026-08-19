@@ -31,11 +31,8 @@ impl AppCore {
         streams: Vec<String>,
         buffer_size: Option<usize>,
     ) {
-        if let Some(crate::config::WindowDef::Text { data, .. }) = self
-            .layout
-            .windows
-            .iter_mut()
-            .find(|w| w.name() == name)
+        if let Some(crate::config::WindowDef::Text { data, .. }) =
+            self.layout.windows.iter_mut().find(|w| w.name() == name)
         {
             data.streams = streams;
             if let Some(buffer_size) = buffer_size {

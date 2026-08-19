@@ -35,7 +35,10 @@ re!(
 
 // --- STOW list (game command `stow list`) ---
 // "You have the following containers set as stow targets:"
-re!(STOW_START, r"^You have the following containers set as stow targets:");
+re!(
+    STOW_START,
+    r"^You have the following containers set as stow targets:"
+);
 // "  a <a ...>backpack</a> (default)" — captures the (type) in parens.
 re!(
     STOW_ROW,
@@ -54,7 +57,10 @@ re!(
     r"^\s*(?P<type>shield|(?:secondary |ranged )?weapon|ammo bundle|wand):.*<d cmd='store set'>(?P<store>worn if possible, stowed otherwise|stowed|put in (?:secondary )?sheath)</d>"
 );
 // Footer: "Click here to update the list." — marks the ready list complete.
-re!(READY_DONE, r"Click <d cmd=.ready list.>here</d> to update the list");
+re!(
+    READY_DONE,
+    r"Click <d cmd=.ready list.>here</d> to update the list"
+);
 
 /// A ready slot key. Mirrors Lich's `ORIGINAL_READY_LIST` symbols (minus the
 /// ammo variants we don't route on).
@@ -263,9 +269,7 @@ mod tests {
         let mut rs = ReadyStow::default();
         assert!(!rs.stow_checked());
         rs.parse_line("You have the following containers set as stow targets:");
-        rs.parse_line(
-            r#"  a <a exist="111" noun="backpack">leather backpack</a> (default)"#,
-        );
+        rs.parse_line(r#"  a <a exist="111" noun="backpack">leather backpack</a> (default)"#);
         rs.parse_line(r#"  a <a exist="222" noun="pouch">gem pouch</a> (gem)"#);
         assert!(rs.stow_checked());
         assert_eq!(rs.default_stow().map(|i| i.id.as_str()), Some("111"));
@@ -296,9 +300,7 @@ mod tests {
         let mut rs = ReadyStow::default();
         rs.parse_line("Your current settings are:");
         assert!(!rs.ready_checked());
-        rs.parse_line(
-            r#"Click <d cmd="ready list">here</d> to update the list."#,
-        );
+        rs.parse_line(r#"Click <d cmd="ready list">here</d> to update the list."#);
         assert!(rs.ready_checked());
         // A fresh ready list clears prior state.
         rs.parse_line("Your current settings are:");

@@ -92,12 +92,7 @@ impl TabbedTextWindow {
     ) -> Self {
         let mut window = Self::new(title, TabBarPosition::Top);
         for (name, show_timestamps, ignore_activity) in tabs {
-            window.add_tab(
-                name,
-                max_lines_per_tab,
-                show_timestamps,
-                ignore_activity,
-            );
+            window.add_tab(name, max_lines_per_tab, show_timestamps, ignore_activity);
         }
         window
     }
@@ -1013,18 +1008,8 @@ mod tests {
 
     fn make_window() -> TabbedTextWindow {
         let mut window = TabbedTextWindow::new("Tabs", TabBarPosition::Top);
-        window.add_tab(
-            "Main".to_string(),
-            100,
-            false,
-            false,
-        );
-        window.add_tab(
-            "Thoughts".to_string(),
-            100,
-            false,
-            false,
-        );
+        window.add_tab("Main".to_string(), 100, false, false);
+        window.add_tab("Thoughts".to_string(), 100, false, false);
         window
     }
 
@@ -1049,20 +1034,10 @@ mod tests {
     #[test]
     fn test_remove_tab_disallows_last() {
         let mut window = TabbedTextWindow::new("Tabs", TabBarPosition::Top);
-        window.add_tab(
-            "Main".to_string(),
-            100,
-            false,
-            false,
-        );
+        window.add_tab("Main".to_string(), 100, false, false);
         assert!(!window.remove_tab("Main"));
 
-        window.add_tab(
-            "Other".to_string(),
-            100,
-            false,
-            false,
-        );
+        window.add_tab("Other".to_string(), 100, false, false);
         assert!(window.remove_tab("Main"));
         assert_eq!(window.get_tab_names(), vec!["Other".to_string()]);
         assert_eq!(window.get_active_tab_index(), 0);
@@ -1071,12 +1046,7 @@ mod tests {
     #[test]
     fn test_reorder_tabs_preserves_active_by_name() {
         let mut window = make_window();
-        window.add_tab(
-            "Other".to_string(),
-            100,
-            false,
-            false,
-        );
+        window.add_tab("Other".to_string(), 100, false, false);
         window.switch_to_tab(2); // "Other"
 
         window.reorder_tabs(&["Other".to_string(), "Main".to_string()]);

@@ -1,6 +1,6 @@
-use super::*;
-use super::performance_stats;
 use super::colors::{blend_colors_hex, color_to_hex_string, normalize_color, parse_hex_color};
+use super::performance_stats;
+use super::*;
 use std::char;
 
 /// Name -> WindowDef lookup for one sync pass. Sync functions previously
@@ -57,54 +57,66 @@ impl TuiFrontend {
                 let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get or create TextWindow for this window
-                let text_window = self.widget_manager.text_windows.entry(name.clone()).or_insert_with(|| {
-                    let mut tw =
-                        text_window::TextWindow::new(&text_content.title, text_content.max_lines);
-
-                    if let Some(def) = window_def {
-                        let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
-                        tw.set_border_config(
-                            def.base().show_border,
-                            Some(def.base().border_style.clone()),
-                            colors.border.clone(),
+                let text_window = self
+                    .widget_manager
+                    .text_windows
+                    .entry(name.clone())
+                    .or_insert_with(|| {
+                        let mut tw = text_window::TextWindow::new(
+                            &text_content.title,
+                            text_content.max_lines,
                         );
-                        tw.set_border_sides(def.base().border_sides.clone());
-                        tw.set_background_color(colors.background.clone());
-                        tw.set_text_color(colors.text.clone());
-                        tw.set_content_align(def.base().content_align.clone());
-                        tw.set_title_position(super::title_position::TitlePosition::from_str(
-                            &def.base().title_position,
-                        ));
-                        if let crate::config::WindowDef::Text { data, .. } = def {
-                            tw.set_show_timestamps(data.show_timestamps);
-                            let ts_pos = data.timestamp_position
-                                .unwrap_or(app_core.config.ui.timestamp_position);
-                            tw.set_timestamp_position(ts_pos);
-                            tw.set_wordwrap(data.wordwrap);
-                            // Compact mode automatically centers content
-                            if data.compact {
-                                tw.set_content_align(Some("center".to_string()));
+
+                        if let Some(def) = window_def {
+                            let colors = resolve_window_colors(
+                                def.base(),
+                                &app_core.config.colors.ui,
+                                theme,
+                            );
+                            tw.set_border_config(
+                                def.base().show_border,
+                                Some(def.base().border_style.clone()),
+                                colors.border.clone(),
+                            );
+                            tw.set_border_sides(def.base().border_sides.clone());
+                            tw.set_background_color(colors.background.clone());
+                            tw.set_text_color(colors.text.clone());
+                            tw.set_content_align(def.base().content_align.clone());
+                            tw.set_title_position(super::title_position::TitlePosition::from_str(
+                                &def.base().title_position,
+                            ));
+                            if let crate::config::WindowDef::Text { data, .. } = def {
+                                tw.set_show_timestamps(data.show_timestamps);
+                                let ts_pos = data
+                                    .timestamp_position
+                                    .unwrap_or(app_core.config.ui.timestamp_position);
+                                tw.set_timestamp_position(ts_pos);
+                                tw.set_wordwrap(data.wordwrap);
+                                // Compact mode automatically centers content
+                                if data.compact {
+                                    tw.set_content_align(Some("center".to_string()));
+                                }
+                            } else {
+                                tw.set_show_timestamps(false); // Default to false for non-text windows
+                                tw.set_timestamp_position(app_core.config.ui.timestamp_position);
+                                tw.set_wordwrap(true);
                             }
                         } else {
-                            tw.set_show_timestamps(false); // Default to false for non-text windows
-                            tw.set_timestamp_position(app_core.config.ui.timestamp_position);
+                            tw.set_show_timestamps(false); // Default to false when no window def
+                            tw.set_timestamp_position(crate::config::TimestampPosition::End);
                             tw.set_wordwrap(true);
                         }
-                    } else {
-                        tw.set_show_timestamps(false); // Default to false when no window def
-                        tw.set_timestamp_position(crate::config::TimestampPosition::End);
-                        tw.set_wordwrap(true);
-                    }
-                    // Note: Highlights are now applied in core (MessageProcessor)
+                        // Note: Highlights are now applied in core (MessageProcessor)
 
-                    tw
-                });
+                        tw
+                    });
 
                 // Existing text windows re-apply def/theme-derived settings
                 // only when the config snapshot changed (themes, layout edits).
                 if self.config_sync_needed {
                     if let Some(def) = window_def {
-                        let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                        let colors =
+                            resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
                         text_window.set_border_config(
                             def.base().show_border,
                             Some(def.base().border_style.clone()),
@@ -120,12 +132,15 @@ impl TuiFrontend {
                             String::new()
                         };
                         text_window.set_title(title_text);
-                        text_window.set_title_position(super::title_position::TitlePosition::from_str(
-                            &def.base().title_position,
-                        ));
+                        text_window.set_title_position(
+                            super::title_position::TitlePosition::from_str(
+                                &def.base().title_position,
+                            ),
+                        );
                         if let crate::config::WindowDef::Text { data, .. } = def {
                             text_window.set_show_timestamps(data.show_timestamps);
-                            let ts_pos = data.timestamp_position
+                            let ts_pos = data
+                                .timestamp_position
                                 .unwrap_or(app_core.config.ui.timestamp_position);
                             text_window.set_timestamp_position(ts_pos);
                             text_window.set_wordwrap(data.wordwrap);
@@ -135,7 +150,8 @@ impl TuiFrontend {
                             }
                         } else {
                             text_window.set_show_timestamps(false); // Default to false
-                            text_window.set_timestamp_position(app_core.config.ui.timestamp_position);
+                            text_window
+                                .set_timestamp_position(app_core.config.ui.timestamp_position);
                             text_window.set_wordwrap(true);
                         }
                     }
@@ -145,7 +161,12 @@ impl TuiFrontend {
                 text_window.set_width(window.position.width.get());
 
                 // Get last synced generation
-                let last_synced_gen = self.widget_manager.last_synced_generation.get(name).copied().unwrap_or(0);
+                let last_synced_gen = self
+                    .widget_manager
+                    .last_synced_generation
+                    .get(name)
+                    .copied()
+                    .unwrap_or(0);
                 let current_gen = text_content.generation;
 
                 // Check if there are new lines to sync (generation changed)
@@ -181,10 +202,15 @@ impl TuiFrontend {
                         // Convert our data format to TextWindow's format
                         for segment in &line.segments {
                             // Apply link preset color to Link spans that don't have a server color
-                            let fg = if segment.span_type == crate::data::SpanType::Link && segment.fg.is_none() {
+                            let fg = if segment.span_type == crate::data::SpanType::Link
+                                && segment.fg.is_none()
+                            {
                                 link_preset_color
                             } else {
-                                segment.fg.as_ref().and_then(|hex| parse_hex_color(hex).ok())
+                                segment
+                                    .fg
+                                    .as_ref()
+                                    .and_then(|hex| parse_hex_color(hex).ok())
                             };
 
                             // TextWindow now uses the same SpanType and LinkData from data module
@@ -196,8 +222,8 @@ impl TuiFrontend {
                                     .as_ref()
                                     .and_then(|hex| parse_hex_color(hex).ok()),
                                 bold: segment.bold,
-                                span_type: segment.span_type,  // Direct use, no conversion needed
-                                link_data: segment.link_data.clone(),  // Direct use, no conversion needed
+                                span_type: segment.span_type, // Direct use, no conversion needed
+                                link_data: segment.link_data.clone(), // Direct use, no conversion needed
                             };
                             text_window.add_text(styled_text);
                         }
@@ -206,7 +232,8 @@ impl TuiFrontend {
                     }
 
                     // Update last synced generation
-                    self.widget_manager.last_synced_generation
+                    self.widget_manager
+                        .last_synced_generation
                         .insert(name.clone(), current_gen);
                 }
 
@@ -236,12 +263,20 @@ impl TuiFrontend {
                     // Apply roomName preset colors to the title/room name if available
                     // Resolve palette names to hex values
                     if let Some(preset) = app_core.config.colors.presets.get("roomName") {
-                        let resolved_fg = preset.fg.as_ref().map(|c| app_core.config.resolve_palette_color(c));
-                        let resolved_bg = preset.bg.as_ref().map(|c| app_core.config.resolve_palette_color(c));
+                        let resolved_fg = preset
+                            .fg
+                            .as_ref()
+                            .map(|c| app_core.config.resolve_palette_color(c));
+                        let resolved_bg = preset
+                            .bg
+                            .as_ref()
+                            .map(|c| app_core.config.resolve_palette_color(c));
                         room_window.set_title_colors(resolved_fg, resolved_bg);
                     }
 
-                    self.widget_manager.room_windows.insert(name.clone(), room_window);
+                    self.widget_manager
+                        .room_windows
+                        .insert(name.clone(), room_window);
                     tracing::debug!("Created RoomWindow widget for '{}' during sync", name);
                 }
             }
@@ -289,21 +324,25 @@ impl TuiFrontend {
             };
 
             // Ensure the backing widget exists so we can apply configuration
-            let cmd_input = self.widget_manager.command_inputs.entry(name.clone()).or_insert_with(|| {
-                let mut widget = command_input::CommandInput::new(100);
-                if let Some(base) = base_config.as_ref() {
-                    let title_text = if base.show_title {
-                        base.title.clone().unwrap_or_default()
+            let cmd_input = self
+                .widget_manager
+                .command_inputs
+                .entry(name.clone())
+                .or_insert_with(|| {
+                    let mut widget = command_input::CommandInput::new(100);
+                    if let Some(base) = base_config.as_ref() {
+                        let title_text = if base.show_title {
+                            base.title.clone().unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
+                        widget.set_title(title_text);
+                        widget.set_show_title(base.show_title);
                     } else {
-                        String::new()
-                    };
-                    widget.set_title(title_text);
-                    widget.set_show_title(base.show_title);
-                } else {
-                    widget.set_title("Command".to_string());
-                }
-                widget
-            });
+                        widget.set_title("Command".to_string());
+                    }
+                    widget
+                });
 
             if let Some(base) = base_config.as_ref() {
                 let title_text = if base.show_title {
@@ -401,8 +440,11 @@ impl TuiFrontend {
                     // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     inv_window.set_highlights(highlights);
-                    inv_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
-                    self.widget_manager.inventory_windows.insert(name.clone(), inv_window);
+                    inv_window
+                        .set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
+                    self.widget_manager
+                        .inventory_windows
+                        .insert(name.clone(), inv_window);
                     tracing::debug!("Created InventoryWindow widget for '{}'", name);
                 }
 
@@ -411,7 +453,8 @@ impl TuiFrontend {
                 if let Some(inv_window) = self.widget_manager.inventory_windows.get_mut(name) {
                     inv_window.set_title(text_content.title.clone());
                     if let Some(def) = window_def {
-                        let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                        let colors =
+                            resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
                         inv_window.set_border_config(def.base().show_border, colors.border.clone());
                         inv_window.set_transparent_background(def.base().transparent_background);
                         inv_window.set_background_color(colors.background.clone());
@@ -444,8 +487,12 @@ impl TuiFrontend {
                     }
 
                     // Change detection: only sync if content changed (using generation)
-                    let last_synced_gen =
-                        self.widget_manager.last_synced_generation.get(name).copied().unwrap_or(0);
+                    let last_synced_gen = self
+                        .widget_manager
+                        .last_synced_generation
+                        .get(name)
+                        .copied()
+                        .unwrap_or(0);
                     let current_gen = text_content.generation;
 
                     if current_gen != last_synced_gen || wrap_changed {
@@ -460,7 +507,8 @@ impl TuiFrontend {
                             inv_window.finish_line();
                         }
                         // Update last synced generation
-                        self.widget_manager.last_synced_generation
+                        self.widget_manager
+                            .last_synced_generation
                             .insert(name.clone(), current_gen);
                     }
                 } else {
@@ -499,15 +547,19 @@ impl TuiFrontend {
                     // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     spells_window.set_highlights(highlights);
-                    spells_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
-                    self.widget_manager.spells_windows.insert(name.clone(), spells_window);
+                    spells_window
+                        .set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
+                    self.widget_manager
+                        .spells_windows
+                        .insert(name.clone(), spells_window);
                     tracing::debug!("Created SpellsWindow widget for '{}'", name);
                 }
 
                 // Update configuration and content from WindowDef if present
                 if let Some(spells_window) = self.widget_manager.spells_windows.get_mut(name) {
                     if let Some(def) = window_def {
-                        let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                        let colors =
+                            resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
                         spells_window.set_border_config(
                             def.base().show_border,
                             Some(def.base().border_style.clone()),
@@ -530,8 +582,12 @@ impl TuiFrontend {
                     }
 
                     // Change detection: only sync if content changed (using generation)
-                    let last_synced_gen =
-                        self.widget_manager.last_synced_generation.get(name).copied().unwrap_or(0);
+                    let last_synced_gen = self
+                        .widget_manager
+                        .last_synced_generation
+                        .get(name)
+                        .copied()
+                        .unwrap_or(0);
                     let current_gen = text_content.generation;
 
                     if current_gen != last_synced_gen {
@@ -558,7 +614,8 @@ impl TuiFrontend {
                             spells_window.finish_line();
                         }
                         // Update last synced generation
-                        self.widget_manager.last_synced_generation
+                        self.widget_manager
+                            .last_synced_generation
                             .insert(name.clone(), current_gen);
                     }
                 } else {
@@ -618,7 +675,8 @@ impl TuiFrontend {
 
                     // Apply window config from WindowDef
                     if let Some(def) = window_def {
-                        let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                        let colors =
+                            resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
                         progress_bar.set_border_config(
                             def.base().show_border,
                             Some(def.base().border_style.clone()),
@@ -634,27 +692,29 @@ impl TuiFrontend {
                         }
 
                         // Compute display text based on config and incoming text
-                        let display_text = if let crate::config::WindowDef::Progress { data, .. } = def {
-                            let (label, current_val, max_val) = Self::parse_progress_display_parts(
-                                &progress_data.label,
-                                progress_data.value,
-                                progress_data.max,
-                            );
+                        let display_text =
+                            if let crate::config::WindowDef::Progress { data, .. } = def {
+                                let (label, current_val, max_val) =
+                                    Self::parse_progress_display_parts(
+                                        &progress_data.label,
+                                        progress_data.value,
+                                        progress_data.max,
+                                    );
 
-                            if data.current_only {
-                                format!("{}", current_val)
-                            } else if data.numbers_only {
-                                format!("{}/{}", current_val, max_val)
-                            } else if !progress_data.label.trim().is_empty() {
-                                progress_data.label.clone()
-                            } else if let Some(lbl) = label {
-                                format!("{} {}/{}", lbl, current_val, max_val)
+                                if data.current_only {
+                                    format!("{}", current_val)
+                                } else if data.numbers_only {
+                                    format!("{}/{}", current_val, max_val)
+                                } else if !progress_data.label.trim().is_empty() {
+                                    progress_data.label.clone()
+                                } else if let Some(lbl) = label {
+                                    format!("{} {}/{}", lbl, current_val, max_val)
+                                } else {
+                                    format!("{}/{}", current_val, max_val)
+                                }
                             } else {
-                                format!("{}/{}", current_val, max_val)
-                            }
-                        } else {
-                            format!("{}/{}", progress_data.value, progress_data.max)
-                        };
+                                format!("{}/{}", progress_data.value, progress_data.max)
+                            };
                         progress_bar.set_value_with_text(
                             progress_data.value,
                             progress_data.max,
@@ -706,7 +766,11 @@ impl TuiFrontend {
     }
 
     /// Sync countdown data - create/configure countdown widgets
-    pub(crate) fn sync_countdowns(&mut self, app_core: &crate::core::AppCore, theme: &crate::theme::AppTheme) {
+    pub(crate) fn sync_countdowns(
+        &mut self,
+        app_core: &crate::core::AppCore,
+        theme: &crate::theme::AppTheme,
+    ) {
         let window_defs = window_def_map(&app_core.layout);
         // Find countdown windows in ui_state
         for (name, window) in &app_core.ui_state.windows {
@@ -728,7 +792,9 @@ impl TuiFrontend {
                         .unwrap_or_default();
 
                     let countdown = countdown::Countdown::new(&label);
-                    self.widget_manager.countdowns.insert(name.clone(), countdown);
+                    self.widget_manager
+                        .countdowns
+                        .insert(name.clone(), countdown);
                     tracing::debug!("Created Countdown widget for '{}'", name);
                 }
 
@@ -739,7 +805,8 @@ impl TuiFrontend {
 
                     // Apply window config from WindowDef
                     if let Some(def) = window_def {
-                        let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                        let colors =
+                            resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
                         countdown_widget.set_border_config(
                             def.base().show_border,
                             Some(def.base().border_style.clone()),
@@ -752,8 +819,7 @@ impl TuiFrontend {
                             String::new()
                         };
                         countdown_widget.set_title(title_text);
-                        countdown_widget
-                            .set_title_position(def.base().title_position.clone());
+                        countdown_widget.set_title_position(def.base().title_position.clone());
 
                         // Get icon from CountdownWidgetData
                         if let crate::config::WindowDef::Countdown { data, .. } = def {
@@ -798,7 +864,11 @@ impl TuiFrontend {
                 let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get or create ActiveEffects for this window
-                if !self.widget_manager.active_effects_windows.contains_key(name) {
+                if !self
+                    .widget_manager
+                    .active_effects_windows
+                    .contains_key(name)
+                {
                     let label = window_def
                         .and_then(|def| {
                             if def.base().show_title {
@@ -815,7 +885,9 @@ impl TuiFrontend {
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
                     widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
-                    self.widget_manager.active_effects_windows.insert(name.clone(), widget);
+                    self.widget_manager
+                        .active_effects_windows
+                        .insert(name.clone(), widget);
                     tracing::debug!("Created ActiveEffects widget for '{}'", name);
                 }
 
@@ -848,9 +920,7 @@ impl TuiFrontend {
                         // Add all effects from content
                         for effect in &effects_content.effects {
                             let (value, time) = match countdown_now {
-                                Some(now) => {
-                                    (effect.display_value(now), effect.display_time(now))
-                                }
+                                Some(now) => (effect.display_value(now), effect.display_time(now)),
                                 None => (effect.value, effect.time.clone()),
                             };
                             widget.add_or_update_effect(
@@ -871,7 +941,8 @@ impl TuiFrontend {
 
                     // Apply window config from WindowDef
                     if let Some(def) = window_def {
-                        let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                        let colors =
+                            resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
                         widget.set_border_config(
                             def.base().show_border,
                             Some(def.base().border_style.clone()),
@@ -906,16 +977,20 @@ impl TuiFrontend {
                 // Ensure spacer widget exists in cache
                 if !self.widget_manager.spacer_widgets.contains_key(name) {
                     let widget = spacer::Spacer::new();
-                    self.widget_manager.spacer_widgets.insert(name.clone(), widget);
+                    self.widget_manager
+                        .spacer_widgets
+                        .insert(name.clone(), widget);
                 }
 
                 // Update spacer widget configuration
                 if let Some(spacer_widget) = self.widget_manager.spacer_widgets.get_mut(name) {
                     // Apply window configuration from layout
-                    if let Some(window_def) =
-                        window_defs.get(name.as_str()).copied()
-                    {
-                        let colors = resolve_window_colors(window_def.base(), &app_core.config.colors.ui, theme);
+                    if let Some(window_def) = window_defs.get(name.as_str()).copied() {
+                        let colors = resolve_window_colors(
+                            window_def.base(),
+                            &app_core.config.colors.ui,
+                            theme,
+                        );
                         spacer_widget.set_background_color(colors.background.clone());
                         spacer_widget
                             .set_transparent_background(window_def.base().transparent_background);
@@ -939,7 +1014,9 @@ impl TuiFrontend {
 
             if !self.widget_manager.quickbar_widgets.contains_key(name) {
                 let widget = quickbar::Quickbar::new(name);
-                self.widget_manager.quickbar_widgets.insert(name.clone(), widget);
+                self.widget_manager
+                    .quickbar_widgets
+                    .insert(name.clone(), widget);
             }
 
             if let Some(quickbar_widget) = self.widget_manager.quickbar_widgets.get_mut(name) {
@@ -958,7 +1035,8 @@ impl TuiFrontend {
                 quickbar_widget.set_entries(entries);
 
                 if let Some(def) = window_def {
-                    let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                    let colors =
+                        resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
                     quickbar_widget.set_border_config(
                         def.base().show_border,
                         Some(def.base().border_style.clone()),
@@ -1032,7 +1110,8 @@ impl TuiFrontend {
                     if let crate::config::WindowDef::Hotkeybar { data, .. } = def {
                         bar_widget.set_vertical(data.orientation == "vertical");
                     }
-                    let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                    let colors =
+                        resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
                     bar_widget.set_border_config(
                         def.base().show_border,
                         Some(def.base().border_style.clone()),
@@ -1073,46 +1152,51 @@ impl TuiFrontend {
                 // Ensure indicator widget exists in cache
                 if !self.widget_manager.indicator_widgets.contains_key(name) {
                     let widget = indicator::Indicator::new(name);
-                    self.widget_manager.indicator_widgets.insert(name.clone(), widget);
+                    self.widget_manager
+                        .indicator_widgets
+                        .insert(name.clone(), widget);
                 }
 
                 // Update indicator widget content and configuration
-                if let Some(indicator_widget) = self.widget_manager.indicator_widgets.get_mut(name) {
+                if let Some(indicator_widget) = self.widget_manager.indicator_widgets.get_mut(name)
+                {
                     // Set active state based on indicator data
                     indicator_widget.set_active(indicator_data.active);
 
                     // Apply window configuration from layout
-                    if let Some(window_def) =
-                        window_defs.get(name.as_str()).copied()
-                    {
-                        let colors = resolve_window_colors(window_def.base(), &app_core.config.colors.ui, theme);
+                    if let Some(window_def) = window_defs.get(name.as_str()).copied() {
+                        let colors = resolve_window_colors(
+                            window_def.base(),
+                            &app_core.config.colors.ui,
+                            theme,
+                        );
                         indicator_widget.set_border_config(
                             window_def.base().show_border,
                             Some(window_def.base().border_style.clone()),
                             colors.border.clone(),
                         );
                         indicator_widget.set_border_sides(window_def.base().border_sides.clone());
-                        let title_text = if let crate::config::WindowDef::Indicator { data, .. } = window_def
-                        {
-                            // Prefer icon from data if provided; fall back to title or empty
-                            if let Some(ref icon_str) = data.icon {
-                                decode_icon(icon_str).unwrap_or_else(|| {
-                                    if window_def.base().show_title {
-                                        window_def.base().title.clone().unwrap_or_default()
-                                    } else {
-                                        String::new()
-                                    }
-                                })
+                        let title_text =
+                            if let crate::config::WindowDef::Indicator { data, .. } = window_def {
+                                // Prefer icon from data if provided; fall back to title or empty
+                                if let Some(ref icon_str) = data.icon {
+                                    decode_icon(icon_str).unwrap_or_else(|| {
+                                        if window_def.base().show_title {
+                                            window_def.base().title.clone().unwrap_or_default()
+                                        } else {
+                                            String::new()
+                                        }
+                                    })
+                                } else if window_def.base().show_title {
+                                    window_def.base().title.clone().unwrap_or_default()
+                                } else {
+                                    String::new()
+                                }
                             } else if window_def.base().show_title {
                                 window_def.base().title.clone().unwrap_or_default()
                             } else {
                                 String::new()
-                            }
-                        } else if window_def.base().show_title {
-                            window_def.base().title.clone().unwrap_or_default()
-                        } else {
-                            String::new()
-                        };
+                            };
                         indicator_widget.set_title(title_text);
                         indicator_widget.set_background_color(colors.background.clone());
                         indicator_widget
@@ -1140,16 +1224,15 @@ impl TuiFrontend {
             if let crate::data::WindowContent::Targets = &window.content {
                 // Ensure widget exists
                 if !self.widget_manager.targets_widgets.contains_key(name) {
-                    tracing::debug!(
-                        "sync_targets_widgets: Creating new widget '{}'",
-                        name
-                    );
+                    tracing::debug!("sync_targets_widgets: Creating new widget '{}'", name);
                     let mut widget = targets::Targets::new(name);
                     // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
                     widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
-                    self.widget_manager.targets_widgets.insert(name.clone(), widget);
+                    self.widget_manager
+                        .targets_widgets
+                        .insert(name.clone(), widget);
                 }
 
                 // Update widget from GameState.room_creatures
@@ -1165,9 +1248,7 @@ impl TuiFrontend {
                     let window_def = window_defs.get(name.as_str()).copied();
 
                     // Get widget width from window definition
-                    let widget_width = window_def
-                        .map(|w| w.base().cols.get())
-                        .unwrap_or(20); // Fallback width if not found
+                    let widget_width = window_def.map(|w| w.base().cols.get()).unwrap_or(20); // Fallback width if not found
 
                     // Get per-window status_position if configured
                     let per_window_status_position = window_def.and_then(|w| {
@@ -1199,7 +1280,11 @@ impl TuiFrontend {
 
                     // Apply configuration
                     if let Some(window_def) = window_def {
-                        let colors = resolve_window_colors(window_def.base(), &app_core.config.colors.ui, theme);
+                        let colors = resolve_window_colors(
+                            window_def.base(),
+                            &app_core.config.colors.ui,
+                            theme,
+                        );
                         widget.set_border_config(
                             window_def.base().show_border,
                             Some(window_def.base().border_style.clone()),
@@ -1217,11 +1302,7 @@ impl TuiFrontend {
                             .text_color
                             .clone()
                             .filter(|c| c != "-" && !c.is_empty());
-                        let monsterbold_preset = app_core
-                            .config
-                            .colors
-                            .presets
-                            .get("monsterbold");
+                        let monsterbold_preset = app_core.config.colors.presets.get("monsterbold");
                         // Resolve palette name to hex value for monsterbold preset
                         let monsterbold_fg = monsterbold_preset
                             .and_then(|p| p.fg.as_ref())
@@ -1307,7 +1388,9 @@ impl TuiFrontend {
                     widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                     // Set link color from "links" preset before first update
                     widget.set_link_color(link_color.clone());
-                    self.widget_manager.container_widgets.insert(name.clone(), widget);
+                    self.widget_manager
+                        .container_widgets
+                        .insert(name.clone(), widget);
                 }
 
                 // Update widget from GameState.container_cache
@@ -1316,7 +1399,9 @@ impl TuiFrontend {
                     widget.set_link_color(link_color.clone());
 
                     // Look up container by title (case-insensitive match)
-                    if let Some(container_data) = app_core.game_state.objects.find_container(container_title) {
+                    if let Some(container_data) =
+                        app_core.game_state.objects.find_container(container_title)
+                    {
                         tracing::debug!(
                             "Container sync: found data for '{}' (id='{}'): {} items",
                             container_title,
@@ -1333,10 +1418,12 @@ impl TuiFrontend {
                     }
 
                     // Apply configuration
-                    if let Some(window_def) =
-                        window_defs.get(name.as_str()).copied()
-                    {
-                        let colors = resolve_window_colors(window_def.base(), &app_core.config.colors.ui, theme);
+                    if let Some(window_def) = window_defs.get(name.as_str()).copied() {
+                        let colors = resolve_window_colors(
+                            window_def.base(),
+                            &app_core.config.colors.ui,
+                            theme,
+                        );
                         widget.set_border_config(
                             window_def.base().show_border,
                             colors.border.clone(),
@@ -1356,10 +1443,7 @@ impl TuiFrontend {
                         }
                     } else {
                         // Ephemeral container windows (from .showcontainers) - apply theme defaults
-                        widget.set_border_config(
-                            true,
-                            color_to_hex_string(&theme.window_border),
-                        );
+                        widget.set_border_config(true, color_to_hex_string(&theme.window_border));
                         widget.set_background_color(color_to_hex_string(&theme.window_background));
                         widget.set_text_color(color_to_hex_string(&theme.text_primary));
                     }
@@ -1438,7 +1522,9 @@ impl TuiFrontend {
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
                     widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
-                    self.widget_manager.players_widgets.insert(name.clone(), widget);
+                    self.widget_manager
+                        .players_widgets
+                        .insert(name.clone(), widget);
                 }
 
                 // Update widget from GameState.room_players
@@ -1456,10 +1542,12 @@ impl TuiFrontend {
                     }
 
                     // Apply configuration (borders, colors, title)
-                    if let Some(window_def) =
-                        window_defs.get(name.as_str()).copied()
-                    {
-                        let colors = resolve_window_colors(window_def.base(), &app_core.config.colors.ui, theme);
+                    if let Some(window_def) = window_defs.get(name.as_str()).copied() {
+                        let colors = resolve_window_colors(
+                            window_def.base(),
+                            &app_core.config.colors.ui,
+                            theme,
+                        );
                         widget.set_border_config(
                             window_def.base().show_border,
                             Some(window_def.base().border_style.clone()),
@@ -1502,7 +1590,9 @@ impl TuiFrontend {
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
                     widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
-                    self.widget_manager.items_widgets.insert(name.clone(), widget);
+                    self.widget_manager
+                        .items_widgets
+                        .insert(name.clone(), widget);
                 }
 
                 // Update widget from GameState.room_objects
@@ -1517,10 +1607,12 @@ impl TuiFrontend {
                     }
 
                     // Apply configuration (borders, colors, title)
-                    if let Some(window_def) =
-                        window_defs.get(name.as_str()).copied()
-                    {
-                        let colors = resolve_window_colors(window_def.base(), &app_core.config.colors.ui, theme);
+                    if let Some(window_def) = window_defs.get(name.as_str()).copied() {
+                        let colors = resolve_window_colors(
+                            window_def.base(),
+                            &app_core.config.colors.ui,
+                            theme,
+                        );
                         widget.set_border_config(
                             window_def.base().show_border,
                             Some(window_def.base().border_style.clone()),
@@ -1561,16 +1653,20 @@ impl TuiFrontend {
                     // Default to horizontal layout - can be configured via WindowDef later
                     let widget =
                         dashboard::Dashboard::new(name, dashboard::DashboardLayout::Horizontal);
-                    self.widget_manager.dashboard_widgets.insert(name.clone(), widget);
+                    self.widget_manager
+                        .dashboard_widgets
+                        .insert(name.clone(), widget);
                 }
 
                 // Update widget
                 if let Some(widget) = self.widget_manager.dashboard_widgets.get_mut(name) {
                     // Apply configuration
-                    if let Some(window_def) =
-                        window_defs.get(name.as_str()).copied()
-                    {
-                        let colors = resolve_window_colors(window_def.base(), &app_core.config.colors.ui, theme);
+                    if let Some(window_def) = window_defs.get(name.as_str()).copied() {
+                        let colors = resolve_window_colors(
+                            window_def.base(),
+                            &app_core.config.colors.ui,
+                            theme,
+                        );
                         widget.set_border_config(
                             window_def.base().show_border,
                             Some(window_def.base().border_style.clone()),
@@ -1662,7 +1758,9 @@ impl TuiFrontend {
                     let widget =
                         tabbed_text_window::TabbedTextWindow::with_tabs(name, tabs, max_lines);
                     // Note: Highlights are now applied in core (MessageProcessor)
-                    self.widget_manager.tabbed_text_windows.insert(name.clone(), widget);
+                    self.widget_manager
+                        .tabbed_text_windows
+                        .insert(name.clone(), widget);
                 }
 
                 // Apply configuration and sync content. Config re-application
@@ -1670,7 +1768,11 @@ impl TuiFrontend {
                 if let Some(widget) = self.widget_manager.tabbed_text_windows.get_mut(name) {
                     if self.config_sync_needed {
                         if let Some(def) = window_def {
-                            let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                            let colors = resolve_window_colors(
+                                def.base(),
+                                &app_core.config.colors.ui,
+                                theme,
+                            );
                             widget.set_border_config(
                                 def.base().show_border,
                                 Some(def.base().border_style.clone()),
@@ -1680,7 +1782,10 @@ impl TuiFrontend {
                             widget.set_transparent_background(def.base().transparent_background);
                             widget.set_background_color(colors.background.clone());
                             widget.set_content_align(def.base().content_align.clone());
-                            widget.apply_window_colors(colors.text.clone(), colors.background.clone());
+                            widget.apply_window_colors(
+                                colors.text.clone(),
+                                colors.background.clone(),
+                            );
                             let title_text = if def.base().show_title {
                                 def.base().title.clone().unwrap_or_default()
                             } else {
@@ -1704,9 +1809,11 @@ impl TuiFrontend {
                                 }
                             }
 
-                            widget.set_title_position(super::title_position::TitlePosition::from_str(
-                                &def.base().title_position,
-                            ));
+                            widget.set_title_position(
+                                super::title_position::TitlePosition::from_str(
+                                    &def.base().title_position,
+                                ),
+                            );
                         }
                     }
 
@@ -1717,8 +1824,7 @@ impl TuiFrontend {
                     for (i, tab_state) in tabbed_content.tabs.iter().enumerate() {
                         let ignore_activity = tab_state.definition.ignore_activity;
                         if let Some(text_window) = widget.get_tab_window_mut(i) {
-                            text_window
-                                .set_show_timestamps(tab_state.definition.show_timestamps);
+                            text_window.set_show_timestamps(tab_state.definition.show_timestamps);
                             text_window
                                 .set_timestamp_position(tab_state.definition.timestamp_position);
                             let tab_sync_key = format!("{}:{}", name, tab_state.definition.name);
@@ -1732,8 +1838,7 @@ impl TuiFrontend {
 
                             if current_gen > last_synced_gen {
                                 let gen_delta = (current_gen - last_synced_gen) as usize;
-                                let needs_full_resync =
-                                    gen_delta > tab_state.content.lines.len();
+                                let needs_full_resync = gen_delta > tab_state.content.lines.len();
                                 let mut lines_added = 0usize;
 
                                 if needs_full_resync {
@@ -1755,10 +1860,15 @@ impl TuiFrontend {
 
                                     for segment in &line.segments {
                                         // Apply link preset color to Link spans that don't have a server color
-                                        let fg = if segment.span_type == crate::data::SpanType::Link && segment.fg.is_none() {
+                                        let fg = if segment.span_type == crate::data::SpanType::Link
+                                            && segment.fg.is_none()
+                                        {
                                             link_preset_color
                                         } else {
-                                            segment.fg.as_ref().and_then(|hex| parse_hex_color(hex).ok())
+                                            segment
+                                                .fg
+                                                .as_ref()
+                                                .and_then(|hex| parse_hex_color(hex).ok())
                                         };
 
                                         // TextWindow now uses the same SpanType and LinkData from data module
@@ -1770,8 +1880,8 @@ impl TuiFrontend {
                                                 .as_ref()
                                                 .and_then(|hex| parse_hex_color(hex).ok()),
                                             bold: segment.bold,
-                                            span_type: segment.span_type,  // Direct use, no conversion needed
-                                            link_data: segment.link_data.clone(),  // Direct use, no conversion needed
+                                            span_type: segment.span_type, // Direct use, no conversion needed
+                                            link_data: segment.link_data.clone(), // Direct use, no conversion needed
                                         };
                                         text_window.add_text(styled_text);
                                     }
@@ -1810,7 +1920,9 @@ impl TuiFrontend {
                 // Ensure widget exists
                 if !self.widget_manager.compass_widgets.contains_key(name) {
                     let widget = compass::Compass::new(name);
-                    self.widget_manager.compass_widgets.insert(name.clone(), widget);
+                    self.widget_manager
+                        .compass_widgets
+                        .insert(name.clone(), widget);
                 }
 
                 // Update widget
@@ -1818,10 +1930,12 @@ impl TuiFrontend {
                     widget.set_directions(compass_data.directions.clone());
 
                     // Apply configuration
-                    if let Some(window_def) =
-                        window_defs.get(name.as_str()).copied()
-                    {
-                        let colors = resolve_window_colors(window_def.base(), &app_core.config.colors.ui, theme);
+                    if let Some(window_def) = window_defs.get(name.as_str()).copied() {
+                        let colors = resolve_window_colors(
+                            window_def.base(),
+                            &app_core.config.colors.ui,
+                            theme,
+                        );
                         widget.set_border_config(
                             window_def.base().show_border,
                             Some(window_def.base().border_style.clone()),
@@ -1873,7 +1987,9 @@ impl TuiFrontend {
                 // Ensure widget exists
                 if !self.widget_manager.injury_doll_widgets.contains_key(name) {
                     let widget = injury_doll::InjuryDoll::new(name);
-                    self.widget_manager.injury_doll_widgets.insert(name.clone(), widget);
+                    self.widget_manager
+                        .injury_doll_widgets
+                        .insert(name.clone(), widget);
                 }
 
                 // Update widget
@@ -1884,10 +2000,12 @@ impl TuiFrontend {
                     }
 
                     // Apply configuration
-                    if let Some(window_def) =
-                        window_defs.get(name.as_str()).copied()
-                    {
-                        let colors = resolve_window_colors(window_def.base(), &app_core.config.colors.ui, theme);
+                    if let Some(window_def) = window_defs.get(name.as_str()).copied() {
+                        let colors = resolve_window_colors(
+                            window_def.base(),
+                            &app_core.config.colors.ui,
+                            theme,
+                        );
                         widget.set_border_config(
                             window_def.base().show_border,
                             Some(window_def.base().border_style.clone()),
@@ -1946,7 +2064,9 @@ impl TuiFrontend {
 
             let window_def = window_defs.get(name.as_str()).copied();
             let (mut base, mut perf_data) = match window_def {
-                Some(crate::config::WindowDef::Performance { base, data }) => (Some(base.clone()), Some(data.clone())),
+                Some(crate::config::WindowDef::Performance { base, data }) => {
+                    (Some(base.clone()), Some(data.clone()))
+                }
                 Some(def) => (Some(def.base().clone()), None),
                 None => (None, None),
             };
@@ -1965,8 +2085,10 @@ impl TuiFrontend {
                 }
             } else if base.is_none() || perf_data.is_none() {
                 // Fallback to performance template for layout-based performance windows
-                if let Some(crate::config::WindowDef::Performance { base: tpl_base, data: tpl_data }) =
-                    crate::core::local_catalog::seed("performance")
+                if let Some(crate::config::WindowDef::Performance {
+                    base: tpl_base,
+                    data: tpl_data,
+                }) = crate::core::local_catalog::seed("performance")
                 {
                     if base.is_none() {
                         base = Some(tpl_base.clone());
@@ -2032,7 +2154,9 @@ impl TuiFrontend {
                     };
 
                     let widget = hand::Hand::new(name, hand_type);
-                    self.widget_manager.hand_widgets.insert(name.clone(), widget);
+                    self.widget_manager
+                        .hand_widgets
+                        .insert(name.clone(), widget);
                 }
 
                 // Update hand widget content
@@ -2042,10 +2166,12 @@ impl TuiFrontend {
                     hand_widget.set_content(content);
 
                     // Apply window configuration from layout
-                    if let Some(window_def) =
-                        window_defs.get(name.as_str()).copied()
-                    {
-                        let colors = resolve_window_colors(window_def.base(), &app_core.config.colors.ui, theme);
+                    if let Some(window_def) = window_defs.get(name.as_str()).copied() {
+                        let colors = resolve_window_colors(
+                            window_def.base(),
+                            &app_core.config.colors.ui,
+                            theme,
+                        );
                         hand_widget.set_border_config(
                             window_def.base().show_border,
                             Some(window_def.base().border_style.clone()),
@@ -2114,7 +2240,10 @@ impl TuiFrontend {
                         } else if link.is_some() {
                             // Resolve palette name to hex value for links preset
                             if let Some(preset) = app_core.config.colors.presets.get("links") {
-                                content_highlight = preset.fg.as_ref().map(|c| app_core.config.resolve_palette_color(c));
+                                content_highlight = preset
+                                    .fg
+                                    .as_ref()
+                                    .map(|c| app_core.config.resolve_palette_color(c));
                             }
                         }
                         hand_widget.set_content_highlight_color(content_highlight);
@@ -2160,10 +2289,12 @@ impl TuiFrontend {
                 if is_new {
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     room_window.set_highlights(highlights);
-                    room_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
+                    room_window
+                        .set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                 }
 
-                let colors = resolve_window_colors(window_def.base(), &app_core.config.colors.ui, theme);
+                let colors =
+                    resolve_window_colors(window_def.base(), &app_core.config.colors.ui, theme);
                 room_window.set_border_config(
                     window_def.base().show_border,
                     Some(window_def.base().border_style.clone()),
@@ -2242,7 +2373,11 @@ impl TuiFrontend {
         }
     }
 
-    fn parse_progress_display_parts(text: &str, fallback_current: u32, fallback_max: u32) -> (Option<String>, u32, u32) {
+    fn parse_progress_display_parts(
+        text: &str,
+        fallback_current: u32,
+        fallback_max: u32,
+    ) -> (Option<String>, u32, u32) {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return (None, fallback_current, fallback_max);
@@ -2283,14 +2418,24 @@ impl TuiFrontend {
     fn first_number(input: &str) -> Option<u32> {
         input
             .split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '%')
-            .find_map(|token| token.trim_matches(|c: char| !c.is_ascii_digit()).parse().ok())
+            .find_map(|token| {
+                token
+                    .trim_matches(|c: char| !c.is_ascii_digit())
+                    .parse()
+                    .ok()
+            })
     }
 
     fn last_number(input: &str) -> Option<u32> {
         input
             .split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '%')
             .rev()
-            .find_map(|token| token.trim_matches(|c: char| !c.is_ascii_digit()).parse().ok())
+            .find_map(|token| {
+                token
+                    .trim_matches(|c: char| !c.is_ascii_digit())
+                    .parse()
+                    .ok()
+            })
     }
 
     /// Sync perception windows with app state
@@ -2321,8 +2466,11 @@ impl TuiFrontend {
                     // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     perception_window.set_highlights(highlights);
-                    perception_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
-                    self.widget_manager.perception_windows.insert(name.clone(), perception_window);
+                    perception_window
+                        .set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
+                    self.widget_manager
+                        .perception_windows
+                        .insert(name.clone(), perception_window);
                     tracing::debug!("Created PerceptionWindow widget for '{}'", name);
                 }
 
@@ -2339,9 +2487,12 @@ impl TuiFrontend {
                 }
 
                 // Update configuration and content from WindowDef if present
-                if let Some(perception_window) = self.widget_manager.perception_windows.get_mut(name) {
+                if let Some(perception_window) =
+                    self.widget_manager.perception_windows.get_mut(name)
+                {
                     if let Some(def) = window_def {
-                        let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                        let colors =
+                            resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
                         perception_window.set_show_border(def.base().show_border);
                         perception_window.set_border_color(colors.border.clone());
                         perception_window.set_background_color(colors.background.clone());
@@ -2361,8 +2512,13 @@ impl TuiFrontend {
 
                     // Get settings from WindowDef if it's a Perception type
                     let (text_replacements, sort_direction, use_short_spell_names) =
-                        if let Some(crate::config::WindowDef::Perception { data, .. }) = window_def {
-                            (&data.text_replacements[..], data.sort_direction.clone(), data.use_short_spell_names)
+                        if let Some(crate::config::WindowDef::Perception { data, .. }) = window_def
+                        {
+                            (
+                                &data.text_replacements[..],
+                                data.sort_direction.clone(),
+                                data.use_short_spell_names,
+                            )
                         } else {
                             (&[][..], crate::config::SortDirection::Descending, false)
                         };
@@ -2372,36 +2528,40 @@ impl TuiFrontend {
                     let compiled_replacements = perception_window.compiled_replacements();
 
                     // Process entries: apply spell abbreviations, then custom replacements
-                    let mut processed_entries: Vec<crate::data::widget::PerceptionEntry> = perc_data
-                        .entries
-                        .iter()
-                        .filter_map(|entry| {
-                            let mut text = entry.raw_text.clone();
+                    let mut processed_entries: Vec<crate::data::widget::PerceptionEntry> =
+                        perc_data
+                            .entries
+                            .iter()
+                            .filter_map(|entry| {
+                                let mut text = entry.raw_text.clone();
 
-                            // Apply short spell names if enabled (BEFORE custom replacements)
-                            // Uses Aho-Corasick for O(n) matching instead of O(n * patterns)
-                            if use_short_spell_names {
-                                text = crate::spell_abbrevs::abbreviate_spells(&text);
-                            }
+                                // Apply short spell names if enabled (BEFORE custom replacements)
+                                // Uses Aho-Corasick for O(n) matching instead of O(n * patterns)
+                                if use_short_spell_names {
+                                    text = crate::spell_abbrevs::abbreviate_spells(&text);
+                                }
 
-                            // Apply user custom replacements using pre-compiled regex
-                            // (no regex compilation here - already compiled and cached)
-                            text = crate::config::apply_compiled_text_replacements(&text, compiled_replacements);
+                                // Apply user custom replacements using pre-compiled regex
+                                // (no regex compilation here - already compiled and cached)
+                                text = crate::config::apply_compiled_text_replacements(
+                                    &text,
+                                    compiled_replacements,
+                                );
 
-                            // If the text becomes empty after replacements, filter it out
-                            if text.trim().is_empty() {
-                                None
-                            } else {
-                                Some(crate::data::widget::PerceptionEntry {
-                                    raw_text: text,
-                                    name: entry.name.clone(),
-                                    format: entry.format.clone(),
-                                    weight: entry.weight,
-                                    link_data: entry.link_data.clone(),
-                                })
-                            }
-                        })
-                        .collect();
+                                // If the text becomes empty after replacements, filter it out
+                                if text.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(crate::data::widget::PerceptionEntry {
+                                        raw_text: text,
+                                        name: entry.name.clone(),
+                                        format: entry.format.clone(),
+                                        weight: entry.weight,
+                                        link_data: entry.link_data.clone(),
+                                    })
+                                }
+                            })
+                            .collect();
 
                     // Re-sort based on configured sort direction
                     match sort_direction {
@@ -2436,13 +2596,12 @@ impl TuiFrontend {
                 let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get align config from WindowDef
-                let align = if let Some(crate::config::WindowDef::Experience { data, .. }) =
-                    window_def
-                {
-                    data.align.clone()
-                } else {
-                    "left".to_string()
-                };
+                let align =
+                    if let Some(crate::config::WindowDef::Experience { data, .. }) = window_def {
+                        data.align.clone()
+                    } else {
+                        "left".to_string()
+                    };
 
                 // Get or create Experience widget for this window
                 let experience_widget = self
@@ -2458,7 +2617,8 @@ impl TuiFrontend {
 
                 // Apply theme colors
                 if let Some(def) = window_def {
-                    let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                    let colors =
+                        resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
                     if let Some(border_color) = &colors.border {
                         if let Ok(c) = parse_hex_color(border_color) {
                             experience_widget.set_border_color(c);
@@ -2512,12 +2672,8 @@ impl TuiFrontend {
                     });
 
                 // Update show_border, show_title, border_sides on every sync
-                let show_border = window_def
-                    .map(|wd| wd.base().show_border)
-                    .unwrap_or(true);
-                let show_title = window_def
-                    .map(|wd| wd.base().show_title)
-                    .unwrap_or(true);
+                let show_border = window_def.map(|wd| wd.base().show_border).unwrap_or(true);
+                let show_title = window_def.map(|wd| wd.base().show_title).unwrap_or(true);
                 let border_sides = window_def
                     .map(|wd| wd.base().border_sides.clone())
                     .unwrap_or_default();
@@ -2527,7 +2683,11 @@ impl TuiFrontend {
 
                 // Apply theme colors and config toggles
                 if let Some(crate::config::WindowDef::GS4Experience { data, .. }) = window_def {
-                    let colors = resolve_window_colors(window_def.unwrap().base(), &app_core.config.colors.ui, theme);
+                    let colors = resolve_window_colors(
+                        window_def.unwrap().base(),
+                        &app_core.config.colors.ui,
+                        theme,
+                    );
                     if let Some(border_color) = &colors.border {
                         if let Ok(c) = parse_hex_color(border_color) {
                             gs4_exp_widget.set_border_color(c);
@@ -2616,12 +2776,8 @@ impl TuiFrontend {
                 enc_widget.set_show_bar(show_bar);
 
                 // Update show_border, show_title, border_sides on every sync
-                let show_border = window_def
-                    .map(|wd| wd.base().show_border)
-                    .unwrap_or(true);
-                let show_title = window_def
-                    .map(|wd| wd.base().show_title)
-                    .unwrap_or(true);
+                let show_border = window_def.map(|wd| wd.base().show_border).unwrap_or(true);
+                let show_title = window_def.map(|wd| wd.base().show_title).unwrap_or(true);
                 let border_sides = window_def
                     .map(|wd| wd.base().border_sides.clone())
                     .unwrap_or_default();
@@ -2631,7 +2787,8 @@ impl TuiFrontend {
 
                 // Apply theme colors
                 if let Some(def) = window_def {
-                    let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                    let colors =
+                        resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
                     if let Some(border_color) = &colors.border {
                         if let Ok(c) = parse_hex_color(border_color) {
                             enc_widget.set_border_color(c);
@@ -2720,12 +2877,8 @@ impl TuiFrontend {
                 };
 
                 // Get show_border, show_title, and border_sides from WindowDef
-                let show_border = window_def
-                    .map(|wd| wd.base().show_border)
-                    .unwrap_or(false);
-                let show_title = window_def
-                    .map(|wd| wd.base().show_title)
-                    .unwrap_or(true);
+                let show_border = window_def.map(|wd| wd.base().show_border).unwrap_or(false);
+                let show_title = window_def.map(|wd| wd.base().show_title).unwrap_or(true);
                 let border_sides = window_def
                     .map(|wd| wd.base().border_sides.clone())
                     .unwrap_or_default();
@@ -2756,7 +2909,8 @@ impl TuiFrontend {
 
                 // Apply theme colors
                 if let Some(def) = window_def {
-                    let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                    let colors =
+                        resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
                     if let Some(border_color) = &colors.border {
                         if let Ok(c) = parse_hex_color(border_color) {
                             mv_widget.set_border_color(c);
@@ -2819,9 +2973,7 @@ impl TuiFrontend {
                     };
 
                 // Get show_border from WindowDef
-                let show_border = window_def
-                    .map(|wd| wd.base().show_border)
-                    .unwrap_or(true);
+                let show_border = window_def.map(|wd| wd.base().show_border).unwrap_or(true);
 
                 // Get or create the widget
                 let betrayer_widget = self
@@ -2830,7 +2982,12 @@ impl TuiFrontend {
                     .entry(name.clone())
                     .or_insert_with(|| {
                         let title = window_def
-                            .map(|wd| wd.base().title.clone().unwrap_or_else(|| "Blood Pool".to_string()))
+                            .map(|wd| {
+                                wd.base()
+                                    .title
+                                    .clone()
+                                    .unwrap_or_else(|| "Blood Pool".to_string())
+                            })
                             .unwrap_or_else(|| "Blood Pool".to_string());
                         super::betrayer::Betrayer::new(&title, show_border)
                     });
@@ -2848,7 +3005,8 @@ impl TuiFrontend {
 
                 // Apply theme colors
                 if let Some(def) = window_def {
-                    let colors = resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
+                    let colors =
+                        resolve_window_colors(def.base(), &app_core.config.colors.ui, theme);
                     if let Some(border_color) = &colors.border {
                         if let Ok(c) = parse_hex_color(border_color) {
                             betrayer_widget.set_border_color(c);

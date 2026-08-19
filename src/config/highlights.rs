@@ -294,34 +294,97 @@ use HlFrontend::*;
 /// character) is editor routing, not a struct field, so it is tracked by
 /// each editor but not catalogued here.
 pub const HIGHLIGHT_FIELDS: &[HlFieldDef] = &[
-    HlFieldDef { name: "pattern", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "fg", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "bg", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "bold", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "color_entire_line", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "fast_parse", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "sound", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "sound_volume", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "rumble", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "category", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "squelch", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "silent_prompt", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "redirect_to", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "redirect_mode", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef {
+        name: "pattern",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "fg",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "bg",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "bold",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "color_entire_line",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "fast_parse",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "sound",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "sound_volume",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "rumble",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "category",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "squelch",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "silent_prompt",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "redirect_to",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "redirect_mode",
+        applies_to: &[Tui, Gui, Web],
+    },
     // Custom-status actions (all three editors since 2026-07-31).
-    HlFieldDef { name: "set_status", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "status_duration", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "clear_status", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "replace", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "stream", applies_to: &[Tui, Gui, Web] },
-    HlFieldDef { name: "window", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef {
+        name: "set_status",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "status_duration",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "clear_status",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "replace",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "stream",
+        applies_to: &[Tui, Gui, Web],
+    },
+    HlFieldDef {
+        name: "window",
+        applies_to: &[Tui, Gui, Web],
+    },
     // Overlay alerts (2026-08-11; TUI form fields 2026-08-13). The TUI edits
     // the subset its renderer shows (banner/colors/flash/anchor/duration/
     // cooldown) and preserves the rest via merge; the GUI edits everything.
     // Web stays out: the phone RECEIVES alerts (delta + DOM overlay) but its
     // highlight form doesn't author them yet — this catalog tracks
     // editability, not rendering.
-    HlFieldDef { name: "alert", applies_to: &[Tui, Gui] },
+    HlFieldDef {
+        name: "alert",
+        applies_to: &[Tui, Gui],
+    },
 ];
 
 /// Deliberate coverage gaps, each with a reason. A `(field, frontend)`
@@ -359,19 +422,53 @@ pub fn highlight_web_fields() -> Vec<&'static str> {
 
 /// Fields edited by the TUI highlight form (`frontend/tui/highlight_form.rs`).
 pub const HL_TUI_COVERED: &[&str] = &[
-    "pattern", "fg", "bg", "bold", "color_entire_line", "fast_parse", "sound",
-    "sound_volume", "rumble", "category", "squelch", "silent_prompt",
-    "redirect_to", "redirect_mode", "replace", "stream", "window",
-    "set_status", "status_duration", "clear_status", "alert",
+    "pattern",
+    "fg",
+    "bg",
+    "bold",
+    "color_entire_line",
+    "fast_parse",
+    "sound",
+    "sound_volume",
+    "rumble",
+    "category",
+    "squelch",
+    "silent_prompt",
+    "redirect_to",
+    "redirect_mode",
+    "replace",
+    "stream",
+    "window",
+    "set_status",
+    "status_duration",
+    "clear_status",
+    "alert",
 ];
 
 /// Fields edited by the GUI highlight editor
 /// (`frontend/gui/app/editors/highlights.rs`).
 pub const HL_GUI_COVERED: &[&str] = &[
-    "pattern", "fg", "bg", "bold", "color_entire_line", "fast_parse", "sound",
-    "sound_volume", "rumble", "category", "squelch", "silent_prompt",
-    "redirect_to", "redirect_mode", "replace", "stream", "window",
-    "set_status", "status_duration", "clear_status", "alert",
+    "pattern",
+    "fg",
+    "bg",
+    "bold",
+    "color_entire_line",
+    "fast_parse",
+    "sound",
+    "sound_volume",
+    "rumble",
+    "category",
+    "squelch",
+    "silent_prompt",
+    "redirect_to",
+    "redirect_mode",
+    "replace",
+    "stream",
+    "window",
+    "set_status",
+    "status_duration",
+    "clear_status",
+    "alert",
 ];
 
 /// Fields edited by the web/phone highlight form
@@ -379,10 +476,26 @@ pub const HL_GUI_COVERED: &[&str] = &[
 /// is cross-checked against the embedded app.js by
 /// `web_highlight_manifest_matches_app_js`.
 pub const HL_WEB_COVERED: &[&str] = &[
-    "pattern", "fg", "bg", "bold", "color_entire_line", "fast_parse", "sound",
-    "sound_volume", "rumble", "category", "squelch", "silent_prompt",
-    "redirect_to", "redirect_mode", "replace", "stream", "window",
-    "set_status", "status_duration", "clear_status",
+    "pattern",
+    "fg",
+    "bg",
+    "bold",
+    "color_entire_line",
+    "fast_parse",
+    "sound",
+    "sound_volume",
+    "rumble",
+    "category",
+    "squelch",
+    "silent_prompt",
+    "redirect_to",
+    "redirect_mode",
+    "replace",
+    "stream",
+    "window",
+    "set_status",
+    "status_duration",
+    "clear_status",
 ];
 
 /// The DOM element id the web form uses for a given catalog field, so the
@@ -803,17 +916,32 @@ mod tests {
             HIGHLIGHT_FIELDS.iter().map(|d| d.name).collect();
         for frontend in [HlFrontend::Tui, HlFrontend::Gui, HlFrontend::Web] {
             for field in covered_for(frontend) {
-                assert!(names.contains(field), "manifest {:?} lists unknown field '{}'", frontend, field);
+                assert!(
+                    names.contains(field),
+                    "manifest {:?} lists unknown field '{}'",
+                    frontend,
+                    field
+                );
             }
         }
         for (field, frontend, reason) in HL_FIELD_EXEMPTIONS {
-            assert!(names.contains(field), "exemption for unknown field '{}'", field);
-            assert!(!reason.is_empty(), "exemption for '{}' in {:?} needs a reason", field, frontend);
+            assert!(
+                names.contains(field),
+                "exemption for unknown field '{}'",
+                field
+            );
+            assert!(
+                !reason.is_empty(),
+                "exemption for '{}' in {:?} needs a reason",
+                field,
+                frontend
+            );
             let def = HIGHLIGHT_FIELDS.iter().find(|d| d.name == *field).unwrap();
             assert!(
                 def.applies_to.contains(frontend),
                 "'{}' exempted from {:?} but doesn't apply there anyway",
-                field, frontend
+                field,
+                frontend
             );
         }
     }

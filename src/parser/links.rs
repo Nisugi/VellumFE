@@ -4,7 +4,6 @@
 use super::*;
 
 impl XmlParser {
-
     /// Mirror the OUTERMOST open link into `current_link_data`, which is what
     /// text spans attach. For nested links (`store list`'s
     /// `<d cmd=...>a <a ...>item</a> ...</d>`) the enclosing `<d>` command is
@@ -58,10 +57,7 @@ impl XmlParser {
 
         if fg.is_some() || bg.is_some() {
             // Explicit colors
-            self.color_stack.push(ColorStyle {
-                fg,
-                bg,
-            });
+            self.color_stack.push(ColorStyle { fg, bg });
         } else {
             // Use commands preset (like links preset for <a> tags)
             if let Some((preset_fg, preset_bg)) = self.presets.get("commands") {
@@ -160,10 +156,7 @@ impl XmlParser {
 
         if fg.is_some() || bg.is_some() {
             // Explicit colors
-            self.color_stack.push(ColorStyle {
-                fg,
-                bg,
-            });
+            self.color_stack.push(ColorStyle { fg, bg });
             self.link_pushed_color.push(true);
         } else if let Some((preset_fg, preset_bg)) = self.presets.get("links") {
             // Use links preset
@@ -279,5 +272,4 @@ impl XmlParser {
             elements.push(ParsedElement::MenuResponse { id, coords });
         }
     }
-
 }

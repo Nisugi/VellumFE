@@ -13,8 +13,7 @@ use crate::data::WindowContent;
 /// Valid ActiveEffects feed categories (matched exactly by the router).
 // The four server-fed categories plus "Timers", which the client owns
 // (alert-started countdown bars). All five render identically.
-const EFFECT_CATEGORIES: [&str; 5] =
-    ["ActiveSpells", "Buffs", "Debuffs", "Cooldowns", "Timers"];
+const EFFECT_CATEGORIES: [&str; 5] = ["ActiveSpells", "Buffs", "Debuffs", "Cooldowns", "Timers"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FeedKind {
@@ -119,7 +118,11 @@ impl MultiAccountConfig {
     /// Write the whole view back into the layout's widget data.
     pub(super) fn apply_to(&self, data: &mut crate::config::MultiAccountWidgetData) {
         *data = self.data.clone();
-        data.row_order = self.rows.iter().map(|(r, _, _)| r.id().to_string()).collect();
+        data.row_order = self
+            .rows
+            .iter()
+            .map(|(r, _, _)| r.id().to_string())
+            .collect();
         for (row, shown, merged) in &self.rows {
             data.set_row_shown(*row, *shown);
             data.set_row_merged(*row, *merged);
@@ -506,7 +509,9 @@ impl VellumGuiApp {
                 }
                 // Rename through the shared dot-command so the layout
                 // definition and system messaging match the TUI exactly.
-                let _ = self.app_core.send_command(format!(".rename {} {}", name, title));
+                let _ = self
+                    .app_core
+                    .send_command(format!(".rename {} {}", name, title));
                 self.refresh_available_tabs_if_needed();
                 self.app_core.needs_render = true;
             }
@@ -535,8 +540,7 @@ impl VellumGuiApp {
                     .message_processor
                     .update_text_stream_subscribers(&self.app_core.ui_state);
                 self.app_core.refresh_bounty_window(&name);
-                match self.layout_def_mut(&name)
-                {
+                match self.layout_def_mut(&name) {
                     Some(crate::config::WindowDef::Text { data, .. }) => {
                         data.streams = streams;
                     }
@@ -561,8 +565,7 @@ impl VellumGuiApp {
                 } else {
                     return;
                 }
-                match self.layout_def_mut(&name)
-                {
+                match self.layout_def_mut(&name) {
                     Some(crate::config::WindowDef::Text { data, .. }) => {
                         data.buffer_size = max_lines;
                     }
@@ -583,7 +586,8 @@ impl VellumGuiApp {
                 // Compaction happens at ingestion; re-feed a bounty window
                 // from cached data so the toggle applies now.
                 self.app_core.refresh_bounty_window(&name);
-                if let Some(crate::config::WindowDef::Text { data, .. }) = self.layout_def_mut(&name)
+                if let Some(crate::config::WindowDef::Text { data, .. }) =
+                    self.layout_def_mut(&name)
                 {
                     data.compact = compact;
                 }
@@ -601,7 +605,8 @@ impl VellumGuiApp {
                         text.timestamp_position = position.clone();
                     }
                 }
-                if let Some(crate::config::WindowDef::Text { data, .. }) = self.layout_def_mut(&name)
+                if let Some(crate::config::WindowDef::Text { data, .. }) =
+                    self.layout_def_mut(&name)
                 {
                     data.show_timestamps = show;
                     data.timestamp_position = Some(position);
@@ -609,8 +614,7 @@ impl VellumGuiApp {
                 self.app_core.schedule_layout_autosave();
             }
             GuiWindowMenuCommand::SetTtsSpeak(tts_speak) => {
-                if let Some(def) = self.layout_def_mut(&name)
-                {
+                if let Some(def) = self.layout_def_mut(&name) {
                     if def.base().tts_speak != tts_speak {
                         def.base_mut().tts_speak = tts_speak;
                         self.app_core.refresh_tts_windows();
@@ -629,8 +633,7 @@ impl VellumGuiApp {
                     (WindowContent::Countdown(countdown), FeedKind::Countdown) => {
                         countdown.countdown_id = id.clone();
                         countdown.label = label.clone();
-                        countdown.color =
-                            Some(color.clone()).filter(|value| !value.is_empty());
+                        countdown.color = Some(color.clone()).filter(|value| !value.is_empty());
                         countdown.show_when_zero = feed.show_when_zero;
                         countdown.count_past_zero = feed.count_past_zero;
                     }
@@ -650,23 +653,16 @@ impl VellumGuiApp {
                         Some(value.to_string())
                     }
                 }
-                if let Some(def) = self.layout_def_mut(&name)
-                {
+                if let Some(def) = self.layout_def_mut(&name) {
                     match (def, feed.kind) {
-                        (
-                            crate::config::WindowDef::Countdown { data, .. },
-                            FeedKind::Countdown,
-                        ) => {
+                        (crate::config::WindowDef::Countdown { data, .. }, FeedKind::Countdown) => {
                             data.id = opt(&id);
                             data.label = opt(&label);
                             data.color = opt(&color);
                             data.show_when_zero = Some(feed.show_when_zero);
                             data.count_past_zero = Some(feed.count_past_zero);
                         }
-                        (
-                            crate::config::WindowDef::Progress { data, .. },
-                            FeedKind::Progress,
-                        ) => {
+                        (crate::config::WindowDef::Progress { data, .. }, FeedKind::Progress) => {
                             data.id = opt(&id);
                             data.label = opt(&label);
                             data.color = opt(&color);
@@ -689,7 +685,8 @@ impl VellumGuiApp {
                         }
                     }
                 }
-                if let Some(crate::config::WindowDef::ActiveEffects { data, .. }) = self.layout_def_mut(&name)
+                if let Some(crate::config::WindowDef::ActiveEffects { data, .. }) =
+                    self.layout_def_mut(&name)
                 {
                     data.category = category;
                 }
@@ -700,7 +697,8 @@ impl VellumGuiApp {
                 self.app_core.schedule_layout_autosave();
             }
             GuiWindowMenuCommand::SetRoomSections(room) => {
-                if let Some(crate::config::WindowDef::Room { data, .. }) = self.layout_def_mut(&name)
+                if let Some(crate::config::WindowDef::Room { data, .. }) =
+                    self.layout_def_mut(&name)
                 {
                     data.show_desc = room.show_desc;
                     data.show_objs = room.show_objs;
@@ -710,11 +708,12 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::SetTargetsConfig(targets) => {
-                if let Some(crate::config::WindowDef::Targets { data, .. }) = self.layout_def_mut(&name)
+                if let Some(crate::config::WindowDef::Targets { data, .. }) =
+                    self.layout_def_mut(&name)
                 {
                     data.show_body_part_count = targets.show_appendages;
-                    data.status_position = Some(targets.status_position)
-                        .filter(|position| !position.is_empty());
+                    data.status_position =
+                        Some(targets.status_position).filter(|position| !position.is_empty());
                     self.app_core.schedule_layout_autosave();
                 }
             }
@@ -728,7 +727,8 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::SetExperienceConfig(experience) => {
-                if let Some(crate::config::WindowDef::GS4Experience { data, .. }) = self.layout_def_mut(&name)
+                if let Some(crate::config::WindowDef::GS4Experience { data, .. }) =
+                    self.layout_def_mut(&name)
                 {
                     data.show_level = experience.show_level;
                     data.show_mind_bar = experience.show_mind_bar;
@@ -765,7 +765,8 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::SetEncumConfig(encum) => {
-                if let Some(crate::config::WindowDef::Encumbrance { data, .. }) = self.layout_def_mut(&name)
+                if let Some(crate::config::WindowDef::Encumbrance { data, .. }) =
+                    self.layout_def_mut(&name)
                 {
                     data.show_bar = encum.show_bar;
                     data.show_label = encum.show_label;
@@ -807,19 +808,17 @@ impl VellumGuiApp {
         let name = view.window_name.as_str();
         ui.horizontal(|ui| {
             ui.label("Title");
-            if let Some(title) =
-                commit_text_field(ui, (name, "cfg_title"), &view.title, "", 150.0)
+            if let Some(title) = commit_text_field(ui, (name, "cfg_title"), &view.title, "", 150.0)
             {
                 command = Some(GuiWindowMenuCommand::Rename(title));
             }
         });
         ui.horizontal(|ui| {
-            ui.label("Title bar text")
-                .on_hover_text(
-                    "Custom text shown in the window's title bar. Leave blank \
+            ui.label("Title bar text").on_hover_text(
+                "Custom text shown in the window's title bar. Leave blank \
                      for the automatic title (for a grouped window, the joined \
                      member names).",
-                );
+            );
             if let Some(custom) = commit_text_field(
                 ui,
                 (name, "cfg_custom_title"),
@@ -845,21 +844,22 @@ impl VellumGuiApp {
                 if !view.seen_streams.is_empty() {
                     ui.menu_button("+", |ui| {
                         ui.set_min_width(180.0);
-                        egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                            for (id, label) in &view.seen_streams {
-                                let text = match label {
-                                    Some(label) => format!("{} ({})", id, label),
-                                    None => id.clone(),
-                                };
-                                if ui.button(text).clicked() {
-                                    let mut streams = view.streams.clone();
-                                    super::editors::append_stream_id(&mut streams, id);
-                                    command =
-                                        Some(GuiWindowMenuCommand::SetStreams(streams));
-                                    ui.close();
+                        egui::ScrollArea::vertical()
+                            .max_height(200.0)
+                            .show(ui, |ui| {
+                                for (id, label) in &view.seen_streams {
+                                    let text = match label {
+                                        Some(label) => format!("{} ({})", id, label),
+                                        None => id.clone(),
+                                    };
+                                    if ui.button(text).clicked() {
+                                        let mut streams = view.streams.clone();
+                                        super::editors::append_stream_id(&mut streams, id);
+                                        command = Some(GuiWindowMenuCommand::SetStreams(streams));
+                                        ui.close();
+                                    }
                                 }
-                            }
-                        });
+                            });
                     })
                     .response
                     .on_hover_text("Add a stream seen this session");
@@ -895,7 +895,14 @@ impl VellumGuiApp {
         }
         if view.locked.is_some() {
             if ui
-                .selectable_label(locked, if locked { "Locked in place" } else { "Lock in place" })
+                .selectable_label(
+                    locked,
+                    if locked {
+                        "Locked in place"
+                    } else {
+                        "Lock in place"
+                    },
+                )
                 .on_hover_text(
                     "Locked windows ignore dragging and resizing — position \
                      and size stay put. Arrange ▸ Move Window still works \
@@ -960,10 +967,7 @@ impl VellumGuiApp {
                 ui.label("Really delete this window from the layout?");
                 ui.horizontal(|ui| {
                     if ui
-                        .button(
-                            egui::RichText::new("Delete")
-                                .color(ui.visuals().error_fg_color),
-                        )
+                        .button(egui::RichText::new("Delete").color(ui.visuals().error_fg_color))
                         .clicked()
                     {
                         ui.data_mut(|data| data.insert_temp(arm_id, false));
@@ -1006,8 +1010,7 @@ impl VellumGuiApp {
                          Lich."
                     }
                 });
-                if let Some(id) =
-                    commit_text_field(ui, (name, "cfg_feed_id"), &feed.id, "", 120.0)
+                if let Some(id) = commit_text_field(ui, (name, "cfg_feed_id"), &feed.id, "", 120.0)
                 {
                     let mut next = feed.clone();
                     next.id = id;
@@ -1101,10 +1104,7 @@ impl VellumGuiApp {
                     .selected_text(category.clone())
                     .show_ui(ui, |ui| {
                         for option in EFFECT_CATEGORIES {
-                            if ui
-                                .selectable_label(category == option, option)
-                                .clicked()
-                            {
+                            if ui.selectable_label(category == option, option).clicked() {
                                 command = Some(GuiWindowMenuCommand::SetEffectsCategory(
                                     option.to_string(),
                                 ));
@@ -1159,8 +1159,7 @@ impl VellumGuiApp {
                             {
                                 let mut next = targets.clone();
                                 next.status_position = option.to_string();
-                                command =
-                                    Some(GuiWindowMenuCommand::SetTargetsConfig(next));
+                                command = Some(GuiWindowMenuCommand::SetTargetsConfig(next));
                             }
                         }
                     });
@@ -1286,11 +1285,7 @@ impl VellumGuiApp {
                 ui.label("Card columns");
                 let current = next.data.column_weights().len();
                 for n in 1..=3usize {
-                    if ui
-                        .selectable_label(current == n, format!("{n}"))
-                        .clicked()
-                        && current != n
-                    {
+                    if ui.selectable_label(current == n, format!("{n}")).clicked() && current != n {
                         let mut weights = next.data.column_weights();
                         weights.resize(n, 1.0);
                         next.data.card_column_weights = weights;
@@ -1343,19 +1338,15 @@ impl VellumGuiApp {
                             .add_enabled(index > 0, egui::Button::new("\u{2B06}").small())
                             .clicked()
                         {
-                            command = Some(GuiWindowMenuCommand::MoveMultiAccountRow {
-                                row,
-                                up: true,
-                            });
+                            command =
+                                Some(GuiWindowMenuCommand::MoveMultiAccountRow { row, up: true });
                         }
                         if ui
                             .add_enabled(index < last, egui::Button::new("\u{2B07}").small())
                             .clicked()
                         {
-                            command = Some(GuiWindowMenuCommand::MoveMultiAccountRow {
-                                row,
-                                up: false,
-                            });
+                            command =
+                                Some(GuiWindowMenuCommand::MoveMultiAccountRow { row, up: false });
                         }
                         if shares {
                             // Visual cue: this row draws on the line opened
@@ -1368,9 +1359,7 @@ impl VellumGuiApp {
                         }
                         let mut on = *shown;
                         if ui.checkbox(&mut on, row.label()).changed() {
-                            if let Some(entry) =
-                                next.rows.iter_mut().find(|(r, _, _)| *r == row)
-                            {
+                            if let Some(entry) = next.rows.iter_mut().find(|(r, _, _)| *r == row) {
                                 entry.1 = on;
                             }
                             changed = true;
@@ -1430,11 +1419,8 @@ impl VellumGuiApp {
             }
             ui.horizontal(|ui| {
                 ui.label("Card order");
-                for (value, label) in [
-                    ("group", "Group"),
-                    ("name", "Name"),
-                    ("port", "Connected"),
-                ] {
+                for (value, label) in [("group", "Group"), ("name", "Name"), ("port", "Connected")]
+                {
                     if ui
                         .selectable_label(next.data.sort_by == value, label)
                         .clicked()

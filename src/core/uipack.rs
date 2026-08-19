@@ -193,8 +193,7 @@ pub fn is_valid_pack_name(name: &str) -> bool {
 }
 
 fn zip_options() -> zip::write::SimpleFileOptions {
-    zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
+    zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated)
 }
 
 /// Everything `.uiexport` (or the pack editor panel) hands to [`export`].
@@ -230,11 +229,7 @@ pub fn export(base: &Path, req: &ExportRequest) -> Result<(PathBuf, Vec<String>)
     }
     for part in req.parts {
         if !PARTS.contains(&part.as_str()) {
-            bail!(
-                "Unknown part '{}' — parts are: {}",
-                part,
-                PARTS.join(", ")
-            );
+            bail!("Unknown part '{}' — parts are: {}", part, PARTS.join(", "));
         }
     }
 
@@ -242,8 +237,7 @@ pub fn export(base: &Path, req: &ExportRequest) -> Result<(PathBuf, Vec<String>)
         Some(dir) => dir.to_path_buf(),
         None => base.join("exports"),
     };
-    std::fs::create_dir_all(&dest_dir)
-        .with_context(|| format!("Failed to create {dest_dir:?}"))?;
+    std::fs::create_dir_all(&dest_dir).with_context(|| format!("Failed to create {dest_dir:?}"))?;
     let pack_path = dest_dir.join(format!("{}.vellumpack", req.name));
     let file = std::fs::File::create(&pack_path)
         .with_context(|| format!("Failed to create {pack_path:?}"))?;
@@ -303,10 +297,8 @@ pub fn export(base: &Path, req: &ExportRequest) -> Result<(PathBuf, Vec<String>)
                     let rel = path
                         .strip_prefix(&skin_dir)
                         .expect("collected under skin_dir");
-                    let entry = format!(
-                        "skins/{skin}/{}",
-                        rel.to_string_lossy().replace('\\', "/")
-                    );
+                    let entry =
+                        format!("skins/{skin}/{}", rel.to_string_lossy().replace('\\', "/"));
                     zip.start_file(entry, zip_options())?;
                     zip.write_all(&std::fs::read(&path)?)?;
                 }
@@ -354,7 +346,11 @@ pub fn export(base: &Path, req: &ExportRequest) -> Result<(PathBuf, Vec<String>)
     }
 
     if wants("quickbars") {
-        if let Some(toml) = req.quickbars_toml.as_deref().filter(|t| !t.trim().is_empty()) {
+        if let Some(toml) = req
+            .quickbars_toml
+            .as_deref()
+            .filter(|t| !t.trim().is_empty())
+        {
             zip.start_file("quickbars.toml", zip_options())?;
             zip.write_all(toml.as_bytes())?;
             included.push("quickbars".to_string());
@@ -362,7 +358,11 @@ pub fn export(base: &Path, req: &ExportRequest) -> Result<(PathBuf, Vec<String>)
     }
 
     if wants("settings") {
-        if let Some(toml) = req.settings_toml.as_deref().filter(|t| !t.trim().is_empty()) {
+        if let Some(toml) = req
+            .settings_toml
+            .as_deref()
+            .filter(|t| !t.trim().is_empty())
+        {
             zip.start_file("settings.toml", zip_options())?;
             zip.write_all(toml.as_bytes())?;
             included.push("settings".to_string());
@@ -474,9 +474,7 @@ fn entry_destination(
 ) -> Option<PathBuf> {
     let known_file = |name: &str| LAYERED_FILES.iter().any(|(_, f)| *f == name);
     if entry == "layout.toml" {
-        return Some(
-            PathBuf::from("layouts").join(format!("{pack_name}.toml")),
-        );
+        return Some(PathBuf::from("layouts").join(format!("{pack_name}.toml")));
     }
     if let Some(name) = entry.strip_prefix("global/") {
         return known_file(name).then(|| PathBuf::from("global").join(name));
@@ -484,8 +482,7 @@ fn entry_destination(
     if let Some(name) = entry.strip_prefix("profile/") {
         // Profile entries land on the importing character; without one
         // they fall back to the shared profile dir ("default").
-        return known_file(name)
-            .then(|| PathBuf::from(character.unwrap_or("default")).join(name));
+        return known_file(name).then(|| PathBuf::from(character.unwrap_or("default")).join(name));
     }
     if let (Some(rest), Some(skin)) = (entry.strip_prefix("skins/"), skin) {
         // Only the manifest's own skin, and only sane relative paths.
@@ -516,8 +513,7 @@ fn entry_destination(
     }
     if let (Some(name), Some(theme)) = (entry.strip_prefix("themes/"), theme) {
         // Only the manifest's own theme file, flat under themes/.
-        return (name == format!("{theme}.toml"))
-            .then(|| PathBuf::from("themes").join(name));
+        return (name == format!("{theme}.toml")).then(|| PathBuf::from("themes").join(name));
     }
     None
 }
@@ -644,7 +640,9 @@ pub fn apply(
             manifest.skin.as_deref(),
             manifest.theme.as_deref(),
         ) else {
-            outcome.notes.push(format!("skipped unknown entry '{name}'"));
+            outcome
+                .notes
+                .push(format!("skipped unknown entry '{name}'"));
             continue;
         };
         let dest = base.join(&rel);
@@ -653,8 +651,7 @@ pub fn apply(
             if let Some(parent) = backup.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::copy(&dest, &backup)
-                .with_context(|| format!("Failed to back up {dest:?}"))?;
+            std::fs::copy(&dest, &backup).with_context(|| format!("Failed to back up {dest:?}"))?;
             backed_up = true;
         }
         if let Some(parent) = dest.parent() {
@@ -662,8 +659,7 @@ pub fn apply(
         }
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes)?;
-        std::fs::write(&dest, &bytes)
-            .with_context(|| format!("Failed to write {dest:?}"))?;
+        std::fs::write(&dest, &bytes).with_context(|| format!("Failed to write {dest:?}"))?;
         if name == "layout.toml" {
             outcome.layout_name = Some(pack_name.clone());
         }
@@ -697,7 +693,11 @@ mod tests {
             "name = 'parchment'\n",
         )
         .unwrap();
-        std::fs::write(base.join("global/skins/parchment/icons/a.png"), b"png-bytes").unwrap();
+        std::fs::write(
+            base.join("global/skins/parchment/icons/a.png"),
+            b"png-bytes",
+        )
+        .unwrap();
         std::fs::write(base.join("global/sounds/alerts/ding.mp3"), b"mp3-bytes").unwrap();
         std::fs::write(base.join("themes/midnight.toml"), "# theme\n").unwrap();
     }
@@ -706,10 +706,7 @@ mod tests {
         PARTS.iter().map(|s| s.to_string()).collect()
     }
 
-    fn full_request<'a>(
-        parts: &'a [String],
-        extra: &'a [(String, Vec<u8>)],
-    ) -> ExportRequest<'a> {
+    fn full_request<'a>(parts: &'a [String], extra: &'a [(String, Vec<u8>)]) -> ExportRequest<'a> {
         ExportRequest {
             name: "my-ui",
             parts,
@@ -731,7 +728,10 @@ mod tests {
         let parts = all_parts();
         let extra = vec![(GUI_LAYOUT_ENTRY.to_string(), b"{\"gui\":1}".to_vec())];
         let (path, included) = export(dir.path(), &full_request(&parts, &extra)).unwrap();
-        assert!(path.ends_with("exports/my-ui.vellumpack") || path.ends_with("exports\\my-ui.vellumpack"));
+        assert!(
+            path.ends_with("exports/my-ui.vellumpack")
+                || path.ends_with("exports\\my-ui.vellumpack")
+        );
         // Only parts with files on disk are included (hotbars/macros had
         // none).
         assert_eq!(
@@ -753,8 +753,14 @@ mod tests {
         assert_eq!(preview.manifest.skin.as_deref(), Some("parchment"));
         assert_eq!(preview.manifest.theme.as_deref(), Some("midnight"));
         assert!(preview.entries.iter().any(|e| e == "global/keybinds.toml"));
-        assert!(preview.entries.iter().any(|e| e == "skins/parchment/icons/a.png"));
-        assert!(preview.entries.iter().any(|e| e == "sounds/alerts/ding.mp3"));
+        assert!(preview
+            .entries
+            .iter()
+            .any(|e| e == "skins/parchment/icons/a.png"));
+        assert!(preview
+            .entries
+            .iter()
+            .any(|e| e == "sounds/alerts/ding.mp3"));
         assert!(preview.entries.iter().any(|e| e == "themes/midnight.toml"));
 
         // Import into a fresh base as a different character.
@@ -767,7 +773,11 @@ mod tests {
         assert_eq!(outcome.theme.as_deref(), Some("midnight"));
         assert_eq!(outcome.gui_layout.as_deref(), Some(&b"{\"gui\":1}"[..]));
         assert!(outcome.quickbars_toml.as_deref().unwrap().contains("qb"));
-        assert!(outcome.settings_toml.as_deref().unwrap().contains("buffer_size"));
+        assert!(outcome
+            .settings_toml
+            .as_deref()
+            .unwrap()
+            .contains("buffer_size"));
         assert_eq!(
             std::fs::read_to_string(target.path().join("layouts/my-ui.toml")).unwrap(),
             "# layout\n"
@@ -782,12 +792,7 @@ mod tests {
             "# colors\n"
         );
         assert_eq!(
-            std::fs::read(
-                target
-                    .path()
-                    .join("global/skins/parchment/icons/a.png")
-            )
-            .unwrap(),
+            std::fs::read(target.path().join("global/skins/parchment/icons/a.png")).unwrap(),
             b"png-bytes"
         );
         assert_eq!(
@@ -883,13 +888,13 @@ mod tests {
             .unwrap();
         for evil in [
             "global/../../outside.toml",
-            "global/config.toml",        // config.toml is never a pack file
-            "profile/passwords.toml",    // nor secrets
-            "skins/other/skin.toml",     // wrong skin name
-            "skins/nice/../escape.png",  // traversal inside the skin
-            "sounds/../escape.mp3",      // traversal in the sounds pool
-            "themes/other.toml",         // wrong theme name
-            "themes/cool/../evil.toml",  // theme entries are flat files only
+            "global/config.toml",       // config.toml is never a pack file
+            "profile/passwords.toml",   // nor secrets
+            "skins/other/skin.toml",    // wrong skin name
+            "skins/nice/../escape.png", // traversal inside the skin
+            "sounds/../escape.mp3",     // traversal in the sounds pool
+            "themes/other.toml",        // wrong theme name
+            "themes/cool/../evil.toml", // theme entries are flat files only
             "random.bin",
         ] {
             zip.start_file(evil, zip_options()).unwrap();
@@ -898,7 +903,12 @@ mod tests {
         zip.finish().unwrap();
 
         let outcome = apply(dir.path(), &pack_path, Some("Testy"), None).unwrap();
-        assert_eq!(outcome.notes.len(), 9, "all nine entries skipped: {:?}", outcome.notes);
+        assert_eq!(
+            outcome.notes.len(),
+            9,
+            "all nine entries skipped: {:?}",
+            outcome.notes
+        );
         assert!(!dir.path().join("global/config.toml").exists());
         assert!(!dir.path().join("Testy/passwords.toml").exists());
         assert!(!dir.path().parent().unwrap().join("outside.toml").exists());

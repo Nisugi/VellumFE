@@ -565,9 +565,7 @@ impl CreatureField {
         self.units
             .iter()
             .filter(|u| u.ci == ci)
-            .filter(|u| {
-                (u.row > row && u.size.h < h) || (u.row < row && u.size.h > h)
-            })
+            .filter(|u| (u.row > row && u.size.h < h) || (u.row < row && u.size.h > h))
             .count() as u32
     }
 
@@ -654,8 +652,7 @@ impl CreatureField {
                                         + 1.3 * behind_cov
                                         + 0.35
                                             * (1.0
-                                                - (-((ci * ci) as f32)
-                                                    / (2.0 * sigma * sigma))
+                                                - (-((ci * ci) as f32) / (2.0 * sigma * sigma))
                                                     .exp())
                                         + 0.95 * occ as f32
                                         + 0.18 * ox.abs()
@@ -917,7 +914,10 @@ mod tests {
         fill(&mut f, 7);
         let order = f.draw_order();
         let zs: Vec<f32> = order.iter().map(|&i| f.ground_z(&f.units()[i])).collect();
-        assert!(zs.windows(2).all(|w| w[0] >= w[1]), "not far-to-near: {zs:?}");
+        assert!(
+            zs.windows(2).all(|w| w[0] >= w[1]),
+            "not far-to-near: {zs:?}"
+        );
     }
 
     #[test]
@@ -941,7 +941,11 @@ mod tests {
         f.mount("rider1", "mount1");
         assert_eq!(f.units().len(), 2);
         let pair = f.unit_of("rider1").unwrap();
-        assert_eq!(pair.members, vec!["mount1", "rider1"], "mount stays members[0]");
+        assert_eq!(
+            pair.members,
+            vec!["mount1", "rider1"],
+            "mount stays members[0]"
+        );
         assert_eq!(world_pos(&f, "mount1"), mount_home, "mount must not move");
         assert_eq!(world_pos(&f, "bystander").0, world_pos(&f, "bystander").0);
     }
@@ -951,7 +955,7 @@ mod tests {
         let mut f = CreatureField::default();
         f.arrive("mount1", troll());
         f.mount("rider1", "mount1"); // rider joins without own square
-        // Crowd the room so nearness is actually contested.
+                                     // Crowd the room so nearness is actually contested.
         fill_more(&mut f, 0, 5);
         let mount_foot = f.foot(f.unit_of("mount1").unwrap());
         f.dismount("rider1", kobold());
@@ -960,9 +964,8 @@ mod tests {
         let rider_foot = f.foot(rider);
         // Near: the rider must land closer to the mount than the farthest
         // possible square (half the stage), and pass the hard rules.
-        let d = ((rider_foot.0 - mount_foot.0).powi(2)
-            + (rider_foot.1 - mount_foot.1).powi(2))
-        .sqrt();
+        let d =
+            ((rider_foot.0 - mount_foot.0).powi(2) + (rider_foot.1 - mount_foot.1).powi(2)).sqrt();
         assert!(d < STAGE_W / 2.0, "rider flung {d}px from its mount");
         assert!(!rider.tight, "affinity placement must honour separation");
         assert!(

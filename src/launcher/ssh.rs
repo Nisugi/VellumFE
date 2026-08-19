@@ -280,7 +280,13 @@ where
             client::connect_stream(config, stream, handler),
         )
         .await
-        .map_err(|_| anyhow!("SSH handshake with {}:{} timed out", target.host, target.port))?
+        .map_err(|_| {
+            anyhow!(
+                "SSH handshake with {}:{} timed out",
+                target.host,
+                target.port
+            )
+        })?
         .context("SSH handshake failed")?;
 
         // The handshake reached check_server_key; if it stashed a key to pin,
@@ -592,12 +598,7 @@ pub async fn probe_port(host: &str, port: u16, timeout: Duration) -> bool {
 /// `deadline` elapses. Returns true if the port came up in time. This is the
 /// authoritative "did the launch work" check — we trust the open port, not the
 /// spawn exit code.
-pub async fn wait_for_port(
-    host: &str,
-    port: u16,
-    deadline: Duration,
-    interval: Duration,
-) -> bool {
+pub async fn wait_for_port(host: &str, port: u16, deadline: Duration, interval: Duration) -> bool {
     let start = tokio::time::Instant::now();
     let probe_timeout = Duration::from_secs(2);
     loop {

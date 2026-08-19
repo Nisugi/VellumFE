@@ -32,6 +32,12 @@ pub(super) struct MapExplorerState {
     edit_mode: bool,
     drag: Option<DragState>,
     rename_buffer: String,
+    /// Name buffer for "New map + move" in the membership editor.
+    new_map_buffer: String,
+    // Room-data editor buffers (P4).
+    /// Creature selected in the Creatures section; its spawn rooms tint on
+    /// the map. Session-only — a viewing aid, not map data.
+    selected_creature: Option<String>,
 }
 
 /// An in-flight edit drag; committed as one override edit on release.
@@ -59,6 +65,8 @@ impl Default for MapExplorerState {
             edit_mode: false,
             drag: None,
             rename_buffer: String::new(),
+            new_map_buffer: String::new(),
+            selected_creature: None,
         }
     }
 }
@@ -68,7 +76,7 @@ struct ExplorerOutput {
     close: bool,
     walk_to: Option<u32>,
     request_location: Option<String>,
-    override_edit: Option<OverrideEdit>,
+    override_edits: Vec<OverrideEdit>,
     /// Service-tag category to pin/unpin in config.map.pinned_tags.
     toggle_pinned_tag: Option<String>,
 }
@@ -144,7 +152,7 @@ impl VellumGuiApp {
                 self.dispatch_raw_command(format!(";go2 {id}"));
             }
         }
-        if let Some(edit) = out.override_edit {
+        for edit in out.override_edits {
             self.app_core.map.apply_override_edit(edit);
         }
         if let Some(tag) = out.toggle_pinned_tag {
@@ -277,15 +285,17 @@ impl VellumGuiApp {
                 ui.menu_button("Markers", |ui| {
                     ui.label("Service markers on rooms");
                     ui.separator();
-                    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                        for &tag in crate::core::mapdb::SERVICE_TAGS {
-                            let mut pinned =
-                                app_core.config.map.pinned_tags.iter().any(|t| t == tag);
-                            if ui.checkbox(&mut pinned, tag).changed() {
-                                out.toggle_pinned_tag = Some(tag.to_string());
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| {
+                            for &tag in crate::core::mapdb::SERVICE_TAGS {
+                                let mut pinned =
+                                    app_core.config.map.pinned_tags.iter().any(|t| t == tag);
+                                if ui.checkbox(&mut pinned, tag).changed() {
+                                    out.toggle_pinned_tag = Some(tag.to_string());
+                                }
                             }
-                        }
-                    });
+                        });
                 })
                 .response
                 .on_hover_text("Pick which service tags get room markers (bank, inn, ...)");
@@ -343,8 +353,8 @@ impl VellumGuiApp {
                             .clicked()
                         {
                             if let Some(loc) = ex.location.clone() {
-                                out.override_edit =
-                                    Some(OverrideEdit::ResetLocation { location: loc });
+                                out.override_edits
+                                    .push(OverrideEdit::ResetLocation { location: loc });
                             }
                         }
                     }
@@ -405,17 +415,11 @@ impl VellumGuiApp {
         let Some((_, scene_room)) = scene.and_then(|s| s.room(selected)) else {
             return;
         };
-        // Full room record for exits.
-        let room = ex
-            .location
-            .as_deref()
-            .and_then(|loc| map.mapdb().and_then(|db| db.rooms(loc)))
-            .and_then(|rooms| {
-                rooms
-                    .binary_search_by_key(&selected, |r| r.id)
-                    .ok()
-                    .map(|i| &rooms[i])
-            });
+        // Full room record. Global lookup by id — the browsed key is a
+        // CURATED map name under membership, not a mapdb location string,
+        // so a per-location slice lookup comes back empty and every
+        // sidebar section silently vanishes (the 2026-08-17 bug).
+        let room = map.mapdb().and_then(|db| db.room(selected));
 
         egui::Panel::right("map_explorer_room")
             .default_size(240.0)
@@ -425,25 +429,8 @@ impl VellumGuiApp {
                 } else {
                     &scene_room.title
                 });
-                ui.label(format!("Room id: {selected}"));
-                if let Some(uid) = scene_room.uid {
-                    ui.label(format!("uid: {uid}"));
-                }
-                ui.separator();
-                if ui.button("Walk here").clicked() {
-                    out.walk_to = Some(selected);
-                }
-                if ui.button("Center view").clicked() {
-                    ex.center = Pos2::new(scene_room.cell.x as f32, scene_room.cell.y as f32);
-                }
-                // Room knowledge in collapsible sections: the mapdb record
-                // composited with this session's observations (forage sense,
-                // ranger sense). Session data reads as part of the room — the
-                // mapdb stays pristine underneath, Lich-in-memory-edit feel —
-                // and evidence is wiped on exit. Section open/closed state is
-                // remembered by egui across selections.
-                ui.separator();
-                let evidence = scene_room.uid.and_then(|uid| app_core.evidence.get(uid));
+                // Mockup order: knowledge collapsibles first, identity
+                // block under them, authoring controls at the bottom.
                 if let Some(room) = room {
                     if !room.description.is_empty() {
                         ui.collapsing("Description", |ui| {
@@ -452,7 +439,25 @@ impl VellumGuiApp {
                             }
                         });
                     }
+                    if !room.paths.is_empty() {
+                        ui.collapsing("Exits or Paths", |ui| {
+                            ui.label(&room.paths);
+                        });
+                    }
                 }
+                ui.separator();
+                ui.label(format!("id: {selected}"));
+                if let Some(uid) = scene_room.uid {
+                    ui.label(format!("uid: {uid}"));
+                }
+                if ui.button("Walk here").clicked() {
+                    out.walk_to = Some(selected);
+                }
+                ui.separator();
+                if let Some(loc) = map.mapdb().and_then(|db| db.location_of_room_id(selected)) {
+                    ui.label(format!("Location: {loc}"));
+                }
+                let evidence = scene_room.uid.and_then(|uid| app_core.evidence.get(uid));
                 let sense = evidence.and_then(|ev| ev.sense.as_ref());
                 // Sense words win the display over mapdb fields — fresher.
                 let climate = sense
@@ -461,149 +466,99 @@ impl VellumGuiApp {
                 let terrain = sense
                     .and_then(|s| s.data.terrain.as_deref())
                     .or_else(|| room.and_then(|r| r.terrain.as_deref()));
-                let has_environment = climate.is_some()
-                    || terrain.is_some()
-                    || sense.is_some_and(|s| {
-                        !s.data.wildlife.is_empty()
-                            || s.data.overhead.is_some()
-                            || !s.data.structures.is_empty()
-                    });
-                if has_environment {
-                    ui.collapsing("Environment", |ui| {
-                        if let Some(c) = climate {
-                            ui.label(format!("Climate: {c}"));
-                        }
-                        if let Some(t) = terrain {
-                            ui.label(format!("Terrain: {t}"));
-                        }
-                        if let Some(s) = sense {
-                            if !s.data.wildlife.is_empty() {
-                                ui.label(format!("Wildlife: {}", s.data.wildlife.join(", ")));
-                            }
-                            if let Some(o) = &s.data.overhead {
-                                ui.label(format!("Overhead: {o}"));
-                            }
-                            if !s.data.structures.is_empty() {
-                                ui.label(format!("Structures: {}", s.data.structures.join("; ")));
-                            }
-                        }
-                    });
-                }
-                if let Some(forage) = evidence.and_then(|ev| ev.forage.as_ref()) {
-                    ui.collapsing("Forageables", |ui| {
-                        for item in &forage.items {
-                            ui.label(item);
-                        }
-                    });
-                }
-                if let Some(room) = room {
-                    if !room.tags.is_empty() {
-                        ui.collapsing("Tags", |ui| {
-                            ui.label(room.tags.join(", "));
-                        });
+                ui.label(format!("Climate: {}", climate.unwrap_or("")));
+                ui.label(format!("Terrain: {}", terrain.unwrap_or("")));
+                if let Some(s) = sense {
+                    if !s.data.wildlife.is_empty() {
+                        ui.label(format!("Wildlife: {}", s.data.wildlife.join(", ")));
+                    }
+                    if let Some(o) = &s.data.overhead {
+                        ui.label(format!("Overhead: {o}"));
+                    }
+                    if !s.data.structures.is_empty() {
+                        ui.label(format!("Structures: {}", s.data.structures.join("; ")));
                     }
                 }
-                if ex.edit_mode {
-                    ui.separator();
-                    ui.label(egui::RichText::new("Group").strong());
-                    let scene = ex.location.as_deref().and_then(|loc| map.scene_for(loc));
-                    if let Some((anchor, group)) = scene.and_then(|s| {
-                        s.room(selected)
-                            .and_then(|(_, r)| Some((*s.group_anchors.get(&r.group)?, r.group)))
-                    }) {
-                        let _ = group;
-                        ui.horizontal(|ui| {
-                            ui.text_edit_singleline(&mut ex.rename_buffer);
-                        });
-                        ui.horizontal(|ui| {
-                            if ui.button("Set name").clicked()
-                                && !ex.rename_buffer.trim().is_empty()
-                            {
-                                out.override_edit = Some(OverrideEdit::GroupName {
-                                    location: ex.location.clone().unwrap_or_default(),
-                                    anchor,
-                                    name: Some(ex.rename_buffer.trim().to_string()),
-                                });
-                            }
-                            if ui.button("Clear name").clicked() {
-                                out.override_edit = Some(OverrideEdit::GroupName {
-                                    location: ex.location.clone().unwrap_or_default(),
-                                    anchor,
-                                    name: None,
-                                });
-                            }
-                        });
-                        // Classification: where does this group belong?
-                        let current_choice = ex
-                            .location
-                            .as_deref()
-                            .and_then(|loc| map.overrides_for(loc))
-                            .and_then(|ov| ov.sheets.get(&anchor).copied());
-                        ui.horizontal(|ui| {
-                            ui.label("Sheet:");
-                            for (label, choice) in [
-                                ("Auto", None),
-                                ("Outdoor", Some(SheetChoice::Outdoor)),
-                                ("Interior", Some(SheetChoice::Interior)),
-                            ] {
-                                if ui
-                                    .selectable_label(current_choice == choice, label)
-                                    .clicked()
-                                    && current_choice != choice
-                                {
-                                    out.override_edit = Some(OverrideEdit::Sheet {
-                                        location: ex.location.clone().unwrap_or_default(),
-                                        anchor,
-                                        choice,
-                                    });
+                // Timeto: the routing costs on their own, so a missing cost
+                // (the "wayto exists but pathing skips it" case) is easy to
+                // spot without reading commands.
+                if let Some(room) = room {
+                    if !room.wayto.is_empty() {
+                        ui.collapsing("Timeto", |ui| {
+                            use crate::core::mapdb::TimeTo;
+                            for target in room.wayto.keys() {
+                                let label = match room.timeto.get(target) {
+                                    Some(TimeTo::Seconds(s)) => {
+                                        format!("{target}: {s:.1}s")
+                                    }
+                                    Some(TimeTo::Proc(_)) => {
+                                        format!("{target}: script")
+                                    }
+                                    None => format!("{target}: none (not routable)"),
+                                };
+                                if room.timeto.contains_key(target) {
+                                    ui.label(label);
+                                } else {
+                                    ui.label(egui::RichText::new(label).weak());
                                 }
                             }
                         });
                     }
-                    let key = scene_room.uid.unwrap_or(selected as i64);
-                    let pinned = ex
-                        .location
-                        .as_deref()
-                        .and_then(|loc| map.overrides_for(loc))
-                        .map(|ov| ov.room_pins.contains_key(&key))
-                        .unwrap_or(false);
-                    if pinned && ui.button("Unpin room").clicked() {
-                        out.override_edit = Some(OverrideEdit::RoomPin {
-                            location: ex.location.clone().unwrap_or_default(),
-                            key,
-                            pin: None,
-                        });
-                    }
                 }
+                // Wayto: the movement commands. In edit mode each entry
+                // grows a connection-type dropdown (how the edge draws and
+                // lays out — not where it goes).
                 if let Some(room) = room {
-                    ui.separator();
-                    let rooms_slice = ex
-                        .location
-                        .as_deref()
-                        .and_then(|loc| map.mapdb().map(|db| (db, loc)))
-                        .and_then(|(db, loc)| db.rooms(loc));
-                    egui::CollapsingHeader::new("Exits")
+                    egui::CollapsingHeader::new("Wayto")
                         .default_open(true)
                         .show(ui, |ui| {
                             egui::ScrollArea::vertical()
                                 .max_height(260.0)
                                 .show(ui, |ui| {
                                     for (target, cmd) in &room.wayto {
+                                        // Command + cost. A wayto without a
+                                        // timeto is NOT routable (Lich skips
+                                        // it); procs cost script-time.
+                                        use crate::core::mapdb::TimeTo;
+                                        let cmd_label =
+                                            if crate::core::mapdb::is_proc_command(cmd) {
+                                                "(script)".to_string()
+                                            } else {
+                                                cmd.clone()
+                                            };
+                                        let target_title = map
+                                            .mapdb()
+                                            .and_then(|db| db.room(*target))
+                                            .and_then(|r| r.title.first().cloned())
+                                            .unwrap_or_default();
+                                        let label = match room.timeto.get(target) {
+                                            Some(TimeTo::Seconds(s)) => format!(
+                                                "{cmd_label} \u{2192} {target} ({s:.0}s)"
+                                            ),
+                                            Some(TimeTo::Proc(_)) => format!(
+                                                "{cmd_label} \u{2192} {target} (script cost)"
+                                            ),
+                                            None => format!(
+                                                "{cmd_label} \u{2192} {target} (not routable)"
+                                            ),
+                                        };
+                                        let text =
+                                            if room.timeto.contains_key(target) {
+                                                egui::RichText::new(&label)
+                                            } else {
+                                                egui::RichText::new(&label).weak()
+                                            };
                                         if !ex.edit_mode {
-                                            ui.label(format!("{cmd} \u{2192} {target}"));
+                                            ui.label(text).on_hover_text(&target_title);
                                             continue;
                                         }
                                         // Edge action editor, keyed by the room-key pair.
-                                        let target_key = rooms_slice
-                                            .and_then(|rooms| {
-                                                rooms
-                                                    .binary_search_by_key(target, |r| r.id)
-                                                    .ok()
-                                                    .map(|i| &rooms[i])
-                                            })
+                                        let target_key = map
+                                            .mapdb()
+                                            .and_then(|db| db.room(*target))
                                             .map(|r| r.uid.first().copied().unwrap_or(r.id as i64));
                                         let Some(target_key) = target_key else {
-                                            ui.label(format!("{cmd} \u{2192} {target}"));
+                                            ui.label(text).on_hover_text(&target_title);
                                             continue;
                                         };
                                         let my_key = scene_room.uid.unwrap_or(selected as i64);
@@ -620,7 +575,7 @@ impl VellumGuiApp {
                                                     .map(|e| e.action)
                                             });
                                         ui.horizontal(|ui| {
-                                            ui.label(format!("{cmd} \u{2192} {target}"));
+                                            ui.label(text).on_hover_text(&target_title);
                                             let text = match current_action {
                                                 None => "auto".to_string(),
                                                 Some(EdgeAction::Hide) => "hidden".to_string(),
@@ -658,8 +613,8 @@ impl VellumGuiApp {
                                                 if resp.clicked()
                                                     && current_action != action
                                                 {
-                                                    out.override_edit =
-                                                        Some(OverrideEdit::Edge {
+                                                    out.override_edits
+                                                        .push(OverrideEdit::Edge {
                                                             location: ex
                                                                 .location
                                                                 .clone()
@@ -722,7 +677,263 @@ impl VellumGuiApp {
                                 });
                         });
                 }
-                ui.separator();
+                // Tags split by exclusion: service/structured stay under
+                // Tags, everything else reads as a forageable.
+                let (service_tags, forage_tags) = room
+                    .map(|r| crate::core::mapdb::partition_tags(&r.tags))
+                    .unwrap_or_default();
+                let session_forage = evidence.and_then(|ev| ev.forage.as_ref());
+                if !forage_tags.is_empty() || session_forage.is_some() {
+                    ui.collapsing("Forageables", |ui| {
+                        for item in &forage_tags {
+                            ui.label(*item);
+                        }
+                        if let Some(forage) = session_forage {
+                            for item in &forage.items {
+                                if !forage_tags.iter().any(|t| t == item) {
+                                    ui.label(format!("{item} (seen this session)"));
+                                }
+                            }
+                        }
+                    });
+                }
+                if !service_tags.is_empty() {
+                    ui.collapsing("Tags", |ui| {
+                        for tag in &service_tags {
+                            ui.label(*tag);
+                        }
+                    });
+                }
+                // Creatures spawning here. Not mapdb data: Saga's spawn
+                // tables (uid ranges per generator) baked into the bundled
+                // bestiary, so it's editorial reference, not something the
+                // map editor can change.
+                if let Some(uid) = scene_room.uid.filter(|u| *u > 0) {
+                    let creatures =
+                        crate::core::bestiary::format::shared().here(uid as u64);
+                    if !creatures.is_empty() {
+                        egui::CollapsingHeader::new(format!("Creatures ({})", creatures.len()))
+                            .show(ui, |ui| {
+                                for entry in &creatures {
+                                    let label = match entry.level {
+                                        Some(level) => format!("{} (level {level})", entry.name),
+                                        None => entry.name.clone(),
+                                    };
+                                    let mut text = egui::RichText::new(label);
+                                    if entry.boss {
+                                        text = text.strong();
+                                    }
+                                    let selected =
+                                        ex.selected_creature.as_deref() == Some(&entry.name);
+                                    let mut hover =
+                                        String::from("Click to highlight every room it \
+                                                      spawns in on this map\n");
+                                    if entry.undead {
+                                        hover.push_str("undead\n");
+                                    }
+                                    if let Some(t) = &entry.creature_type {
+                                        hover.push_str(&format!("type: {t}\n"));
+                                    }
+                                    if let Some(hp) = entry.max_hp {
+                                        hover.push_str(&format!("max HP: {hp}\n"));
+                                    }
+                                    if ui
+                                        .selectable_label(selected, text)
+                                        .on_hover_text(hover.trim_end())
+                                        .clicked()
+                                    {
+                                        // Click toggles; only one at a time.
+                                        ex.selected_creature = if selected {
+                                            None
+                                        } else {
+                                            Some(entry.name.clone())
+                                        };
+                                    }
+                                }
+                                if ex.selected_creature.is_some()
+                                    && ui.button("Clear highlight").clicked()
+                                {
+                                    ex.selected_creature = None;
+                                }
+                                ui.label(
+                                    egui::RichText::new("from Saga spawn tables")
+                                        .weak()
+                                        .small(),
+                                );
+                            });
+                    }
+                }
+                if ex.edit_mode {
+                    ui.separator();
+                    egui::CollapsingHeader::new("Group").show(ui, |ui| {
+                    let scene = ex.location.as_deref().and_then(|loc| map.scene_for(loc));
+                    if let Some((anchor, group)) = scene.and_then(|s| {
+                        s.room(selected)
+                            .and_then(|(_, r)| Some((*s.group_anchors.get(&r.group)?, r.group)))
+                    }) {
+                        let _ = group;
+                        ui.horizontal(|ui| {
+                            ui.text_edit_singleline(&mut ex.rename_buffer);
+                        });
+                        ui.horizontal(|ui| {
+                            if ui.button("Set name").clicked()
+                                && !ex.rename_buffer.trim().is_empty()
+                            {
+                                out.override_edits.push(OverrideEdit::GroupName {
+                                    location: ex.location.clone().unwrap_or_default(),
+                                    anchor,
+                                    name: Some(ex.rename_buffer.trim().to_string()),
+                                });
+                            }
+                            if ui.button("Clear name").clicked() {
+                                out.override_edits.push(OverrideEdit::GroupName {
+                                    location: ex.location.clone().unwrap_or_default(),
+                                    anchor,
+                                    name: None,
+                                });
+                            }
+                        });
+                        // Classification: where does this group belong?
+                        let current_choice = ex
+                            .location
+                            .as_deref()
+                            .and_then(|loc| map.overrides_for(loc))
+                            .and_then(|ov| ov.sheets.get(&anchor).copied());
+                        ui.horizontal(|ui| {
+                            ui.label("Sheet:");
+                            for (label, choice) in [
+                                ("Auto", None),
+                                ("Outdoor", Some(SheetChoice::Outdoor)),
+                                ("Interior", Some(SheetChoice::Interior)),
+                            ] {
+                                if ui
+                                    .selectable_label(current_choice == choice, label)
+                                    .clicked()
+                                    && current_choice != choice
+                                {
+                                    out.override_edits.push(OverrideEdit::Sheet {
+                                        location: ex.location.clone().unwrap_or_default(),
+                                        anchor,
+                                        choice,
+                                    });
+                                }
+                            }
+                        });
+                    }
+                    });
+                    // Map membership: move this room between curated/user
+                    // maps (rosters only — the layout engine still places
+                    // everything). Purgatory is the always-available staging
+                    // map; "New map + move" mints a user map and moves the
+                    // room there in one action.
+                    ui.separator();
+                    egui::CollapsingHeader::new("Map membership").show(ui, |ui| {
+                    if let Some(membership) = map.membership() {
+                        use crate::core::map_service::{PURGATORY_KEY, PURGATORY_NAME};
+                        let current_map =
+                            membership.map_of_room(selected).map(str::to_string);
+                        if let Some(cur) = &current_map {
+                            ui.label(format!("In: {}", membership.display_name(cur)));
+                        }
+                        let uids: Vec<i64> =
+                            room.map(|r| r.uid.clone()).unwrap_or_default();
+                        if uids.is_empty() {
+                            ui.label(
+                                egui::RichText::new("(room has no uid: not movable)").weak(),
+                            );
+                        } else {
+                            let mut targets: Vec<(String, String)> = membership
+                                .list_maps()
+                                .into_iter()
+                                .filter(|(_, _, _, curated)| *curated)
+                                .map(|(key, name, _, _)| (key, name))
+                                .collect();
+                            if !targets.iter().any(|(k, _)| k == PURGATORY_KEY) {
+                                targets.push((
+                                    PURGATORY_KEY.to_string(),
+                                    PURGATORY_NAME.to_string(),
+                                ));
+                            }
+                            egui::ComboBox::from_id_salt("map_move_target")
+                                .selected_text("Move to map\u{2026}")
+                                .width(200.0)
+                                .show_ui(ui, |ui| {
+                                    for (key, name) in &targets {
+                                        if current_map.as_deref() == Some(key.as_str()) {
+                                            continue;
+                                        }
+                                        if ui.selectable_label(false, name).clicked() {
+                                            out.override_edits.push(
+                                                OverrideEdit::MembershipMove {
+                                                    uids: uids.clone(),
+                                                    to: Some(key.clone()),
+                                                },
+                                            );
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                            if uids
+                                .iter()
+                                .any(|&u| map.personal_membership_move(u).is_some())
+                                && ui
+                                    .button("Revert move")
+                                    .on_hover_text(
+                                        "Drop the personal move; the room returns to \
+                                         its curated/community map",
+                                    )
+                                    .clicked()
+                            {
+                                out.override_edits.push(OverrideEdit::MembershipMove {
+                                    uids: uids.clone(),
+                                    to: None,
+                                });
+                            }
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut ex.new_map_buffer)
+                                        .hint_text("new map name")
+                                        .desired_width(130.0),
+                                );
+                                if ui.button("New map + move").clicked()
+                                    && !ex.new_map_buffer.trim().is_empty()
+                                {
+                                    let name = ex.new_map_buffer.trim().to_string();
+                                    let key =
+                                        crate::core::map_service::MapService::user_map_key(
+                                            &name,
+                                        );
+                                    out.override_edits
+                                        .push(OverrideEdit::CreateMap {
+                                            key: key.clone(),
+                                            name,
+                                        });
+                                    out.override_edits.push(
+                                        OverrideEdit::MembershipMove {
+                                            uids: uids.clone(),
+                                            to: Some(key),
+                                        },
+                                    );
+                                    ex.new_map_buffer.clear();
+                                }
+                            });
+                        }
+                    }
+                    });
+                    let key = scene_room.uid.unwrap_or(selected as i64);                    let pinned = ex
+                        .location
+                        .as_deref()
+                        .and_then(|loc| map.overrides_for(loc))
+                        .map(|ov| ov.room_pins.contains_key(&key))
+                        .unwrap_or(false);
+                    if pinned && ui.button("Unpin room").clicked() {
+                        out.override_edits.push(OverrideEdit::RoomPin {
+                            location: ex.location.clone().unwrap_or_default(),
+                            key,
+                            pin: None,
+                        });
+                    }
+                }                ui.separator();
                 if ui.button("Close").clicked() {
                     ex.selected = None;
                 }
@@ -857,7 +1068,7 @@ impl VellumGuiApp {
                     };
                     if (delta.x != 0 || delta.y != 0) && ex.location.is_some() {
                         let location = ex.location.clone().unwrap_or_default();
-                        out.override_edit = Some(match drag.room {
+                        out.override_edits.push(match drag.room {
                             Some(id) => {
                                 let key =
                                     scene.room(id).and_then(|(_, r)| r.uid).unwrap_or(id as i64);
@@ -911,7 +1122,11 @@ impl VellumGuiApp {
                 px_per_cell: ex.px_per_cell,
             };
             let style = MapStyle::from_visuals(ui.visuals())
-                .with_accent(super::widgets::widget_accent(ui.ctx(), ui.visuals()));
+                .with_accent(super::widgets::widget_accent(ui.ctx(), ui.visuals()))
+                .with_highlight(
+                    super::widgets::parse_hex_color(&app_core.config.map.creature_highlight)
+                        .unwrap_or(egui::Color32::from_rgb(0xc2, 0x41, 0x4d)),
+                );
             let browsing_here = map.current_location == ex.location;
             // Session ghost sketches: anchored clusters land on whichever
             // sheet their anchor room is drawn on (no group filter — the
@@ -934,6 +1149,37 @@ impl VellumGuiApp {
                 None
             };
             let exits = (current.is_some()).then(|| app_core.game_state.compass_dirs.as_slice());
+            // Rooms on THIS sheet where the selected creature spawns.
+            let highlight_rooms: std::collections::HashSet<u32> = match &ex.selected_creature {
+                Some(name) => {
+                    let entries = crate::core::bestiary::format::shared();
+                    let ranges: Vec<(u64, u64)> = entries
+                        .entries
+                        .iter()
+                        .find(|e| &e.name == name)
+                        .map(|e| {
+                            e.spawns
+                                .iter()
+                                .flat_map(|s| s.uids.iter().copied())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    sheet
+                        .rooms
+                        .iter()
+                        .filter(|room| {
+                            room.uid.is_some_and(|uid| {
+                                uid > 0
+                                    && ranges
+                                        .iter()
+                                        .any(|&(lo, hi)| (uid as u64) >= lo && (uid as u64) <= hi)
+                            })
+                        })
+                        .map(|room| room.id)
+                        .collect()
+                }
+                None => std::collections::HashSet::new(),
+            };
             let result = map_view::paint_sheet(
                 ui,
                 rect,
@@ -944,6 +1190,7 @@ impl VellumGuiApp {
                 true,
                 None,
                 &app_core.config.map.pinned_tags,
+                &highlight_rooms,
                 &style,
             );
             if let Some(overlay) = ghost_overlay.as_ref().filter(|o| !o.is_empty()) {

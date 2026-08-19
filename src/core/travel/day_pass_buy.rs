@@ -51,14 +51,25 @@ enum Phase {
     /// Sent the confirm `ask`; waiting for in-hand or too-poor.
     AwaitPass { sent_ms: u64 },
     /// Too poor: walking to the bank (index into `to_bank`), then withdrawing.
-    ToBank { i: usize, sent_from: Option<u32>, sent_ms: u64 },
+    ToBank {
+        i: usize,
+        sent_from: Option<u32>,
+        sent_ms: u64,
+    },
     /// Sent `withdraw`; waiting for the teller confirmation.
     AwaitWithdraw { sent_ms: u64 },
     /// Walking back from the bank (index into `from_bank`).
-    FromBank { i: usize, sent_from: Option<u32>, sent_ms: u64 },
+    FromBank {
+        i: usize,
+        sent_from: Option<u32>,
+        sent_ms: u64,
+    },
     /// Have the pass; stepping back to the waiting room before the raise.
     /// `sent_ms` is when the look+exit went out (None until sent).
-    ToWaitingRoom { sent_ms: Option<u64>, sent_from: Option<u32> },
+    ToWaitingRoom {
+        sent_ms: Option<u64>,
+        sent_from: Option<u32>,
+    },
     /// Sent `raise pass`; waiting for the whirlwind (travelled) or a
     /// wrong-room/expired failure.
     AwaitRaise { sent_ms: u64 },
@@ -118,7 +129,10 @@ impl Preamble {
             match &mut self.stage {
                 PreStage::Open { sent_ms } => {
                     let Some(sack) = &self.sack else {
-                        self.stage = PreStage::Drop { i: 0, sent_ms: None };
+                        self.stage = PreStage::Drop {
+                            i: 0,
+                            sent_ms: None,
+                        };
                         continue;
                     };
                     match *sent_ms {
@@ -131,10 +145,17 @@ impl Preamble {
                             return false;
                         }
                         Some(sent) => {
-                            let answered = ctx.feedback.iter().any(|(_, f)| f == &F::ContainerOpened)
-                                || ctx.feedback.iter().any(|(_, f)| f == &F::ContainerAlreadyOpen);
+                            let answered =
+                                ctx.feedback.iter().any(|(_, f)| f == &F::ContainerOpened)
+                                    || ctx
+                                        .feedback
+                                        .iter()
+                                        .any(|(_, f)| f == &F::ContainerAlreadyOpen);
                             if answered || ctx.now_ms.saturating_sub(sent) > RESP_TIMEOUT_MS {
-                                self.stage = PreStage::Drop { i: 0, sent_ms: None };
+                                self.stage = PreStage::Drop {
+                                    i: 0,
+                                    sent_ms: None,
+                                };
                                 continue;
                             }
                             return false;
@@ -187,7 +208,11 @@ struct PutBack {
 
 impl PutBack {
     fn new(pass_id: String, sack: Option<String>) -> Self {
-        PutBack { pass_id, sack, sent_ms: None }
+        PutBack {
+            pass_id,
+            sack,
+            sent_ms: None,
+        }
     }
 
     /// Advance; true once the pass is back in the sack (or there's no sack to
@@ -272,7 +297,9 @@ impl UseState {
                     if saw(&F::ItemGot) || ctx.now_ms.saturating_sub(sent) > RESP_TIMEOUT_MS {
                         out.push(BuyEvent::Send(format!("raise #{}", self.pass_id)));
                         self.raised_from = ctx.current_room;
-                        self.phase = UsePhase::AwaitRaise { sent_ms: ctx.now_ms };
+                        self.phase = UsePhase::AwaitRaise {
+                            sent_ms: ctx.now_ms,
+                        };
                     }
                 }
             },
@@ -394,7 +421,9 @@ impl BuyState {
                         return out;
                     }
                     out.push(BuyEvent::Send(self.enter_move.to_string()));
-                    self.phase = Phase::ToClerk { sent_ms: Some(ctx.now_ms) };
+                    self.phase = Phase::ToClerk {
+                        sent_ms: Some(ctx.now_ms),
+                    };
                     return out;
                 };
                 // Wait to arrive (room RESOLVED off the departure room —
@@ -404,7 +433,9 @@ impl BuyState {
                         out.push(BuyEvent::Send("unhide".into()));
                     }
                     out.push(BuyEvent::Send(self.ask()));
-                    self.phase = Phase::AwaitOffer { sent_ms: ctx.now_ms };
+                    self.phase = Phase::AwaitOffer {
+                        sent_ms: ctx.now_ms,
+                    };
                 } else if timed_out(sent) {
                     out.push(BuyEvent::Failed("never reached the pass clerk".into()));
                 }
@@ -417,7 +448,10 @@ impl BuyState {
                     // both shapes). Waiting for an offer that never comes
                     // timed the whole trip out after a full bank round-trip.
                     self.capture_pass(&ctx);
-                    self.phase = Phase::ToWaitingRoom { sent_ms: None, sent_from: None };
+                    self.phase = Phase::ToWaitingRoom {
+                        sent_ms: None,
+                        sent_from: None,
+                    };
                     self.tick_to_waiting_room(&ctx, &mut out);
                 } else if saw(&F::DayPassTooPoor) {
                     out.push(BuyEvent::FailedTooPoor(
@@ -426,7 +460,9 @@ impl BuyState {
                 } else if saw(&F::DayPassOffered) {
                     // Confirm the purchase.
                     out.push(BuyEvent::Send(self.ask()));
-                    self.phase = Phase::AwaitPass { sent_ms: ctx.now_ms };
+                    self.phase = Phase::AwaitPass {
+                        sent_ms: ctx.now_ms,
+                    };
                 } else if timed_out(*sent_ms) {
                     out.push(BuyEvent::Failed("the clerk never made an offer".into()));
                 }
@@ -435,7 +471,10 @@ impl BuyState {
             Phase::AwaitPass { sent_ms } => {
                 if saw(&F::DayPassInHand) {
                     self.capture_pass(&ctx);
-                    self.phase = Phase::ToWaitingRoom { sent_ms: None, sent_from: None };
+                    self.phase = Phase::ToWaitingRoom {
+                        sent_ms: None,
+                        sent_from: None,
+                    };
                     // fall through to send the look/step below next tick
                     self.tick_to_waiting_room(&ctx, &mut out);
                 } else if saw(&F::DayPassTooPoor) {
@@ -443,11 +482,16 @@ impl BuyState {
                         // Already withdrew once and it's STILL not enough —
                         // don't loop bank trips (Lich bails here too).
                         out.push(BuyEvent::FailedTooPoor(
-                            "still too poor after withdrawing - the bank can't cover the pass".into(),
+                            "still too poor after withdrawing - the bank can't cover the pass"
+                                .into(),
                         ));
                     } else if ctx.get_silvers {
                         self.funded = true;
-                        self.phase = Phase::ToBank { i: 0, sent_from: None, sent_ms: ctx.now_ms };
+                        self.phase = Phase::ToBank {
+                            i: 0,
+                            sent_from: None,
+                            sent_ms: ctx.now_ms,
+                        };
                         self.tick_to_bank(&ctx, &mut out);
                     } else {
                         out.push(BuyEvent::FailedTooPoor(
@@ -469,7 +513,11 @@ impl BuyState {
                         "this area's bank account can't cover the pass".into(),
                     ));
                 } else if saw(&F::WithdrawOk) {
-                    self.phase = Phase::FromBank { i: 0, sent_from: None, sent_ms: ctx.now_ms };
+                    self.phase = Phase::FromBank {
+                        i: 0,
+                        sent_from: None,
+                        sent_ms: ctx.now_ms,
+                    };
                     self.tick_from_bank(&ctx, &mut out);
                 } else if timed_out(*sent_ms) {
                     out.push(BuyEvent::Failed("the withdrawal didn't confirm".into()));
@@ -488,16 +536,14 @@ impl BuyState {
                 // Teleport proven by the whirlwind line or the RESOLVED room
                 // changing off the raise room — never a bare nav vs a stale
                 // room (see UseState::AwaitRaise).
-                let moved =
-                    ctx.current_room.is_some() && ctx.current_room != self.raised_from;
+                let moved = ctx.current_room.is_some() && ctx.current_room != self.raised_from;
                 if saw(&F::RaiseTraveled) || moved {
                     // Put the bought pass back (response-gated) before
                     // Traveled — but only when we captured its id; without an
                     // id there's nothing to drag by.
                     match &self.pass_id {
                         Some(id) => {
-                            let mut put =
-                                PutBack::new(id.clone(), self.pre.sack.clone());
+                            let mut put = PutBack::new(id.clone(), self.pre.sack.clone());
                             if put.tick(&ctx, &mut out) {
                                 out.push(BuyEvent::Traveled {
                                     pass_id: self.pass_id.clone(),
@@ -531,7 +577,12 @@ impl BuyState {
 
     /// Paced walk to the bank, then `withdraw 5000`.
     fn tick_to_bank(&mut self, ctx: &BuyTick, out: &mut Vec<BuyEvent>) {
-        let Phase::ToBank { i, sent_from, sent_ms } = &mut self.phase else {
+        let Phase::ToBank {
+            i,
+            sent_from,
+            sent_ms,
+        } = &mut self.phase
+        else {
             return;
         };
         if ctx.rt_remaining > 0.0 {
@@ -539,14 +590,18 @@ impl BuyState {
         }
         // Waiting for the previous step to land?
         if let Some(from) = *sent_from {
-            if ctx.current_room == Some(from) && ctx.now_ms.saturating_sub(*sent_ms) <= RESP_TIMEOUT_MS {
+            if ctx.current_room == Some(from)
+                && ctx.now_ms.saturating_sub(*sent_ms) <= RESP_TIMEOUT_MS
+            {
                 return; // not landed yet
             }
         }
         if *i >= self.to_bank.len() {
             // Arrived at the bank — withdraw.
             out.push(BuyEvent::Send("withdraw 5000".into()));
-            self.phase = Phase::AwaitWithdraw { sent_ms: ctx.now_ms };
+            self.phase = Phase::AwaitWithdraw {
+                sent_ms: ctx.now_ms,
+            };
             return;
         }
         out.push(BuyEvent::Send(self.to_bank[*i].to_string()));
@@ -557,14 +612,21 @@ impl BuyState {
 
     /// Paced walk back from the bank, then re-ask (offer → confirm again).
     fn tick_from_bank(&mut self, ctx: &BuyTick, out: &mut Vec<BuyEvent>) {
-        let Phase::FromBank { i, sent_from, sent_ms } = &mut self.phase else {
+        let Phase::FromBank {
+            i,
+            sent_from,
+            sent_ms,
+        } = &mut self.phase
+        else {
             return;
         };
         if ctx.rt_remaining > 0.0 {
             return;
         }
         if let Some(from) = *sent_from {
-            if ctx.current_room == Some(from) && ctx.now_ms.saturating_sub(*sent_ms) <= RESP_TIMEOUT_MS {
+            if ctx.current_room == Some(from)
+                && ctx.now_ms.saturating_sub(*sent_ms) <= RESP_TIMEOUT_MS
+            {
                 return;
             }
         }
@@ -576,7 +638,9 @@ impl BuyState {
                 out.push(BuyEvent::Send("unhide".into()));
             }
             out.push(BuyEvent::Send(self.ask()));
-            self.phase = Phase::AwaitOffer { sent_ms: ctx.now_ms };
+            self.phase = Phase::AwaitOffer {
+                sent_ms: ctx.now_ms,
+            };
             return;
         }
         out.push(BuyEvent::Send(self.from_bank[*i].to_string()));
@@ -603,7 +667,10 @@ impl BuyState {
             out.push(BuyEvent::Send(look));
             out.push(BuyEvent::Send(self.exit_move.to_string()));
             let from = ctx.current_room;
-            self.phase = Phase::ToWaitingRoom { sent_ms: Some(ctx.now_ms), sent_from: from };
+            self.phase = Phase::ToWaitingRoom {
+                sent_ms: Some(ctx.now_ms),
+                sent_from: from,
+            };
             return;
         };
         // Arrived back at the waiting room (room RESOLVED off the clerk room —
@@ -617,7 +684,9 @@ impl BuyState {
             };
             out.push(BuyEvent::Send(raise));
             self.raised_from = ctx.current_room;
-            self.phase = Phase::AwaitRaise { sent_ms: ctx.now_ms };
+            self.phase = Phase::AwaitRaise {
+                sent_ms: ctx.now_ms,
+            };
         } else if ctx.now_ms.saturating_sub(sent) > RESP_TIMEOUT_MS {
             out.push(BuyEvent::Failed(
                 "never made it back to the Chronomage waiting room".into(),

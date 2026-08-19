@@ -125,7 +125,11 @@ macro_rules! zone_test {
 }
 
 zone_test!(mist_harbor_matches_reference, "Mist Harbor", "mist-harbor");
-zone_test!(icemule_trace_matches_reference, "Icemule Trace", "icemule-trace");
+zone_test!(
+    icemule_trace_matches_reference,
+    "Icemule Trace",
+    "icemule-trace"
+);
 zone_test!(
     wehnimers_landing_matches_reference,
     "Wehnimer's Landing",
@@ -164,7 +168,10 @@ fn atoll_inlines_its_grottos() {
     );
     let outdoor: HashSet<usize> = layout.outdoor.iter().copied().collect();
     for &idx in &layout.inlined {
-        assert!(outdoor.contains(&idx), "inlined group {idx} not on the outdoor sheet");
+        assert!(
+            outdoor.contains(&idx),
+            "inlined group {idx} not on the outdoor sheet"
+        );
         assert!(
             !layout.interiors.contains(&idx),
             "inlined group {idx} still on the shelf"
@@ -224,7 +231,12 @@ fn inlined_buildings_sit_beside_their_doorways() {
 /// buildings never inlines, even where the ground looks open.
 #[test]
 fn towns_keep_their_interior_shelf() {
-    for file in ["wehnimers-landing", "icemule-trace", "solhaven", "ta-illistim"] {
+    for file in [
+        "wehnimers-landing",
+        "icemule-trace",
+        "solhaven",
+        "ta-illistim",
+    ] {
         let mut rooms = load_rooms(file);
         let layout = generate_layout(&mut rooms);
         assert_hard_invariants(&layout, &rooms);
@@ -251,9 +263,7 @@ fn inline_pass_is_deterministic() {
 #[test]
 fn curated_interior_flip_pins_the_building_to_the_shelf() {
     use vellum_fe::core::layout_engine::overrides::group_anchor_key;
-    use vellum_fe::core::layout_engine::{
-        generate_layout_curated, LocationOverrides, SheetChoice,
-    };
+    use vellum_fe::core::layout_engine::{generate_layout_curated, LocationOverrides, SheetChoice};
     use vellum_fe::core::mapdb::RoomTable;
 
     let mut rooms = load_rooms("the-atoll");
@@ -370,7 +380,9 @@ fn satellite_edge_audit() {
                         continue;
                     };
                     resolvable += 1;
-                    let diff = (stated - actual).rem_euclid(8).min((actual - stated).rem_euclid(8));
+                    let diff = (stated - actual)
+                        .rem_euclid(8)
+                        .min((actual - stated).rem_euclid(8));
                     match diff {
                         0 => agree += 1,
                         1 => adjacent += 1,

@@ -189,9 +189,7 @@ impl InventoryService {
         // discarded our cursor mid-walk, so partial data can't be trusted
         // to still describe one coherent moment.
         if let Some(s) = state.filter(|s| !s.is_empty()) {
-            tracing::warn!(
-                "inventoryManager load failed (token={token}, state={s}); restarting"
-            );
+            tracing::warn!("inventoryManager load failed (token={token}, state={s}); restarting");
             self.fail_load(now_ms);
             return ResponseOutcome::Failed;
         }
@@ -277,8 +275,9 @@ impl InventoryService {
                     },
                 );
             }
-            self.outbox
-                .push(format!("_inventory manager {token} continue {room} {root} {last}"));
+            self.outbox.push(format!(
+                "_inventory manager {token} continue {room} {root} {last}"
+            ));
         }
     }
 
@@ -286,10 +285,7 @@ impl InventoryService {
     /// caller sends whatever comes back.
     pub fn tick(&mut self, now_ms: u64) -> Vec<String> {
         if let Some(load) = self.active.as_ref() {
-            let timed_out = load
-                .in_flight
-                .values()
-                .any(|r| now_ms >= r.deadline_ms);
+            let timed_out = load.in_flight.values().any(|r| now_ms >= r.deadline_ms);
             if timed_out {
                 tracing::warn!("inventoryManager request timed out; restarting load");
                 self.fail_load(now_ms);
@@ -318,11 +314,8 @@ impl InventoryService {
     /// `in_selector` addresses the subtree by noun phrase, not `#id`.
     pub fn queue_container_probes(&mut self, snapshot: &ManagedInventoryState) {
         self.probe_queue.clear();
-        let by_id: HashMap<&str, &ManagedInventoryItem> = snapshot
-            .items
-            .iter()
-            .map(|i| (i.id.as_str(), i))
-            .collect();
+        let by_id: HashMap<&str, &ManagedInventoryItem> =
+            snapshot.items.iter().map(|i| (i.id.as_str(), i)).collect();
         for item in &snapshot.items {
             if !item.is_container() {
                 continue;
@@ -423,7 +416,9 @@ impl InventoryService {
             return ViewItemOutcome::Ignored;
         }
         if expected != exist {
-            tracing::debug!("viewitem probe answered with wrong exist ({exist}, wanted {expected})");
+            tracing::debug!(
+                "viewitem probe answered with wrong exist ({exist}, wanted {expected})"
+            );
             return ViewItemOutcome::Ignored;
         }
         ViewItemOutcome::Probe(ProbeResult {
@@ -495,9 +490,8 @@ mod tests {
         let token = token_of(&svc.tick(0)[0]);
 
         // Initial chunk: 2 items + 6 cursors -> only 4 go out.
-        let cursors: Vec<(String, String)> = (0..6)
-            .map(|i| (format!("r{i}"), format!("l{i}")))
-            .collect();
+        let cursors: Vec<(String, String)> =
+            (0..6).map(|i| (format!("r{i}"), format!("l{i}"))).collect();
         let out = svc.on_response(&token, "77", None, vec![item("1"), item("2")], &cursors, 10);
         assert_eq!(out, ResponseOutcome::Absorbed);
         let sent = svc.tick(10);
@@ -562,7 +556,10 @@ mod tests {
         let sent = svc.tick(10);
         assert_eq!(sent.len(), 1);
         assert!(sent[0].starts_with("_inventory manager im"));
-        assert!(!sent[0].contains("continue"), "restart is a fresh initial load");
+        assert!(
+            !sent[0].contains("continue"),
+            "restart is a fresh initial load"
+        );
 
         // Two more failures exhaust the restart budget.
         let t2 = token_of(&sent[0]);
@@ -672,7 +669,10 @@ mod tests {
         let verdict = svc.on_viewitem(&token, "10", None, true, &[]);
         assert_eq!(
             verdict,
-            ViewItemOutcome::Probe(ProbeResult { exist: "10".to_string(), closed: true })
+            ViewItemOutcome::Probe(ProbeResult {
+                exist: "10".to_string(),
+                closed: true
+            })
         );
         svc.on_prompt(2);
         let sent = svc.tick(2);
@@ -698,10 +698,7 @@ mod tests {
         // pouch must go via the locker's noun phrase.
         let mut locker = container("1", "room", Some("locker"));
         locker.relation = "in".to_string();
-        svc.queue_container_probes(&snapshot(vec![
-            locker,
-            container("2", "1", None),
-        ]));
+        svc.queue_container_probes(&snapshot(vec![locker, container("2", "1", None)]));
         svc.on_prompt(0);
         let sent = svc.tick(0);
         // First probe is the locker itself: no strict ancestor, no via.
@@ -742,7 +739,9 @@ mod tests {
         svc.queue_container_probes(&snapshot(vec![container("10", "player", None)]));
         svc.on_prompt(0);
         let t = token_of(&svc.tick(0)[0]);
-        assert!(svc.on_viewitem(&t, "10", Some("malformed"), true, &[]) == ViewItemOutcome::Ignored);
+        assert!(
+            svc.on_viewitem(&t, "10", Some("malformed"), true, &[]) == ViewItemOutcome::Ignored
+        );
     }
 
     #[test]

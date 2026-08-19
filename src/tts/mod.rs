@@ -263,8 +263,9 @@ impl TtsManager {
         // Pronunciation substitutions.
         let mut entry = entry;
         for sub in &self.substitutions {
-            if let std::borrow::Cow::Owned(replaced) =
-                sub.pattern.replace_all(&entry.text, sub.replacement.as_str())
+            if let std::borrow::Cow::Owned(replaced) = sub
+                .pattern
+                .replace_all(&entry.text, sub.replacement.as_str())
             {
                 entry.text = replaced;
             }
@@ -754,10 +755,7 @@ mod tests {
     #[test]
     fn substitutions_rewrite_text() {
         let mut tts = manager();
-        tts.set_filters(
-            &[],
-            &[("Wehnimer's".to_string(), "Wenimers".to_string())],
-        );
+        tts.set_filters(&[], &[("Wehnimer's".to_string(), "Wenimers".to_string())]);
         tts.enqueue(entry("You arrive in Wehnimer's Landing."));
         assert_eq!(tts.queue[0].text, "You arrive in Wenimers Landing.");
     }

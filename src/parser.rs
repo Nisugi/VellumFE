@@ -12,8 +12,8 @@ mod text;
 use crate::config::EventAction;
 use crate::data::{DialogButton, DialogDropDown, LinkData, QuickbarEntry};
 use regex::Regex;
-use std::sync::LazyLock;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 /// Text categories emitted by the XML stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,14 +59,24 @@ fn parse_progress_numbers(text: &str, percentage: u32) -> (u32, u32) {
 fn first_number(input: &str) -> Option<u32> {
     input
         .split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '%')
-        .find_map(|token| token.trim_matches(|c: char| !c.is_ascii_digit()).parse().ok())
+        .find_map(|token| {
+            token
+                .trim_matches(|c: char| !c.is_ascii_digit())
+                .parse()
+                .ok()
+        })
 }
 
 fn last_number(input: &str) -> Option<u32> {
     input
         .split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '%')
         .rev()
-        .find_map(|token| token.trim_matches(|c: char| !c.is_ascii_digit()).parse().ok())
+        .find_map(|token| {
+            token
+                .trim_matches(|c: char| !c.is_ascii_digit())
+                .parse()
+                .ok()
+        })
 }
 
 /// Top-level representation of any XML fragment we care about.
@@ -249,9 +259,9 @@ pub enum ParsedElement {
     },
     /// Injury data for another player's injuries popup dialog
     InjuryPopupData {
-        popup_id: String,                               // Dialog ID: "injuries-10154507"
-        injuries: Vec<(String, String)>,                // Vec of (body_part, injury_level)
-        clear: bool,                                    // true if clearing injuries
+        popup_id: String,                // Dialog ID: "injuries-10154507"
+        injuries: Vec<(String, String)>, // Vec of (body_part, injury_level)
+        clear: bool,                     // true if clearing injuries
     },
     StatusIndicator {
         id: String,   // Status type: "poisoned", "diseased", "bleeding", "stunned"
@@ -497,13 +507,11 @@ pub struct DialogProgressBarSpec {
 
 /// Tracks the currently active foreground/background/bold settings while the
 /// parser walks nested XML tags.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct ColorStyle {
     fg: Option<String>,
     bg: Option<String>,
 }
-
 
 /// Stateful streaming parser that consumes wizard XML chunks and emits
 /// high-level `ParsedElement` values.
@@ -729,6 +737,22 @@ impl XmlParser {
                 if let Some(tag_end) = remaining[tag_start..].find('>') {
                     let tag = &remaining[tag_start..tag_start + tag_end + 1];
 
+                    // Simu splits one logical line into fragments with
+                    // <popStream/><pushStream id="same"/> pairs mid-sentence
+                    // (arena spectate on the familiar stream). Wrayth glues
+                    // those fragments back together; treat the pair as a
+                    // no-op so the line stays whole instead of breaking at
+                    // every fragment boundary.
+                    if tag.starts_with("<popStream") {
+                        let after = &remaining[tag_start + tag_end + 1..];
+                        if let Some(push_len) =
+                            Self::same_stream_repush_len(after, &self.current_stream)
+                        {
+                            remaining = &after[push_len..];
+                            continue;
+                        }
+                    }
+
                     // Process the tag (may flush buffer)
                     self.process_tag(tag, &mut text_buffer, &mut elements);
 
@@ -757,10 +781,36 @@ impl XmlParser {
     /// comparison leaves the link style open, bleeding link color over
     /// everything after it. The name must end at a non-alphanumeric char so
     /// `</a$>` closes a link but `</app>` never does.
+    /// If `after` begins with a `<pushStream>` tag whose id matches the
+    /// stream that is currently open, return that tag's length so the
+    /// caller can skip the whole <popStream/><pushStream/> pair. Adjacency
+    /// is required: any text between the tags belongs to the outer stream
+    /// and means this is a real stream switch, not fragment glue.
+    fn same_stream_repush_len(after: &str, current_stream: &str) -> Option<usize> {
+        if current_stream.is_empty() || current_stream == "main" {
+            return None;
+        }
+        if !after.starts_with("<pushStream") {
+            return None;
+        }
+        let tag_end = after.find('>')?;
+        let tag = &after[..tag_end + 1];
+        if Self::extract_attribute(tag, "id").as_deref() == Some(current_stream) {
+            Some(tag_end + 1)
+        } else {
+            None
+        }
+    }
+
     fn is_close_tag(tag: &str, name: &str) -> bool {
         tag.strip_prefix("</")
             .and_then(|rest| rest.strip_prefix(name))
-            .is_some_and(|rest| !rest.chars().next().is_some_and(|c| c.is_ascii_alphanumeric()))
+            .is_some_and(|rest| {
+                !rest
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric())
+            })
     }
 
     fn process_tag(
@@ -997,15 +1047,17 @@ impl XmlParser {
         }
         // Handle dropDownBox for target list
         else if tag.starts_with("<dropDownBox ") {
-            tracing::debug!("Parser: Matched dropDownBox tag: {}", &tag[..tag.len().min(100)]);
+            tracing::debug!(
+                "Parser: Matched dropDownBox tag: {}",
+                &tag[..tag.len().min(100)]
+            );
             self.handle_dropdown(tag, elements);
         }
         // Creature status snapshot (usually embedded in room objs components,
         // which are captured whole; this arm catches any sent standalone)
         else if tag.starts_with("<crtrStatus ") {
             self.handle_crtr_status(tag, elements);
-        }
-        else if tag.starts_with("<roommeta ") {
+        } else if tag.starts_with("<roommeta ") {
             self.handle_roommeta(tag, elements);
         }
         // Extended feed (WRAYTH 1.0.1.28+ banner): pulse tick and the
@@ -1015,8 +1067,8 @@ impl XmlParser {
         } else if tag.starts_with("<worldEvent") {
             self.handle_world_event(tag, elements);
         } else if tag.starts_with("<PantheonStatus") {
-            if let Some(value) = Self::extract_attribute(tag, "value")
-                .and_then(|v| v.trim().parse().ok())
+            if let Some(value) =
+                Self::extract_attribute(tag, "value").and_then(|v| v.trim().parse().ok())
             {
                 elements.push(ParsedElement::PantheonStatus { value });
             }
@@ -1036,7 +1088,10 @@ impl XmlParser {
         // Debug: catch any dropdown-related tags we might be missing
         // (case-sensitive checks - avoids a per-tag to_lowercase allocation)
         else if tag.contains("dropDown") || tag.contains("dropdown") || tag.contains("dDB") {
-            tracing::warn!("Parser: Unhandled dropdown-like tag: {}", &tag[..tag.len().min(100)]);
+            tracing::warn!(
+                "Parser: Unhandled dropdown-like tag: {}",
+                &tag[..tag.len().min(100)]
+            );
         }
         // Silently ignore these tags
         else if tag.starts_with("<compDef ")
@@ -1047,7 +1102,6 @@ impl XmlParser {
             // Ignore these (UI layout tags)
         }
     }
-
 }
 
 impl Default for XmlParser {

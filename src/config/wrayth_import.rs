@@ -379,10 +379,7 @@ mod tests {
 <palette><i id="13" color="#39CC00"/></palette>
 </settings>"##;
 
-    fn find<'a>(
-        result: &'a WraythImport,
-        key: &str,
-    ) -> &'a HighlightPattern {
+    fn find<'a>(result: &'a WraythImport, key: &str) -> &'a HighlightPattern {
         &result
             .highlights
             .iter()
@@ -408,7 +405,6 @@ mod tests {
         let help = find(&result, "wrayth_help");
         assert!(help.color_entire_line);
     }
-
 
     #[test]
     fn wrayth_case_attribute_maps_to_case_insensitive() {
@@ -528,6 +524,9 @@ mod tests {
         let result = import_wrayth_settings(xml).unwrap();
         let keys: Vec<&str> = result.highlights.iter().map(|(k, _)| k.as_str()).collect();
         // "[Merchant]" and "[Merchant]-" slug identically; all three stay distinct
-        assert_eq!(keys, vec!["wrayth_merchant", "wrayth_merchant_2", "wrayth_merchant_3"]);
+        assert_eq!(
+            keys,
+            vec!["wrayth_merchant", "wrayth_merchant_2", "wrayth_merchant_3"]
+        );
     }
 }

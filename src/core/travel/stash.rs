@@ -292,10 +292,7 @@ impl StashTask {
             let hand = *hand;
             // Retrieved if the item is now in EITHER hand (it may land in the
             // wrong one; a swap fixes that, but for "filled" either counts).
-            let back = ctx
-                .left_hand
-                .map(|i| &i.id == item_id)
-                .unwrap_or(false)
+            let back = ctx.left_hand.map(|i| &i.id == item_id).unwrap_or(false)
                 || ctx.right_hand.map(|i| &i.id == item_id).unwrap_or(false);
             if back {
                 // If it landed in the wrong hand, swap it back (Lich's
@@ -351,7 +348,10 @@ fn plan_stow(
     let ethereal = is_ethereal(&item.name);
     // Worn shields/bows (non-ethereal): wear to inventory, retrieve `remove`.
     if !ethereal && is_worn_gear(&item.noun) {
-        return (format!("wear #{}", item.id), Retrieve::Remove(item.id.clone()));
+        return (
+            format!("wear #{}", item.id),
+            Retrieve::Remove(item.id.clone()),
+        );
     }
     // Bandolier weapon: stow normally, but retrieve with `rub #bag`.
     let retrieve_override = if ethereal {
@@ -371,12 +371,7 @@ fn plan_stow(
 }
 
 /// Pick the stow command per Lich's per-hand cascade (stash.rb:171-257).
-fn stow_destination(
-    item: &GameItem,
-    is_weapon: bool,
-    ctx: StashContext,
-    rs: &ReadyStow,
-) -> String {
+fn stow_destination(item: &GameItem, is_weapon: bool, ctx: StashContext, rs: &ReadyStow) -> String {
     // 1. This item has a ready store-rule → sheath / 2nd sheath / default.
     if let Some(mode) = rs.store_mode_for(item) {
         let bag = match mode {
@@ -574,7 +569,10 @@ mod tests {
     #[test]
     fn bandolier_weapon_retrieves_with_rub_bag() {
         let mut objs = GameObjects::default();
-        objs.set_hand(Hand::Right, Some(GameItem::new("7", "sword", "a war sword")));
+        objs.set_hand(
+            Hand::Right,
+            Some(GameItem::new("7", "sword", "a war sword")),
+        );
         let others: Vec<String> = vec![];
         // Caller resolved a bandolier bag (#500) for the right hand.
         let mut c = ctx(&objs, None, Some("99"), &others, 0);
@@ -604,11 +602,30 @@ mod tests {
         assert_eq!(e, vec![StashEvent::Send("_drag #1 #99".into())]);
         // Hand never clears; past the timeout → fall back to a bare `stow`
         // rather than giving up (the item might still land in the default bag).
-        let e = empty.tick(ctx(&objs, None, Some("99"), &others, CONFIRM_TIMEOUT_MS + 1));
-        assert_eq!(e, vec![StashEvent::Send("stow #1".into())], "falls back to bare stow");
+        let e = empty.tick(ctx(
+            &objs,
+            None,
+            Some("99"),
+            &others,
+            CONFIRM_TIMEOUT_MS + 1,
+        ));
+        assert_eq!(
+            e,
+            vec![StashEvent::Send("stow #1".into())],
+            "falls back to bare stow"
+        );
         // The fallback ALSO times out → now it's a real failure.
-        let e = empty.tick(ctx(&objs, None, Some("99"), &others, 2 * CONFIRM_TIMEOUT_MS + 2));
-        assert!(matches!(e.as_slice(), [StashEvent::Failed(_)]), "gives up after the fallback: {e:?}");
+        let e = empty.tick(ctx(
+            &objs,
+            None,
+            Some("99"),
+            &others,
+            2 * CONFIRM_TIMEOUT_MS + 2,
+        ));
+        assert!(
+            matches!(e.as_slice(), [StashEvent::Failed(_)]),
+            "gives up after the fallback: {e:?}"
+        );
     }
 
     #[test]

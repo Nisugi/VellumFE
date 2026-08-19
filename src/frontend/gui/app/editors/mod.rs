@@ -2,25 +2,25 @@
 //! colors). Editors are egui windows that buffer edits and apply them through
 //! the shared core config layer, so both frontends stay in sync.
 
+mod alertpacks;
 mod colors;
 #[cfg(feature = "gamepad")]
 mod controller;
 mod custom_windows;
 mod dashboard;
 mod doll_calibration;
-mod jinx;
 mod hand_icons;
 mod highlights;
 mod hotbars;
 mod indicators;
+mod jinx;
 mod keybinds;
 mod known_windows;
 mod launcher;
 mod menu_keybinds;
-mod alertpacks;
 mod packs;
-mod settings;
 mod room_images;
+mod settings;
 mod sorter;
 mod tabs;
 mod themes;
@@ -33,18 +33,18 @@ pub(super) use controller::ControllerEditorState;
 pub(super) use custom_windows::CustomWindowsEditorState;
 pub(super) use dashboard::DashboardEditorState;
 pub(super) use doll_calibration::DollCalibrationState;
-pub(super) use jinx::JinxPanelState;
 pub(super) use hand_icons::HandIconsEditorState;
 pub(super) use highlights::HighlightEditorState;
 pub(super) use hotbars::HotbarEditorState;
 pub(super) use indicators::IndicatorTemplatesEditorState;
+pub(super) use jinx::JinxPanelState;
 pub(super) use keybinds::KeybindEditorState;
 pub(super) use known_windows::KnownWindowsEditorState;
 pub(super) use launcher::LauncherEditorState;
 pub(super) use menu_keybinds::MenuKeybindEditorState;
 pub(super) use packs::PackEditorState;
-pub(super) use settings::{settings_sections, SettingsEditorState};
 pub(super) use room_images::RoomImagesEditorState;
+pub(super) use settings::{settings_sections, SettingsEditorState};
 pub(super) use sorter::SorterEditorState;
 pub(super) use tabs::TabEditorState;
 pub(super) use themes::{ThemeBrowserState, ThemeEditorState};
@@ -187,10 +187,7 @@ pub(super) fn icon_ref_picker(
                     current,
                     Some(crate::data::IconRef::SheetCell { sheet: s, .. }) if s == sheet
                 );
-                if ui
-                    .selectable_label(is, format!("sheet: {sheet}"))
-                    .clicked()
-                {
+                if ui.selectable_label(is, format!("sheet: {sheet}")).clicked() {
                     picked = Some(IconRefPick::Ref(crate::data::IconRef::SheetCell {
                         sheet: sheet.clone(),
                         cell: 1,
@@ -236,15 +233,11 @@ pub(super) fn sheet_cell_grid(
                         let Some((texture, uv)) = art.sheet_cell(sheet, cell, grayscale) else {
                             continue;
                         };
-                        let (rect, response) = ui
-                            .allocate_exact_size(egui::vec2(THUMB, THUMB), egui::Sense::click());
+                        let (rect, response) =
+                            ui.allocate_exact_size(egui::vec2(THUMB, THUMB), egui::Sense::click());
                         if ui.is_rect_visible(rect) {
-                            ui.painter().image(
-                                texture.texture,
-                                rect,
-                                uv,
-                                egui::Color32::WHITE,
-                            );
+                            ui.painter()
+                                .image(texture.texture, rect, uv, egui::Color32::WHITE);
                             let selected = *current_cell == cell;
                             if selected || response.hovered() {
                                 let stroke = if selected {

@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use super::classifier::Entrance;
 use super::direction::DirectionMap;
-use crate::core::mapdb::{Room, RoomTable};
 use super::positioner::{Cell, Group, PackMethod};
+use crate::core::mapdb::{Room, RoomTable};
 
 const GROUP_PADDING: i32 = 3; // cells between strip-placed groups
 const SEARCH_RADIUS: i32 = 30; // max spiral distance resolving collisions
@@ -109,10 +109,7 @@ fn js_round(x: f64) -> i32 {
 }
 
 fn uid_delta(a: Option<&Room>, b: Option<&Room>) -> u64 {
-    match (
-        a.and_then(|r| r.uid.first()),
-        b.and_then(|r| r.uid.first()),
-    ) {
+    match (a.and_then(|r| r.uid.first()), b.and_then(|r| r.uid.first())) {
         (Some(&ua), Some(&ub)) => ua.abs_diff(ub),
         _ => UID_DELTA_MISSING,
     }
@@ -339,24 +336,23 @@ fn add_bridged_edges(
     // Excluded component → packed-side contacts, in first-encounter order.
     let mut contact_order: Vec<usize> = Vec::new();
     let mut contacts: HashMap<usize, Vec<Contact>> = HashMap::new();
-    let add_contact =
-        |excluded: usize,
-         packed_idx: usize,
-         room_id: u32,
-         contact_order: &mut Vec<usize>,
-         contacts: &mut HashMap<usize, Vec<Contact>>| {
-            let list = contacts.entry(excluded).or_insert_with(|| {
-                contact_order.push(excluded);
-                Vec::new()
-            });
-            let c = Contact {
-                group: packed_idx,
-                room_id,
-            };
-            if !list.contains(&c) {
-                list.push(c);
-            }
+    let add_contact = |excluded: usize,
+                       packed_idx: usize,
+                       room_id: u32,
+                       contact_order: &mut Vec<usize>,
+                       contacts: &mut HashMap<usize, Vec<Contact>>| {
+        let list = contacts.entry(excluded).or_insert_with(|| {
+            contact_order.push(excluded);
+            Vec::new()
+        });
+        let c = Contact {
+            group: packed_idx,
+            room_id,
         };
+        if !list.contains(&c) {
+            list.push(c);
+        }
+    };
 
     for group in groups {
         for &room_id in &group.room_ids {
@@ -622,7 +618,9 @@ fn find_best_connector_offset(
                 break;
             }
         }
-        for_ring(proposed, r, |cand| consider(cand, &mut best, &mut best_score));
+        for_ring(proposed, r, |cand| {
+            consider(cand, &mut best, &mut best_score)
+        });
     }
     best.map(|cell| (cell, best_score))
 }
@@ -1098,9 +1096,10 @@ pub fn inline_interior_clusters(
 
     // Outdoor room per final cell, kept current as buildings place, so the
     // crowding gate sees earlier inlines as neighbors too.
-    let mut room_at: HashMap<Cell, u32> =
-        outdoor_cell_of.iter().map(|(&id, &c)| (c, id)).collect();
-    let crowded = |merged: &Group, offset: Cell, hosts: &HashSet<u32>,
+    let mut room_at: HashMap<Cell, u32> = outdoor_cell_of.iter().map(|(&id, &c)| (c, id)).collect();
+    let crowded = |merged: &Group,
+                   offset: Cell,
+                   hosts: &HashSet<u32>,
                    room_at: &HashMap<Cell, u32>| {
         let mut nearby: HashSet<u32> = HashSet::new();
         for p in merged.positions.values() {

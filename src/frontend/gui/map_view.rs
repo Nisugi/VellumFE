@@ -49,6 +49,8 @@ pub struct MapStyle {
     pub label_bg: Color32,
     pub current_fill: Color32,
     pub current_ring: Stroke,
+    /// Fill for rooms in `highlight_rooms` (creature spawn highlighting).
+    pub highlight_fill: Color32,
 }
 
 impl MapStyle {
@@ -65,7 +67,14 @@ impl MapStyle {
             label_bg: visuals.extreme_bg_color.gamma_multiply(0.75),
             current_fill: accent,
             current_ring: Stroke::new(2.0, visuals.strong_text_color()),
+            highlight_fill: Color32::from_rgb(0xc2, 0x41, 0x4d),
         }
+    }
+
+    /// Override the creature-highlight fill (config `map.creature_highlight`).
+    pub fn with_highlight(mut self, color: Color32) -> Self {
+        self.highlight_fill = color;
+        self
     }
 
     /// Override the accent-derived colors. `from_visuals` falls back to
@@ -222,6 +231,9 @@ pub fn paint_sheet(
     // Service-tag categories drawn as room markers (config pinned_tags);
     // empty = no markers.
     pinned_tags: &[String],
+    // Rooms to tint in the highlight color (creature spawn rooms for the
+    // selected creature); empty = no highlighting.
+    highlight_rooms: &std::collections::HashSet<u32>,
     style: &MapStyle,
 ) -> MapViewResult {
     let painter = ui.painter().with_clip_rect(rect);
@@ -337,9 +349,7 @@ pub fn paint_sheet(
                 // labeled with the partner's room id (spec §8).
                 let dir = (b - a).normalized();
                 let stub_len = ppc * 0.9;
-                for (from, toward, partner) in
-                    [(a, dir, edge.b_room), (b, -dir, edge.a_room)]
-                {
+                for (from, toward, partner) in [(a, dir, edge.b_room), (b, -dir, edge.a_room)] {
                     let tip = from + toward * stub_len;
                     painter.extend(egui::Shape::dashed_line(
                         &[from, tip],
@@ -361,10 +371,7 @@ pub fn paint_sheet(
                     ));
                     if show_labels {
                         deferred_labels.push(DeferredLabel {
-                            candidates: vec![
-                                tip + toward * 2.0,
-                                tip + toward * (ppc * 0.6),
-                            ],
+                            candidates: vec![tip + toward * 2.0, tip + toward * (ppc * 0.6)],
                             align: Align2::CENTER_CENTER,
                             text: partner.to_string(),
                             font_size: (ppc * 0.45).clamp(7.0, 12.0),
@@ -428,10 +435,17 @@ pub fn paint_sheet(
                 egui::StrokeKind::Outside,
             );
         }
+        // Creature-spawn highlight replaces the terrain fill so tinted
+        // rooms read at a glance; the ring/markers are untouched.
+        let fill = if highlight_rooms.contains(&room.id) {
+            style.highlight_fill
+        } else {
+            terrain_fill(room.terrain.as_deref(), style.room_fill)
+        };
         painter.rect(
             room_rect,
             1.5,
-            terrain_fill(room.terrain.as_deref(), style.room_fill),
+            fill,
             style.room_stroke,
             egui::StrokeKind::Middle,
         );

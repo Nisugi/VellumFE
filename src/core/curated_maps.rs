@@ -143,11 +143,49 @@ impl CuratedMaps {
     /// still ship); snapshot-only slugs are kept (a map they retired doesn't
     /// yank the rug from users mid-session).
     pub fn merge_from(&mut self, extracted: CuratedMaps) {
-        self.source_layout_version = extracted.source_layout_version.or(self.source_layout_version);
+        self.source_layout_version = extracted
+            .source_layout_version
+            .or(self.source_layout_version);
         for (slug, map) in extracted.maps {
             self.maps.insert(slug, map);
         }
     }
+}
+
+/// Apply membership overrides to the curated rosters, producing the
+/// EFFECTIVE curated set the membership build consumes. Custom maps join
+/// with empty rosters; each moved uid leaves every roster and lands on its
+/// target's (a move to a key that no longer exists just removes the uid —
+/// it falls back to satellite material). Doing this BEFORE the build means
+/// satellites recompute around the moves for free: rooms moved out of a
+/// satellite shrink it, and a fully-absorbed satellite disappears.
+pub fn apply_membership_overrides(
+    base: &CuratedMaps,
+    moves: &BTreeMap<i64, String>,
+    custom_maps: &BTreeMap<String, String>,
+) -> CuratedMaps {
+    let mut out = base.clone();
+    for (key, name) in custom_maps {
+        out.maps.entry(key.clone()).or_insert_with(|| CuratedMap {
+            name: name.clone(),
+            uids: Vec::new(),
+        });
+    }
+    if !moves.is_empty() {
+        for map in out.maps.values_mut() {
+            map.uids.retain(|uid| !moves.contains_key(uid));
+        }
+        for (&uid, target) in moves {
+            if let Some(map) = out.maps.get_mut(target) {
+                map.uids.push(uid);
+            }
+        }
+        for map in out.maps.values_mut() {
+            map.uids.sort_unstable();
+            map.uids.dedup();
+        }
+    }
+    out
 }
 
 /// "wehnimers-landing-coastal-cliffs" → "Wehnimers Landing Coastal Cliffs".
@@ -237,7 +275,11 @@ mod tests {
     #[test]
     fn embedded_rosters_parse_and_cover_the_world() {
         let maps = CuratedMaps::embedded().expect("shipped curated_maps.toml must parse");
-        assert!(maps.maps.len() >= 100, "expected the full curated set, got {}", maps.maps.len());
+        assert!(
+            maps.maps.len() >= 100,
+            "expected the full curated set, got {}",
+            maps.maps.len()
+        );
         assert!(maps.coverage_len() >= 10_000);
         assert!(maps.maps.contains_key("wehnimers-landing-town"));
     }
@@ -259,7 +301,14 @@ mod tests {
         .unwrap();
         snapshot.merge_from(fresh);
         assert_eq!(snapshot.source_layout_version, Some(62));
-        assert_eq!(snapshot.maps["town-a"].uids, vec![100, 102], "roster replaced");
-        assert!(snapshot.maps.contains_key("town-a-annex"), "retired map kept");
+        assert_eq!(
+            snapshot.maps["town-a"].uids,
+            vec![100, 102],
+            "roster replaced"
+        );
+        assert!(
+            snapshot.maps.contains_key("town-a-annex"),
+            "retired map kept"
+        );
     }
 }

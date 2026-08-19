@@ -25,7 +25,6 @@ pub enum KnownWindowKind {
     Container,
 }
 
-
 /// One row in the unified known-windows list.
 #[derive(Debug, Clone)]
 pub struct KnownWindow {

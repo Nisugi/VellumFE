@@ -49,8 +49,7 @@ impl AppCore {
         };
         // Only rebuild windows fed solely by the bounty stream: mixed-stream
         // history can't be reconstructed from the bounty cache.
-        let bounty_only = text.streams.len() == 1
-            && text.streams[0].eq_ignore_ascii_case("bounty");
+        let bounty_only = text.streams.len() == 1 && text.streams[0].eq_ignore_ascii_case("bounty");
         if !bounty_only {
             return;
         }
@@ -278,8 +277,7 @@ impl AppCore {
 
         for dialog_id in pending {
             // The claimed view's seed key, via the resolver (Phase 4).
-            let template_name =
-                Self::seed_template_for(&WindowBinding::Dialog(dialog_id.clone()));
+            let template_name = Self::seed_template_for(&WindowBinding::Dialog(dialog_id.clone()));
 
             // Already have a window bound to this feed? The game only ever
             // needs one home per feed to create — refresh flows to all bound
@@ -291,7 +289,10 @@ impl AppCore {
                     .windows
                     .iter()
                     .filter(|w| {
-                        w.base().binding.as_ref().is_some_and(|b| b.id() == dialog_id)
+                        w.base()
+                            .binding
+                            .as_ref()
+                            .is_some_and(|b| b.id() == dialog_id)
                             && w.base().visibility.is_shown()
                     })
                     .map(|w| w.name().to_string())
@@ -330,7 +331,11 @@ impl AppCore {
                     .map(|w| w.base().visibility.is_shown())
                     .unwrap_or(false);
                 if shown && !self.ui_state.windows.contains_key(&existing_name) {
-                    if let Some(def) = self.layout.windows.iter().find(|w| w.name() == existing_name)
+                    if let Some(def) = self
+                        .layout
+                        .windows
+                        .iter()
+                        .find(|w| w.name() == existing_name)
                     {
                         let def = def.clone();
                         self.add_new_window(&def, terminal_width, terminal_height);
@@ -363,7 +368,11 @@ impl AppCore {
                 if let Some(def) = self.layout.windows.iter().find(|w| w.name() == name) {
                     let def = def.clone();
                     self.add_new_window(&def, terminal_width, terminal_height);
-                    tracing::info!("Auto-added bound window '{}' from openDialog '{}'", name, dialog_id);
+                    tracing::info!(
+                        "Auto-added bound window '{}' from openDialog '{}'",
+                        name,
+                        dialog_id
+                    );
                     self.needs_render = true;
                     self.ui_state.needs_widget_reset = true;
                 }
@@ -529,27 +538,35 @@ impl AppCore {
         }
 
         // Check for saved position, otherwise center with reasonable defaults
-        let (x, y, w, h) = if let Some(saved) = self.saved_dialog_positions.containers.get(&window_name) {
-            let width = saved.width.unwrap_or(40);
-            let height = saved.height.unwrap_or(15);
-            // Clamp to terminal bounds
-            let x = saved.x.min(terminal_width.saturating_sub(width));
-            let y = saved.y.min(terminal_height.saturating_sub(height));
-            tracing::debug!("Using saved position for container '{}': ({}, {}) {}x{}", window_name, x, y, width, height);
-            (x, y, width, height)
-        } else {
-            // Redesign Phase 3e: one placement policy, honoring the
-            // declaration's own hints when the game sent any. (Container
-            // hints are keyed by container id; only the title reaches
-            // here, so containers ride the kind default until the id is
-            // plumbed through — the panels below DO consume hints.)
-            crate::core::placement::ephemeral_placement(
-                None,
-                (40, 15),
-                crate::core::placement::PlacementAnchor::Center,
-                (terminal_width, terminal_height),
-            )
-        };
+        let (x, y, w, h) =
+            if let Some(saved) = self.saved_dialog_positions.containers.get(&window_name) {
+                let width = saved.width.unwrap_or(40);
+                let height = saved.height.unwrap_or(15);
+                // Clamp to terminal bounds
+                let x = saved.x.min(terminal_width.saturating_sub(width));
+                let y = saved.y.min(terminal_height.saturating_sub(height));
+                tracing::debug!(
+                    "Using saved position for container '{}': ({}, {}) {}x{}",
+                    window_name,
+                    x,
+                    y,
+                    width,
+                    height
+                );
+                (x, y, width, height)
+            } else {
+                // Redesign Phase 3e: one placement policy, honoring the
+                // declaration's own hints when the game sent any. (Container
+                // hints are keyed by container id; only the title reaches
+                // here, so containers ride the kind default until the id is
+                // plumbed through — the panels below DO consume hints.)
+                crate::core::placement::ephemeral_placement(
+                    None,
+                    (40, 15),
+                    crate::core::placement::PlacementAnchor::Center,
+                    (terminal_width, terminal_height),
+                )
+            };
 
         let window = WindowState {
             name: window_name.clone(),
@@ -604,7 +621,10 @@ impl AppCore {
         // openDialog, captured as WindowHints) win over the tall-narrow
         // kind default (26x20, right edge — combat is ~190x288 px).
         let (hx, hy, w, h) = crate::core::placement::ephemeral_placement(
-            self.ui_state.window_hints.get(dialog_id).map(|v| v.as_slice()),
+            self.ui_state
+                .window_hints
+                .get(dialog_id)
+                .map(|v| v.as_slice()),
             (26, 20),
             crate::core::placement::PlacementAnchor::RightEdge,
             (terminal_width, terminal_height),
@@ -670,8 +690,7 @@ impl AppCore {
             // adding its id here would ALSO pop it up as an active_dialog,
             // producing a duplicate (an empty panel + a populated popup, or
             // vice-versa). So a panel-bound dialog must stay out of the set.
-            let is_dialog_panel =
-                matches!(win, crate::config::WindowDef::DialogPanel { .. });
+            let is_dialog_panel = matches!(win, crate::config::WindowDef::DialogPanel { .. });
             if let Some(crate::config::WindowBinding::Dialog(id)) = win.base().binding.clone() {
                 if !is_dialog_panel {
                     if shown {
@@ -821,8 +840,7 @@ impl AppCore {
         // popup currently active under this id stays the popup path's
         // business (bank: openDialog popup + exposeDialog ride together;
         // U5's persistent bank row remains deferred).
-        let exposes: Vec<(String, String)> =
-            self.ui_state.pending_exposes.drain(..).collect();
+        let exposes: Vec<(String, String)> = self.ui_state.pending_exposes.drain(..).collect();
         for (kind, id) in exposes {
             if self
                 .ui_state
@@ -864,9 +882,7 @@ impl AppCore {
                 use crate::config::WindowBinding;
                 let binding = WindowBinding::Stream(id.clone());
                 let template = Self::seed_template_for(&binding);
-                if let Some(name) =
-                    self.layout.register_discovered_window(binding, &template)
-                {
+                if let Some(name) = self.layout.register_discovered_window(binding, &template) {
                     self.apply_declared_size_hint(&name, &id);
                     self.mark_layout_modified();
                     self.show_window(&name, terminal_width, terminal_height);
@@ -952,10 +968,7 @@ impl AppCore {
         let Some((wpx, hpx)) = declared else {
             return;
         };
-        let (w, h) = (
-            (wpx > 1.0).then_some(wpx),
-            (hpx > 1.0).then_some(hpx),
-        );
+        let (w, h) = ((wpx > 1.0).then_some(wpx), (hpx > 1.0).then_some(hpx));
         let Some(def) = self
             .layout
             .windows
@@ -995,7 +1008,7 @@ impl AppCore {
     }
 
     pub(super) fn register_window_discovery(&mut self, d: crate::data::WindowDiscovery) {
-        use crate::config::{WindowBinding, WindowVisibility, WindowDef};
+        use crate::config::{WindowBinding, WindowDef, WindowVisibility};
         use crate::data::WindowDiscoveryKind;
 
         // Discovery memory (Phase 1b): every sighting is recorded — even
@@ -1102,10 +1115,7 @@ impl AppCore {
                 // Wire the widget to its game feed by id.
                 match (d.kind, def) {
                     // A stream text window subscribes to the stream id.
-                    (
-                        WindowDiscoveryKind::Stream,
-                        crate::config::WindowDef::Text { data, .. },
-                    ) => {
+                    (WindowDiscoveryKind::Stream, crate::config::WindowDef::Text { data, .. }) => {
                         if !data.streams.contains(&d.id) {
                             data.streams.push(d.id.clone());
                         }
@@ -1198,7 +1208,10 @@ impl AppCore {
             Some(wt) => wt,
             None => {
                 self.add_system_message(&format!("Unknown widget type: {}", widget_type_str));
-                self.add_system_message(&format!("Valid types: {}", WidgetType::VALID_TYPES.join(", ")));
+                self.add_system_message(&format!(
+                    "Valid types: {}",
+                    WidgetType::VALID_TYPES.join(", ")
+                ));
                 return;
             }
         };
@@ -1274,11 +1287,13 @@ impl AppCore {
             WidgetType::Dashboard => WindowContent::Dashboard {
                 indicators: Vec::new(),
             },
-            WidgetType::ActiveEffects => WindowContent::ActiveEffects(crate::data::ActiveEffectsContent {
-                category: "Unknown".to_string(),
-                effects: Vec::new(),
-                generation: 0,
-            }),
+            WidgetType::ActiveEffects => {
+                WindowContent::ActiveEffects(crate::data::ActiveEffectsContent {
+                    category: "Unknown".to_string(),
+                    effects: Vec::new(),
+                    generation: 0,
+                })
+            }
             WidgetType::Targets => WindowContent::Targets,
             WidgetType::CreatureField => WindowContent::CreatureField,
             WidgetType::Players => WindowContent::Players,
@@ -1300,9 +1315,9 @@ impl AppCore {
             WidgetType::Hotkeybar => WindowContent::Hotkeybar {
                 bar: name.to_string(),
             },
-            WidgetType::WebUi => WindowContent::WebUi(
-                crate::data::webui::WebUiPanelContent::new(name, name),
-            ),
+            WidgetType::WebUi => {
+                WindowContent::WebUi(crate::data::webui::WebUiPanelContent::new(name, name))
+            }
             // Name-based creation path: bind the panel to the window name.
             WidgetType::DialogPanel => WindowContent::DialogPanel {
                 dialog_id: name.to_string(),
@@ -1377,8 +1392,8 @@ impl AppCore {
         // near the top of this function, so blank() cannot return None here;
         // fall back to a plain text def defensively rather than panicking.
         let fallback_base = base.clone();
-        let window_def = WindowDef::blank(widget_type_str, base).unwrap_or_else(|| {
-            WindowDef::Text {
+        let window_def =
+            WindowDef::blank(widget_type_str, base).unwrap_or_else(|| WindowDef::Text {
                 base: fallback_base,
                 data: TextWidgetData {
                     streams: vec![],
@@ -1388,8 +1403,7 @@ impl AppCore {
                     timestamp_position: None,
                     compact: false,
                 },
-            }
-        });
+            });
 
         // Add to layout at the front (so new windows appear on top)
         self.layout.windows.insert(0, window_def);
@@ -1528,7 +1542,12 @@ impl AppCore {
     }
 
     /// Set window border style and color
-    pub(in crate::core::app_core) fn set_window_border(&mut self, window_name: &str, style: &str, color: Option<String>) {
+    pub(in crate::core::app_core) fn set_window_border(
+        &mut self,
+        window_name: &str,
+        style: &str,
+        color: Option<String>,
+    ) {
         if let Some(window_def) = self
             .layout
             .windows

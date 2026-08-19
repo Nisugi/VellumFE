@@ -34,15 +34,27 @@ impl AppCore {
 
     /// Scroll the currently focused window up by one page
     pub fn scroll_current_window_up_page(&mut self) {
-        tracing::debug!("scroll_current_window_up_page called, focused_window={:?}", self.ui_state.focused_window);
+        tracing::debug!(
+            "scroll_current_window_up_page called, focused_window={:?}",
+            self.ui_state.focused_window
+        );
         if let Some(window_name) = &self.ui_state.focused_window.clone() {
             if let Some(window) = self.ui_state.windows.get_mut(window_name) {
-                tracing::debug!("Found window '{}', widget_type={:?}", window_name, window.widget_type);
+                tracing::debug!(
+                    "Found window '{}', widget_type={:?}",
+                    window_name,
+                    window.widget_type
+                );
                 if let crate::data::WindowContent::Text(ref mut content) = window.content {
                     // Use a reasonable page size (20 lines)
                     let old_offset = content.scroll_offset;
                     content.scroll_up(20);
-                    tracing::info!("Scrolled '{}' up: {} -> {}", window_name, old_offset, content.scroll_offset);
+                    tracing::info!(
+                        "Scrolled '{}' up: {} -> {}",
+                        window_name,
+                        old_offset,
+                        content.scroll_offset
+                    );
                     self.needs_render = true;
                 } else {
                     tracing::debug!("Window '{}' content is not Text type", window_name);
@@ -57,15 +69,27 @@ impl AppCore {
 
     /// Scroll the currently focused window down by one page
     pub fn scroll_current_window_down_page(&mut self) {
-        tracing::debug!("scroll_current_window_down_page called, focused_window={:?}", self.ui_state.focused_window);
+        tracing::debug!(
+            "scroll_current_window_down_page called, focused_window={:?}",
+            self.ui_state.focused_window
+        );
         if let Some(window_name) = &self.ui_state.focused_window.clone() {
             if let Some(window) = self.ui_state.windows.get_mut(window_name) {
-                tracing::debug!("Found window '{}', widget_type={:?}", window_name, window.widget_type);
+                tracing::debug!(
+                    "Found window '{}', widget_type={:?}",
+                    window_name,
+                    window.widget_type
+                );
                 if let crate::data::WindowContent::Text(ref mut content) = window.content {
                     // Use a reasonable page size (20 lines)
                     let old_offset = content.scroll_offset;
                     content.scroll_down(20);
-                    tracing::info!("Scrolled '{}' down: {} -> {}", window_name, old_offset, content.scroll_offset);
+                    tracing::info!(
+                        "Scrolled '{}' down: {} -> {}",
+                        window_name,
+                        old_offset,
+                        content.scroll_offset
+                    );
                     self.needs_render = true;
                 } else {
                     tracing::debug!("Window '{}' content is not Text type", window_name);

@@ -25,8 +25,8 @@ pub struct Countdown {
     text_color: Option<String>,
     background_color: Option<String>,
     transparent_background: bool,
-    icon: char,          // Character to use for countdown blocks
-    show_when_zero: bool, // Keep "label 0" visible at rest instead of hiding
+    icon: char,            // Character to use for countdown blocks
+    show_when_zero: bool,  // Keep "label 0" visible at rest instead of hiding
     count_past_zero: bool, // Run negative after expiry (window timers like pulse)
 }
 
@@ -431,8 +431,14 @@ mod tests {
     fn test_signed_math_counts_whole_seconds_overdue() {
         // end = 100s. 999ms overdue -> 0; 1000ms -> -1; 29s -> -29.
         assert_eq!(Countdown::remaining_seconds_signed_from(100, 0, 100_999), 0);
-        assert_eq!(Countdown::remaining_seconds_signed_from(100, 0, 101_000), -1);
-        assert_eq!(Countdown::remaining_seconds_signed_from(100, 0, 129_000), -29);
+        assert_eq!(
+            Countdown::remaining_seconds_signed_from(100, 0, 101_000),
+            -1
+        );
+        assert_eq!(
+            Countdown::remaining_seconds_signed_from(100, 0, 129_000),
+            -29
+        );
         // Future values still ceiling like the clamped helper.
         assert_eq!(Countdown::remaining_seconds_signed_from(100, 0, 98_999), 2);
     }

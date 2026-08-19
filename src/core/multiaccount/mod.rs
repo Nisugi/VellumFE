@@ -487,8 +487,7 @@ mod tests {
         // Self is an ordinary member for grouping purposes: when we lead, our
         // card leads the frame.
         let mut me = peer(SELF_PORT, "Ultz");
-        me.group
-            .replace(GroupLeader::SelfLed, vec![member("Abem")]);
+        me.group.replace(GroupLeader::SelfLed, vec![member("Abem")]);
         let mut them = peer(8041, "Abem");
         them.group
             .replace(GroupLeader::Other(member("Ultz")), vec![]);
@@ -618,10 +617,8 @@ mod tests {
     fn the_motivating_case_three_grouped_one_solo_two_grouped() {
         // "chars 1-3 are grouped, 4 is solo, and 5-6 are grouped as well"
         let mut a = peer(8040, "Alice");
-        a.group.replace(
-            GroupLeader::SelfLed,
-            vec![member("Bob"), member("Carol")],
-        );
+        a.group
+            .replace(GroupLeader::SelfLed, vec![member("Bob"), member("Carol")]);
         let mut b = peer(8041, "Bob");
         b.group
             .replace(GroupLeader::Other(member("Alice")), vec![member("Carol")]);
@@ -634,8 +631,7 @@ mod tests {
         let mut e = peer(8044, "Eve");
         e.group.replace(GroupLeader::SelfLed, vec![member("Frank")]);
         let mut f = peer(8045, "Frank");
-        f.group
-            .replace(GroupLeader::Other(member("Eve")), vec![]);
+        f.group.replace(GroupLeader::Other(member("Eve")), vec![]);
 
         let clusters = cluster_peers(&peers(vec![a, b, c, d, e, f]));
         assert_eq!(clusters.len(), 3, "two groups and one solo: {clusters:?}");
@@ -705,8 +701,7 @@ mod tests {
         let mut a = peer(8040, "Alice");
         a.group.replace(GroupLeader::SelfLed, vec![member("Bob")]);
         let mut b = peer(8041, "Bob");
-        b.group
-            .replace(GroupLeader::Other(member("Alice")), vec![]);
+        b.group.replace(GroupLeader::Other(member("Alice")), vec![]);
         b.group.mark_unconfirmed();
 
         let clusters = cluster_peers(&peers(vec![a, b]));
@@ -733,8 +728,7 @@ mod tests {
         let mut a = peer(8045, "Alice");
         a.group.replace(GroupLeader::SelfLed, vec![member("Bob")]);
         let mut b = peer(8041, "Bob");
-        b.group
-            .replace(GroupLeader::Other(member("Alice")), vec![]);
+        b.group.replace(GroupLeader::Other(member("Alice")), vec![]);
         let d = peer(8043, "Dave");
 
         let map = peers(vec![a, b, d]);

@@ -31,12 +31,7 @@ const EDGE_PAD: u16 = 1;
 /// Mirrors the GUI's 9-grid semantics — same anchor means the same corner in
 /// both frontends — and clamps into the screen so a stack or a wide banner can
 /// never place text off-grid where it would simply vanish.
-fn anchored_rect(
-    anchor: AlertAnchor,
-    screen: Rect,
-    width: u16,
-    stack_depth: u16,
-) -> Rect {
+fn anchored_rect(anchor: AlertAnchor, screen: Rect, width: u16, stack_depth: u16) -> Rect {
     let width = width.min(screen.width);
     let x = match anchor {
         AlertAnchor::TopLeft | AlertAnchor::CenterLeft | AlertAnchor::BottomLeft => {
@@ -53,26 +48,30 @@ fn anchored_rect(
     // Top anchors stack downward, bottom anchors upward, so a stack never
     // grows into the edge it is pinned to (same rule as the GUI).
     let y = match anchor {
-        AlertAnchor::TopLeft | AlertAnchor::TopCenter | AlertAnchor::TopRight => {
-            screen.y.saturating_add(EDGE_PAD).saturating_add(stack_depth)
-        }
+        AlertAnchor::TopLeft | AlertAnchor::TopCenter | AlertAnchor::TopRight => screen
+            .y
+            .saturating_add(EDGE_PAD)
+            .saturating_add(stack_depth),
         AlertAnchor::CenterLeft | AlertAnchor::Center | AlertAnchor::CenterRight => {
             screen.y + screen.height / 2 + stack_depth
         }
-        AlertAnchor::BottomLeft | AlertAnchor::BottomCenter | AlertAnchor::BottomRight => {
-            screen
-                .y
-                .saturating_add(screen.height)
-                .saturating_sub(EDGE_PAD + 1)
-                .saturating_sub(stack_depth)
-        }
+        AlertAnchor::BottomLeft | AlertAnchor::BottomCenter | AlertAnchor::BottomRight => screen
+            .y
+            .saturating_add(screen.height)
+            .saturating_sub(EDGE_PAD + 1)
+            .saturating_sub(stack_depth),
     };
 
     // Clamp so a deep stack cannot walk off the top or bottom.
     let max_y = screen.y + screen.height.saturating_sub(1);
     let y = y.clamp(screen.y, max_y);
 
-    Rect { x, y, width, height: 1 }
+    Rect {
+        x,
+        y,
+        width,
+        height: 1,
+    }
 }
 
 /// The text a banner shows. Art has no terminal form, so an art-only alert
@@ -138,22 +137,24 @@ pub fn render(
             .banner_fg
             .as_deref()
             .and_then(super::colors::parse_color_to_ratatui)
-            .unwrap_or_else(|| {
-                super::crossterm_bridge::to_ratatui_color(theme.form_label_focused)
-            });
+            .unwrap_or_else(|| super::crossterm_bridge::to_ratatui_color(theme.form_label_focused));
         let bg = alert
             .banner_bg
             .as_deref()
             .and_then(super::colors::parse_color_to_ratatui)
-            .unwrap_or_else(|| {
-                super::crossterm_bridge::to_ratatui_color(theme.browser_background)
-            });
+            .unwrap_or_else(|| super::crossterm_bridge::to_ratatui_color(theme.browser_background));
 
         Clear.render(rect, buf);
         let style = Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD);
         // Pad by one cell each side so the banner reads as a label rather
         // than text jammed against whatever it is covering.
-        buf.set_stringn(rect.x, rect.y, format!(" {text} "), rect.width as usize, style);
+        buf.set_stringn(
+            rect.x,
+            rect.y,
+            format!(" {text} "),
+            rect.width as usize,
+            style,
+        );
 
         *stack = stack.saturating_add(1);
     }
@@ -170,12 +171,44 @@ fn render_flash(screen: Rect, buf: &mut Buffer, color: &str) {
     let bottom = screen.y + screen.height.saturating_sub(1);
 
     for x in screen.x..screen.x + screen.width {
-        buf.set_style(Rect { x, y: screen.y, width: 1, height: 1 }, style);
-        buf.set_style(Rect { x, y: bottom, width: 1, height: 1 }, style);
+        buf.set_style(
+            Rect {
+                x,
+                y: screen.y,
+                width: 1,
+                height: 1,
+            },
+            style,
+        );
+        buf.set_style(
+            Rect {
+                x,
+                y: bottom,
+                width: 1,
+                height: 1,
+            },
+            style,
+        );
     }
     for y in screen.y..screen.y + screen.height {
-        buf.set_style(Rect { x: screen.x, y, width: 1, height: 1 }, style);
-        buf.set_style(Rect { x: right, y, width: 1, height: 1 }, style);
+        buf.set_style(
+            Rect {
+                x: screen.x,
+                y,
+                width: 1,
+                height: 1,
+            },
+            style,
+        );
+        buf.set_style(
+            Rect {
+                x: right,
+                y,
+                width: 1,
+                height: 1,
+            },
+            style,
+        );
     }
 }
 
@@ -184,7 +217,12 @@ mod tests {
     use super::*;
 
     fn screen() -> Rect {
-        Rect { x: 0, y: 0, width: 80, height: 24 }
+        Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        }
     }
 
     #[test]
@@ -225,7 +263,12 @@ mod tests {
 
     #[test]
     fn a_banner_wider_than_the_screen_is_clamped_not_dropped() {
-        let s = Rect { x: 0, y: 0, width: 20, height: 10 };
+        let s = Rect {
+            x: 0,
+            y: 0,
+            width: 20,
+            height: 10,
+        };
         let rect = anchored_rect(AlertAnchor::TopCenter, s, 500, 0);
         assert_eq!(rect.width, 20, "clamped to the screen");
         assert!(rect.x + rect.width <= s.x + s.width, "stays on screen");
@@ -243,7 +286,12 @@ mod tests {
 
     #[test]
     fn a_tiny_screen_does_not_panic_or_overflow() {
-        let s = Rect { x: 0, y: 0, width: 1, height: 1 };
+        let s = Rect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
         for anchor in [
             AlertAnchor::TopLeft,
             AlertAnchor::Center,
@@ -315,7 +363,12 @@ mod tests {
     fn rendering_into_a_one_by_one_terminal_does_not_panic() {
         // A terminal can legitimately be this small mid-resize; painting must
         // clip rather than index out of bounds.
-        let s = Rect { x: 0, y: 0, width: 1, height: 1 };
+        let s = Rect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
         let mut buf = Buffer::empty(s);
         let mut alert = sample_alert();
         alert.flash = Some("#ff0000".to_string());
@@ -324,7 +377,12 @@ mod tests {
 
     #[test]
     fn a_banner_far_wider_than_the_screen_is_clipped_when_painted() {
-        let s = Rect { x: 0, y: 0, width: 12, height: 5 };
+        let s = Rect {
+            x: 0,
+            y: 0,
+            width: 12,
+            height: 5,
+        };
         let mut buf = Buffer::empty(s);
         let mut alert = sample_alert();
         alert.banner = Some("A".repeat(500));
@@ -333,7 +391,12 @@ mod tests {
 
     #[test]
     fn reduce_motion_and_zero_intensity_both_suppress_the_flash() {
-        let s = Rect { x: 0, y: 0, width: 10, height: 4 };
+        let s = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 4,
+        };
         let mut alert = sample_alert();
         alert.banner = None;
         alert.art = None;
@@ -343,8 +406,8 @@ mod tests {
         // against the parsed color rather than `bg.is_some()`: an empty
         // buffer's cells already carry a Reset background, so `is_some()`
         // would be true whether or not we painted anything.
-        let red = super::super::colors::parse_color_to_ratatui("#ff0000")
-            .expect("test color parses");
+        let red =
+            super::super::colors::parse_color_to_ratatui("#ff0000").expect("test color parses");
         let flashed = |reduce: bool, intensity: f32| {
             let mut buf = Buffer::empty(s);
             render(
@@ -374,7 +437,9 @@ mod tests {
         render(&[first, second], s, &mut buf, &theme(), false, 0.0);
 
         let row_at = |y: u16| -> String {
-            (0..s.width).map(|x| buf[(x, y)].symbol().to_string()).collect()
+            (0..s.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect()
         };
         assert!(row_at(EDGE_PAD).contains("FIRST"));
         assert!(

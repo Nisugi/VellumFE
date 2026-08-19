@@ -10,10 +10,10 @@
 //! path (so travel moves echo like anything the user types).
 
 pub mod confluence;
-pub mod minotaur;
 pub mod day_pass_buy;
 pub mod executor;
 pub mod mazes;
+pub mod minotaur;
 pub mod stash;
 pub mod target;
 

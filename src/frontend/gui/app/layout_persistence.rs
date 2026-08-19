@@ -14,7 +14,10 @@ impl VellumGuiApp {
     /// restores placement), while a named CHECKPOINT (`.savelayout <name>`) is
     /// an exact portable copy of what's on screen — shown windows only, no
     /// hidden residue carried to other profiles. `mode` picks the behavior.
-    pub(super) fn build_layout_snapshot(&mut self, mode: LayoutSaveMode) -> Option<GuiLayoutFileV1> {
+    pub(super) fn build_layout_snapshot(
+        &mut self,
+        mode: LayoutSaveMode,
+    ) -> Option<GuiLayoutFileV1> {
         let mut layout = GuiLayoutFileV1::new(&self.layout_profile, &self.layout_character);
 
         let strip_hidden = mode == LayoutSaveMode::Checkpoint;
@@ -139,7 +142,10 @@ impl VellumGuiApp {
             Err(err) => {
                 // Persisting a null snapshot would wipe the saved window layout;
                 // keep the existing file instead.
-                tracing::error!("Failed to serialize GUI dock layout; skipping save: {}", err);
+                tracing::error!(
+                    "Failed to serialize GUI dock layout; skipping save: {}",
+                    err
+                );
                 return None;
             }
         };
@@ -231,9 +237,7 @@ impl VellumGuiApp {
                     );
                 }
             }
-            None => {
-                Self::write_layout_now(&layout, &self.layout_profile, &self.layout_character)
-            }
+            None => Self::write_layout_now(&layout, &self.layout_profile, &self.layout_character),
         }
     }
 
@@ -266,9 +270,9 @@ impl VellumGuiApp {
         // blanking the screen.
         if !layout.window_defs.is_empty() {
             let (w, h) = self.core_layout_size;
-            let created =
-                self.app_core
-                    .materialize_missing_windows(&layout.window_defs, w, h);
+            let created = self
+                .app_core
+                .materialize_missing_windows(&layout.window_defs, w, h);
             if !created.is_empty() {
                 tracing::info!(
                     "loadlayout: created {} missing window(s): {}",
@@ -368,8 +372,10 @@ impl VellumGuiApp {
         // live content size. `from` is the saved canvas; without a recorded
         // viewport (legacy checkpoints) fall back to the bounding box of the
         // saved rects so we still have a reference.
-        self.canonical_canvas =
-            Some(Self::layout_reference_canvas(layout, &self.main_window_rects));
+        self.canonical_canvas = Some(Self::layout_reference_canvas(
+            layout,
+            &self.main_window_rects,
+        ));
         // Restore the saved OS-window geometry too, so "exact position on
         // screen" means exactly that. No settle-wait: the anchor rescale
         // tracks every intermediate size while the OS window resizes and
@@ -404,8 +410,7 @@ impl VellumGuiApp {
         current_tabs: &HashMap<TabKey, GuiTab>,
         layout_windows: &[crate::config::WindowDef],
     ) -> HashSet<TabKey> {
-        let layout_def_names: HashSet<&str> =
-            layout_windows.iter().map(|def| def.name()).collect();
+        let layout_def_names: HashSet<&str> = layout_windows.iter().map(|def| def.name()).collect();
         previous_tabs
             .iter()
             .filter(|(key, tab)| {

@@ -176,9 +176,7 @@ impl PackEditorWidget {
                 }
             }
             KeyCode::Up => self.focused = self.focused.saturating_sub(1),
-            KeyCode::Down => {
-                self.focused = (self.focused + 1).min(rows.len().saturating_sub(1))
-            }
+            KeyCode::Down => self.focused = (self.focused + 1).min(rows.len().saturating_sub(1)),
             KeyCode::Left | KeyCode::Right => {
                 if matches!(row, Some(Row::PackPicker)) && !self.import_choices.is_empty() {
                     let len = self.import_choices.len();
@@ -222,10 +220,7 @@ impl PackEditorWidget {
                         self.import_choices = uipack::list_import_packs(&self.base);
                         self.import_choice = None;
                         self.refresh_preview();
-                        self.status = format!(
-                            "{} pack(s) in imports/",
-                            self.import_choices.len()
-                        );
+                        self.status = format!("{} pack(s) in imports/", self.import_choices.len());
                     }
                     _ => {}
                 }
@@ -262,8 +257,7 @@ impl PackEditorWidget {
             PackTab::Export => {
                 let name = self.name.trim().to_string();
                 if !uipack::is_valid_pack_name(&name) {
-                    self.status =
-                        "Names use letters, digits, '-' and '_' only.".to_string();
+                    self.status = "Names use letters, digits, '-' and '_' only.".to_string();
                     return PackEditorAction::None;
                 }
                 let parts: Vec<String> = self
@@ -351,10 +345,7 @@ impl PackEditorWidget {
             let shown = if value.is_empty() { hint } else { value };
             Line::from(vec![
                 Span::styled(format!("{name:<9}"), label),
-                Span::styled(
-                    format!("[{shown}]"),
-                    if focused { focus } else { dim },
-                ),
+                Span::styled(format!("[{shown}]"), if focused { focus } else { dim }),
             ])
         };
 
@@ -388,10 +379,7 @@ impl PackEditorWidget {
                         });
                     lines.push(Line::from(vec![
                         Span::styled(format!("{:<9}", "Pack"), label),
-                        Span::styled(
-                            format!("< {shown} >"),
-                            if is_focused { focus } else { dim },
-                        ),
+                        Span::styled(format!("< {shown} >"), if is_focused { focus } else { dim }),
                         Span::styled("  (Enter rescans)", dim),
                     ]));
                 }

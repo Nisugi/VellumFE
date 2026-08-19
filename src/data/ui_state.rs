@@ -965,9 +965,7 @@ impl DialogState {
                         .filter(|(j, e)| {
                             *j != index
                                 && flows[*j].is_none()
-                                && e.layout
-                                    .as_ref()
-                                    .and_then(|l| l.anchor_left.as_deref())
+                                && e.layout.as_ref().and_then(|l| l.anchor_left.as_deref())
                                     == Some(al)
                         })
                         .map(|(_, e)| e.rect.1 + e.rect.3)
@@ -1487,7 +1485,10 @@ mod tests {
         let mut f = field("é€", 0);
         assert!(f.move_right());
         assert!(f.move_right());
-        assert!(!f.move_right(), "cursor must stop at char count, not byte len");
+        assert!(
+            !f.move_right(),
+            "cursor must stop at char count, not byte len"
+        );
         assert_eq!(f.cursor, 2);
         f.move_end();
         assert_eq!(f.cursor, 2);
@@ -2217,7 +2218,11 @@ mod tests {
         };
         let (controls, _) = dialog.positioned_controls().expect("positioned");
         let rect_of = |kind: PositionedControlKind| {
-            controls.iter().find(|c| c.kind == kind).map(|c| c.rect).unwrap()
+            controls
+                .iter()
+                .find(|c| c.kind == kind)
+                .map(|c| c.rect)
+                .unwrap()
         };
 
         let header = rect_of(PositionedControlKind::Label(0));
@@ -2291,7 +2296,11 @@ mod tests {
         };
         let (controls, _) = dialog.positioned_controls().expect("positioned");
         let rect_of = |k: PositionedControlKind| {
-            controls.iter().find(|c| c.kind == k).map(|c| c.rect).unwrap()
+            controls
+                .iter()
+                .find(|c| c.kind == k)
+                .map(|c| c.rect)
+                .unwrap()
         };
         let ublog = rect_of(PositionedControlKind::Label(0));
         let ubhour = rect_of(PositionedControlKind::Label(1));
@@ -2351,9 +2360,15 @@ mod tests {
             justify: None,
             layout: Some(la("n", 0, 0, 190, 20)),
         });
-        dialog.buttons.push(button("depositBtn", la("e", -25, 0, 80, 25)));
-        dialog.buttons.push(button("withdrawBtn", la("e", 5, 0, 80, 25)));
-        dialog.buttons.push(button("closeMe", la("s", 0, 0, 80, 20)));
+        dialog
+            .buttons
+            .push(button("depositBtn", la("e", -25, 0, 80, 25)));
+        dialog
+            .buttons
+            .push(button("withdrawBtn", la("e", 5, 0, 80, 25)));
+        dialog
+            .buttons
+            .push(button("closeMe", la("s", 0, 0, 80, 20)));
         dialog.spinboxes.push(DialogSpinBox {
             id: "depositSB".to_string(),
             value: 0,
@@ -2428,7 +2443,10 @@ mod tests {
         assert_eq!(deposit_btn.1, 65.0 - 12.5 - 25.0);
         assert_eq!(deposit_sb.0, 0.0);
         assert_eq!(deposit_btn.0, 190.0 - 80.0);
-        assert!(deposit_sb.0 + deposit_sb.2 <= deposit_btn.0, "row does not overlap");
+        assert!(
+            deposit_sb.0 + deposit_sb.2 <= deposit_btn.0,
+            "row does not overlap"
+        );
         // Withdraw row 5px below center, BELOW the deposit row.
         assert_eq!(withdraw_btn.1, 65.0 - 12.5 + 5.0);
         assert!(withdraw_btn.1 > deposit_btn.1 + deposit_btn.3 - 1.0);
@@ -2437,7 +2455,10 @@ mod tests {
         assert_eq!(deposit_lnk.1, 65.0 - 15.0 + 30.0);
         assert_eq!(notes_lnk.1, deposit_lnk.1);
         assert!(deposit_lnk.1 >= withdraw_btn.1 + withdraw_btn.3 - 3.0);
-        assert!(deposit_lnk.0 + deposit_lnk.2 <= notes_lnk.0, "links side by side");
+        assert!(
+            deposit_lnk.0 + deposit_lnk.2 <= notes_lnk.0,
+            "links side by side"
+        );
         // Close button ON the bottom edge, centered.
         assert_eq!(close.1, 130.0 - 20.0);
         assert_eq!(close.0, 95.0 - 40.0);
@@ -2460,6 +2481,9 @@ mod tests {
         let mut dialog = DialogState::empty("combat".to_string(), None);
         dialog.buttons.push(button("x", la));
         let (controls, _) = dialog.positioned_controls().expect("positioned");
-        assert_eq!(controls[0].rect.1, 5.0, "no declared height: top-referenced");
+        assert_eq!(
+            controls[0].rect.1, 5.0,
+            "no declared height: top-referenced"
+        );
     }
 }

@@ -85,7 +85,10 @@ re!(
     r"^You will have access to the urchin guides until (?P<m>\d+)/(?P<d>\d+)/(?P<y>\d+) (?P<h>\d+):(?P<min>\d+):(?P<s>\d+)"
 );
 re!(URCHIN_PERMANENT, r"permanent access to the urchin guides");
-re!(URCHIN_NONE, r"You currently have no access to the urchin guides");
+re!(
+    URCHIN_NONE,
+    r"You currently have no access to the urchin guides"
+);
 // The PROFILE block states citizenship differently:
 // "Full citizen of Kraken's Fall" / "Partial citizen of X" / "No citizenship".
 re!(
@@ -335,14 +338,7 @@ impl CharacterState {
 fn urchin_epoch(c: &regex::Captures) -> Option<i64> {
     use chrono::{NaiveDate, NaiveTime};
     let g = |name: &str| c.name(name)?.as_str().parse::<u32>().ok();
-    let (m, d, y, h, min, s) = (
-        g("m")?,
-        g("d")?,
-        g("y")?,
-        g("h")?,
-        g("min")?,
-        g("s")?,
-    );
+    let (m, d, y, h, min, s) = (g("m")?, g("d")?, g("y")?, g("h")?, g("min")?, g("s")?);
     let date = NaiveDate::from_ymd_opt(y as i32, m, d)?;
     let time = NaiveTime::from_hms_opt(h, min, s)?;
     Some(date.and_time(time).and_utc().timestamp())
@@ -436,7 +432,9 @@ mod tests {
         s.parse_line("   You are a member in the Order of Voln at step 13.");
         s.parse_line("Zarak traces the outline of a sigil into the air before you and says, \"Congratulations.\"");
         assert_eq!(s.society_rank, 14);
-        s.parse_line("The Grandmaster says, \"I'm sorry to hear that.  You are no longer in our service.\"");
+        s.parse_line(
+            "The Grandmaster says, \"I'm sorry to hear that.  You are no longer in our service.\"",
+        );
         assert_eq!(s.society.as_deref(), Some("None"));
         assert_eq!(s.society_rank, 0);
     }
@@ -498,11 +496,20 @@ mod tests {
         s.parse_line("You will have access to the urchin guides until 8/28/2026 14:30:00 ET.");
         assert!(s.urchins_expire > 0);
         let expire = s.urchins_expire;
-        assert!(s.urchins_valid(expire - 1, false, false), "valid before expiry");
-        assert!(!s.urchins_valid(expire + 1, false, false), "invalid after expiry");
+        assert!(
+            s.urchins_valid(expire - 1, false, false),
+            "valid before expiry"
+        );
+        assert!(
+            !s.urchins_valid(expire + 1, false, false),
+            "invalid after expiry"
+        );
         // Hidden/invisible blocks urchins even when not expired.
         assert!(!s.urchins_valid(expire - 1, true, false), "hidden blocks");
-        assert!(!s.urchins_valid(expire - 1, false, true), "invisible blocks");
+        assert!(
+            !s.urchins_valid(expire - 1, false, true),
+            "invisible blocks"
+        );
 
         // Permanent → far future.
         s.parse_line("You have permanent access to the urchin guides.");
@@ -521,7 +528,10 @@ mod tests {
             Some(1_234_567)
         );
         assert_eq!(parse_wealth_line("You have no silver with you."), Some(0));
-        assert_eq!(parse_wealth_line("You have but one silver with you."), Some(1));
+        assert_eq!(
+            parse_wealth_line("You have but one silver with you."),
+            Some(1)
+        );
         assert_eq!(parse_wealth_line("A cat wanders by."), None);
     }
 

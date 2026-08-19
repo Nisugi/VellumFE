@@ -5,7 +5,7 @@
 //! and persist through the debounced layout autosave.
 
 use super::super::VellumGuiApp;
-use crate::config::{EffectCategory, HandIconState, HandSlot, Condition, NameMatch};
+use crate::config::{Condition, EffectCategory, HandIconState, HandSlot, NameMatch};
 use eframe::egui;
 
 pub(in super::super) struct HandIconsEditorState {
@@ -73,21 +73,20 @@ impl VellumGuiApp {
             .map(|art| art.sheet_names())
             .unwrap_or_default();
         // Effect-name suggestions for the shared condition builder.
-        let suggestions: std::collections::HashMap<&'static str, Vec<String>> =
-            EffectCategory::ALL
-                .iter()
-                .map(|c| {
-                    (
-                        c.state_key(),
-                        self.app_core
-                            .game_state
-                            .effects
-                            .get(c.state_key())
-                            .map(|store| store.effects.iter().map(|e| e.text.clone()).collect())
-                            .unwrap_or_default(),
-                    )
-                })
-                .collect();
+        let suggestions: std::collections::HashMap<&'static str, Vec<String>> = EffectCategory::ALL
+            .iter()
+            .map(|c| {
+                (
+                    c.state_key(),
+                    self.app_core
+                        .game_state
+                        .effects
+                        .get(c.state_key())
+                        .map(|store| store.effects.iter().map(|e| e.text.clone()).collect())
+                        .unwrap_or_default(),
+                )
+            })
+            .collect();
 
         egui::Window::new(format!("Hand Icons - {}", state.window_name))
             .id(egui::Id::new("gui_hand_icons_editor"))
@@ -158,8 +157,7 @@ impl VellumGuiApp {
                             }
                             None => {}
                         }
-                        if let Some(crate::data::IconRef::SheetCell { cell, .. }) = &mut st.icon
-                        {
+                        if let Some(crate::data::IconRef::SheetCell { cell, .. }) = &mut st.icon {
                             let mut value = (*cell).max(1);
                             if ui
                                 .add(egui::DragValue::new(&mut value).range(1..=9999).prefix("#"))
@@ -271,8 +269,7 @@ impl VellumGuiApp {
                     state.error = None;
                 }
                 _ => {
-                    state.error =
-                        Some(format!("Window '{}' no longer exists.", state.window_name));
+                    state.error = Some(format!("Window '{}' no longer exists.", state.window_name));
                 }
             }
         }

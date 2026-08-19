@@ -5,17 +5,17 @@ use crate::config::Config;
 /// Searches slots 16-231 (color cube range) for the first unused slot.
 /// Returns None if all slots are taken.
 fn find_next_available_slot(palette: &[crate::config::PaletteColor]) -> Option<u8> {
-    let used_slots: std::collections::HashSet<u8> = palette
-        .iter()
-        .filter_map(|c| c.slot)
-        .collect();
+    let used_slots: std::collections::HashSet<u8> = palette.iter().filter_map(|c| c.slot).collect();
 
     // Search in color cube range (16-231), avoiding ANSI colors (0-15) and grayscale (232-255)
     (16u8..=231).find(|slot| !used_slots.contains(slot))
 }
 
 /// Assign the next available slot to a color if it doesn't have one
-pub(super) fn auto_assign_slot(mut color: crate::config::PaletteColor, palette: &[crate::config::PaletteColor]) -> crate::config::PaletteColor {
+pub(super) fn auto_assign_slot(
+    mut color: crate::config::PaletteColor,
+    palette: &[crate::config::PaletteColor],
+) -> crate::config::PaletteColor {
     if color.slot.is_none() {
         color.slot = find_next_available_slot(palette);
         if let Some(slot) = color.slot {
@@ -134,7 +134,10 @@ impl TuiFrontend {
     ) {
         use crate::frontend::tui::spell_color_form::SpellColorFormResult;
         match result {
-            SpellColorFormResult::Save { mut range, edit_index } => {
+            SpellColorFormResult::Save {
+                mut range,
+                edit_index,
+            } => {
                 // Resolve palette color names to hex codes.
                 range.color = app_core.config.resolve_palette_color(&range.color);
                 if let Some(ref bar) = range.bar_color {
@@ -221,11 +224,7 @@ impl TuiFrontend {
                     .strip_prefix("Prompt (")
                     .and_then(|rest| rest.strip_suffix(')'))
                     .unwrap_or(name);
-                if let Some(prompt) = colors
-                    .prompt_colors
-                    .iter_mut()
-                    .find(|p| p.character == ch)
-                {
+                if let Some(prompt) = colors.prompt_colors.iter_mut().find(|p| p.character == ch) {
                     prompt.color = fg;
                 } else {
                     tracing::warn!("Unknown prompt color '{}'", name);
@@ -995,8 +994,11 @@ impl TuiFrontend {
         // Right-click on performance overlay: show metrics toggle menu
         if let Some(window) = app_core.ui_state.windows.get("performance_overlay") {
             let pos = &window.position;
-            if x >= pos.x.get() && x < pos.x.get() + pos.width.get()
-               && y >= pos.y.get() && y < pos.y.get() + pos.height.get() {
+            if x >= pos.x.get()
+                && x < pos.x.get() + pos.width.get()
+                && y >= pos.y.get()
+                && y < pos.y.get() + pos.height.get()
+            {
                 // Build performance metrics context menu
                 let items = Self::build_perf_metrics_context_menu(&app_core.config.ui);
                 app_core.ui_state.popup_menu =
@@ -1094,7 +1096,9 @@ impl TuiFrontend {
 
                         // Inventory window: check link first, fallback to wear
                         if matches!(window.content, crate::data::WindowContent::Inventory(_)) {
-                            if let Some(target_link) = self.link_at_position(name, x, y, window_rect) {
+                            if let Some(target_link) =
+                                self.link_at_position(name, x, y, window_rect)
+                            {
                                 drop_target_id = Some(target_link.exist_id);
                             } else {
                                 drop_target_hand = Some("wear".to_string());
@@ -1103,34 +1107,41 @@ impl TuiFrontend {
                         }
 
                         // Container windows: check link first, fallback to container
-                        if let crate::data::WindowContent::Container { ref container_title } = window.content {
+                        if let crate::data::WindowContent::Container {
+                            ref container_title,
+                        } = window.content
+                        {
                             // First: try to find a link at the drop position (nested container)
-                            if let Some(target_link) = self.link_at_position(name, x, y, window_rect) {
+                            if let Some(target_link) =
+                                self.link_at_position(name, x, y, window_rect)
+                            {
                                 drop_target_id = Some(target_link.exist_id);
                             } else {
                                 // Fallback: the window's container as a
                                 // game-command target (command_target is
                                 // stow-correct; plain id would be "#stow").
-                                if let Some(container_data) = app_core.game_state.objects.find_container(container_title) {
+                                if let Some(container_data) =
+                                    app_core.game_state.objects.find_container(container_title)
+                                {
                                     drop_target_id = Some(container_data.command_target());
                                 }
                             }
-                            break;  // Container window handled
+                            break; // Container window handled
                         }
 
                         // Items window: check link first, fallback to drop
                         if matches!(window.content, crate::data::WindowContent::Items) {
-                            if let Some(target_link) = self.link_at_position(name, x, y, window_rect) {
+                            if let Some(target_link) =
+                                self.link_at_position(name, x, y, window_rect)
+                            {
                                 drop_target_id = Some(target_link.exist_id);
                             }
                             // No else - if no link clicked, fall through to "drop" at line ~1782
-                            break;  // Items window handled
+                            break; // Items window handled
                         }
 
                         // Otherwise check if we dropped on a link (non-container windows)
-                        if let Some(target_link) =
-                            self.link_at_position(name, x, y, window_rect)
-                        {
+                        if let Some(target_link) = self.link_at_position(name, x, y, window_rect) {
                             drop_target_id = Some(target_link.exist_id);
                             break;
                         }
@@ -1138,23 +1149,15 @@ impl TuiFrontend {
                 }
 
                 let command = if let Some(hand_type) = drop_target_hand {
-                    format!(
-                        "_drag #{} {}\n",
-                        link_drag.link_data.exist_id, hand_type
-                    )
+                    format!("_drag #{} {}\n", link_drag.link_data.exist_id, hand_type)
                 } else if let Some(target_id) = drop_target_id {
-                    format!(
-                        "_drag #{} #{}\n",
-                        link_drag.link_data.exist_id, target_id
-                    )
+                    format!("_drag #{} #{}\n", link_drag.link_data.exist_id, target_id)
                 } else {
                     format!("_drag #{} drop\n", link_drag.link_data.exist_id)
                 };
                 command_to_send = Some(command);
             }
-        } else if let Some(pending_click) =
-            app_core.ui_state.pending_link_click.take()
-        {
+        } else if let Some(pending_click) = app_core.ui_state.pending_link_click.take() {
             let dx = (x as i16 - pending_click.click_pos.0 as i16).abs();
             let dy = (y as i16 - pending_click.click_pos.1 as i16).abs();
 
@@ -1162,9 +1165,7 @@ impl TuiFrontend {
                 // Web links open in the default browser, nothing goes upstream
                 if pending_click.link_data.exist_id == crate::data::URL_LINK_SENTINEL {
                     if crate::data::is_web_url(&pending_click.link_data.noun) {
-                        if let Err(err) =
-                            crate::platform::open_url(&pending_click.link_data.noun)
-                        {
+                        if let Err(err) = crate::platform::open_url(&pending_click.link_data.noun) {
                             app_core.add_system_message(&format!(
                                 "Cannot open {}: {}",
                                 pending_click.link_data.noun, err
@@ -1181,10 +1182,7 @@ impl TuiFrontend {
                         format!("{}\n", pending_click.link_data.text)
                         // Use text content
                     };
-                    tracing::info!(
-                        "Executing <d> direct command: {}",
-                        command.trim()
-                    );
+                    tracing::info!("Executing <d> direct command: {}", command.trim());
                     command_to_send = Some(command);
                 } else if let Some(ref coord) = pending_click.link_data.coord {
                     // Link has coord field: Look up command in cmdlist and send directly
@@ -1233,19 +1231,14 @@ impl TuiFrontend {
                     command_to_send = Some(command);
                 }
             } else {
-                tracing::debug!(
-                    "Link click cancelled - dragged {} pixels",
-                    dx.max(dy)
-                );
+                tracing::debug!("Link click cancelled - dragged {} pixels", dx.max(dy));
             }
         }
 
         // Sync UI state positions back to layout WindowDefs after mouse resize/move
         let mut window_layout_changed = false;
         if let Some(drag_state) = &app_core.ui_state.mouse_drag {
-            if let Some(window) =
-                app_core.ui_state.get_window(&drag_state.window_name)
-            {
+            if let Some(window) = app_core.ui_state.get_window(&drag_state.window_name) {
                 // Find the corresponding WindowDef in layout and update it
                 if let Some(window_def) = app_core
                     .layout
@@ -1258,13 +1251,23 @@ impl TuiFrontend {
                     base.row = window.position.y;
                     base.cols = window.position.width;
                     base.rows = window.position.height;
-                    tracing::info!("Synced mouse resize/move for '{}' to layout: pos=({},{}) size={}x{}",
-                        drag_state.window_name, base.col.get(), base.row.get(), base.cols.get(), base.rows.get());
+                    tracing::info!(
+                        "Synced mouse resize/move for '{}' to layout: pos=({},{}) size={}x{}",
+                        drag_state.window_name,
+                        base.col.get(),
+                        base.row.get(),
+                        base.cols.get(),
+                        base.rows.get()
+                    );
                     window_layout_changed = true;
                 }
 
                 // Save ephemeral container window positions to widget_state.toml
-                if app_core.ui_state.ephemeral_windows.contains(&drag_state.window_name) {
+                if app_core
+                    .ui_state
+                    .ephemeral_windows
+                    .contains(&drag_state.window_name)
+                {
                     use crate::config::{Config, DialogPosition};
                     let pos = DialogPosition {
                         x: window.position.x.get(),
@@ -1272,19 +1275,24 @@ impl TuiFrontend {
                         width: Some(window.position.width.get()),
                         height: Some(window.position.height.get()),
                     };
-                    app_core.saved_dialog_positions.containers.insert(
-                        drag_state.window_name.clone(),
-                        pos,
-                    );
+                    app_core
+                        .saved_dialog_positions
+                        .containers
+                        .insert(drag_state.window_name.clone(), pos);
                     // Save to disk asynchronously (best-effort)
                     let character = app_core.config.character.clone();
                     let positions = app_core.saved_dialog_positions.clone();
                     std::thread::spawn(move || {
-                        if let Err(e) = Config::save_dialog_positions(character.as_deref(), &positions) {
+                        if let Err(e) =
+                            Config::save_dialog_positions(character.as_deref(), &positions)
+                        {
                             tracing::warn!("Failed to save container positions: {}", e);
                         }
                     });
-                    tracing::debug!("Saved ephemeral container position for '{}'", drag_state.window_name);
+                    tracing::debug!(
+                        "Saved ephemeral container position for '{}'",
+                        drag_state.window_name
+                    );
                 }
             }
         }
@@ -1306,7 +1314,11 @@ impl TuiFrontend {
                 let window_name = &selection.window_name;
 
                 if let Some(text) = self.extract_selection_text(
-                    window_name, start.line, start.col, end.line, end.col,
+                    window_name,
+                    start.line,
+                    start.col,
+                    end.line,
+                    end.col,
                 ) {
                     // Copy to clipboard
                     match crate::clipboard::copy(&text) {
@@ -1327,16 +1339,23 @@ impl TuiFrontend {
             if auto_copy {
                 // Unfreeze the text window before clearing selection
                 let window_to_unfreeze = selection.window_name.clone();
-                if let Some(text_window) = self.widget_manager.text_windows.get_mut(&window_to_unfreeze) {
+                if let Some(text_window) = self
+                    .widget_manager
+                    .text_windows
+                    .get_mut(&window_to_unfreeze)
+                {
                     text_window.unfreeze_and_apply_pending();
-                } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&window_to_unfreeze) {
+                } else if let Some(tabbed_window) = self
+                    .widget_manager
+                    .tabbed_text_windows
+                    .get_mut(&window_to_unfreeze)
+                {
                     tabbed_window.unfreeze_and_apply_pending();
                 }
                 app_core.ui_state.selection_state = None;
             }
             app_core.needs_render = true;
         }
-
 
         Ok((true, command_to_send))
     }
@@ -1364,9 +1383,7 @@ impl TuiFrontend {
             let (min_width_constraint, min_height_constraint) =
                 app_core.window_min_size(&drag_state.window_name);
 
-            if let Some(window) =
-                app_core.ui_state.get_window_mut(&drag_state.window_name)
-            {
+            if let Some(window) = app_core.ui_state.get_window_mut(&drag_state.window_name) {
                 // Geometry lives in the pure, unit-tested
                 // apply_window_drag (data/window.rs). The original
                 // window position at drag-start is `original_window_pos`
@@ -1391,8 +1408,7 @@ impl TuiFrontend {
             }
         } else if app_core.ui_state.pending_link_click.is_some() {
             app_core.ui_state.pending_link_click = None;
-        } else if let Some(_drag_start) = app_core.ui_state.selection_drag_start
-        {
+        } else if let Some(_drag_start) = app_core.ui_state.selection_drag_start {
             // Update text selection on drag
             if let Some(ref mut selection) = app_core.ui_state.selection_state {
                 // Find which window we're dragging in
@@ -1409,11 +1425,10 @@ impl TuiFrontend {
                             width: pos.width.get(),
                             height: pos.height.get(),
                         };
-                        if let Some((line, col)) = self
-                            .mouse_to_text_coords(name, x, y, window_rect)
+                        if let Some((line, col)) =
+                            self.mouse_to_text_coords(name, x, y, window_rect)
                         {
-                            let window_index =
-                                window_names.binary_search(name).unwrap_or(0);
+                            let window_index = window_names.binary_search(name).unwrap_or(0);
                             selection.update_end(window_index, line, col);
                             app_core.needs_render = true;
                         }
@@ -1439,7 +1454,9 @@ impl TuiFrontend {
         handle_menu_action_fn: impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
     ) -> Result<(bool, Option<String>)> {
         use crate::data::ui_state::InputMode;
-        use crate::data::{DragOperation, LinkDragState, MouseDragState, PendingLinkClick, window::WidgetType};
+        use crate::data::{
+            window::WidgetType, DragOperation, LinkDragState, MouseDragState, PendingLinkClick,
+        };
         use ratatui::layout::Rect;
 
         // If in menu mode, handle menu clicks first
@@ -1456,8 +1473,7 @@ impl TuiFrontend {
                     .iter()
                     .map(|item| item.text.len())
                     .max()
-                    .unwrap_or(10)
-                    as u16
+                    .unwrap_or(10) as u16
                     + 4; // +4 for borders and padding
                 let max_x = screen_width.saturating_sub(menu_width);
                 let max_y = screen_height.saturating_sub(menu_height);
@@ -1515,16 +1531,11 @@ impl TuiFrontend {
 
             if let Some(item) = clicked_item {
                 let command = item.command.clone();
-                tracing::info!(
-                    "Menu item clicked: {} (command: {})",
-                    item.text,
-                    command
-                );
+                tracing::info!("Menu item clicked: {} (command: {})", item.text, command);
 
                 // Dispatch through the same path as keyboard Enter so
                 // mouse and keyboard menus can never diverge.
-                let result =
-                    self.handle_menu_command(command, app_core, &handle_menu_action_fn)?;
+                let result = self.handle_menu_command(command, app_core, &handle_menu_action_fn)?;
                 return Ok((true, result));
             } else {
                 // Click outside menu - close it
@@ -1543,9 +1554,17 @@ impl TuiFrontend {
         // Mouse down handling (find links, start drags)
         // Unfreeze any frozen text window before clearing selection
         if let Some(ref selection) = app_core.ui_state.selection_state {
-            if let Some(text_window) = self.widget_manager.text_windows.get_mut(&selection.window_name) {
+            if let Some(text_window) = self
+                .widget_manager
+                .text_windows
+                .get_mut(&selection.window_name)
+            {
                 text_window.unfreeze_and_apply_pending();
-            } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&selection.window_name) {
+            } else if let Some(tabbed_window) = self
+                .widget_manager
+                .tabbed_text_windows
+                .get_mut(&selection.window_name)
+            {
                 tabbed_window.unfreeze_and_apply_pending();
             }
         }
@@ -1555,12 +1574,19 @@ impl TuiFrontend {
         let (is_quickbar, window_pos) = app_core
             .ui_state
             .get_window(&topmost_window)
-            .map(|window| (window.widget_type == WidgetType::Quickbar, Some(window.position.clone())))
+            .map(|window| {
+                (
+                    window.widget_type == WidgetType::Quickbar,
+                    Some(window.position.clone()),
+                )
+            })
             .unwrap_or((false, None));
 
         if is_quickbar {
-            if let Some(quickbar_widget) =
-                self.widget_manager.quickbar_widgets.get_mut(&topmost_window)
+            if let Some(quickbar_widget) = self
+                .widget_manager
+                .quickbar_widgets
+                .get_mut(&topmost_window)
             {
                 let window_pos = window_pos.unwrap_or(crate::data::WindowPosition {
                     x: crate::data::geometry::Col::new(0),
@@ -1585,7 +1611,10 @@ impl TuiFrontend {
                         crate::frontend::tui::quickbar::QuickbarAction::ExecuteCommand(command) => {
                             return Ok((true, Some(command)));
                         }
-                        crate::frontend::tui::quickbar::QuickbarAction::MenuRequest { exist, noun } => {
+                        crate::frontend::tui::quickbar::QuickbarAction::MenuRequest {
+                            exist,
+                            noun,
+                        } => {
                             let command = app_core.request_menu(exist, noun, (x, y));
                             return Ok((true, Some(command)));
                         }
@@ -1637,13 +1666,18 @@ impl TuiFrontend {
 
         tracing::debug!(
             "Mouse down at ({}, {}), topmost_window='{}'",
-            x, y, topmost_window
+            x,
+            y,
+            topmost_window
         );
 
         if let Some(window) = app_core.ui_state.get_window(&topmost_window) {
             tracing::debug!(
                 "  Window pos: y={}, height={}, click_y={}, is_top_row={}",
-                window.position.y.get(), window.position.height.get(), y, y == window.position.y.get()
+                window.position.y.get(),
+                window.position.height.get(),
+                y,
+                y == window.position.y.get()
             );
             let pos = &window.position;
             let name = &topmost_window;
@@ -1664,9 +1698,7 @@ impl TuiFrontend {
                     width: pos.width.get(),
                     height: pos.height.get(),
                 };
-                if let Some(new_index) =
-                    self.handle_tabbed_click(name, rect, x, y)
-                {
+                if let Some(new_index) = self.handle_tabbed_click(name, rect, x, y) {
                     handled_tab_click = Some((name.clone(), new_index));
                 }
             }
@@ -1692,9 +1724,7 @@ impl TuiFrontend {
             app_core.ui_state.set_focus(Some(win_name.clone()));
 
             if let Some(window_state) = app_core.ui_state.get_window_mut(&win_name) {
-                if let crate::data::WindowContent::TabbedText(tabbed) =
-                    &mut window_state.content
-                {
+                if let crate::data::WindowContent::TabbedText(tabbed) = &mut window_state.content {
                     if new_index < tabbed.tabs.len() {
                         tabbed.active_tab_index = new_index;
                     }
@@ -1737,19 +1767,17 @@ impl TuiFrontend {
                         {
                             if has_ctrl {
                                 // Ctrl+click always starts link drag
-                                app_core.ui_state.link_drag_state =
-                                    Some(LinkDragState {
-                                        link_data,
-                                        start_pos: (x, y),
-                                        current_pos: (x, y),
-                                    });
+                                app_core.ui_state.link_drag_state = Some(LinkDragState {
+                                    link_data,
+                                    start_pos: (x, y),
+                                    current_pos: (x, y),
+                                });
                             } else {
                                 // Locked window without Ctrl: open menu
-                                app_core.ui_state.pending_link_click =
-                                    Some(PendingLinkClick {
-                                        link_data,
-                                        click_pos: (x, y),
-                                    });
+                                app_core.ui_state.pending_link_click = Some(PendingLinkClick {
+                                    link_data,
+                                    click_pos: (x, y),
+                                });
                             }
                             handled_as_link = true;
                         }
@@ -1765,7 +1793,12 @@ impl TuiFrontend {
                         operation,
                         window_name,
                         start_pos: (x, y),
-                        original_window_pos: (pos.x.get(), pos.y.get(), pos.width.get(), pos.height.get()),
+                        original_window_pos: (
+                            pos.x.get(),
+                            pos.y.get(),
+                            pos.width.get(),
+                            pos.height.get(),
+                        ),
                     });
                 }
             }
@@ -1788,44 +1821,39 @@ impl TuiFrontend {
 
                 tracing::debug!(
                     "Non-drag click on '{}' at ({}, {}), window_rect: y={}, height={}",
-                    window_name, x, y, window_rect.y, window_rect.height
+                    window_name,
+                    x,
+                    y,
+                    window_rect.y,
+                    window_rect.height
                 );
 
-                if let Some(link_data) =
-                    self.link_at_position(&window_name, x, y, window_rect)
-                {
+                if let Some(link_data) = self.link_at_position(&window_name, x, y, window_rect) {
                     tracing::debug!("  Found link: {}", link_data.noun);
                     let has_ctrl = modifiers.ctrl;
 
                     if has_ctrl {
-                        app_core.ui_state.link_drag_state =
-                            Some(LinkDragState {
-                                link_data,
-                                start_pos: (x, y),
-                                current_pos: (x, y),
-                            });
+                        app_core.ui_state.link_drag_state = Some(LinkDragState {
+                            link_data,
+                            start_pos: (x, y),
+                            current_pos: (x, y),
+                        });
                     } else {
-                        app_core.ui_state.pending_link_click =
-                            Some(PendingLinkClick {
-                                link_data,
-                                click_pos: (x, y),
-                            });
+                        app_core.ui_state.pending_link_click = Some(PendingLinkClick {
+                            link_data,
+                            click_pos: (x, y),
+                        });
                     }
                 } else {
                     // Start text selection
                     app_core.ui_state.selection_drag_start = Some((x, y));
 
                     // Convert mouse coords to text coords for selection
-                    if let Some((line, col)) = self.mouse_to_text_coords(
-                        &window_name,
-                        x,
-                        y,
-                        window_rect,
-                    ) {
+                    if let Some((line, col)) =
+                        self.mouse_to_text_coords(&window_name, x, y, window_rect)
+                    {
                         // Find window index from the stable (sorted) ordering
-                        let window_index = window_names
-                            .binary_search(&window_name)
-                            .unwrap_or(0);
+                        let window_index = window_names.binary_search(&window_name).unwrap_or(0);
                         app_core.ui_state.selection_state =
                             Some(crate::selection::SelectionState::new(
                                 window_index,
@@ -1836,11 +1864,17 @@ impl TuiFrontend {
 
                         // Freeze the text window if it's scrolled back
                         // This prevents new lines from shifting selection indices
-                        if let Some(text_window) = self.widget_manager.text_windows.get_mut(&window_name) {
+                        if let Some(text_window) =
+                            self.widget_manager.text_windows.get_mut(&window_name)
+                        {
                             if text_window.is_scrolled_back() {
                                 text_window.freeze_for_selection();
                             }
-                        } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&window_name) {
+                        } else if let Some(tabbed_window) = self
+                            .widget_manager
+                            .tabbed_text_windows
+                            .get_mut(&window_name)
+                        {
                             if tabbed_window.is_scrolled_back() {
                                 tabbed_window.freeze_for_selection();
                             }
@@ -1865,9 +1899,9 @@ impl TuiFrontend {
         app_core: &mut crate::core::AppCore,
         handle_menu_action_fn: impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
     ) -> Result<(bool, Option<String>)> {
-        use crate::data::ui_state::InputMode;
         use crate::data::input::MouseEventKind;
-        use crate::data::{DialogDragState, DialogDragOperation};
+        use crate::data::ui_state::InputMode;
+        use crate::data::{DialogDragOperation, DialogDragState};
         use crate::frontend::tui::dialog;
         use ratatui::layout::Rect;
 
@@ -1930,9 +1964,13 @@ impl TuiFrontend {
 
         // Handle color palette browser mouse events
         if self.color_palette_browser.is_some() {
-            if let Some(result) =
-                self.handle_color_palette_browser_mouse(app_core, kind, *x, *y, &handle_menu_action_fn)?
-            {
+            if let Some(result) = self.handle_color_palette_browser_mouse(
+                app_core,
+                kind,
+                *x,
+                *y,
+                &handle_menu_action_fn,
+            )? {
                 return Ok(result);
             }
         }
@@ -1995,82 +2033,156 @@ impl TuiFrontend {
 
                             match drag_state.operation {
                                 DialogDragOperation::Move => {
-                                    let new_x = (drag_state.original_dialog_pos.0 as i32 + dx).max(0) as u16;
-                                    let new_y = (drag_state.original_dialog_pos.1 as i32 + dy).max(0) as u16;
+                                    let new_x = (drag_state.original_dialog_pos.0 as i32 + dx)
+                                        .max(0)
+                                        as u16;
+                                    let new_y = (drag_state.original_dialog_pos.1 as i32 + dy)
+                                        .max(0)
+                                        as u16;
 
                                     // Get current dialog size to clamp position
-                                    let dialog_size = dialog.size.unwrap_or(drag_state.original_dialog_size);
+                                    let dialog_size =
+                                        dialog.size.unwrap_or(drag_state.original_dialog_size);
                                     let max_x = term_width.saturating_sub(dialog_size.0);
                                     let max_y = term_height.saturating_sub(dialog_size.1);
 
                                     dialog.position = Some((new_x.min(max_x), new_y.min(max_y)));
                                 }
                                 DialogDragOperation::ResizeRight => {
-                                    let new_width = (drag_state.original_dialog_size.0 as i32 + dx).max(min_width as i32) as u16;
-                                    let max_width = term_width.saturating_sub(drag_state.original_dialog_pos.0);
-                                    dialog.size = Some((new_width.min(max_width), drag_state.original_dialog_size.1));
+                                    let new_width = (drag_state.original_dialog_size.0 as i32 + dx)
+                                        .max(min_width as i32)
+                                        as u16;
+                                    let max_width =
+                                        term_width.saturating_sub(drag_state.original_dialog_pos.0);
+                                    dialog.size = Some((
+                                        new_width.min(max_width),
+                                        drag_state.original_dialog_size.1,
+                                    ));
                                 }
                                 DialogDragOperation::ResizeBottom => {
-                                    let new_height = (drag_state.original_dialog_size.1 as i32 + dy).max(min_height as i32) as u16;
-                                    let max_height = term_height.saturating_sub(drag_state.original_dialog_pos.1);
-                                    dialog.size = Some((drag_state.original_dialog_size.0, new_height.min(max_height)));
+                                    let new_height = (drag_state.original_dialog_size.1 as i32 + dy)
+                                        .max(min_height as i32)
+                                        as u16;
+                                    let max_height = term_height
+                                        .saturating_sub(drag_state.original_dialog_pos.1);
+                                    dialog.size = Some((
+                                        drag_state.original_dialog_size.0,
+                                        new_height.min(max_height),
+                                    ));
                                 }
                                 DialogDragOperation::ResizeBottomRight => {
-                                    let new_width = (drag_state.original_dialog_size.0 as i32 + dx).max(min_width as i32) as u16;
-                                    let new_height = (drag_state.original_dialog_size.1 as i32 + dy).max(min_height as i32) as u16;
-                                    let max_width = term_width.saturating_sub(drag_state.original_dialog_pos.0);
-                                    let max_height = term_height.saturating_sub(drag_state.original_dialog_pos.1);
-                                    dialog.size = Some((new_width.min(max_width), new_height.min(max_height)));
+                                    let new_width = (drag_state.original_dialog_size.0 as i32 + dx)
+                                        .max(min_width as i32)
+                                        as u16;
+                                    let new_height = (drag_state.original_dialog_size.1 as i32 + dy)
+                                        .max(min_height as i32)
+                                        as u16;
+                                    let max_width =
+                                        term_width.saturating_sub(drag_state.original_dialog_pos.0);
+                                    let max_height = term_height
+                                        .saturating_sub(drag_state.original_dialog_pos.1);
+                                    dialog.size = Some((
+                                        new_width.min(max_width),
+                                        new_height.min(max_height),
+                                    ));
                                 }
                                 DialogDragOperation::ResizeLeft => {
-                                    let new_x = (drag_state.original_dialog_pos.0 as i32 + dx).max(0) as u16;
-                                    let width_delta = drag_state.original_dialog_pos.0 as i32 - new_x as i32;
-                                    let new_width = (drag_state.original_dialog_size.0 as i32 + width_delta).max(min_width as i32) as u16;
+                                    let new_x = (drag_state.original_dialog_pos.0 as i32 + dx)
+                                        .max(0)
+                                        as u16;
+                                    let width_delta =
+                                        drag_state.original_dialog_pos.0 as i32 - new_x as i32;
+                                    let new_width = (drag_state.original_dialog_size.0 as i32
+                                        + width_delta)
+                                        .max(min_width as i32)
+                                        as u16;
                                     if new_width >= min_width {
-                                        dialog.position = Some((new_x, drag_state.original_dialog_pos.1));
-                                        dialog.size = Some((new_width, drag_state.original_dialog_size.1));
+                                        dialog.position =
+                                            Some((new_x, drag_state.original_dialog_pos.1));
+                                        dialog.size =
+                                            Some((new_width, drag_state.original_dialog_size.1));
                                     }
                                 }
                                 DialogDragOperation::ResizeTop => {
-                                    let new_y = (drag_state.original_dialog_pos.1 as i32 + dy).max(0) as u16;
-                                    let height_delta = drag_state.original_dialog_pos.1 as i32 - new_y as i32;
-                                    let new_height = (drag_state.original_dialog_size.1 as i32 + height_delta).max(min_height as i32) as u16;
+                                    let new_y = (drag_state.original_dialog_pos.1 as i32 + dy)
+                                        .max(0)
+                                        as u16;
+                                    let height_delta =
+                                        drag_state.original_dialog_pos.1 as i32 - new_y as i32;
+                                    let new_height = (drag_state.original_dialog_size.1 as i32
+                                        + height_delta)
+                                        .max(min_height as i32)
+                                        as u16;
                                     if new_height >= min_height {
-                                        dialog.position = Some((drag_state.original_dialog_pos.0, new_y));
-                                        dialog.size = Some((drag_state.original_dialog_size.0, new_height));
+                                        dialog.position =
+                                            Some((drag_state.original_dialog_pos.0, new_y));
+                                        dialog.size =
+                                            Some((drag_state.original_dialog_size.0, new_height));
                                     }
                                 }
                                 DialogDragOperation::ResizeTopLeft => {
-                                    let new_x = (drag_state.original_dialog_pos.0 as i32 + dx).max(0) as u16;
-                                    let new_y = (drag_state.original_dialog_pos.1 as i32 + dy).max(0) as u16;
-                                    let width_delta = drag_state.original_dialog_pos.0 as i32 - new_x as i32;
-                                    let height_delta = drag_state.original_dialog_pos.1 as i32 - new_y as i32;
-                                    let new_width = (drag_state.original_dialog_size.0 as i32 + width_delta).max(min_width as i32) as u16;
-                                    let new_height = (drag_state.original_dialog_size.1 as i32 + height_delta).max(min_height as i32) as u16;
+                                    let new_x = (drag_state.original_dialog_pos.0 as i32 + dx)
+                                        .max(0)
+                                        as u16;
+                                    let new_y = (drag_state.original_dialog_pos.1 as i32 + dy)
+                                        .max(0)
+                                        as u16;
+                                    let width_delta =
+                                        drag_state.original_dialog_pos.0 as i32 - new_x as i32;
+                                    let height_delta =
+                                        drag_state.original_dialog_pos.1 as i32 - new_y as i32;
+                                    let new_width = (drag_state.original_dialog_size.0 as i32
+                                        + width_delta)
+                                        .max(min_width as i32)
+                                        as u16;
+                                    let new_height = (drag_state.original_dialog_size.1 as i32
+                                        + height_delta)
+                                        .max(min_height as i32)
+                                        as u16;
                                     if new_width >= min_width && new_height >= min_height {
                                         dialog.position = Some((new_x, new_y));
                                         dialog.size = Some((new_width, new_height));
                                     }
                                 }
                                 DialogDragOperation::ResizeTopRight => {
-                                    let new_y = (drag_state.original_dialog_pos.1 as i32 + dy).max(0) as u16;
-                                    let new_width = (drag_state.original_dialog_size.0 as i32 + dx).max(min_width as i32) as u16;
-                                    let height_delta = drag_state.original_dialog_pos.1 as i32 - new_y as i32;
-                                    let new_height = (drag_state.original_dialog_size.1 as i32 + height_delta).max(min_height as i32) as u16;
-                                    let max_width = term_width.saturating_sub(drag_state.original_dialog_pos.0);
+                                    let new_y = (drag_state.original_dialog_pos.1 as i32 + dy)
+                                        .max(0)
+                                        as u16;
+                                    let new_width = (drag_state.original_dialog_size.0 as i32 + dx)
+                                        .max(min_width as i32)
+                                        as u16;
+                                    let height_delta =
+                                        drag_state.original_dialog_pos.1 as i32 - new_y as i32;
+                                    let new_height = (drag_state.original_dialog_size.1 as i32
+                                        + height_delta)
+                                        .max(min_height as i32)
+                                        as u16;
+                                    let max_width =
+                                        term_width.saturating_sub(drag_state.original_dialog_pos.0);
                                     if new_height >= min_height {
-                                        dialog.position = Some((drag_state.original_dialog_pos.0, new_y));
+                                        dialog.position =
+                                            Some((drag_state.original_dialog_pos.0, new_y));
                                         dialog.size = Some((new_width.min(max_width), new_height));
                                     }
                                 }
                                 DialogDragOperation::ResizeBottomLeft => {
-                                    let new_x = (drag_state.original_dialog_pos.0 as i32 + dx).max(0) as u16;
-                                    let new_height = (drag_state.original_dialog_size.1 as i32 + dy).max(min_height as i32) as u16;
-                                    let width_delta = drag_state.original_dialog_pos.0 as i32 - new_x as i32;
-                                    let new_width = (drag_state.original_dialog_size.0 as i32 + width_delta).max(min_width as i32) as u16;
-                                    let max_height = term_height.saturating_sub(drag_state.original_dialog_pos.1);
+                                    let new_x = (drag_state.original_dialog_pos.0 as i32 + dx)
+                                        .max(0)
+                                        as u16;
+                                    let new_height = (drag_state.original_dialog_size.1 as i32 + dy)
+                                        .max(min_height as i32)
+                                        as u16;
+                                    let width_delta =
+                                        drag_state.original_dialog_pos.0 as i32 - new_x as i32;
+                                    let new_width = (drag_state.original_dialog_size.0 as i32
+                                        + width_delta)
+                                        .max(min_width as i32)
+                                        as u16;
+                                    let max_height = term_height
+                                        .saturating_sub(drag_state.original_dialog_pos.1);
                                     if new_width >= min_width {
-                                        dialog.position = Some((new_x, drag_state.original_dialog_pos.1));
+                                        dialog.position =
+                                            Some((new_x, drag_state.original_dialog_pos.1));
                                         dialog.size = Some((new_width, new_height.min(max_height)));
                                     }
                                 }
@@ -2093,13 +2205,22 @@ impl TuiFrontend {
                                         width: dialog.size.map(|(w, _)| w),
                                         height: dialog.size.map(|(_, h)| h),
                                     };
-                                    app_core.saved_dialog_positions.dialogs.insert(dialog.id.clone(), pos);
+                                    app_core
+                                        .saved_dialog_positions
+                                        .dialogs
+                                        .insert(dialog.id.clone(), pos);
                                     // Save to disk asynchronously (best-effort)
                                     let character = app_core.config.character.clone();
                                     let positions = app_core.saved_dialog_positions.clone();
                                     std::thread::spawn(move || {
-                                        if let Err(e) = Config::save_dialog_positions(character.as_deref(), &positions) {
-                                            tracing::warn!("Failed to save dialog positions: {}", e);
+                                        if let Err(e) = Config::save_dialog_positions(
+                                            character.as_deref(),
+                                            &positions,
+                                        ) {
+                                            tracing::warn!(
+                                                "Failed to save dialog positions: {}",
+                                                e
+                                            );
                                         }
                                     });
                                 }
@@ -2125,8 +2246,12 @@ impl TuiFrontend {
 
                     // Check resize handles first
                     if let Some(resize_op) = dialog::hit_test_resize_handle(&layout, *x, *y) {
-                        let current_pos = dialog_state.position.unwrap_or((layout.area.x, layout.area.y));
-                        let current_size = dialog_state.size.unwrap_or((layout.area.width, layout.area.height));
+                        let current_pos = dialog_state
+                            .position
+                            .unwrap_or((layout.area.x, layout.area.y));
+                        let current_size = dialog_state
+                            .size
+                            .unwrap_or((layout.area.width, layout.area.height));
                         app_core.ui_state.dialog_drag = Some(DialogDragState {
                             operation: resize_op,
                             start_pos: (*x, *y),
@@ -2146,8 +2271,12 @@ impl TuiFrontend {
 
                     // Check title bar for move
                     if dialog::hit_test_title_bar(&layout, *x, *y) {
-                        let current_pos = dialog_state.position.unwrap_or((layout.area.x, layout.area.y));
-                        let current_size = dialog_state.size.unwrap_or((layout.area.width, layout.area.height));
+                        let current_pos = dialog_state
+                            .position
+                            .unwrap_or((layout.area.x, layout.area.y));
+                        let current_size = dialog_state
+                            .size
+                            .unwrap_or((layout.area.width, layout.area.height));
                         app_core.ui_state.dialog_drag = Some(DialogDragState {
                             operation: DialogDragOperation::Move,
                             start_pos: (*x, *y),
@@ -2244,8 +2373,8 @@ impl TuiFrontend {
         app_core: &mut crate::core::AppCore,
         handle_menu_action_fn: impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
     ) -> Result<Option<String>> {
-        use crate::data::ui_state::InputMode;
         use crate::data::input::{KeyCode, KeyModifiers};
+        use crate::data::ui_state::InputMode;
 
         tracing::debug!(
             "Key event: code={:?}, modifiers={:?}, input_mode={:?}",
@@ -2273,22 +2402,54 @@ impl TuiFrontend {
             InputMode::HighlightBrowser => {
                 return self.handle_highlight_browser_mode_keys(code, modifiers, app_core);
             }
-            InputMode::KeybindBrowser => return self.handle_keybind_browser_mode_keys(code, modifiers, app_core),
-            InputMode::HotbarEditor => return self.handle_hotbar_editor_mode_keys(code, modifiers, app_core),
-            InputMode::ColorPaletteBrowser => return self.handle_color_palette_browser_mode_keys(code, modifiers, app_core),
-            InputMode::UIColorsBrowser => return self.handle_uicolors_browser_mode_keys(code, modifiers, app_core),
-            InputMode::SpellColorsBrowser => return self.handle_spell_colors_browser_mode_keys(code, modifiers, app_core),
-            InputMode::ThemeBrowser => return self.handle_theme_browser_mode_keys(code, modifiers, app_core),
-            InputMode::SettingsEditor => return self.handle_settings_editor_mode_keys(code, modifiers, app_core),
-            InputMode::PackEditor => return self.handle_pack_editor_mode_keys(code, modifiers, app_core),
-            InputMode::HighlightForm => return self.handle_highlight_form_mode_keys(code, modifiers, app_core),
-            InputMode::KeybindForm => return self.handle_keybind_form_mode_keys(code, modifiers, app_core),
-            InputMode::ColorForm => return self.handle_color_form_mode_keys(code, modifiers, app_core),
-            InputMode::SpellColorForm => return self.handle_spell_color_form_mode_keys(code, modifiers, app_core),
-            InputMode::MenuKeybindEditor => return self.handle_menu_keybind_editor_mode_keys(code, modifiers, app_core),
-            InputMode::StatusAbbrevEditor => return self.handle_status_abbrev_editor_mode_keys(code, modifiers, app_core),
-            InputMode::ThemeEditor => return self.handle_theme_editor_mode_keys(code, modifiers, app_core),
-            InputMode::IndicatorTemplateEditor => return self.handle_indicator_template_editor_mode_keys(code, modifiers, app_core),
+            InputMode::KeybindBrowser => {
+                return self.handle_keybind_browser_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::HotbarEditor => {
+                return self.handle_hotbar_editor_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::ColorPaletteBrowser => {
+                return self.handle_color_palette_browser_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::UIColorsBrowser => {
+                return self.handle_uicolors_browser_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::SpellColorsBrowser => {
+                return self.handle_spell_colors_browser_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::ThemeBrowser => {
+                return self.handle_theme_browser_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::SettingsEditor => {
+                return self.handle_settings_editor_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::PackEditor => {
+                return self.handle_pack_editor_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::HighlightForm => {
+                return self.handle_highlight_form_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::KeybindForm => {
+                return self.handle_keybind_form_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::ColorForm => {
+                return self.handle_color_form_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::SpellColorForm => {
+                return self.handle_spell_color_form_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::MenuKeybindEditor => {
+                return self.handle_menu_keybind_editor_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::StatusAbbrevEditor => {
+                return self.handle_status_abbrev_editor_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::ThemeEditor => {
+                return self.handle_theme_editor_mode_keys(code, modifiers, app_core)
+            }
+            InputMode::IndicatorTemplateEditor => {
+                return self.handle_indicator_template_editor_mode_keys(code, modifiers, app_core)
+            }
             _ => {}
         }
 
@@ -2318,8 +2479,8 @@ impl TuiFrontend {
         _modifiers: crate::data::input::KeyModifiers,
         app_core: &mut crate::core::AppCore,
     ) -> Result<Option<String>> {
-        use crate::data::ui_state::InputMode;
         use crate::data::input::KeyCode;
+        use crate::data::ui_state::InputMode;
 
         let mut command_to_send: Option<String> = None;
         let mut close_dialog = false;
@@ -2507,7 +2668,6 @@ impl TuiFrontend {
         }
     }
 
-
     /// Handle Menu mode keyboard navigation (extracted from main.rs Phase 4.2)
     fn handle_menu_mode_keys(
         &mut self,
@@ -2516,8 +2676,6 @@ impl TuiFrontend {
         app_core: &mut crate::core::AppCore,
         handle_menu_action_fn: impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
     ) -> Result<Option<String>> {
-        
-        
         use crate::data::input::KeyCode;
         use crate::data::ui_state::InputMode;
 
@@ -2615,8 +2773,9 @@ impl TuiFrontend {
                     app_core.schedule_layout_autosave();
                     app_core.add_system_message(&format!("Window '{}' added", actual_name));
                     tracing::info!("Added window: {}", actual_name);
-                    self.window_editor =
-                        Some(crate::frontend::tui::window_editor::WindowEditor::new(window_def));
+                    self.window_editor = Some(
+                        crate::frontend::tui::window_editor::WindowEditor::new(window_def),
+                    );
                     app_core.ui_state.input_mode = InputMode::WindowEditor;
                 } else {
                     app_core.add_system_message(&format!(
@@ -2668,7 +2827,6 @@ impl TuiFrontend {
         app_core: &mut crate::core::AppCore,
         handle_menu_action_fn: impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
     ) -> Result<Option<String>> {
-
         use crate::data::ui_state::{InputMode, PopupMenu};
 
         if let Some(submenu_name) = command.strip_prefix("menu:") {
@@ -2696,7 +2854,8 @@ impl TuiFrontend {
                     .as_ref()
                     .map(|m| m.get_position())
                     .unwrap_or((40, 12));
-                app_core.ui_state.nested_submenu = Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                app_core.ui_state.nested_submenu =
+                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
             } else if app_core.ui_state.popup_menu.is_some() {
                 // Have popup_menu, create submenu
                 let parent_pos = app_core
@@ -2705,7 +2864,8 @@ impl TuiFrontend {
                     .as_ref()
                     .map(|m| m.get_position())
                     .unwrap_or((40, 12));
-                app_core.ui_state.submenu = Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                app_core.ui_state.submenu =
+                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
             } else {
                 // No existing menu, create popup_menu
                 app_core.ui_state.popup_menu = Some(PopupMenu::new(items, (40, 12)));
@@ -2750,10 +2910,13 @@ impl TuiFrontend {
             app_core.needs_render = true;
         } else if command == "__SUBMENU_INDICATORS" {
             // Indicator submenu under Status (replaces deep_submenu since we're at level 4)
-            let templates = crate::core::local_catalog::addable_by_category(&app_core.layout, app_core.game_type())
-                .get(&crate::config::WidgetCategory::Status)
-                .cloned()
-                .unwrap_or_default();
+            let templates = crate::core::local_catalog::addable_by_category(
+                &app_core.layout,
+                app_core.game_type(),
+            )
+            .get(&crate::config::WidgetCategory::Status)
+            .cloned()
+            .unwrap_or_default();
             let items = app_core.build_indicator_add_menu(&templates);
             if items.is_empty() {
                 app_core.ui_state.deep_submenu = None;
@@ -2788,7 +2951,9 @@ impl TuiFrontend {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visibility.is_shown() && matches!(w.widget_type(), "indicator"))
+                .filter(|w| {
+                    w.base().visibility.is_shown() && matches!(w.widget_type(), "indicator")
+                })
                 .map(|w| w.name().to_string())
                 .collect::<Vec<String>>();
             let items = app_core.build_indicator_hide_menu(&indicators);
@@ -2818,10 +2983,12 @@ impl TuiFrontend {
             }
             app_core.needs_render = true;
         } else if command == "__INDICATOR_EDITOR" {
-            self.indicator_template_editor =
-                Some(crate::frontend::tui::indicator_template_editor::IndicatorTemplateEditor::new());
+            self.indicator_template_editor = Some(
+                crate::frontend::tui::indicator_template_editor::IndicatorTemplateEditor::new(),
+            );
             app_core.ui_state.close_all_menus();
-            app_core.ui_state.input_mode = crate::data::ui_state::InputMode::IndicatorTemplateEditor;
+            app_core.ui_state.input_mode =
+                crate::data::ui_state::InputMode::IndicatorTemplateEditor;
             app_core.needs_render = true;
         } else if let Some(widget_type) = command.strip_prefix("__ADD_CUSTOM__") {
             self.menu_add_custom_window(widget_type, app_core);
@@ -2848,7 +3015,10 @@ impl TuiFrontend {
         } else if let Some(window_name) = command.strip_prefix("__EDIT__") {
             // Safeguard: prevent opening if a window editor is already open
             if self.window_editor.is_some() {
-                tracing::debug!("Window editor already open, ignoring edit request for: {}", window_name);
+                tracing::debug!(
+                    "Window editor already open, ignoring edit request for: {}",
+                    window_name
+                );
             } else if let Some(window_def) = app_core.layout.get_window(window_name) {
                 self.window_editor = Some(crate::frontend::tui::window_editor::WindowEditor::new(
                     window_def.clone(),
@@ -2984,7 +3154,9 @@ impl TuiFrontend {
     }
 
     /// Build performance overlay metrics context menu with checkmarks for enabled metrics
-    fn build_perf_metrics_context_menu(ui: &crate::config::UiConfig) -> Vec<crate::data::ui_state::PopupMenuItem> {
+    fn build_perf_metrics_context_menu(
+        ui: &crate::config::UiConfig,
+    ) -> Vec<crate::data::ui_state::PopupMenuItem> {
         use crate::performance::{PerfFrontend, PERF_METRICS};
         let check = |on: bool| if on { "✓" } else { " " };
         // Rows derive from the shared metric table (TUI scope), so this
@@ -2993,7 +3165,11 @@ impl TuiFrontend {
             .iter()
             .filter(|metric| metric.in_scope(PerfFrontend::Tui))
             .map(|metric| crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] {}", check(ui.perf_metric_enabled(metric.id)), metric.label),
+                text: format!(
+                    "[{}] {}",
+                    check(ui.perf_metric_enabled(metric.id)),
+                    metric.label
+                ),
                 command: format!("__TOGGLE_PERF__{}", metric.id),
                 disabled: false,
             })
@@ -3173,7 +3349,11 @@ impl TuiFrontend {
                         let is_performance = original_template.eq_ignore_ascii_case("performance");
                         if orig_is_custom || exists_in_store || is_performance {
                             if let Err(e) = Config::upsert_window_template(&window_def) {
-                                tracing::warn!("Failed to save window template {}: {}", window_def.name(), e);
+                                tracing::warn!(
+                                    "Failed to save window template {}: {}",
+                                    window_def.name(),
+                                    e
+                                );
                             }
                         }
 
@@ -3197,7 +3377,8 @@ impl TuiFrontend {
                                 app_core.update_window_position(&window_def, width, height);
 
                                 // For TabbedText windows, sync tabs and reset widget cache if structure changed
-                                if matches!(window_def, crate::config::WindowDef::TabbedText { .. }) {
+                                if matches!(window_def, crate::config::WindowDef::TabbedText { .. })
+                                {
                                     if app_core.sync_tabbed_window_tabs(&window_name) {
                                         app_core.ui_state.needs_widget_reset = true;
                                     }
@@ -3260,7 +3441,8 @@ impl TuiFrontend {
                     let ct_code = crossterm_bridge::to_crossterm_keycode(code);
                     let ct_mods = crossterm_bridge::to_crossterm_modifiers(modifiers);
                     let key_event = crossterm::event::KeyEvent::new(ct_code, ct_mods);
-                    let rt_key = crate::frontend::tui::textarea_bridge::to_textarea_event(key_event);
+                    let rt_key =
+                        crate::frontend::tui::textarea_bridge::to_textarea_event(key_event);
                     if let Some(ref mut editor) = self.window_editor {
                         if editor.is_sub_editor_active() {
                             if editor.handle_sub_editor_key(tf_key) {
@@ -3276,9 +3458,7 @@ impl TuiFrontend {
                             && matches!(code, KeyCode::Char('p') | KeyCode::Char('P'))
                             && editor.is_on_streams()
                         {
-                            editor.set_seen_streams(
-                                app_core.message_processor.seen_streams(),
-                            );
+                            editor.set_seen_streams(app_core.message_processor.seen_streams());
                             editor.open_stream_picker();
                             app_core.needs_render = true;
                             return Ok(None);
@@ -3374,7 +3554,13 @@ mod hit_test_tests {
         // height <= 2: bottom row is NOT a resize handle (it's the one content
         // row); only the top row moves and the right column resizes width.
         assert_eq!(resize_op_at(0, 0, 10, 2, false, 3, 1), None);
-        assert_eq!(resize_op_at(0, 0, 10, 2, false, 9, 1), Some(DragOperation::ResizeRight));
-        assert_eq!(resize_op_at(0, 0, 10, 2, false, 3, 0), Some(DragOperation::Move));
+        assert_eq!(
+            resize_op_at(0, 0, 10, 2, false, 9, 1),
+            Some(DragOperation::ResizeRight)
+        );
+        assert_eq!(
+            resize_op_at(0, 0, 10, 2, false, 3, 0),
+            Some(DragOperation::Move)
+        );
     }
 }

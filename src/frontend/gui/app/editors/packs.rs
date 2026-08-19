@@ -198,11 +198,7 @@ impl VellumGuiApp {
         ui.weak("Connection and account settings are never included.");
     }
 
-    fn pack_import_tab(
-        ui: &mut egui::Ui,
-        state: &mut PackEditorState,
-        base: &std::path::Path,
-    ) {
+    fn pack_import_tab(ui: &mut egui::Ui, state: &mut PackEditorState, base: &std::path::Path) {
         ui.horizontal(|ui| {
             ui.label("From imports/");
             let selected_text = state
@@ -223,7 +219,11 @@ impl VellumGuiApp {
                         }
                     }
                 });
-            if ui.small_button("⟳").on_hover_text("Rescan imports/").clicked() {
+            if ui
+                .small_button("⟳")
+                .on_hover_text("Rescan imports/")
+                .clicked()
+            {
                 state.import_choices = uipack::list_import_packs(base);
                 state.import_choice = None;
             }
@@ -309,22 +309,18 @@ impl VellumGuiApp {
     }
 
     /// Install a pack's GUI layout bytes as a named checkpoint.
-    pub(in super::super) fn install_gui_layout_from_pack(
-        &mut self,
-        pack_name: &str,
-        bytes: &[u8],
-    ) {
+    pub(in super::super) fn install_gui_layout_from_pack(&mut self, pack_name: &str, bytes: &[u8]) {
         match serde_json::from_slice(bytes) {
-            Ok(layout) => match crate::frontend::gui::persistence::save_named_layout(
-                &layout, pack_name,
-            ) {
-                Ok(()) => self.app_core.add_system_message(&format!(
-                    "GUI layout installed — load it with .loadlayout {pack_name}"
-                )),
-                Err(err) => self.app_core.add_system_message(&format!(
-                    "Pack's GUI layout could not be saved: {err}"
-                )),
-            },
+            Ok(layout) => {
+                match crate::frontend::gui::persistence::save_named_layout(&layout, pack_name) {
+                    Ok(()) => self.app_core.add_system_message(&format!(
+                        "GUI layout installed — load it with .loadlayout {pack_name}"
+                    )),
+                    Err(err) => self.app_core.add_system_message(&format!(
+                        "Pack's GUI layout could not be saved: {err}"
+                    )),
+                }
+            }
             Err(err) => self
                 .app_core
                 .add_system_message(&format!("Pack's GUI layout did not parse: {err}")),

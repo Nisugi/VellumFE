@@ -131,7 +131,11 @@ async fn discovery_loop(
             if entry.pid == own_pid {
                 continue;
             }
-            if !watching.lock().expect("watch set poisoned").insert(entry.port) {
+            if !watching
+                .lock()
+                .expect("watch set poisoned")
+                .insert(entry.port)
+            {
                 continue;
             }
             tokio::spawn(peer_task(
@@ -232,7 +236,9 @@ async fn run_peer(
     // every instance on this machine reads, so no pairing step is needed.
     socket
         .send(Message::Text(
-            serde_json::json!({"t": "auth", "d": {"token": token}}).to_string().into(),
+            serde_json::json!({"t": "auth", "d": {"token": token}})
+                .to_string()
+                .into(),
         ))
         .await?;
 
@@ -247,7 +253,9 @@ async fn run_peer(
         .await?;
     socket
         .send(Message::Text(
-            serde_json::json!({"t": "resume", "d": {"seq": 0}}).to_string().into(),
+            serde_json::json!({"t": "resume", "d": {"seq": 0}})
+                .to_string()
+                .into(),
         ))
         .await?;
 
@@ -268,8 +276,7 @@ async fn run_peer(
         match frame? {
             Message::Text(text) => {
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let is_snapshot =
-                        value.get("t").and_then(|v| v.as_str()) == Some("snapshot");
+                    let is_snapshot = value.get("t").and_then(|v| v.as_str()) == Some("snapshot");
                     let needs_roster;
                     {
                         let mut table = peers.lock().expect("peer table poisoned");
@@ -393,10 +400,7 @@ fn apply_frame(peer: &mut PeerStatus, frame: &serde_json::Value) {
         "hands" => apply_hands(peer, Some(d)),
         "minivitals" => apply_minivitals(peer, Some(d)),
         "prepared_spell" => {
-            peer.prepared_spell = d
-                .get("spell")
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
+            peer.prepared_spell = d.get("spell").and_then(|v| v.as_str()).map(str::to_string);
         }
         _ => return,
     }
@@ -451,8 +455,7 @@ fn apply_char_info(peer: &mut PeerStatus, v: Option<&serde_json::Value>) {
     // value. Absent fields deserialize to None and leave the previous value
     // alone: char_info ships only on change, and a missing section means
     // "unchanged", not "now unknown".
-    let Ok(gauges) =
-        serde_json::from_value::<crate::core::remote::RemoteGauges>(gauges.clone())
+    let Ok(gauges) = serde_json::from_value::<crate::core::remote::RemoteGauges>(gauges.clone())
     else {
         return;
     };
@@ -490,8 +493,7 @@ fn apply_effects(peer: &mut PeerStatus, v: Option<&serde_json::Value>) {
 
 fn apply_minivitals(peer: &mut PeerStatus, v: Option<&serde_json::Value>) {
     let Some(v) = v else { return };
-    let Ok(vitals) =
-        serde_json::from_value::<Vec<crate::core::remote::RemoteVital>>(v.clone())
+    let Ok(vitals) = serde_json::from_value::<Vec<crate::core::remote::RemoteVital>>(v.clone())
     else {
         return;
     };
@@ -511,10 +513,7 @@ fn apply_hands(peer: &mut PeerStatus, v: Option<&serde_json::Value>) {
 
 fn apply_room(peer: &mut PeerStatus, v: Option<&serde_json::Value>) {
     let Some(v) = v else { return };
-    peer.room_name = v
-        .get("name")
-        .and_then(|x| x.as_str())
-        .map(str::to_string);
+    peer.room_name = v.get("name").and_then(|x| x.as_str()).map(str::to_string);
     peer.room_id = v.get("id").and_then(|x| x.as_str()).map(str::to_string);
 }
 
@@ -583,7 +582,10 @@ mod tests {
         assert_eq!(p.roundtime_end, Some(1_700));
         assert_eq!(p.roundtime_remaining(1_695), 5.0);
         assert_eq!(p.mind.as_ref().map(|g| g.value), Some(42));
-        assert_eq!(p.stance.as_ref().map(|g| g.text.as_str()), Some("defensive"));
+        assert_eq!(
+            p.stance.as_ref().map(|g| g.text.as_str()),
+            Some("defensive")
+        );
         // Encumbrance was not reported, so it stays unknown rather than 0.
         assert!(p.encumbrance.is_none());
         assert_eq!(p.room_name.as_deref(), Some("Town Square"));
@@ -621,7 +623,10 @@ mod tests {
             }}),
         );
         assert!(!p.group.leads());
-        assert!(!p.group.confirmed, "unconfirmed must survive the round trip");
+        assert!(
+            !p.group.confirmed,
+            "unconfirmed must survive the round trip"
+        );
     }
 
     /// A snapshot is authoritative: the encoder skips `group` when the peer
@@ -638,7 +643,10 @@ mod tests {
                 name: "Bob".to_string(),
             }],
         );
-        p.mind = Some(Gauge { value: 42, text: "muddled".to_string() });
+        p.mind = Some(Gauge {
+            value: 42,
+            text: "muddled".to_string(),
+        });
         p.minivitals.insert("health".to_string(), (51, 51));
 
         apply_frame(&mut p, &serde_json::json!({"t": "snapshot", "d": {}}));
@@ -653,7 +661,10 @@ mod tests {
     #[test]
     fn deltas_still_treat_absence_as_unchanged() {
         let mut p = peer();
-        p.mind = Some(Gauge { value: 42, text: "muddled".to_string() });
+        p.mind = Some(Gauge {
+            value: 42,
+            text: "muddled".to_string(),
+        });
         apply_frame(
             &mut p,
             &serde_json::json!({"t": "char_info", "d": {"gauges": {"stance": {"value": 50, "text": "forward"}}}}),
@@ -684,7 +695,10 @@ mod tests {
         p.last_update_ms = 5;
         // A newer peer may send frames this build does not model; that must
         // not count as an update or corrupt anything.
-        apply_frame(&mut p, &serde_json::json!({"t": "some_future_thing", "d": {}}));
+        apply_frame(
+            &mut p,
+            &serde_json::json!({"t": "some_future_thing", "d": {}}),
+        );
         assert_eq!(p.last_update_ms, 5);
         assert!(!p.connected);
 
@@ -707,7 +721,11 @@ mod tests {
             &mut p,
             &serde_json::json!({"t": "char_info", "d": {"gauges": {"stance": {"value": 50, "text": "forward"}}}}),
         );
-        assert_eq!(p.mind.as_ref().map(|g| g.value), Some(10), "mind must persist");
+        assert_eq!(
+            p.mind.as_ref().map(|g| g.value),
+            Some(10),
+            "mind must persist"
+        );
         assert_eq!(p.stance.as_ref().map(|g| g.value), Some(50));
     }
 
@@ -717,10 +735,16 @@ mod tests {
         p.vitals.health = 77;
         // Wrong types everywhere; every applier must decline rather than
         // unwrap. A peer on a different build should never crash the display.
-        apply_frame(&mut p, &serde_json::json!({"t": "vitals", "d": "not an object"}));
+        apply_frame(
+            &mut p,
+            &serde_json::json!({"t": "vitals", "d": "not an object"}),
+        );
         apply_frame(&mut p, &serde_json::json!({"t": "injuries", "d": 42}));
         apply_frame(&mut p, &serde_json::json!({"t": "group", "d": []}));
-        apply_frame(&mut p, &serde_json::json!({"t": "rt", "d": {"roundtime_end": "soon"}}));
+        apply_frame(
+            &mut p,
+            &serde_json::json!({"t": "rt", "d": {"roundtime_end": "soon"}}),
+        );
         assert_eq!(p.vitals.health, 77);
     }
 }

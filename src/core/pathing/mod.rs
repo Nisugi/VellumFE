@@ -17,6 +17,6 @@ pub mod overrides;
 pub mod transpile;
 
 pub use dijkstra::{
-    dijkstra, dijkstra_filtered, estimate_time, find_nearest, find_nearest_by_tag, path_to, silver_cost,
-    path_to_filtered, PathTarget,
+    dijkstra, dijkstra_filtered, estimate_time, find_nearest, find_nearest_by_tag, path_to,
+    path_to_filtered, silver_cost, PathTarget,
 };

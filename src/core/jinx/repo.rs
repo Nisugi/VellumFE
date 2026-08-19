@@ -38,7 +38,11 @@ struct Seed {
 /// own single monorepo's per-category sub-paths.
 const SEEDS: &[Seed] = &[
     // Game data + community assets, all games.
-    Seed { name: "elanthia-online", url: "https://extras.repo.elanthia.online", only: None },
+    Seed {
+        name: "elanthia-online",
+        url: "https://extras.repo.elanthia.online",
+        only: None,
+    },
     // Map backups, game-specific.
     Seed {
         name: "mapdb-backup-gs",
@@ -53,11 +57,31 @@ const SEEDS: &[Seed] = &[
     // VellumFE asset repos: per-category sub-paths of the vellum-assets
     // monorepo, served over GitHub Pages (live). Each category is its own
     // Jinx repo (own manifest.json at its base URL).
-    Seed { name: "vellum-icons", url: "https://nisugi.github.io/vellum-assets/icons", only: None },
-    Seed { name: "vellum-dolls", url: "https://nisugi.github.io/vellum-assets/dolls", only: None },
-    Seed { name: "vellum-skins", url: "https://nisugi.github.io/vellum-assets/skins", only: None },
-    Seed { name: "vellum-layouts", url: "https://nisugi.github.io/vellum-assets/layouts", only: None },
-    Seed { name: "vellum-frames", url: "https://nisugi.github.io/vellum-assets/frames", only: None },
+    Seed {
+        name: "vellum-icons",
+        url: "https://nisugi.github.io/vellum-assets/icons",
+        only: None,
+    },
+    Seed {
+        name: "vellum-dolls",
+        url: "https://nisugi.github.io/vellum-assets/dolls",
+        only: None,
+    },
+    Seed {
+        name: "vellum-skins",
+        url: "https://nisugi.github.io/vellum-assets/skins",
+        only: None,
+    },
+    Seed {
+        name: "vellum-layouts",
+        url: "https://nisugi.github.io/vellum-assets/layouts",
+        only: None,
+    },
+    Seed {
+        name: "vellum-frames",
+        url: "https://nisugi.github.io/vellum-assets/frames",
+        only: None,
+    },
     Seed {
         name: "vellum-backgrounds",
         url: "https://nisugi.github.io/vellum-assets/backgrounds",
@@ -301,11 +325,18 @@ mod tests {
         let mut list = RepoList::default();
         list.add("myfriend", "https://example.com").unwrap();
         for name in PRUNE {
-            list.repos.push(RepoSource { name: (*name).into(), url: "https://x".into() });
+            list.repos.push(RepoSource {
+                name: (*name).into(),
+                url: "https://x".into(),
+            });
         }
 
         let changed = list.prune_deprecated();
-        assert_eq!(changed, !PRUNE.is_empty(), "changed iff there was something to prune");
+        assert_eq!(
+            changed,
+            !PRUNE.is_empty(),
+            "changed iff there was something to prune"
+        );
         for name in PRUNE {
             assert!(list.find(name).is_none(), "{name} should be pruned");
         }
@@ -318,22 +349,41 @@ mod tests {
     #[test]
     fn merge_discovered_is_add_only_and_filters_bad_entries() {
         let mut list = RepoList::default();
-        list.add("vellum-frames", "https://mine.example/frames").unwrap();
+        list.add("vellum-frames", "https://mine.example/frames")
+            .unwrap();
 
         let index = DiscoveryIndex {
             repos: vec![
                 // Existing name: the user's URL must win.
-                RepoSource { name: "vellum-frames".into(), url: "https://official/frames".into() },
+                RepoSource {
+                    name: "vellum-frames".into(),
+                    url: "https://official/frames".into(),
+                },
                 // New name: merged in, trailing slash normalized.
-                RepoSource { name: "vellum-banners".into(), url: "https://official/banners/".into() },
+                RepoSource {
+                    name: "vellum-banners".into(),
+                    url: "https://official/banners/".into(),
+                },
                 // Bad entries: skipped.
-                RepoSource { name: "".into(), url: "https://official/x".into() },
-                RepoSource { name: "vellum-evil".into(), url: "http://insecure/evil".into() },
+                RepoSource {
+                    name: "".into(),
+                    url: "https://official/x".into(),
+                },
+                RepoSource {
+                    name: "vellum-evil".into(),
+                    url: "http://insecure/evil".into(),
+                },
             ],
         };
         assert!(list.merge_discovered(index));
-        assert_eq!(list.find("vellum-frames").unwrap().url, "https://mine.example/frames");
-        assert_eq!(list.find("vellum-banners").unwrap().url, "https://official/banners");
+        assert_eq!(
+            list.find("vellum-frames").unwrap().url,
+            "https://mine.example/frames"
+        );
+        assert_eq!(
+            list.find("vellum-banners").unwrap().url,
+            "https://official/banners"
+        );
         assert!(list.find("vellum-evil").is_none());
         assert_eq!(list.repos.len(), 2);
 
@@ -353,7 +403,7 @@ mod tests {
         assert!(list.add("x", "http://insecure.example").is_err());
         list.add("x", "https://ok.example").unwrap();
         assert!(list.add("x", "https://ok.example/2").is_err()); // dup name
-        // Trailing slash normalized off.
+                                                                 // Trailing slash normalized off.
         list.add("y", "https://ok.example/y/").unwrap();
         assert_eq!(list.find("y").unwrap().url, "https://ok.example/y");
     }

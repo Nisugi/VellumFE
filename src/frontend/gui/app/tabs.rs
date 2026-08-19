@@ -320,7 +320,6 @@ impl VellumGuiApp {
             .map(|(key, _)| key.clone())
     }
 
-
     /// Drop group members that no longer exist, groups that shrink below
     /// two members, and duplicate memberships (first group wins).
     pub(super) fn sanitize_tab_groups(
@@ -539,7 +538,10 @@ impl VellumGuiApp {
         let mut slots: Vec<Vec<GuiTab>> = Vec::new();
         for member in members {
             if !slots.is_empty() && merged.contains(&member.id.key) {
-                slots.last_mut().expect("slots checked non-empty").push(member);
+                slots
+                    .last_mut()
+                    .expect("slots checked non-empty")
+                    .push(member);
             } else {
                 slots.push(vec![member]);
             }
@@ -644,8 +646,7 @@ impl VellumGuiApp {
                         ui.set_max_height(each_height);
                         ui.columns(slot.len(), |columns| {
                             for (column, member) in columns.iter_mut().zip(slot.iter()) {
-                                member_rects
-                                    .push((member.window_name.clone(), column.max_rect()));
+                                member_rects.push((member.window_name.clone(), column.max_rect()));
                                 column.push_id(&member.id.key, |ui| {
                                     if let Some(click) = Self::render_window_content(
                                         &self.app_core,
@@ -679,7 +680,12 @@ impl VellumGuiApp {
     /// exactly that; the leftover splits among flexible members (doll,
     /// text, ...) instead of equal N-way shares that leave dead space
     /// under each bar. None = flexible.
-    pub(super) fn member_natural_height(&self, gap: f32, bar_height: f32, member: &GuiTab) -> Option<f32> {
+    pub(super) fn member_natural_height(
+        &self,
+        gap: f32,
+        bar_height: f32,
+        member: &GuiTab,
+    ) -> Option<f32> {
         match self
             .app_core
             .ui_state
@@ -694,12 +700,8 @@ impl VellumGuiApp {
             // a grouped hand to one bar row froze its icon at ~16px no matter
             // how the group window was resized — so hands stay flexible (fall
             // through to None) and share the group's growable height.
-            Some(WindowContent::Progress(_) | WindowContent::Countdown(_)) => {
-                Some(bar_height)
-            }
-            Some(WindowContent::Betrayer)
-                if self.app_core.game_state.betrayer.items.is_empty() =>
-            {
+            Some(WindowContent::Progress(_) | WindowContent::Countdown(_)) => Some(bar_height),
+            Some(WindowContent::Betrayer) if self.app_core.game_state.betrayer.items.is_empty() => {
                 Some(bar_height)
             }
             Some(WindowContent::Encumbrance) => {
@@ -881,5 +883,4 @@ impl VellumGuiApp {
             member_rects.push((member.window_name.clone(), block.inner.response.rect));
         }
     }
-
 }

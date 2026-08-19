@@ -207,8 +207,12 @@ mod tests {
     fn transparent_background_is_none() {
         let mut base = base_with(None, Some("#112233"), None);
         base.transparent_background = true;
-        let colors =
-            resolve_window_colors(&base, &UiColors::default(), &AppTheme::default(), test_parse);
+        let colors = resolve_window_colors(
+            &base,
+            &UiColors::default(),
+            &AppTheme::default(),
+            test_parse,
+        );
         assert_eq!(colors.background, None);
     }
 
@@ -254,6 +258,9 @@ mod tests {
             theme.window_border_focused.g,
             theme.window_border_focused.b,
         );
-        assert_eq!(resolve_focused_border_color(&ui, &theme, test_parse), expected);
+        assert_eq!(
+            resolve_focused_border_color(&ui, &theme, test_parse),
+            expected
+        );
     }
 }

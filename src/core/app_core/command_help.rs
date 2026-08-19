@@ -566,10 +566,7 @@ mod tests {
             let pattern = rest.split("=>").next().unwrap_or(rest);
             for piece in format!("\"{pattern}").split('|') {
                 let piece = piece.trim();
-                if let Some(name) = piece
-                    .strip_prefix('"')
-                    .and_then(|p| p.strip_suffix('"'))
-                {
+                if let Some(name) = piece.strip_prefix('"').and_then(|p| p.strip_suffix('"')) {
                     names.insert(name.to_string());
                 }
             }

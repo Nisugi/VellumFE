@@ -221,7 +221,11 @@ fn story_preview(
     span("go archway", role("commands"), none);
     span("\n", body, none);
     span("Penelopia says,", role("speech"), none);
-    span(" \"Selling a satyr will-o-wisp in a black acorn amulet.\"\n", body, none);
+    span(
+        " \"Selling a satyr will-o-wisp in a black acorn amulet.\"\n",
+        body,
+        none,
+    );
     span("Someone whispers,", role("whisper"), none);
     span(" \"Meet me by the fountain.\"\n", body, none);
     span(
@@ -229,7 +233,11 @@ fn story_preview(
         role("thought"),
         none,
     );
-    span("Your familiar senses movement nearby.\n", role("familiar"), none);
+    span(
+        "Your familiar senses movement nearby.\n",
+        role("familiar"),
+        none,
+    );
     span("You feel the favor of Voln upon you.\n", role("voln"), none);
     span("\u{25b8} kobold", role("target_indicator"), none);
     span("   ", body, none);
@@ -239,7 +247,11 @@ fn story_preview(
     span(" H", prompt("H"), none);
     span(" !", prompt("!"), none);
     span(" >", prompt(">"), none);
-    span("  (roundtime / stunned / hiding / bleeding / prompt)", body, none);
+    span(
+        "  (roundtime / stunned / hiding / bleeding / prompt)",
+        body,
+        none,
+    );
     job
 }
 
@@ -382,7 +394,8 @@ impl SpellFormState {
             .filter(|part| !part.trim().is_empty())
             .map(|part| part.trim().parse::<u32>())
             .collect();
-        let spells = spells.map_err(|_| "Spells must be numeric IDs (e.g. 101, 107).".to_string())?;
+        let spells =
+            spells.map_err(|_| "Spells must be numeric IDs (e.g. 101, 107).".to_string())?;
         if spells.is_empty() {
             return Err("At least one spell ID is required.".to_string());
         }
@@ -822,32 +835,34 @@ impl VellumGuiApp {
             .ui_buffer
             .get_or_insert_with(|| UiColorsBuffer::from_config(&self.app_core.config.colors));
 
-        egui::Grid::new("ui_colors_grid").num_columns(2).show(ui, |ui| {
-            ui.label("Command echo");
-            color_field(ui, &mut buffer.command_echo_color);
-            ui.end_row();
-            ui.label("System messages");
-            color_field(ui, &mut buffer.system_message_color);
-            ui.end_row();
-            ui.label("Border");
-            color_field(ui, &mut buffer.border_color);
-            ui.end_row();
-            ui.label("Focused border");
-            color_field(ui, &mut buffer.focused_border_color);
-            ui.end_row();
-            ui.label("Text");
-            color_field(ui, &mut buffer.text_color);
-            ui.end_row();
-            ui.label("Background");
-            color_field(ui, &mut buffer.background_color);
-            ui.end_row();
-            ui.label("Selection background");
-            color_field(ui, &mut buffer.selection_bg_color);
-            ui.end_row();
-            ui.label("Textarea background");
-            color_field(ui, &mut buffer.textarea_background);
-            ui.end_row();
-        });
+        egui::Grid::new("ui_colors_grid")
+            .num_columns(2)
+            .show(ui, |ui| {
+                ui.label("Command echo");
+                color_field(ui, &mut buffer.command_echo_color);
+                ui.end_row();
+                ui.label("System messages");
+                color_field(ui, &mut buffer.system_message_color);
+                ui.end_row();
+                ui.label("Border");
+                color_field(ui, &mut buffer.border_color);
+                ui.end_row();
+                ui.label("Focused border");
+                color_field(ui, &mut buffer.focused_border_color);
+                ui.end_row();
+                ui.label("Text");
+                color_field(ui, &mut buffer.text_color);
+                ui.end_row();
+                ui.label("Background");
+                color_field(ui, &mut buffer.background_color);
+                ui.end_row();
+                ui.label("Selection background");
+                color_field(ui, &mut buffer.selection_bg_color);
+                ui.end_row();
+                ui.label("Textarea background");
+                color_field(ui, &mut buffer.textarea_background);
+                ui.end_row();
+            });
 
         ui.separator();
         ui.horizontal(|ui| {
@@ -927,7 +942,10 @@ impl VellumGuiApp {
         if let Some(r) = dup {
             ui.colored_label(
                 ui.visuals().warn_fg_color,
-                format!("Duplicate preset name '{}' — only the last is kept.", r.name.trim()),
+                format!(
+                    "Duplicate preset name '{}' — only the last is kept.",
+                    r.name.trim()
+                ),
             );
         }
 
@@ -1279,7 +1297,9 @@ impl VellumGuiApp {
                     egui::Slider::new(&mut gen.skin_panel.fade_depth, 0.0..=60.0)
                         .text("fade depth"),
                 );
-                ui.add(egui::Slider::new(&mut gen.skin_panel.vignette, 0.0..=90.0).text("vignette"));
+                ui.add(
+                    egui::Slider::new(&mut gen.skin_panel.vignette, 0.0..=90.0).text("vignette"),
+                );
                 ui.add(
                     egui::Slider::new(&mut gen.skin_panel.scanlines, 0.0..=40.0).text("scanlines"),
                 );
@@ -1298,17 +1318,15 @@ impl VellumGuiApp {
                     );
                 }
 
-                let colors = SkinColors::derive(
-                    &params.background,
-                    &params.seed,
-                    gen.skin_panel.fade_depth,
-                );
+                let colors =
+                    SkinColors::derive(&params.background, &params.seed, gen.skin_panel.fade_depth);
                 // Regenerate the four preview textures only when an input
                 // changed; uploading textures every frame would thrash.
                 let hash = {
                     use std::hash::{Hash, Hasher};
                     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    format!("{:?}{:?}{:?}", colors, gen.skin_panel, gen.skin_frame).hash(&mut hasher);
+                    format!("{:?}{:?}{:?}", colors, gen.skin_panel, gen.skin_frame)
+                        .hash(&mut hasher);
                     hasher.finish()
                 };
                 if gen.skin_preview.as_ref().map(|(h, _)| *h) != Some(hash) {
@@ -1316,7 +1334,12 @@ impl VellumGuiApp {
                         (
                             "harmony_skin_panel",
                             96,
-                            render_panel(96, &colors.panel_top, &colors.panel_bottom, &gen.skin_panel),
+                            render_panel(
+                                96,
+                                &colors.panel_top,
+                                &colors.panel_bottom,
+                                &gen.skin_panel,
+                            ),
                         ),
                         (
                             "harmony_skin_deep",
@@ -1371,9 +1394,7 @@ impl VellumGuiApp {
 
                 ui.horizontal(|ui| {
                     ui.label("Skin name:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut gen.skin_name).desired_width(140.0),
-                    );
+                    ui.add(egui::TextEdit::singleline(&mut gen.skin_name).desired_width(140.0));
                     if ui.button("Write skin files").clicked() {
                         skin_write = Some((
                             gen.skin_name.clone(),
@@ -1484,7 +1505,8 @@ impl VellumGuiApp {
             if index < self.app_core.config.colors.spell_colors.len() {
                 self.app_core.config.colors.spell_colors.remove(index);
                 self.persist_color_config();
-                self.app_core.add_system_message("Spell color range deleted.");
+                self.app_core
+                    .add_system_message("Spell color range deleted.");
             }
         }
     }
@@ -1572,13 +1594,20 @@ mod tests {
         colors.presets.clear();
         colors.presets.insert(
             "combat".to_string(),
-            PresetColor { fg: Some("#ff0000".into()), bg: None },
+            PresetColor {
+                fg: Some("#ff0000".into()),
+                bg: None,
+            },
         );
         let mut buf = PresetsBuffer::from_config(&colors);
         assert_eq!(buf.rows.len(), 1);
         // Add a bg, and add a blank-named row that must be dropped on save.
         buf.rows[0].bg = "#111111".into();
-        buf.rows.push(PresetRow { name: "  ".into(), fg: "#abc".into(), bg: String::new() });
+        buf.rows.push(PresetRow {
+            name: "  ".into(),
+            fg: "#abc".into(),
+            bg: String::new(),
+        });
 
         let mut out = ColorConfig::default();
         buf.apply(&mut out);
@@ -1591,15 +1620,29 @@ mod tests {
     #[test]
     fn presets_duplicate_name_last_wins() {
         let mut colors = ColorConfig::default();
-        let mut buf = PresetsBuffer { rows: vec![
-            PresetRow { name: "x".into(), fg: "#111111".into(), bg: String::new() },
-            PresetRow { name: "x".into(), fg: "#222222".into(), bg: String::new() },
-        ] };
+        let mut buf = PresetsBuffer {
+            rows: vec![
+                PresetRow {
+                    name: "x".into(),
+                    fg: "#111111".into(),
+                    bg: String::new(),
+                },
+                PresetRow {
+                    name: "x".into(),
+                    fg: "#222222".into(),
+                    bg: String::new(),
+                },
+            ],
+        };
         buf.rows[0].name = "x".into(); // ensure identical
         let mut out = ColorConfig::default();
         buf.apply(&mut out);
         assert_eq!(out.presets.len(), 1);
-        assert_eq!(out.presets["x"].fg.as_deref(), Some("#222222"), "last row wins");
+        assert_eq!(
+            out.presets["x"].fg.as_deref(),
+            Some("#222222"),
+            "last row wins"
+        );
     }
 
     #[test]
@@ -1618,15 +1661,28 @@ mod tests {
         buf.apply(&mut out);
         assert_eq!(out.prompt_colors.len(), 1);
         assert_eq!(out.prompt_colors[0].fg.as_deref(), Some("#00ff00"));
-        assert!(out.prompt_colors[0].color.is_none(), "legacy field cleared on save");
+        assert!(
+            out.prompt_colors[0].color.is_none(),
+            "legacy field cleared on save"
+        );
     }
 
     #[test]
     fn prompts_buffer_drops_blank_character_rows() {
-        let buf = PromptsBuffer { rows: vec![
-            PromptRow { character: ">".into(), fg: "#fff".into(), bg: String::new() },
-            PromptRow { character: "   ".into(), fg: "#000".into(), bg: String::new() },
-        ] };
+        let buf = PromptsBuffer {
+            rows: vec![
+                PromptRow {
+                    character: ">".into(),
+                    fg: "#fff".into(),
+                    bg: String::new(),
+                },
+                PromptRow {
+                    character: "   ".into(),
+                    fg: "#000".into(),
+                    bg: String::new(),
+                },
+            ],
+        };
         let mut out = ColorConfig::default();
         buf.apply(&mut out);
         assert_eq!(out.prompt_colors.len(), 1, "blank-character row dropped");

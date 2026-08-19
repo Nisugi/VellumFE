@@ -434,11 +434,10 @@ impl VellumGuiApp {
         // Stash the def instead of dropping it, so the window can be restored
         // (delete_and_stash_window calls remove_window + autosave internally).
         self.app_core.delete_and_stash_window(name);
-        self.app_core
-            .add_system_message(&format!(
-                "Window '{}' deleted. Restore it from + Custom window → Restore deleted.",
-                name
-            ));
+        self.app_core.add_system_message(&format!(
+            "Window '{}' deleted. Restore it from + Custom window → Restore deleted.",
+            name
+        ));
     }
 
     pub(in super::super) fn render_custom_windows_editor(&mut self, ctx: &egui::Context) {
@@ -546,9 +545,7 @@ impl VellumGuiApp {
                 // ---- Seen this session ----
                 ui.strong("Streams seen this session");
                 if seen_streams.is_empty() {
-                    ui.weak(
-                        "No custom streams observed yet. Ids appear here as Lich pushes them.",
-                    );
+                    ui.weak("No custom streams observed yet. Ids appear here as Lich pushes them.");
                 } else {
                     ui.weak("Click to add to the draft above (or the open editor below).");
                     egui::ScrollArea::vertical()
@@ -587,7 +584,10 @@ impl VellumGuiApp {
                                 .is_some_and(|edit| edit.name == row.name);
 
                             ui.horizontal(|ui| {
-                                if ui.small_button(if is_editing { "▼" } else { "▶" }).clicked() {
+                                if ui
+                                    .small_button(if is_editing { "▼" } else { "▶" })
+                                    .clicked()
+                                {
                                     expand_request = Some(if is_editing {
                                         None
                                     } else {
@@ -726,11 +726,7 @@ impl VellumGuiApp {
 
         if let Some(name) = delete_request {
             self.delete_custom_window(&name);
-            if state
-                .editing
-                .as_ref()
-                .is_some_and(|edit| edit.name == name)
-            {
+            if state.editing.as_ref().is_some_and(|edit| edit.name == name) {
                 state.editing = None;
             }
             state.error = None;
@@ -775,8 +771,7 @@ fn render_stream_row(
                         GoesTo::Subscribed { first, .. } if first == name
                     );
                     if ui.selectable_label(is_current, name).clicked() && !is_current {
-                        *route_request =
-                            Some((row.id.clone(), RouteTarget::Window(name.clone())));
+                        *route_request = Some((row.id.clone(), RouteTarget::Window(name.clone())));
                     }
                 }
                 if !window_names.is_empty() {
@@ -814,9 +809,8 @@ fn render_stream_row(
     // Column 3: the orphan policy when a subscription currently overrides it.
     match (&row.dest, &row.route) {
         (GoesTo::Subscribed { .. }, Some(route)) => {
-            ui.weak(format!("route: {}", route)).on_hover_text(
-                "Where this stream goes if the subscribing window is removed.",
-            );
+            ui.weak(format!("route: {}", route))
+                .on_hover_text("Where this stream goes if the subscribing window is removed.");
         }
         _ if !row.editable => {
             ui.weak("via Window Editor");
@@ -830,9 +824,7 @@ fn render_stream_row(
 /// Append a stream id to a comma-separated field if not already present.
 /// Shared with the Tab Editor and the context menu's seen-streams picker.
 pub(crate) fn append_stream_id(field: &mut String, id: &str) {
-    let already = field
-        .split(',')
-        .any(|s| s.trim().eq_ignore_ascii_case(id));
+    let already = field.split(',').any(|s| s.trim().eq_ignore_ascii_case(id));
     if already {
         return;
     }
@@ -941,8 +933,7 @@ mod tests {
     #[test]
     fn merge_stream_ids_unions_dedups_and_sorts() {
         let merged = merge_stream_ids(
-            ["bounty", "Speech", "", " notes ", "speech", "atmospherics"]
-                .into_iter(),
+            ["bounty", "Speech", "", " notes ", "speech", "atmospherics"].into_iter(),
         );
         assert_eq!(merged, vec!["atmospherics", "bounty", "notes", "Speech"]);
     }

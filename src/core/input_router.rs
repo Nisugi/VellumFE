@@ -7,8 +7,8 @@
 
 use crate::config::Config;
 use crate::core::menu_actions::{ActionContext, MenuAction};
-use crate::data::ui_state::InputMode;
 use crate::data::input::KeyEvent;
+use crate::data::ui_state::InputMode;
 
 /// Route a key event to a MenuAction based on current context
 pub fn route_input(key: &KeyEvent, mode: &InputMode, config: &Config) -> MenuAction {

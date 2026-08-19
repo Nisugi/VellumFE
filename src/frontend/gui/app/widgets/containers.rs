@@ -103,8 +103,10 @@ impl VellumGuiApp {
         ui.separator();
 
         // Index children by parent id, preserving feed order.
-        let mut children: std::collections::HashMap<&str, Vec<&crate::core::state::ManagedInventoryItem>> =
-            std::collections::HashMap::new();
+        let mut children: std::collections::HashMap<
+            &str,
+            Vec<&crate::core::state::ManagedInventoryItem>,
+        > = std::collections::HashMap::new();
         for item in &snap.items {
             children.entry(item.parent.as_str()).or_default().push(item);
         }
@@ -232,8 +234,18 @@ impl VellumGuiApp {
             if let Some(fid) = focus_id.as_deref() {
                 if let Some(focused) = snap.items.iter().find(|i| i.id == fid) {
                     return Self::render_focused_container(
-                        app_core, ui, snap, focused, &children, &weights, &counts, focus_key,
-                        heading_band, heading_color, clicked, &mut click,
+                        app_core,
+                        ui,
+                        snap,
+                        focused,
+                        &children,
+                        &weights,
+                        &counts,
+                        focus_key,
+                        heading_band,
+                        heading_color,
+                        clicked,
+                        &mut click,
                     );
                 }
                 // Focused container no longer in the snapshot: drop focus.
@@ -271,7 +283,14 @@ impl VellumGuiApp {
                     }
                     for item in group {
                         Self::containers_node(
-                            ui, item, &children, &weights, &counts, 0, &mut clicked, &mut click,
+                            ui,
+                            item,
+                            &children,
+                            &weights,
+                            &counts,
+                            0,
+                            &mut clicked,
+                            &mut click,
                         );
                     }
                 }
@@ -316,7 +335,10 @@ impl VellumGuiApp {
         if ui.button("◀ All containers").clicked() {
             ui.ctx().data_mut(|d| d.remove_temp::<String>(focus_key));
         }
-        let bd = weights.get(focused.id.as_str()).copied().unwrap_or_default();
+        let bd = weights
+            .get(focused.id.as_str())
+            .copied()
+            .unwrap_or_default();
         let count = counts.get(focused.id.as_str()).copied().unwrap_or(0);
         ui.label(
             egui::RichText::new(format!(
@@ -333,13 +355,12 @@ impl VellumGuiApp {
 
         // Flatten the subtree (cycle-bounded), then sort by name.
         let mut flat: Vec<&crate::core::state::ManagedInventoryItem> = Vec::new();
-        let mut stack: Vec<(&crate::core::state::ManagedInventoryItem, usize)> =
-            children
-                .get(focused.id.as_str())
-                .into_iter()
-                .flatten()
-                .map(|i| (*i, 0))
-                .collect();
+        let mut stack: Vec<(&crate::core::state::ManagedInventoryItem, usize)> = children
+            .get(focused.id.as_str())
+            .into_iter()
+            .flatten()
+            .map(|i| (*i, 0))
+            .collect();
         while let Some((item, depth)) = stack.pop() {
             if depth > 16 {
                 continue;
@@ -356,11 +377,19 @@ impl VellumGuiApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if flat.is_empty() {
-                    ui.weak(if focused.is_closed() { "closed" } else { "empty" });
+                    ui.weak(if focused.is_closed() {
+                        "closed"
+                    } else {
+                        "empty"
+                    });
                 }
                 for item in &flat {
                     let weight = if item.weight > 0 {
-                        format!("  ({} lb{})", item.weight, if item.weight == 1 { "" } else { "s" })
+                        format!(
+                            "  ({} lb{})",
+                            item.weight,
+                            if item.weight == 1 { "" } else { "s" }
+                        )
                     } else {
                         String::new()
                     };
@@ -461,40 +490,37 @@ impl VellumGuiApp {
                 .show_header(ui, |ui| {
                     // Cap the name to the width the stat columns leave so a
                     // long name truncates instead of painting under them.
-                    let reserved = STAT_COLS_WIDTH
-                        + ui.spacing().item_spacing.x * 5.0;
+                    let reserved = STAT_COLS_WIDTH + ui.spacing().item_spacing.x * 5.0;
                     let name_width = (ui.available_width() - reserved).max(60.0);
                     ui.scope(|ui| {
                         ui.set_max_width(name_width);
-                        ui.add(
-                            egui::Label::new(format!("{glyph}{}", item.name)).truncate(),
-                        );
+                        ui.add(egui::Label::new(format!("{glyph}{}", item.name)).truncate());
                     });
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            // Right-to-left: rightmost column first. Exact
-                            // allocations so an empty cell still reserves
-                            // its column (painter text, not labels — labels
-                            // shrink and break the grid). The slash is its
-                            // own cell, present only when a cap exists.
-                            Self::stat_col(ui, &capacity, CAP_COL);
-                            Self::stat_col(
-                                ui,
-                                if capacity.is_empty() { "" } else { "/" },
-                                SLASH_COL,
-                            );
-                            let color = Self::weight_color(ui, bd.total, cap_lbs);
-                            Self::stat_col_colored(ui, &weight, WEIGHT_COL, color);
-                            Self::stat_col(ui, &count, COUNT_COL);
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Right-to-left: rightmost column first. Exact
+                        // allocations so an empty cell still reserves
+                        // its column (painter text, not labels — labels
+                        // shrink and break the grid). The slash is its
+                        // own cell, present only when a cap exists.
+                        Self::stat_col(ui, &capacity, CAP_COL);
+                        Self::stat_col(ui, if capacity.is_empty() { "" } else { "/" }, SLASH_COL);
+                        let color = Self::weight_color(ui, bd.total, cap_lbs);
+                        Self::stat_col_colored(ui, &weight, WEIGHT_COL, color);
+                        Self::stat_col(ui, &count, COUNT_COL);
+                    });
                 })
                 .body(|ui| {
                     if let Some(kids) = kids {
                         for kid in kids {
                             Self::containers_node(
-                                ui, kid, children, weights, counts, depth + 1, clicked, click,
+                                ui,
+                                kid,
+                                children,
+                                weights,
+                                counts,
+                                depth + 1,
+                                clicked,
+                                click,
                             );
                         }
                     } else if item.is_closed() {
@@ -526,11 +552,13 @@ impl VellumGuiApp {
                 let name_width = (ui.available_width() - reserved).max(60.0);
                 ui.scope(|ui| {
                     ui.set_max_width(name_width);
-                    name_response = Some(ui.add(
-                        egui::Label::new(&item.name)
-                            .truncate()
-                            .sense(egui::Sense::click()),
-                    ));
+                    name_response = Some(
+                        ui.add(
+                            egui::Label::new(&item.name)
+                                .truncate()
+                                .sense(egui::Sense::click()),
+                        ),
+                    );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     Self::stat_col(ui, "", CAP_COL);

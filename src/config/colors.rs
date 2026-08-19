@@ -399,8 +399,7 @@ impl ColorConfig {
             // Global/default profile, or global layer unreadable: full write.
             _ => self.clone(),
         };
-        let contents =
-            toml::to_string_pretty(&to_write).context("Failed to serialize colors")?;
+        let contents = toml::to_string_pretty(&to_write).context("Failed to serialize colors")?;
         write_atomic(&colors_path, contents).context("Failed to write colors.toml")?;
         Ok(())
     }
@@ -450,12 +449,12 @@ impl ColorConfig {
         } else {
             Vec::new()
         };
-        let color_palette =
-            if differs(&to_val(&self.color_palette), &to_val(&global.color_palette)) {
-                self.color_palette.clone()
-            } else {
-                Vec::new()
-            };
+        let color_palette = if differs(&to_val(&self.color_palette), &to_val(&global.color_palette))
+        {
+            self.color_palette.clone()
+        } else {
+            Vec::new()
+        };
 
         // ui: keep the block only if any field diverges from the default (the
         // exact merge predicate). Otherwise emit the default (no override).
@@ -515,7 +514,11 @@ impl ColorConfig {
         let mut colors = Self::load_common_colors()?;
 
         // Find and update or add the color
-        if let Some(existing) = colors.color_palette.iter_mut().find(|c| c.name == color.name) {
+        if let Some(existing) = colors
+            .color_palette
+            .iter_mut()
+            .find(|c| c.name == color.name)
+        {
             *existing = color.clone();
         } else {
             colors.color_palette.push(color.clone());
@@ -531,7 +534,11 @@ impl ColorConfig {
         let mut colors = Self::load_character_colors_only(character)?;
 
         // Find and update or add the color
-        if let Some(existing) = colors.color_palette.iter_mut().find(|c| c.name == color.name) {
+        if let Some(existing) = colors
+            .color_palette
+            .iter_mut()
+            .find(|c| c.name == color.name)
+        {
             *existing = color.clone();
         } else {
             colors.color_palette.push(color.clone());
@@ -583,10 +590,10 @@ impl ColorConfig {
                 }
             }
             if !resolved_via_palette {
-                let preset = cfg.presets.entry(role.to_string()).or_insert(PresetColor {
-                    fg: None,
-                    bg: None,
-                });
+                let preset = cfg
+                    .presets
+                    .entry(role.to_string())
+                    .or_insert(PresetColor { fg: None, bg: None });
                 if is_bg {
                     preset.bg = Some(hex.to_string());
                 } else {
@@ -675,7 +682,11 @@ impl ColorConfig {
         // resolve through the palette, which the updates above already cover.
         let mut override_role = |chara: &mut Self, role: &str, hex: &str, is_bg: bool| {
             if let Some(preset) = chara.presets.get_mut(role) {
-                let value = if is_bg { &mut preset.bg } else { &mut preset.fg };
+                let value = if is_bg {
+                    &mut preset.bg
+                } else {
+                    &mut preset.fg
+                };
                 if !value.as_deref().is_some_and(|v| !v.starts_with('#')) {
                     *value = Some(hex.to_string());
                     return true;
@@ -862,7 +873,11 @@ mod harmony_apply_tests {
         // generated colors must BOTH survive.
         let mut cfg = ColorConfig::default();
         cfg.apply_generated_presets(&generated(), "#0a0a14");
-        assert_eq!(palette_hex(&cfg, "Link"), "#111111", "links claims the entry");
+        assert_eq!(
+            palette_hex(&cfg, "Link"),
+            "#111111",
+            "links claims the entry"
+        );
         assert_eq!(
             cfg.presets["commands"].fg.as_deref(),
             Some("#222222"),
@@ -875,7 +890,10 @@ mod harmony_apply_tests {
         // target_indicator ships as a literal (8-digit) hex, not a name.
         let mut cfg = ColorConfig::default();
         cfg.apply_generated_presets(&generated(), "#0a0a14");
-        assert_eq!(cfg.presets["target_indicator"].fg.as_deref(), Some("#bb2211"));
+        assert_eq!(
+            cfg.presets["target_indicator"].fg.as_deref(),
+            Some("#bb2211")
+        );
     }
 
     #[test]
@@ -897,10 +915,18 @@ mod harmony_apply_tests {
             .map(|(a, b)| (a.to_string(), b.to_string()))
             .collect();
         cfg.apply_generated_prompts(&prompts);
-        let r = cfg.prompt_colors.iter().find(|p| p.character == "R").unwrap();
+        let r = cfg
+            .prompt_colors
+            .iter()
+            .find(|p| p.character == "R")
+            .unwrap();
         assert_eq!(r.fg.as_deref(), Some("#cc4433"));
         assert!(r.color.is_none(), "legacy field cleared so fg wins");
-        let s = cfg.prompt_colors.iter().find(|p| p.character == "S").unwrap();
+        let s = cfg
+            .prompt_colors
+            .iter()
+            .find(|p| p.character == "S")
+            .unwrap();
         assert_eq!(s.fg.as_deref(), Some("#ccaa22"), "missing character added");
         // Untouched characters keep their colors.
         assert!(cfg.prompt_colors.iter().any(|p| p.character == "H"));
@@ -972,7 +998,10 @@ mod sparse_character_save_tests {
     use super::*;
 
     fn preset(fg: &str) -> PresetColor {
-        PresetColor { fg: Some(fg.to_string()), bg: None }
+        PresetColor {
+            fg: Some(fg.to_string()),
+            bg: None,
+        }
     }
 
     /// Save-sparse then reload must preserve a character override AND let a
@@ -1018,7 +1047,10 @@ mod sparse_character_save_tests {
             "character file should carry only the overridden preset, got {:?}",
             char_only.presets.keys().collect::<Vec<_>>()
         );
-        assert_eq!(char_only.presets.get("speech").unwrap().fg.as_deref(), Some("#ff0000"));
+        assert_eq!(
+            char_only.presets.get("speech").unwrap().fg.as_deref(),
+            Some("#ff0000")
+        );
         assert!(char_only.presets.get("links").is_none());
 
         // Now change the GLOBAL "links" preset and confirm it reaches Alice

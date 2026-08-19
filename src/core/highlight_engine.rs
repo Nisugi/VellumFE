@@ -79,8 +79,7 @@ pub struct StatusAction {
 }
 
 /// Character-level style information for highlight processing
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct CharStyle {
     fg: Option<String>,
     bg: Option<String>,
@@ -296,11 +295,7 @@ impl CoreHighlightEngine {
     ///
     /// This is the main entry point called from MessageProcessor.
     /// Returns the segments with colors applied and any sounds to trigger.
-    pub fn apply_highlights(
-        &self,
-        segments: &[TextSegment],
-        stream: &str,
-    ) -> HighlightResult {
+    pub fn apply_highlights(&self, segments: &[TextSegment], stream: &str) -> HighlightResult {
         self.apply_highlights_impl(segments, stream)
             .unwrap_or_else(|| HighlightResult {
                 segments: segments.to_vec(),
@@ -410,7 +405,11 @@ impl CoreHighlightEngine {
                 }
                 None => template.clone(),
             });
-            out.push(AlertTrigger { key, spec: spec.clone(), banner });
+            out.push(AlertTrigger {
+                key,
+                spec: spec.clone(),
+                banner,
+            });
         };
 
         // Try Aho-Corasick fast patterns (with word boundary checking).
@@ -442,8 +441,7 @@ impl CoreHighlightEngine {
                 };
 
                 if is_word_start && is_word_end {
-                    if let Some(&highlight_idx) = pattern_map.get(mat.pattern().as_usize())
-                    {
+                    if let Some(&highlight_idx) = pattern_map.get(mat.pattern().as_usize()) {
                         if let Some(highlight) = self.highlights.get(highlight_idx) {
                             // Check stream filter
                             if let Some(ref required_stream) = highlight.stream {
@@ -640,8 +638,7 @@ impl CoreHighlightEngine {
                 let mut silent_covered = vec![false; full_text_chars.len()];
                 for m in matches.iter() {
                     if m.silent_prompt {
-                        let start_char =
-                            byte_to_char.get(m.start_byte).map_or(0, |&c| c as usize);
+                        let start_char = byte_to_char.get(m.start_byte).map_or(0, |&c| c as usize);
                         let end_char = byte_to_char
                             .get(m.end_byte)
                             .map_or(full_text_chars.len(), |&c| c as usize);
@@ -865,8 +862,7 @@ impl CoreHighlightEngine {
                 };
 
                 if is_word_start && is_word_end {
-                    if let Some(&highlight_idx) = pattern_map.get(mat.pattern().as_usize())
-                    {
+                    if let Some(&highlight_idx) = pattern_map.get(mat.pattern().as_usize()) {
                         if let Some(highlight) = self.highlights.get(highlight_idx) {
                             if let Some(ref fg) = highlight.fg {
                                 return Some(fg.clone());
@@ -1010,7 +1006,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn case_insensitive_flag_applies_to_literal_and_regex_rules() {
         // A literal (fast_parse) rule and a regex rule, both opting in.
@@ -1144,7 +1139,10 @@ mod tests {
         let segments = vec![make_segment("The troll’s wounds bleed. 傷が痛む")];
         let result = engine.apply_highlights(&segments, "main");
 
-        assert_eq!(segments_to_text(&result.segments), "The troll’s wounds bleed. 傷が痛む");
+        assert_eq!(
+            segments_to_text(&result.segments),
+            "The troll’s wounds bleed. 傷が痛む"
+        );
         // The matched word carries the color; surrounding text does not
         let colored: String = result
             .segments
@@ -1163,7 +1161,10 @@ mod tests {
         let segments = vec![make_segment("’’’ the wound may bleed badly")];
         let result = engine.apply_highlights(&segments, "main");
 
-        assert_eq!(segments_to_text(&result.segments), "’’’ the wound may BLEED badly");
+        assert_eq!(
+            segments_to_text(&result.segments),
+            "’’’ the wound may BLEED badly"
+        );
     }
 
     #[test]
@@ -1872,8 +1873,7 @@ mod tests {
         clear.clear_status = Some("POISONED".to_string());
         let engine = CoreHighlightEngine::new(vec![set, clear]);
 
-        let result =
-            engine.apply_highlights(&[make_segment("You feel poison coursing")], "main");
+        let result = engine.apply_highlights(&[make_segment("You feel poison coursing")], "main");
         assert_eq!(result.status_actions.len(), 1);
         assert_eq!(
             result.status_actions[0].set,
@@ -1933,7 +1933,9 @@ mod tests {
         // one event to the player, not one overlay per occurrence.
         let engine = CoreHighlightEngine::new(vec![alert_pattern("kobold", "KOBOLD")]);
         let result = engine.apply_highlights(
-            &[make_segment("A kobold, a kobold, and another kobold arrive.")],
+            &[make_segment(
+                "A kobold, a kobold, and another kobold arrive.",
+            )],
             "main",
         );
         assert_eq!(result.alerts.len(), 1);
@@ -1945,7 +1947,10 @@ mod tests {
             CoreHighlightEngine::new(vec![alert_pattern(r"(\w+) gestures", "$1 is casting!")]);
         let result = engine.apply_highlights(&[make_segment("Grishnak gestures broadly")], "main");
         assert_eq!(result.alerts.len(), 1);
-        assert_eq!(result.alerts[0].banner.as_deref(), Some("Grishnak is casting!"));
+        assert_eq!(
+            result.alerts[0].banner.as_deref(),
+            Some("Grishnak is casting!")
+        );
     }
 
     #[test]

@@ -56,11 +56,7 @@ pub struct GameItem {
 }
 
 impl GameItem {
-    pub fn new(
-        id: impl Into<String>,
-        noun: impl Into<String>,
-        name: impl Into<String>,
-    ) -> Self {
+    pub fn new(id: impl Into<String>, noun: impl Into<String>, name: impl Into<String>) -> Self {
         GameItem {
             id: id.into(),
             noun: noun.into(),
@@ -474,7 +470,11 @@ impl GameObjects {
             return Some(c);
         }
         // substring on the raw query
-        if let Some(c) = self.containers.values().find(|c| c.title_lower.contains(&q)) {
+        if let Some(c) = self
+            .containers
+            .values()
+            .find(|c| c.title_lower.contains(&q))
+        {
             return Some(c);
         }
         let words = parse::strip_articles(&q);
@@ -517,7 +517,10 @@ impl GameObjects {
                 || (!words.is_empty() && parse::title_matches_words(&name, &words))
         };
 
-        for (hand, slot) in [(Hand::Left, &self.left_hand), (Hand::Right, &self.right_hand)] {
+        for (hand, slot) in [
+            (Hand::Left, &self.left_hand),
+            (Hand::Right, &self.right_hand),
+        ] {
             if let Some(item) = slot.as_ref().filter(|i| matches(i)) {
                 return Some((item, Location::Hand(hand)));
             }
@@ -588,11 +591,7 @@ mod tests {
     fn container_ingest_and_command_target() {
         let mut reg = GameObjects::default();
         // Normal container: target == #id.
-        reg.register_container(
-            "77".into(),
-            "Bandolier".into(),
-            Some("#77".into()),
-        );
+        reg.register_container("77".into(), "Bandolier".into(), Some("#77".into()));
         reg.add_container_item("77", GameItem::new("101", "crystal", "quartz crystal"));
         assert_eq!(reg.items_in("77").len(), 1);
         assert_eq!(reg.container("77").unwrap().command_target(), "77");
@@ -605,7 +604,11 @@ mod tests {
     #[test]
     fn find_item_matches_words_in_order_across_every_location() {
         let mut reg = GameObjects::default();
-        reg.register_container("77".into(), "boar hide bandolier".into(), Some("#77".into()));
+        reg.register_container(
+            "77".into(),
+            "boar hide bandolier".into(),
+            Some("#77".into()),
+        );
         reg.add_container_item(
             "77",
             GameItem::new("500", "trinket", "silver filigreed trinket"),
@@ -614,7 +617,9 @@ mod tests {
 
         // Per-word subsequence: what the mapdb procs express as
         // `name.split(' ').join('.*')`.
-        let (item, loc) = reg.find_item("silver trinket").expect("found in a container");
+        let (item, loc) = reg
+            .find_item("silver trinket")
+            .expect("found in a container");
         assert_eq!(item.id, "500");
         assert_eq!(loc, Location::Container("77".into()));
         // And we know which bag to put it back in — no link scraping needed.
@@ -634,7 +639,10 @@ mod tests {
         let mut reg = GameObjects::default();
         reg.register_container("77".into(), "bandolier".into(), Some("#77".into()));
         reg.add_container_item("77", GameItem::new("500", "trinket", "silver trinket"));
-        reg.set_hand(Hand::Right, Some(GameItem::new("501", "trinket", "silver trinket")));
+        reg.set_hand(
+            Hand::Right,
+            Some(GameItem::new("501", "trinket", "silver trinket")),
+        );
 
         let (item, loc) = reg.find_item("silver trinket").unwrap();
         assert_eq!(item.id, "501", "the held one wins");
@@ -646,9 +654,18 @@ mod tests {
         let mut reg = GameObjects::default();
         reg.register_container("77".into(), "iron boar hide bandolier".into(), None);
         reg.register_container("88".into(), "coal black purse".into(), None);
-        assert_eq!(reg.find_container("my bando").map(|c| &c.id), Some(&"77".into()));
-        assert_eq!(reg.find_container("boar hide").map(|c| &c.id), Some(&"77".into()));
-        assert_eq!(reg.find_container("my purse").map(|c| &c.id), Some(&"88".into()));
+        assert_eq!(
+            reg.find_container("my bando").map(|c| &c.id),
+            Some(&"77".into())
+        );
+        assert_eq!(
+            reg.find_container("boar hide").map(|c| &c.id),
+            Some(&"77".into())
+        );
+        assert_eq!(
+            reg.find_container("my purse").map(|c| &c.id),
+            Some(&"88".into())
+        );
         assert!(reg.find_container("my locker").is_none());
     }
 
@@ -740,10 +757,7 @@ mod tests {
     fn carried_is_worn_plus_hands() {
         let mut reg = GameObjects::default();
         reg.set_worn(vec![GameItem::new("1", "cloak", "wool cloak")]);
-        reg.set_hands(
-            Some(GameItem::new("2", "sword", "short sword")),
-            None,
-        );
+        reg.set_hands(Some(GameItem::new("2", "sword", "short sword")), None);
         let carried: Vec<&str> = reg.carried().iter().map(|i| i.id.as_str()).collect();
         assert_eq!(carried, vec!["1", "2"]);
     }

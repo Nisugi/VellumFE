@@ -133,10 +133,7 @@ impl VellumGuiApp {
             .default_width(460.0)
             .show(ctx, |ui| {
                 let draft = &mut state.draft;
-                ui.checkbox(
-                    &mut draft.enabled,
-                    "Sort container looks (.sorter)",
-                );
+                ui.checkbox(&mut draft.enabled, "Sort container looks (.sorter)");
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut draft.show_counts, "Counts")
                         .on_hover_text("Duplicate counts and category totals");
@@ -187,20 +184,14 @@ impl VellumGuiApp {
                                             swap = Some((idx, idx - 1));
                                         }
                                         if ui
-                                            .add_enabled(
-                                                idx < last,
-                                                egui::Button::new("⬇").small(),
-                                            )
+                                            .add_enabled(idx < last, egui::Button::new("⬇").small())
                                             .clicked()
                                         {
                                             swap = Some((idx, idx + 1));
                                         }
                                         ui.label(category);
-                                        let mut label = draft
-                                            .labels
-                                            .get(category)
-                                            .cloned()
-                                            .unwrap_or_default();
+                                        let mut label =
+                                            draft.labels.get(category).cloned().unwrap_or_default();
                                         if ui
                                             .add(
                                                 egui::TextEdit::singleline(&mut label)
@@ -212,9 +203,7 @@ impl VellumGuiApp {
                                             if label.trim().is_empty() {
                                                 draft.labels.remove(category);
                                             } else {
-                                                draft
-                                                    .labels
-                                                    .insert(category.clone(), label);
+                                                draft.labels.insert(category.clone(), label);
                                             }
                                         }
                                     });
@@ -298,26 +287,18 @@ impl VellumGuiApp {
                     );
                 }
                 let (segments, text) = preview_line();
-                match crate::core::sorter::transform(
-                    &segments,
-                    &text,
-                    preview_pack,
-                    draft,
-                ) {
+                match crate::core::sorter::transform(&segments, &text, preview_pack, draft) {
                     Some(lines) => {
                         for line in lines {
                             ui.horizontal_wrapped(|ui| {
                                 ui.spacing_mut().item_spacing.x = 0.0;
                                 for segment in &line {
-                                    let mut rich =
-                                        egui::RichText::new(&segment.text).monospace();
+                                    let mut rich = egui::RichText::new(&segment.text).monospace();
                                     if segment.span_type == SpanType::Monsterbold {
                                         rich = rich.strong();
                                     }
                                     if segment.link_data.is_some() {
-                                        rich = rich.color(
-                                            ui.visuals().hyperlink_color,
-                                        );
+                                        rich = rich.color(ui.visuals().hyperlink_color);
                                     }
                                     ui.label(rich);
                                 }

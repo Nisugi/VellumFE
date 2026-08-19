@@ -23,10 +23,7 @@ impl MessageProcessor {
     /// Publish the room uid -> art index built from room_images.toml. Called
     /// at startup and on `.reload`; also after the editor saves, so mappings
     /// take effect without a restart.
-    pub fn set_room_image_index(
-        &mut self,
-        index: crate::config::room_images::RoomImageIndex,
-    ) {
+    pub fn set_room_image_index(&mut self, index: crate::config::room_images::RoomImageIndex) {
         self.room_image_index = index;
     }
 
@@ -46,19 +43,12 @@ impl MessageProcessor {
         // refreshes it — the openDialog block emits DialogOpen first and
         // its controls after, so without this the popup kept the empty
         // clone it was born with (bugDialogBox rendered blank).
-        let refreshing_active = ui_state
-            .active_dialog
-            .as_ref()
-            .is_some_and(|d| d.id == id);
+        let refreshing_active = ui_state.active_dialog.as_ref().is_some_and(|d| d.id == id);
         if !show && !refreshing_active {
             return;
         }
         // Don't steal the screen from a different open dialog.
-        if ui_state
-            .active_dialog
-            .as_ref()
-            .is_some_and(|d| d.id != id)
-        {
+        if ui_state.active_dialog.as_ref().is_some_and(|d| d.id != id) {
             return;
         }
         let first_show = ui_state
@@ -191,7 +181,11 @@ impl MessageProcessor {
                 );
             }
         } else if id == "room objs" {
-            tracing::debug!("Room objs first seen: len={}, empty={}", value.len(), value.is_empty());
+            tracing::debug!(
+                "Room objs first seen: len={}, empty={}",
+                value.len(),
+                value.is_empty()
+            );
         }
 
         tracing::debug!(
@@ -216,7 +210,10 @@ impl MessageProcessor {
 
             // Log when room objs becomes empty (item picked up, etc.)
             if value.is_empty() {
-                tracing::debug!("Room objs now empty (previously had creatures: {})", had_objs);
+                tracing::debug!(
+                    "Room objs now empty (previously had creatures: {})",
+                    had_objs
+                );
             }
 
             // Pre-scan for <crtrStatus exist="..." .../> snapshots embedded in
@@ -252,12 +249,20 @@ impl MessageProcessor {
                                             let exist_id = &after_exist[1..=end_quote];
 
                                             // Extract noun from the link tag (optional)
-                                            let noun = if let Some(noun_pos) = link_tag.find("noun=") {
+                                            let noun = if let Some(noun_pos) =
+                                                link_tag.find("noun=")
+                                            {
                                                 let after_noun = &link_tag[noun_pos + 5..];
-                                                if let Some(noun_quote) = after_noun.chars().next() {
+                                                if let Some(noun_quote) = after_noun.chars().next()
+                                                {
                                                     if noun_quote == '\'' || noun_quote == '"' {
-                                                        if let Some(noun_end_quote) = after_noun[1..].find(noun_quote) {
-                                                            Some(after_noun[1..=noun_end_quote].to_string())
+                                                        if let Some(noun_end_quote) =
+                                                            after_noun[1..].find(noun_quote)
+                                                        {
+                                                            Some(
+                                                                after_noun[1..=noun_end_quote]
+                                                                    .to_string(),
+                                                            )
                                                         } else {
                                                             None
                                                         }
@@ -273,7 +278,8 @@ impl MessageProcessor {
 
                                             // Check for status after </b>: " (stunned)" or " (dead)"
                                             let after_bold = &remaining[bold_end + 4..];
-                                            let status = if after_bold.trim_start().starts_with('(') {
+                                            let status = if after_bold.trim_start().starts_with('(')
+                                            {
                                                 // Extract text between ( and )
                                                 after_bold.find('(').and_then(|start| {
                                                     let after_paren = &after_bold[start + 1..];
@@ -287,8 +293,15 @@ impl MessageProcessor {
 
                                             // Check if noun should be excluded (configurable filter for non-creatures)
                                             if let Some(ref noun_val) = noun {
-                                                if self.config.target_list.excluded_nouns.iter()
-                                                    .any(|excluded| excluded.eq_ignore_ascii_case(noun_val)) {
+                                                if self
+                                                    .config
+                                                    .target_list
+                                                    .excluded_nouns
+                                                    .iter()
+                                                    .any(|excluded| {
+                                                        excluded.eq_ignore_ascii_case(noun_val)
+                                                    })
+                                                {
                                                     tracing::debug!(
                                                         "Skipping creature with excluded noun: '{}' (name: '{}')",
                                                         noun_val, creature_name
@@ -379,7 +392,9 @@ impl MessageProcessor {
                                             let after_noun = &link_tag[noun_pos + 5..];
                                             if let Some(noun_quote) = after_noun.chars().next() {
                                                 if noun_quote == '\'' || noun_quote == '"' {
-                                                    if let Some(noun_end) = after_noun[1..].find(noun_quote) {
+                                                    if let Some(noun_end) =
+                                                        after_noun[1..].find(noun_quote)
+                                                    {
                                                         Some(after_noun[1..=noun_end].to_string())
                                                     } else {
                                                         None
@@ -402,7 +417,9 @@ impl MessageProcessor {
 
                                         tracing::debug!(
                                             "Parsed room object: name='{}', noun={:?}, id='{}'",
-                                            room_object.name, room_object.noun, room_object.id
+                                            room_object.name,
+                                            room_object.noun,
+                                            room_object.id
                                         );
 
                                         game_state.room_objects.push(room_object);
@@ -531,10 +548,7 @@ impl MessageProcessor {
         }
 
         // ALWAYS clear the component buffer when receiving new data (game sends full replacement, not append)
-        room_components
-            .entry(id.to_string())
-            .or_default()
-            .clear();
+        room_components.entry(id.to_string()).or_default().clear();
         *current_room_component = Some(id.to_string());
         tracing::debug!("Started/replaced room component: {}", id);
 
@@ -566,8 +580,7 @@ impl MessageProcessor {
                     let resolved = art.resolve_name(game_state, now_server, None).to_string();
                     if crate::core::inline_image::contains(&resolved) {
                         Some((art, resolved))
-                    } else if resolved != art.name
-                        && crate::core::inline_image::contains(&art.name)
+                    } else if resolved != art.name && crate::core::inline_image::contains(&art.name)
                     {
                         // A variant matched but its file isn't installed (typo,
                         // deleted art). Fall back to the entry's base image rather
@@ -576,8 +589,7 @@ impl MessageProcessor {
                     } else {
                         None
                     }
-                })
-            {
+                }) {
                 Some((art, name)) => {
                     let align = match art.align_or_default() {
                         crate::data::FloatAlign::Right => "right",
@@ -669,7 +681,7 @@ impl MessageProcessor {
                             ParserSpanType::Monsterbold => DataSpanType::Monsterbold,
                             ParserSpanType::Spell => DataSpanType::Spell,
                             ParserSpanType::Speech => DataSpanType::Speech,
-                            };
+                        };
 
                         // Link data is already the correct type from parser
                         let link = link_data.clone();

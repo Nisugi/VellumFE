@@ -154,7 +154,10 @@ mod tests {
             let WalkAction::If { cond, then, els } = &ov.actions[0] else {
                 panic!("shipped crossing is item-gated, got {:?}", ov.actions[0]);
             };
-            assert_eq!(*cond, super::super::edge::Cond::HasItem("crystal amulet".into()));
+            assert_eq!(
+                *cond,
+                super::super::edge::Cond::HasItem("crystal amulet".into())
+            );
             assert_eq!(then.len(), 2, "put amulet + go boot");
             assert!(
                 matches!(&els[0], WalkAction::PauseForUser { msg, .. } if msg.contains("alchemist")),

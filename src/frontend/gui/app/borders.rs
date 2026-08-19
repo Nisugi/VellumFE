@@ -227,13 +227,7 @@ fn paint_border_spec(painter: &egui::Painter, rect: Rect, spec: &BorderSpec) {
 /// Stroke `rect`'s enabled sides, staying inside `rect`. All four sides use
 /// one rounded rect-stroke; partial sides paint per-edge segments with
 /// quarter-circle arcs at corners where both adjacent sides are on.
-fn stroke_sides(
-    painter: &egui::Painter,
-    rect: Rect,
-    spec: &BorderSpec,
-    width: f32,
-    radius: f32,
-) {
+fn stroke_sides(painter: &egui::Painter, rect: Rect, spec: &BorderSpec, width: f32, radius: f32) {
     let stroke = egui::Stroke::new(width, spec.color);
     let sides = &spec.sides;
     if sides.top && sides.bottom && sides.left && sides.right {
@@ -275,12 +269,7 @@ fn stroke_sides(
     }
     let mut arc = |center: egui::Pos2, quadrant: f32| {
         let mut points = Vec::new();
-        egui::epaint::tessellator::path::add_circle_quadrant(
-            &mut points,
-            center,
-            radius,
-            quadrant,
-        );
+        egui::epaint::tessellator::path::add_circle_quadrant(&mut points, center, radius, quadrant);
         painter.add(egui::Shape::line(points, stroke));
     };
     // Quadrant indices follow egui's add_circle_quadrant convention:

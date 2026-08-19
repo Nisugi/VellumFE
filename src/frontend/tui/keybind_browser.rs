@@ -761,7 +761,8 @@ impl KeybindBrowser {
         }
 
         // Sort by key combo
-        self.all_entries.sort_by(|a, b| a.key_combo.cmp(&b.key_combo));
+        self.all_entries
+            .sort_by(|a, b| a.key_combo.cmp(&b.key_combo));
 
         let selected = self.selected_index;
         self.apply_filter();
@@ -770,7 +771,6 @@ impl KeybindBrowser {
             self.selected_index = selected;
         }
     }
-
 }
 
 // Trait implementations for KeybindBrowser

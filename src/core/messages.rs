@@ -133,8 +133,7 @@ pub struct MessageProcessor {
     /// Container contents extracted from a main-stream look line during
     /// flush (which lacks `game_state`); drained into the registry by the
     /// caller in `process_element`. (container_id, items)
-    pending_container_ingest:
-        Option<(String, Vec<crate::core::game_objects::GameItem>)>,
+    pending_container_ingest: Option<(String, Vec<crate::core::game_objects::GameItem>)>,
     /// READY/STOW list rows captured during flush (no `game_state` there);
     /// drained into `game_state.objects` at the prompt. (line_text, item).
     pending_ready_stow: Vec<(String, Option<crate::core::game_objects::GameItem>)>,
@@ -172,10 +171,16 @@ pub struct MessageProcessor {
     /// links. Text says what happened; the links say to whom. Applied to
     /// `game_state.group` at the prompt IN ORDER -- a `group` reply's roster
     /// line and its status sentinel must not be reordered.
-    pending_group: Vec<(crate::core::group::GroupEvent, Vec<crate::core::group::GroupMember>)>,
+    pending_group: Vec<(
+        crate::core::group::GroupEvent,
+        Vec<crate::core::group::GroupMember>,
+    )>,
 
     /// Track if chunk (since last prompt) has main stream text
     chunk_has_main_text: bool,
+    /// Familiar-stream text arrived since the last prompt. Drives the prompt
+    /// echo into the familiar window (arena-spectate round separators).
+    chunk_has_familiar_text: bool,
 
     /// Track if chunk (since last prompt) has silent updates
     pub chunk_has_silent_updates: bool,
@@ -378,6 +383,7 @@ impl MessageProcessor {
             remote: None,
             pending_client_commands: Vec::new(),
             chunk_has_main_text: false,
+            chunk_has_familiar_text: false,
             chunk_has_silent_updates: false,
             discard_current_stream: false,
             tts_windows: std::collections::HashSet::new(),
@@ -491,8 +497,14 @@ impl MessageProcessor {
             .presets
             .iter()
             .map(|(id, preset)| {
-                let resolved_fg = preset.fg.as_ref().map(|c| self.config.resolve_palette_color(c));
-                let resolved_bg = preset.bg.as_ref().map(|c| self.config.resolve_palette_color(c));
+                let resolved_fg = preset
+                    .fg
+                    .as_ref()
+                    .map(|c| self.config.resolve_palette_color(c));
+                let resolved_bg = preset
+                    .bg
+                    .as_ref()
+                    .map(|c| self.config.resolve_palette_color(c));
                 (id.clone(), resolved_fg, resolved_bg)
             })
             .collect();
@@ -510,10 +522,7 @@ impl MessageProcessor {
 
         // Update highlight engine with new patterns
         self.update_highlights();
-        tracing::debug!(
-            "apply_config: total elapsed {:?}",
-            apply_start.elapsed()
-        );
+        tracing::debug!("apply_config: total elapsed {:?}", apply_start.elapsed());
     }
 
     /// Update the highlight engine with current config patterns.
@@ -544,7 +553,6 @@ impl MessageProcessor {
     pub fn skip_next_spells_clear(&mut self) {
         self.skip_next_spells_clear = true;
     }
-
 
     /// Expand `:grin:`-style emoji shortcodes in the pending line, gated by
     /// the `ui.emoji_shortcodes` toggle. Called from the flush path right
@@ -604,19 +612,14 @@ impl MessageProcessor {
     /// Registers the container if the `<container>` tag wasn't seen (the
     /// visible look carries the container as its first link; we don't have
     /// its title/target here, so a later `<container>` tag refines those).
-    fn drain_pending_container_ingest(
-        &mut self,
-        game_state: &mut crate::core::state::GameState,
-    ) {
+    fn drain_pending_container_ingest(&mut self, game_state: &mut crate::core::state::GameState) {
         let Some((container_id, items)) = self.pending_container_ingest.take() else {
             return;
         };
         if game_state.objects.container(&container_id).is_none() {
-            game_state.objects.register_container(
-                container_id.clone(),
-                String::new(),
-                None,
-            );
+            game_state
+                .objects
+                .register_container(container_id.clone(), String::new(), None);
         }
         game_state.objects.clear_container(&container_id);
         for item in items {
@@ -666,7 +669,9 @@ impl MessageProcessor {
     /// Should be called when a new spells window is created
     pub fn populate_spells_window(&self, window_content: &mut crate::data::TextContent) {
         if self.spells_buffer.is_empty() {
-            tracing::debug!("Spells buffer is empty - new window will remain empty until data arrives");
+            tracing::debug!(
+                "Spells buffer is empty - new window will remain empty until data arrives"
+            );
             return;
         }
 
@@ -687,7 +692,6 @@ impl MessageProcessor {
             window_content.lines.len()
         );
     }
-
 }
 
 #[cfg(test)]

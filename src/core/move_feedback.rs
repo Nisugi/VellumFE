@@ -400,7 +400,9 @@ mod tests {
             Some(MoveFeedback::DoorClosed)
         );
         assert_eq!(
-            classify_line("You slip on a patch of ice and flail uselessly as you land on your rear."),
+            classify_line(
+                "You slip on a patch of ice and flail uselessly as you land on your rear."
+            ),
             Some(MoveFeedback::Fell)
         );
         assert_eq!(

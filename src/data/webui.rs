@@ -317,8 +317,12 @@ pub enum WebUiServerMessage {
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum WebUiClientMessage {
-    Subscribe { page: String },
-    Unsubscribe { page: String },
+    Subscribe {
+        page: String,
+    },
+    Unsubscribe {
+        page: String,
+    },
     /// Component interaction; `value` is component-specific (button: null,
     /// text_input: submitted string, checkbox: bool, table row click: index).
     Event {
@@ -450,7 +454,13 @@ mod tests {
   ],
   "siblings": [ { "name": "Alt", "game": "GSIV", "port": 51999 } ] }"#;
         let msg: WebUiServerMessage = serde_json::from_str(raw).unwrap();
-        let WebUiServerMessage::Hello { schema_version, session, pages, siblings } = msg else {
+        let WebUiServerMessage::Hello {
+            schema_version,
+            session,
+            pages,
+            siblings,
+        } = msg
+        else {
             panic!("expected hello, got {:?}", msg);
         };
         assert_eq!(schema_version, 1);
@@ -492,7 +502,10 @@ mod tests {
         assert_eq!(tree.children()[2].variant.as_deref(), Some("danger"));
         let cols = &tree.children()[3];
         assert_eq!(cols.children().len(), 2);
-        assert_eq!(cols.children()[0].children()[0].text.as_deref(), Some("left"));
+        assert_eq!(
+            cols.children()[0].children()[0].text.as_deref(),
+            Some("left")
+        );
         let table = &tree.children()[4];
         assert_eq!(table.rows.as_ref().unwrap().len(), 2);
         assert_eq!(table.selected, Some(1));
@@ -582,8 +595,14 @@ mod tests {
         let node: WebUiNode = serde_json::from_str(raw).unwrap();
         let out = serde_json::to_string(&node).unwrap();
         // Lean: no null-valued keys leaked in.
-        assert!(!out.contains("null"), "serialized node must skip absent fields: {out}");
-        assert!(!out.contains("\"markers\""), "absent Option must not serialize");
+        assert!(
+            !out.contains("null"),
+            "serialized node must skip absent fields: {out}"
+        );
+        assert!(
+            !out.contains("\"markers\""),
+            "absent Option must not serialize"
+        );
         // Round-trips back to the same tree.
         let back: WebUiNode = serde_json::from_str(&out).unwrap();
         assert_eq!(node, back);
@@ -593,7 +612,9 @@ mod tests {
 
     #[test]
     fn serializes_client_messages() {
-        let sub = WebUiClientMessage::Subscribe { page: "creaturebar/main".into() };
+        let sub = WebUiClientMessage::Subscribe {
+            page: "creaturebar/main".into(),
+        };
         assert_eq!(
             serde_json::to_string(&sub).unwrap(),
             r#"{"type":"subscribe","page":"creaturebar/main"}"#
@@ -612,6 +633,8 @@ mod tests {
             cid: "table:4".into(),
             value: serde_json::json!(1),
         };
-        assert!(serde_json::to_string(&row).unwrap().contains(r#""value":1"#));
+        assert!(serde_json::to_string(&row)
+            .unwrap()
+            .contains(r#""value":1"#));
     }
 }

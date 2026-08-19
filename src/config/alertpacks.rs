@@ -82,11 +82,7 @@ impl AlertPackScope {
             return true;
         }
         if let Some(location) = location {
-            if self
-                .area
-                .iter()
-                .any(|a| a.eq_ignore_ascii_case(location))
-            {
+            if self.area.iter().any(|a| a.eq_ignore_ascii_case(location)) {
                 return true;
             }
         }
@@ -313,21 +309,19 @@ impl Config {
                     Err(err) => {
                         // A malformed scope must not silently become
                         // "everywhere" — that is the permissive direction.
-                        tracing::warn!(
-                            "alert pack {name}: bad {SCOPE_KEY} ({err}); pack skipped"
-                        );
+                        tracing::warn!("alert pack {name}: bad {SCOPE_KEY} ({err}); pack skipped");
                         continue;
                     }
                 },
             };
-            let rules: HashMap<String, HighlightPattern> =
-                match toml::Value::Table(raw).try_into() {
-                    Ok(rules) => rules,
-                    Err(err) => {
-                        tracing::warn!("alert pack {name}: parse failed ({err})");
-                        continue;
-                    }
-                };
+            let rules: HashMap<String, HighlightPattern> = match toml::Value::Table(raw).try_into()
+            {
+                Ok(rules) => rules,
+                Err(err) => {
+                    tracing::warn!("alert pack {name}: parse failed ({err})");
+                    continue;
+                }
+            };
             packs.push(AlertPack {
                 name: name.to_string(),
                 hash: pack_hash(&bytes),
@@ -384,12 +378,10 @@ impl Config {
             // Out-of-area packs are dropped from the rule set entirely rather
             // than flagged, because the matcher has no per-pack partitioning:
             // membership of this Vec IS the arming mechanism.
-            if !pack.scope.admits(
-                room.location.as_deref(),
-                room.realm,
-                &room.tags,
-                room.uid,
-            ) {
+            if !pack
+                .scope
+                .admits(room.location.as_deref(), room.realm, &room.tags, room.uid)
+            {
                 continue;
             }
             let approved = approvals.is_approved(&pack.name, &pack.hash);
@@ -436,10 +428,7 @@ mod tests {
         AlertPack {
             name: "testpack".to_string(),
             hash: "abc123".to_string(),
-            rules: rules
-                .into_iter()
-                .map(|(n, r)| (n.to_string(), r))
-                .collect(),
+            rules: rules.into_iter().map(|(n, r)| (n.to_string(), r)).collect(),
             scope: AlertPackScope::default(),
         }
     }
@@ -463,7 +452,10 @@ mod tests {
         });
         let pack = pack_with(vec![("color", colored), ("alert", alerting)]);
 
-        assert!(!pack.needs_approval(), "these powers cannot misrepresent output");
+        assert!(
+            !pack.needs_approval(),
+            "these powers cannot misrepresent output"
+        );
         assert!(pack.sensitive_rules().is_empty());
     }
 
@@ -545,7 +537,10 @@ mod tests {
         let approvals = AlertPackApprovals::default(); // nothing enabled
         let mut highlights = HashMap::new();
         Config::merge_alert_packs(&mut highlights, &[pack], &approvals, &RoomScope::default());
-        assert!(highlights.is_empty(), "installed is not the same as enabled");
+        assert!(
+            highlights.is_empty(),
+            "installed is not the same as enabled"
+        );
     }
 
     #[test]
@@ -612,7 +607,10 @@ mod tests {
     fn an_unscoped_pack_is_armed_everywhere() {
         let scope = AlertPackScope::default();
         assert!(scope.is_unscoped());
-        assert!(scope.admits(None, None, &[], None), "even with no room data");
+        assert!(
+            scope.admits(None, None, &[], None),
+            "even with no room data"
+        );
         assert!(scope.admits(Some("anywhere"), Some(1), &["x".into()], Some(9)));
     }
 
@@ -630,7 +628,10 @@ mod tests {
     fn zone_scope_works_without_any_mapdb_data() {
         // The whole point of zone: it comes off the wire, so it still scopes
         // correctly in places the mapdb has never heard of.
-        let scope = AlertPackScope { zone: vec![7], ..Default::default() };
+        let scope = AlertPackScope {
+            zone: vec![7],
+            ..Default::default()
+        };
         assert!(scope.admits(None, Some(7), &[], None));
         assert!(!scope.admits(None, Some(8), &[], None));
     }
@@ -647,7 +648,10 @@ mod tests {
 
     #[test]
     fn room_scope_matches_an_exact_uid() {
-        let scope = AlertPackScope { rooms: vec![42], ..Default::default() };
+        let scope = AlertPackScope {
+            rooms: vec![42],
+            ..Default::default()
+        };
         assert!(scope.admits(None, None, &[], Some(42)));
         assert!(!scope.admits(None, None, &[], Some(43)));
     }
@@ -709,7 +713,10 @@ mod tests {
         let mut rewriter = rule("kobold");
         rewriter.replace = Some("KOBOLD".to_string());
         let mut pack = pack_with(vec![("rewrite", rewriter)]);
-        pack.scope = AlertPackScope { zone: vec![7], ..Default::default() };
+        pack.scope = AlertPackScope {
+            zone: vec![7],
+            ..Default::default()
+        };
         let mut approvals = AlertPackApprovals::default();
         approvals.set_enabled("testpack", true);
 
@@ -730,7 +737,10 @@ mod tests {
         let ambiance = scoped("ambiance", AlertPackScope::default());
         let encounter = scoped(
             "reim",
-            AlertPackScope { zone: vec![7], ..Default::default() },
+            AlertPackScope {
+                zone: vec![7],
+                ..Default::default()
+            },
         );
         let mut approvals = AlertPackApprovals::default();
         approvals.set_enabled("ambiance", true);
@@ -741,7 +751,10 @@ mod tests {
         Config::merge_alert_packs(&mut here, &packs, &approvals, &reim());
         assert_eq!(here.len(), 2, "both armed in zone 7");
 
-        let far = RoomScope { realm: Some(99), ..Default::default() };
+        let far = RoomScope {
+            realm: Some(99),
+            ..Default::default()
+        };
         let mut there = HashMap::new();
         Config::merge_alert_packs(&mut there, &packs, &approvals, &far);
         assert_eq!(there.len(), 1, "ambiance stays, encounter drops");
@@ -851,7 +864,11 @@ mod tests {
         assert!(approvals.is_approved("p", &before[0].hash));
 
         // Simulate a jinx update / hand edit changing the pack's content.
-        fs::write(&path, "[r]\npattern = \"a\"\nreplace = \"SOMETHING ELSE\"\n").unwrap();
+        fs::write(
+            &path,
+            "[r]\npattern = \"a\"\nreplace = \"SOMETHING ELSE\"\n",
+        )
+        .unwrap();
         let after = Config::load_alert_packs();
         assert_ne!(before[0].hash, after[0].hash, "content change -> new hash");
         assert!(

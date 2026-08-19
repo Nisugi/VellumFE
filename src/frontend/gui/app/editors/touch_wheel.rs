@@ -88,7 +88,11 @@ impl VellumGuiApp {
                             // Kind toggle: client action vs game command.
                             let mut is_client = slice.client.is_some();
                             egui::ComboBox::from_id_salt(("tw_kind", i))
-                                .selected_text(if is_client { "Open / focus" } else { "Game command" })
+                                .selected_text(if is_client {
+                                    "Open / focus"
+                                } else {
+                                    "Game command"
+                                })
                                 .show_ui(ui, |ui| {
                                     ui.selectable_value(&mut is_client, true, "Open / focus");
                                     ui.selectable_value(&mut is_client, false, "Game command");

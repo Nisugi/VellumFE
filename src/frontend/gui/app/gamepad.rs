@@ -44,8 +44,23 @@ pub(super) fn gamepad_button_name(button: gilrs::Button) -> Option<&'static str>
 
 /// All bindable button names, for the editor's dropdown.
 pub(super) const GAMEPAD_BUTTON_NAMES: [&str; 17] = [
-    "south", "east", "north", "west", "dpad_up", "dpad_down", "dpad_left", "dpad_right", "l1",
-    "r1", "l2", "r2", "l3", "r3", "select", "start", "guide",
+    "south",
+    "east",
+    "north",
+    "west",
+    "dpad_up",
+    "dpad_down",
+    "dpad_left",
+    "dpad_right",
+    "l1",
+    "r1",
+    "l2",
+    "r2",
+    "l3",
+    "r3",
+    "select",
+    "start",
+    "guide",
 ];
 
 /// Compass commands by left-stick sector, clockwise from north.
@@ -262,8 +277,7 @@ impl VellumGuiApp {
         // continuous hold instead of an open/close strobe. Nothing can
         // dwell-commit this fast, so delaying the close never delays a
         // real fire.
-        let wheel_min_open_ms =
-            self.app_core.config.controller_tuning.wheel_min_open_ms as u128;
+        let wheel_min_open_ms = self.app_core.config.controller_tuning.wheel_min_open_ms as u128;
         match (self.gp_wheel.is_some(), held_key) {
             (false, Some(key)) => {
                 // A fired leaf keeps the wheel closed for the rest of this
@@ -333,8 +347,7 @@ impl VellumGuiApp {
         // Release grace: after the wheel closes, movement stays hushed for
         // release_grace_ms so releasing the wheel (stick still deflected)
         // doesn't also walk a direction.
-        let release_grace_ms =
-            self.app_core.config.controller_tuning.release_grace_ms as u128;
+        let release_grace_ms = self.app_core.config.controller_tuning.release_grace_ms as u128;
         // The grace exists to keep wheel-aim residue on the MOVEMENT
         // stick from walking a direction. A wheel that aimed with the
         // other stick never touched the movement stick — movement was
@@ -455,10 +468,7 @@ impl VellumGuiApp {
                 // stick shows up as a stream of these lines.
                 tracing::info!("scrollreq gamepad aim_y={aim_y:.3} delta={delta:.1}");
                 ctx.data_mut(|d| {
-                    d.insert_temp(
-                        egui::Id::new(("text_scroll_pending", "main")),
-                        (0u8, delta),
-                    )
+                    d.insert_temp(egui::Id::new(("text_scroll_pending", "main")), (0u8, delta))
                 });
             }
         }
@@ -510,7 +520,10 @@ impl VellumGuiApp {
 
     /// Play already-resolved rumble parameters. Split from `play_rumble`
     /// so the editor's Test button can preview unsaved pattern edits.
-    pub(super) fn play_rumble_resolved(&mut self, (magnitude, ms, pulses, gap): (f32, u32, u32, u32)) {
+    pub(super) fn play_rumble_resolved(
+        &mut self,
+        (magnitude, ms, pulses, gap): (f32, u32, u32, u32),
+    ) {
         use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Replay, Ticks};
         let Some(gilrs) = self.gamepad.as_mut() else {
             return;
@@ -527,7 +540,9 @@ impl VellumGuiApp {
         let mut builder = EffectBuilder::new();
         for pulse in 0..pulses {
             builder.add_effect(BaseEffect {
-                kind: BaseEffectType::Strong { magnitude: strength },
+                kind: BaseEffectType::Strong {
+                    magnitude: strength,
+                },
                 scheduling: Replay {
                     after: Ticks::from_ms(pulse * (ms + gap)),
                     play_for: Ticks::from_ms(ms),
@@ -616,11 +631,21 @@ impl VellumGuiApp {
                 // some OTHER button (so an explicit rebind wins and frees
                 // the physical button). East is a hard cancel regardless.
                 _ => match button {
-                    Button::DPadUp if !self.controller_action_bound_anywhere("menu_up") => Some(KeyCode::Up),
-                    Button::DPadDown if !self.controller_action_bound_anywhere("menu_down") => Some(KeyCode::Down),
-                    Button::DPadLeft if !self.controller_action_bound_anywhere("menu_left") => Some(KeyCode::Left),
-                    Button::DPadRight if !self.controller_action_bound_anywhere("menu_right") => Some(KeyCode::Right),
-                    Button::South if !self.controller_action_bound_anywhere("interact_select") => Some(KeyCode::Enter),
+                    Button::DPadUp if !self.controller_action_bound_anywhere("menu_up") => {
+                        Some(KeyCode::Up)
+                    }
+                    Button::DPadDown if !self.controller_action_bound_anywhere("menu_down") => {
+                        Some(KeyCode::Down)
+                    }
+                    Button::DPadLeft if !self.controller_action_bound_anywhere("menu_left") => {
+                        Some(KeyCode::Left)
+                    }
+                    Button::DPadRight if !self.controller_action_bound_anywhere("menu_right") => {
+                        Some(KeyCode::Right)
+                    }
+                    Button::South if !self.controller_action_bound_anywhere("interact_select") => {
+                        Some(KeyCode::Enter)
+                    }
                     Button::East => Some(KeyCode::Esc), // hard fallback, always
                     _ => None,
                 },
@@ -644,9 +669,7 @@ impl VellumGuiApp {
         let interact_select = bound_action.as_deref() == Some("interact_select")
             || (button == Button::South
                 && !self.controller_action_bound_anywhere("interact_select"));
-        if self.app_core.ui_state.input_mode == InputMode::Interact
-            && !modified
-            && interact_select
+        if self.app_core.ui_state.input_mode == InputMode::Interact && !modified && interact_select
         {
             let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
             self.handle_modal_nav_key(&key, ctx);
@@ -693,10 +716,14 @@ impl VellumGuiApp {
     /// to some button explicitly. Composite (modified) keys are ignored — a
     /// nav action only counts when bound with no modifiers held.
     fn controller_action_bound_anywhere(&self, action: &str) -> bool {
-        self.app_core.config.controller_binds.iter().any(|(key, b)| {
-            !key.contains('+')
-                && matches!(b, crate::config::KeyBindAction::Action(name) if name == action)
-        })
+        self.app_core
+            .config
+            .controller_binds
+            .iter()
+            .any(|(key, b)| {
+                !key.contains('+')
+                    && matches!(b, crate::config::KeyBindAction::Action(name) if name == action)
+            })
     }
 
     /// True when a button is declared as a modifier (`controller_modifier`),
@@ -757,8 +784,8 @@ impl VellumGuiApp {
         // so the hysteresis band can't invert.
         let tuning = &self.app_core.config.controller_tuning;
         let trigger_open = (tuning.trigger_open_pct as f32 / 100.0).clamp(0.05, 1.0);
-        let trigger_close = (tuning.trigger_close_pct as f32 / 100.0)
-            .clamp(0.0, trigger_open - 0.01);
+        let trigger_close =
+            (tuning.trigger_close_pct as f32 / 100.0).clamp(0.0, trigger_open - 0.01);
         let gilrs = self.gamepad.as_ref()?;
         // The wheel currently up (or in its fired-hold tail): its trigger
         // uses the low release threshold; everything else the high open one.
@@ -844,7 +871,12 @@ impl VellumGuiApp {
     pub(super) fn wheel_view(&self, key: &str, path: &[usize]) -> Option<WheelView> {
         let real = self.wheel_level_slices(key, path)?;
         let anchor = &self.app_core.config.controller_tuning.back_slice;
-        Some(WheelView::build(&real, !path.is_empty(), anchor, self.wheel_start(key)))
+        Some(WheelView::build(
+            &real,
+            !path.is_empty(),
+            anchor,
+            self.wheel_start(key),
+        ))
     }
 
     /// The ring rotation in degrees for wheel `key` (0 = up), from
@@ -911,8 +943,8 @@ impl VellumGuiApp {
         // for a missing target), this hold's aim is used up — the stick
         // must recentre before a new dwell can start.
         self.gp_wheel_spent = true;
-        let debounce =
-            (self.app_core.config.controller_tuning.fire_debounce_ms as u128).max(DEBOUNCE_FLOOR_MS);
+        let debounce = (self.app_core.config.controller_tuning.fire_debounce_ms as u128)
+            .max(DEBOUNCE_FLOOR_MS);
         if let Some(last) = self.gp_wheel_last_fire {
             if last.elapsed().as_millis() < debounce {
                 return;
@@ -925,8 +957,9 @@ impl VellumGuiApp {
         // (rather than sending the literal text) — same contract as bound
         // interact macros.
         let Some(command) = self.app_core.substitute_interact_placeholders(command) else {
-            self.app_core
-                .add_system_message("Wheel slice needs an interact-mode target (focus something first)");
+            self.app_core.add_system_message(
+                "Wheel slice needs an interact-mode target (focus something first)",
+            );
             return;
         };
         self.gp_wheel_last_fire = Some(std::time::Instant::now());
@@ -994,7 +1027,6 @@ impl VellumGuiApp {
             self.wheel_close_and_fire(&view, display);
         }
     }
-
 }
 
 /// Live radial-wheel state: which named wheel is up, the folder path
@@ -1088,14 +1120,19 @@ impl VellumGuiApp {
                 // never name the wrong stick.
                 let move_on_right =
                     self.app_core.config.controller_tuning.movement_stick == "right";
-                let aim_on_right =
-                    resolve_aim_stick(move_on_right, self.wheel_aim_stick(&key));
-                let stick_word = if aim_on_right { "right stick" } else { "left stick" };
+                let aim_on_right = resolve_aim_stick(move_on_right, self.wheel_aim_stick(&key));
+                let stick_word = if aim_on_right {
+                    "right stick"
+                } else {
+                    "left stick"
+                };
                 let hint = match selected.and_then(|i| slices.get(i)) {
                     Some(slice) if is_back_slice(slice) => "dwell to go back".to_string(),
                     Some(slice) if slice.is_folder() => format!("{}: dwell to open", slice.label),
                     Some(slice) => format!("release to fire: {}", slice.command),
-                    None if in_folder => "dwell a slice · release fires · center to cancel".to_string(),
+                    None if in_folder => {
+                        "dwell a slice · release fires · center to cancel".to_string()
+                    }
                     None => format!("aim with the {stick_word}"),
                 };
                 painter.text(
@@ -1138,7 +1175,11 @@ pub(super) fn paint_wheel_ring(
     // Small rings (the designer in a cramped editor; the live wheel never
     // drops below ~124) shrink the labels so an enlarged selected label
     // can't collide with its neighbors or the hub.
-    let (selected_size, normal_size) = if outer < 120.0 { (15.0, 12.0) } else { (18.0, 14.0) };
+    let (selected_size, normal_size) = if outer < 120.0 {
+        (15.0, 12.0)
+    } else {
+        (18.0, 14.0)
+    };
 
     // Wedge fills: the colored area is the ACTIVATION zone — it runs
     // from the slice's floor radius (its own `inner`, else the global
@@ -1150,10 +1191,7 @@ pub(super) fn paint_wheel_ring(
         let center_angle = seat_center_screen(i);
         let step = seat_span_rad(i);
         let is_selected = selected == Some(i);
-        let tint = slice
-            .color
-            .as_deref()
-            .and_then(super::theme::resolve_color);
+        let tint = slice.color.as_deref().and_then(super::theme::resolve_color);
         let fill = match (tint, is_selected) {
             (Some(c), true) => c.gamma_multiply(0.85),
             (Some(c), false) => c.gamma_multiply(0.22),
@@ -1232,12 +1270,11 @@ pub(super) fn paint_wheel_ring(
     // arc across its wedge at that floor radius — the deflection
     // you must cross before it registers. Slices on the default
     // floor get no extra line (keeps the common case clean).
-    let floor_stroke = egui::Stroke::new(
-        1.5,
-        visuals.warn_fg_color.gamma_multiply(0.8),
-    );
+    let floor_stroke = egui::Stroke::new(1.5, visuals.warn_fg_color.gamma_multiply(0.8));
     for (i, slice) in slices.iter().enumerate() {
-        let Some(inner_pct) = slice.inner else { continue };
+        let Some(inner_pct) = slice.inner else {
+            continue;
+        };
         let frac = (inner_pct as f32 / 100.0).clamp(0.0, 1.0);
         if frac <= global_deadzone + 1e-3 {
             continue; // not harder than the default reach
@@ -1366,10 +1403,7 @@ pub(super) fn resolve_spans(spans: &[Option<f32>], start_deg: f32) -> ResolvedLa
     } else {
         0.0
     };
-    let mut widths: Vec<f32> = explicit
-        .iter()
-        .map(|s| s.unwrap_or(free_each))
-        .collect();
+    let mut widths: Vec<f32> = explicit.iter().map(|s| s.unwrap_or(free_each)).collect();
 
     // Close the ring exactly: scale to 360 whenever the provisional widths
     // don't already sum there (explicit overflow, or no free seats to take
@@ -1390,7 +1424,10 @@ pub(super) fn resolve_spans(spans: &[Option<f32>], start_deg: f32) -> ResolvedLa
     let mut seats = Vec::with_capacity(n);
     let mut edge = start_deg - widths[0] / 2.0;
     for w in widths {
-        seats.push(Seat { start_deg: edge, span_deg: w });
+        seats.push(Seat {
+            start_deg: edge,
+            span_deg: w,
+        });
         edge += w;
     }
     ResolvedLayout { seats }
@@ -1433,12 +1470,7 @@ pub(super) fn seat_index_at_angle(x: f32, y_up: f32, layout: &ResolvedLayout) ->
 /// deflection) if set, else the global `deadzone`. Below the floor the seat
 /// isn't aimable, so this returns None (the stick reads as centered). This
 /// gates aiming/commit only; firing stays with the active fire mode.
-fn seat_at_with_inner(
-    x: f32,
-    y_up: f32,
-    view: &WheelView,
-    deadzone: f32,
-) -> Option<usize> {
+fn seat_at_with_inner(x: f32, y_up: f32, view: &WheelView, deadzone: f32) -> Option<usize> {
     let seat = seat_index_at_angle(x, y_up, &view.layout)?;
     let slice = view.slices.get(seat);
     // A dead-zone slice (`fire_type = none`) is never a candidate: aiming
@@ -1533,10 +1565,7 @@ fn leaf_command_at(view: &WheelView, display: usize) -> Option<String> {
         _ => return None,
     }
     let slice = view.slices.get(display)?;
-    if slice.is_folder()
-        || is_back_slice(slice)
-        || slice.is_none_type()
-        || slice.command.is_empty()
+    if slice.is_folder() || is_back_slice(slice) || slice.is_none_type() || slice.command.is_empty()
     {
         return None;
     }
@@ -1684,8 +1713,7 @@ fn wheel_aim_step(
                             render = true;
                         }
                         ui.peak_magnitude = ui.peak_magnitude.max(magnitude);
-                        if retract_should_fire(magnitude, ui.peak_magnitude, timing.retract_delta)
-                        {
+                        if retract_should_fire(magnitude, ui.peak_magnitude, timing.retract_delta) {
                             return WheelStepOutcome {
                                 fire: Some(display),
                                 render,
@@ -1814,7 +1842,12 @@ impl WheelView {
     /// with uneven seats too. `back_anchor == "none"` skips Back entirely —
     /// the folder ring is just the real slices (rotated by `start`), and
     /// you ascend with the East/B accelerator.
-    pub(super) fn build(real: &[WheelSlice], in_folder: bool, back_anchor: &str, start: f32) -> Self {
+    pub(super) fn build(
+        real: &[WheelSlice],
+        in_folder: bool,
+        back_anchor: &str,
+        start: f32,
+    ) -> Self {
         let real_spans = || -> Vec<Option<f32>> { real.iter().map(|s| s.span).collect() };
 
         // An explicit `back = true` slice replaces the synthesized seat:
@@ -1852,7 +1885,11 @@ impl WheelView {
         let at_zero = resolve_spans(&spans, 0.0);
         let rotation = anchor_angle_deg(back_anchor) - at_zero.seats[back_idx].center_deg();
         let layout = resolve_spans(&spans, rotation);
-        Self { slices, real_index, layout }
+        Self {
+            slices,
+            real_index,
+            layout,
+        }
     }
 
     #[cfg(test)]
@@ -1942,14 +1979,29 @@ mod tests {
     fn button_names_round_trip_the_editor_list() {
         use gilrs::Button;
         for button in [
-            Button::South, Button::East, Button::North, Button::West,
-            Button::DPadUp, Button::DPadDown, Button::DPadLeft, Button::DPadRight,
-            Button::LeftTrigger, Button::LeftTrigger2, Button::RightTrigger,
-            Button::RightTrigger2, Button::LeftThumb, Button::RightThumb,
-            Button::Select, Button::Start, Button::Mode,
+            Button::South,
+            Button::East,
+            Button::North,
+            Button::West,
+            Button::DPadUp,
+            Button::DPadDown,
+            Button::DPadLeft,
+            Button::DPadRight,
+            Button::LeftTrigger,
+            Button::LeftTrigger2,
+            Button::RightTrigger,
+            Button::RightTrigger2,
+            Button::LeftThumb,
+            Button::RightThumb,
+            Button::Select,
+            Button::Start,
+            Button::Mode,
         ] {
             let name = gamepad_button_name(button).expect("named button");
-            assert!(GAMEPAD_BUTTON_NAMES.contains(&name), "{name} missing from editor list");
+            assert!(
+                GAMEPAD_BUTTON_NAMES.contains(&name),
+                "{name} missing from editor list"
+            );
         }
     }
 }
@@ -1982,7 +2034,11 @@ mod wheel_tests {
     }
 
     fn spans(v: &[Option<f32>]) -> Vec<f32> {
-        resolve_spans(v, 0.0).seats.iter().map(|s| s.span_deg).collect()
+        resolve_spans(v, 0.0)
+            .seats
+            .iter()
+            .map(|s| s.span_deg)
+            .collect()
     }
 
     #[test]
@@ -1993,7 +2049,10 @@ mod wheel_tests {
         for s in &layout.seats {
             assert!((s.span_deg - 90.0).abs() < 1e-3, "even 90 each");
         }
-        assert!((layout.seats[0].start_deg - -45.0).abs() < 1e-3, "seat 0 centered at up");
+        assert!(
+            (layout.seats[0].start_deg - -45.0).abs() < 1e-3,
+            "seat 0 centered at up"
+        );
         assert!((layout.seats[0].center_deg() - 0.0).abs() < 1e-3);
         // And the seat lookup matches the compass exactly (up/right/down/left).
         assert_eq!(seat_at(0.0, 1.0, &layout, 0.5), Some(0));
@@ -2005,9 +2064,15 @@ mod wheel_tests {
     #[test]
     fn resolve_explicit_spans_take_value_remainder_splits_evenly() {
         // One 120° slice; the other three share the remaining 240° = 80 each.
-        assert_eq!(spans(&[Some(120.0), None, None, None]), vec![120.0, 80.0, 80.0, 80.0]);
+        assert_eq!(
+            spans(&[Some(120.0), None, None, None]),
+            vec![120.0, 80.0, 80.0, 80.0]
+        );
         // Two explicit; two free share what's left.
-        assert_eq!(spans(&[Some(100.0), Some(60.0), None, None]), vec![100.0, 60.0, 100.0, 100.0]);
+        assert_eq!(
+            spans(&[Some(100.0), Some(60.0), None, None]),
+            vec![100.0, 60.0, 100.0, 100.0]
+        );
     }
 
     #[test]
@@ -2040,8 +2105,16 @@ mod wheel_tests {
         // start = 90 puts seat 0's center on the right; the lookup follows.
         let layout = resolve_spans(&[None, None, None, None], 90.0);
         assert!((layout.seats[0].center_deg() - 90.0).abs() < 1e-3);
-        assert_eq!(seat_at(1.0, 0.0, &layout, 0.5), Some(0), "seat 0 now points right");
-        assert_eq!(seat_at(0.0, -1.0, &layout, 0.5), Some(1), "seat 1 points down");
+        assert_eq!(
+            seat_at(1.0, 0.0, &layout, 0.5),
+            Some(0),
+            "seat 0 now points right"
+        );
+        assert_eq!(
+            seat_at(0.0, -1.0, &layout, 0.5),
+            Some(1),
+            "seat 1 points down"
+        );
     }
 
     #[test]
@@ -2051,9 +2124,21 @@ mod wheel_tests {
         // while straight down falls to one of the narrow slices.
         let layout = resolve_spans(&[Some(180.0), None, None], 0.0);
         assert_eq!(seat_at(0.0, 1.0, &layout, 0.5), Some(0), "up");
-        assert_eq!(seat_at(0.7, 0.7, &layout, 0.5), Some(0), "up-right still seat 0");
-        assert_eq!(seat_at(-0.7, 0.7, &layout, 0.5), Some(0), "up-left still seat 0");
-        assert_ne!(seat_at(0.0, -1.0, &layout, 0.5), Some(0), "down is a narrow slice");
+        assert_eq!(
+            seat_at(0.7, 0.7, &layout, 0.5),
+            Some(0),
+            "up-right still seat 0"
+        );
+        assert_eq!(
+            seat_at(-0.7, 0.7, &layout, 0.5),
+            Some(0),
+            "up-left still seat 0"
+        );
+        assert_ne!(
+            seat_at(0.0, -1.0, &layout, 0.5),
+            Some(0),
+            "down is a narrow slice"
+        );
     }
 
     fn leaf(label: &str) -> WheelSlice {
@@ -2130,7 +2215,12 @@ mod wheel_tests {
         // anchor direction (up=0, right=90, down=180, left=270 in the aim
         // convention), whatever the seat count or spans.
         let real = vec![leaf("a"), leaf("b"), leaf("c")];
-        for (anchor, want) in [("up", 0.0), ("right", 90.0), ("down", 180.0), ("left", 270.0)] {
+        for (anchor, want) in [
+            ("up", 0.0),
+            ("right", 90.0),
+            ("down", 180.0),
+            ("left", 270.0),
+        ] {
             let view = WheelView::build(&real, true, anchor, 0.0);
             let back = *view.layout.seats.last().unwrap();
             assert!(
@@ -2158,7 +2248,11 @@ mod wheel_tests {
         let view = WheelView::build(&real, true, "down", 0.0);
         assert_eq!(view.len(), 3, "no extra synthesized seat");
         for i in 0..3 {
-            assert_eq!(view.real(i), Some(Some(i)), "all seats are real config slices");
+            assert_eq!(
+                view.real(i),
+                Some(Some(i)),
+                "all seats are real config slices"
+            );
         }
         // Verbatim layout at start 0: seat 0 centered up, not rotated so
         // Back hits the "down" anchor.
@@ -2243,7 +2337,10 @@ mod wheel_tests {
         let view = WheelView::build(&real, false, "down", 0.0);
         let mut ui = fresh_ui();
         let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.95, Instant::now());
-        assert_eq!(out.fire, None, "release fire_type ignores the edge crossing");
+        assert_eq!(
+            out.fire, None,
+            "release fire_type ignores the edge crossing"
+        );
     }
 
     #[test]
@@ -2298,9 +2395,17 @@ mod wheel_tests {
 
         // Aiming up at 0.55: past the global dead zone but under seat 0's
         // 65% floor, so it does NOT register.
-        assert_eq!(seat_at_with_inner(0.0, 0.55, &view, dz), None, "under hard floor");
+        assert_eq!(
+            seat_at_with_inner(0.0, 0.55, &view, dz),
+            None,
+            "under hard floor"
+        );
         // At 0.70 it clears the floor.
-        assert_eq!(seat_at_with_inner(0.0, 0.70, &view, dz), Some(0), "over hard floor");
+        assert_eq!(
+            seat_at_with_inner(0.0, 0.70, &view, dz),
+            Some(0),
+            "over hard floor"
+        );
 
         // Seat 1 (right) registers at just 0.25 — below the global dead
         // zone — because its own inner (20%) is lower.
@@ -2313,8 +2418,16 @@ mod wheel_tests {
 
         // The plain slice (no inner) still uses the global dead zone: seat 2
         // is down (180). At 0.4 it's under 0.5 -> None; at 0.6 -> Some(2).
-        assert_eq!(seat_at_with_inner(0.0, -0.4, &view, dz), None, "plain under global dz");
-        assert_eq!(seat_at_with_inner(0.0, -0.6, &view, dz), Some(2), "plain over global dz");
+        assert_eq!(
+            seat_at_with_inner(0.0, -0.4, &view, dz),
+            None,
+            "plain under global dz"
+        );
+        assert_eq!(
+            seat_at_with_inner(0.0, -0.6, &view, dz),
+            Some(2),
+            "plain over global dz"
+        );
     }
 
     #[test]
@@ -2348,8 +2461,8 @@ mod wheel_tests {
         // No override: aim stick is the one that isn't the movement stick.
         assert_eq!(resolve_aim_stick(false, None), true); // move left -> aim right
         assert_eq!(resolve_aim_stick(true, None), false); // move right -> aim left
-        // Per-wheel override wins regardless of movement stick — including
-        // Niffy's combat-on-the-movement-stick case (move left, aim left).
+                                                          // Per-wheel override wins regardless of movement stick — including
+                                                          // Niffy's combat-on-the-movement-stick case (move left, aim left).
         assert_eq!(resolve_aim_stick(false, Some(false)), false); // aim left
         assert_eq!(resolve_aim_stick(false, Some(true)), true); // aim right
         assert_eq!(resolve_aim_stick(true, Some(true)), true);
@@ -2409,8 +2522,8 @@ mod wheel_tests {
         assert!(!retract_should_fire(0.95, 1.00, 0.10)); // not far enough in
         assert!(retract_should_fire(0.90, 1.00, 0.10)); // exactly delta in
         assert!(retract_should_fire(0.50, 1.00, 0.10)); // well past
-        // A shallower peak needs a correspondingly shallow retraction. The
-        // exact boundary (0.70 - 0.10 = 0.60) must fire despite f32 rounding.
+                                                        // A shallower peak needs a correspondingly shallow retraction. The
+                                                        // exact boundary (0.70 - 0.10 = 0.60) must fire despite f32 rounding.
         assert!(!retract_should_fire(0.65, 0.70, 0.10));
         assert!(retract_should_fire(0.60, 0.70, 0.10));
         // A hair above the boundary still holds (the epsilon is far smaller
@@ -2689,7 +2802,11 @@ mod wheel_tests {
             let real: Vec<WheelSlice> = (0..n).map(|i| leaf(&format!("s{i}"))).collect();
             let view = WheelView::build(&real, true, case["anchor"].as_str().unwrap(), 0.0);
             let back = *view.layout.seats.last().unwrap();
-            assert_eq!(view.real(view.len() - 1), Some(None), "Back is last: {case}");
+            assert_eq!(
+                view.real(view.len() - 1),
+                Some(None),
+                "Back is last: {case}"
+            );
             let want = case["expectBackCenterDeg"].as_f64().unwrap() as f32;
             assert!(
                 angular_gap(back.center_deg(), want) < 1e-2,
@@ -2799,8 +2916,7 @@ mod wheel_tests {
                 // JS side's leafRealAt(view, aimed) (phone picks are
                 // real-index paths; commands resolve host-side).
                 let got = ui.aimed.and_then(|display| {
-                    leaf_command_at(&view, display)
-                        .and_then(|_| view.real(display).flatten())
+                    leaf_command_at(&view, display).and_then(|_| view.real(display).flatten())
                 });
                 assert_eq!(got.map(|v| v as u64), want.as_u64(), "{name}: releaseReal");
             }

@@ -110,8 +110,7 @@ pub fn set_for_test(registry: CustomEmojiRegistry) {
 
 /// True once any test has pinned the registry; see [`reload`].
 #[cfg(test)]
-static TEST_PINNED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static TEST_PINNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Serializes tests that install a snapshot: [`set_for_test`] writes
 /// process-wide state, so two tests running in parallel otherwise clobber

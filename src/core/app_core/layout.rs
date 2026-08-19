@@ -55,7 +55,13 @@ fn distribute_1d(tracks: &[Track], delta: i32) -> Vec<u16> {
     // touches them.
     let lo: Vec<i32> = tracks
         .iter()
-        .map(|t| if t.is_static { t.base_size as i32 } else { t.min as i32 })
+        .map(|t| {
+            if t.is_static {
+                t.base_size as i32
+            } else {
+                t.min as i32
+            }
+        })
         .collect();
     let hi: Vec<i32> = tracks
         .iter()
@@ -336,7 +342,12 @@ impl AppCore {
         // Categorize widgets by scaling behavior
         let mut static_both = HashSet::new();
         let mut static_height = HashSet::new();
-        for window_def in self.layout.windows.iter().filter(|w| w.base().visibility.is_shown()) {
+        for window_def in self
+            .layout
+            .windows
+            .iter()
+            .filter(|w| w.base().visibility.is_shown())
+        {
             let base = window_def.base();
             match window_def.widget_type() {
                 "indicator" => {
@@ -358,14 +369,26 @@ impl AppCore {
                     .windows
                     .iter()
                     .filter(|w| w.base().visibility.is_shown())
-                    .map(|w| (w.name().to_string(), w.base().row.get(), w.base().rows.get()))
+                    .map(|w| {
+                        (
+                            w.name().to_string(),
+                            w.base().row.get(),
+                            w.base().rows.get(),
+                        )
+                    })
                     .collect()
             } else {
                 self.layout
                     .windows
                     .iter()
                     .filter(|w| w.base().visibility.is_shown())
-                    .map(|w| (w.base().name.clone(), w.base().row.get(), w.base().rows.get()))
+                    .map(|w| {
+                        (
+                            w.base().name.clone(),
+                            w.base().row.get(),
+                            w.base().rows.get(),
+                        )
+                    })
                     .collect()
             };
 
@@ -381,7 +404,12 @@ impl AppCore {
         // Pull such a window back on screen WITHOUT resizing it (max origin =
         // terminal - size, saturating), so a fixed-height input keeps its size.
         // This never moves a window that already fits.
-        for window_def in self.layout.windows.iter_mut().filter(|w| w.base().visibility.is_shown()) {
+        for window_def in self
+            .layout
+            .windows
+            .iter_mut()
+            .filter(|w| w.base().visibility.is_shown())
+        {
             let base = window_def.base_mut();
             let max_col = crate::data::geometry::Col::new(terminal_width) - base.cols;
             let max_row = crate::data::geometry::Row::new(terminal_height) - base.rows;
@@ -557,7 +585,8 @@ impl AppCore {
             // former hand-rolled proportional + leftover + remainder logic with
             // one conserving pass (see distribute_1d). Sort by baseline row so
             // proportional order matches the cascade order below.
-            windows_at_col.sort_by_key(|name| baseline_rows.get(name).map(|(r, _)| *r).unwrap_or(0));
+            windows_at_col
+                .sort_by_key(|name| baseline_rows.get(name).map(|(r, _)| *r).unwrap_or(0));
 
             let tracks: Vec<Track> = windows_at_col
                 .iter()
@@ -565,15 +594,14 @@ impl AppCore {
                     let (_, base_rows) = baseline_rows.get(name).copied().unwrap_or((0, 0));
                     let is_static = static_both.contains(name.as_str())
                         || static_height.contains(name.as_str());
-                    let (min_c, max_c) = if let Some(w) =
-                        self.layout.windows.iter().find(|w| w.name() == name)
-                    {
-                        let base = w.base();
-                        let (_, min_rows) = self.widget_min_size(w.widget_type());
-                        (base.min_rows.unwrap_or(min_rows), base.max_rows)
-                    } else {
-                        (0, None)
-                    };
+                    let (min_c, max_c) =
+                        if let Some(w) = self.layout.windows.iter().find(|w| w.name() == name) {
+                            let base = w.base();
+                            let (_, min_rows) = self.widget_min_size(w.widget_type());
+                            (base.min_rows.unwrap_or(min_rows), base.max_rows)
+                        } else {
+                            (0, None)
+                        };
                     Track {
                         name: name.clone(),
                         base_size: base_rows,
@@ -743,7 +771,8 @@ impl AppCore {
             // shared distribute_1d compute the new widths — the transpose of the
             // height pass. Replaces the former proportional + leftover +
             // remainder logic with one conserving pass.
-            windows_at_row.sort_by_key(|name| baseline_cols.get(name).map(|(c, _)| *c).unwrap_or(0));
+            windows_at_row
+                .sort_by_key(|name| baseline_cols.get(name).map(|(c, _)| *c).unwrap_or(0));
 
             let tracks: Vec<Track> = windows_at_row
                 .iter()
@@ -751,15 +780,14 @@ impl AppCore {
                     let (_, base_cols) = baseline_cols.get(name).copied().unwrap_or((0, 0));
                     // Width has only the `static_both` category (no static_width).
                     let is_static = static_both.contains(name.as_str());
-                    let (min_c, max_c) = if let Some(w) =
-                        self.layout.windows.iter().find(|w| w.name() == name)
-                    {
-                        let base = w.base();
-                        let (min_cols, _) = self.widget_min_size(w.widget_type());
-                        (base.min_cols.unwrap_or(min_cols), base.max_cols)
-                    } else {
-                        (0, None)
-                    };
+                    let (min_c, max_c) =
+                        if let Some(w) = self.layout.windows.iter().find(|w| w.name() == name) {
+                            let base = w.base();
+                            let (min_cols, _) = self.widget_min_size(w.widget_type());
+                            (base.min_cols.unwrap_or(min_cols), base.max_cols)
+                        } else {
+                            (0, None)
+                        };
                     Track {
                         name: name.clone(),
                         base_size: base_cols,
@@ -1030,7 +1058,6 @@ impl AppCore {
             Err(e) => self.add_system_message(&format!("Failed to list layouts: {}", e)),
         }
     }
-
 }
 
 #[cfg(test)]
@@ -1663,7 +1690,11 @@ mod tests {
         ];
         let layout = test_layout_with_windows(windows);
 
-        let visible_count = layout.windows.iter().filter(|w| w.base().visibility.is_shown()).count();
+        let visible_count = layout
+            .windows
+            .iter()
+            .filter(|w| w.base().visibility.is_shown())
+            .count();
         assert_eq!(visible_count, 2);
     }
 
@@ -1830,7 +1861,12 @@ mod tests {
 
             // The on-screen safety net: NO visible window may extend past the
             // terminal edge after a resize.
-            for w in c.layout.windows.iter().filter(|w| w.base().visibility.is_shown()) {
+            for w in c
+                .layout
+                .windows
+                .iter()
+                .filter(|w| w.base().visibility.is_shown())
+            {
                 let b = w.base();
                 assert!(
                     b.row.get() + b.rows.get() <= h,
@@ -2157,10 +2193,7 @@ mod tests {
     #[test]
     fn resize_width_only_leaves_height_untouched() {
         let mut core = core_with_baseline(
-            vec![
-                text_def("l", 0, 0, 40, 24),
-                text_def("r", 40, 0, 40, 24),
-            ],
+            vec![text_def("l", 0, 0, 40, 24), text_def("r", 40, 0, 40, 24)],
             80,
             24,
         );
@@ -2292,14 +2325,16 @@ mod tests {
         // Deterministic LCG (numerical recipes constants).
         let mut seed: u64 = 0x9E3779B97F4A7C15;
         let mut next = |bound: u16| -> u16 {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((seed >> 33) as u16) % bound
         };
 
         for _ in 0..500 {
             let n = 2 + next(3); // 2..=4 windows stacked full-width
             let base_h: u16 = 20 + next(20); // 20..=39
-            // Partition base_h into n chunks of >= 3 rows each (text min = 3).
+                                             // Partition base_h into n chunks of >= 3 rows each (text min = 3).
             let mut rows_list = Vec::new();
             let mut remaining = base_h;
             for i in 0..n {

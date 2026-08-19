@@ -219,8 +219,8 @@ impl KeybindFormWidget {
                 // Right arrow - cycle dropdown forward (when on action dropdown)
                 if self.focused_field == 3 && self.action_type == KeybindActionType::Action {
                     self.loaded_action = None;
-                    self.action_dropdown_index =
-                        (self.action_dropdown_index + 1).min(offered_actions().len().saturating_sub(1));
+                    self.action_dropdown_index = (self.action_dropdown_index + 1)
+                        .min(offered_actions().len().saturating_sub(1));
                 }
                 None
             }
@@ -405,8 +405,7 @@ impl KeybindFormWidget {
                 })
             }
         };
-        if let Some(reason) =
-            crate::config::reserved_combo_conflict(&key_combo, &action_for_check)
+        if let Some(reason) = crate::config::reserved_combo_conflict(&key_combo, &action_for_check)
         {
             self.status_message = reason;
             return None;
@@ -1009,7 +1008,6 @@ impl KeybindFormWidget {
         // Use centralized mode-aware color parser
         super::colors::parse_color_to_ratatui(hex)
     }
-
 }
 
 // Trait implementations for KeybindFormWidget
@@ -1191,7 +1189,11 @@ mod tests {
             true,
         );
         // No user interaction with the dropdown → the loaded action is kept.
-        assert_eq!(saved_value(&mut form), unoffered, "unoffered action was clobbered on save");
+        assert_eq!(
+            saved_value(&mut form),
+            unoffered,
+            "unoffered action was clobbered on save"
+        );
     }
 
     /// A known action still round-trips through edit → save unchanged.
@@ -1221,7 +1223,13 @@ mod tests {
         form.focused_field = 3;
         form.cycle_action_dropdown(false); // user moves the dropdown
         let saved = saved_value(&mut form);
-        assert_ne!(saved, "tts_pause_resume", "preserved action should be dropped after cycling");
-        assert!(offered_actions().contains(&saved.as_str()), "saved a real offered action");
+        assert_ne!(
+            saved, "tts_pause_resume",
+            "preserved action should be dropped after cycling"
+        );
+        assert!(
+            offered_actions().contains(&saved.as_str()),
+            "saved a real offered action"
+        );
     }
 }

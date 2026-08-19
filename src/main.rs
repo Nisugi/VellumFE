@@ -13,8 +13,8 @@ mod migrate;
 mod network;
 mod parser;
 mod performance;
-mod process_probe;
 mod platform;
+mod process_probe;
 mod selection;
 mod session_cache;
 mod sound;
@@ -387,16 +387,19 @@ fn main() -> Result<()> {
                 return Ok(());
             }
 
-            Commands::ExtractCuratedMaps { saga_dir, out, dry_run } => {
+            Commands::ExtractCuratedMaps {
+                saga_dir,
+                out,
+                dry_run,
+            } => {
                 use crate::core::curated_maps;
 
                 println!("Curated Map Membership Extraction");
                 println!("=================================");
-                let layouts_json = curated_maps::find_saga_layouts(saga_dir.as_deref())
-                    .context(
-                        "No Saga install found. Pass --saga-dir <resources dir> \
+                let layouts_json = curated_maps::find_saga_layouts(saga_dir.as_deref()).context(
+                    "No Saga install found. Pass --saga-dir <resources dir> \
                          or set SAGA_RESOURCES_DIR",
-                    )?;
+                )?;
                 println!("Source: {}", layouts_json.display());
 
                 let extracted = curated_maps::extract_from_saga(&layouts_json)?;
@@ -419,9 +422,17 @@ fn main() -> Result<()> {
                 // retired aren't dropped.
                 let mut snapshot = match std::fs::read_to_string(&out_path) {
                     Ok(text) => {
-                        let existing = curated_maps::CuratedMaps::from_toml(&text)
-                            .with_context(|| format!("existing {} is corrupt; move it aside or pass --out", out_path.display()))?;
-                        println!("Merging over existing snapshot ({} maps)", existing.maps.len());
+                        let existing =
+                            curated_maps::CuratedMaps::from_toml(&text).with_context(|| {
+                                format!(
+                                    "existing {} is corrupt; move it aside or pass --out",
+                                    out_path.display()
+                                )
+                            })?;
+                        println!(
+                            "Merging over existing snapshot ({} maps)",
+                            existing.maps.len()
+                        );
                         existing
                     }
                     Err(_) => curated_maps::CuratedMaps::default(),
@@ -430,25 +441,42 @@ fn main() -> Result<()> {
                 snapshot.version = curated_maps::SNAPSHOT_VERSION;
 
                 if dry_run {
-                    println!("DRY RUN — would write {} maps to {}", snapshot.maps.len(), out_path.display());
+                    println!(
+                        "DRY RUN — would write {} maps to {}",
+                        snapshot.maps.len(),
+                        out_path.display()
+                    );
                     for (slug, map) in &snapshot.maps {
                         println!("  {:<44} {:>5} rooms  ({})", slug, map.uids.len(), map.name);
                     }
                 } else {
                     config::write_atomic(&out_path, snapshot.to_toml()?)
                         .with_context(|| format!("Failed to write {}", out_path.display()))?;
-                    println!("Wrote {} maps to {}", snapshot.maps.len(), out_path.display());
+                    println!(
+                        "Wrote {} maps to {}",
+                        snapshot.maps.len(),
+                        out_path.display()
+                    );
                 }
                 return Ok(());
             }
 
-            Commands::ExtractBestiary { creatures_dir, saga_dir, out, dry_run } => {
+            Commands::ExtractBestiary {
+                creatures_dir,
+                saga_dir,
+                out,
+                dry_run,
+            } => {
                 use crate::core::bestiary;
 
                 println!("Bestiary Extraction");
                 println!("===================");
                 let (mut entries, failed) = bestiary::extract_from_lich(&creatures_dir)?;
-                println!("Parsed {} templates from {}", entries.len(), creatures_dir.display());
+                println!(
+                    "Parsed {} templates from {}",
+                    entries.len(),
+                    creatures_dir.display()
+                );
                 if !failed.is_empty() {
                     println!("FAILED to parse {} templates:", failed.len());
                     for f in &failed {
@@ -460,8 +488,7 @@ fn main() -> Result<()> {
                     let creatures_json = saga.join("map-data").join("prime").join("creatures.json");
                     let text = std::fs::read_to_string(&creatures_json)
                         .with_context(|| format!("reading {}", creatures_json.display()))?;
-                    let curated = core::curated_maps::CuratedMaps::embedded()
-                        .unwrap_or_default();
+                    let curated = core::curated_maps::CuratedMaps::embedded().unwrap_or_default();
                     let unmatched = bestiary::join_spawns(&mut entries, &text, &curated)?;
                     let with_spawns = entries.iter().filter(|e| !e.spawns.is_empty()).count();
                     println!(
@@ -478,7 +505,11 @@ fn main() -> Result<()> {
 
                 let out_path = out.unwrap_or_else(|| PathBuf::from("defaults/bestiary.json"));
                 if dry_run {
-                    println!("DRY RUN — would write {} entries to {}", entries.len(), out_path.display());
+                    println!(
+                        "DRY RUN — would write {} entries to {}",
+                        entries.len(),
+                        out_path.display()
+                    );
                 } else {
                     let file = bestiary::BestiaryFile {
                         version: bestiary::FILE_VERSION,
@@ -486,7 +517,11 @@ fn main() -> Result<()> {
                     };
                     config::write_atomic(&out_path, serde_json::to_string_pretty(&file)?)
                         .with_context(|| format!("Failed to write {}", out_path.display()))?;
-                    println!("Wrote {} entries to {}", file.entries.len(), out_path.display());
+                    println!(
+                        "Wrote {} entries to {}",
+                        file.entries.len(),
+                        out_path.display()
+                    );
                 }
                 return Ok(());
             }
@@ -534,10 +569,7 @@ fn main() -> Result<()> {
                 }
 
                 let out_path = out.unwrap_or_else(|| {
-                    let stem = src
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("wrayth");
+                    let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("wrayth");
                     src.with_file_name(format!("{}-highlights.toml", stem))
                 });
                 let toml_str = config::wrayth_import::to_toml_string(&result.highlights)?;
@@ -545,7 +577,11 @@ fn main() -> Result<()> {
                     .with_context(|| format!("Failed to write {}", out_path.display()))?;
 
                 println!();
-                println!("Wrote {} highlights to {}", result.highlights.len(), out_path.display());
+                println!(
+                    "Wrote {} highlights to {}",
+                    result.highlights.len(),
+                    out_path.display()
+                );
                 if let Ok(global) = config::Config::common_highlights_path() {
                     println!(
                         "To activate for all characters, merge or copy it to {}",
@@ -627,10 +663,7 @@ fn main() -> Result<()> {
 
     // Build direct connection config if enabled
     // Uses --character for login (not --profile, which is only for config directory)
-    let game_code_arg = cli
-        .game
-        .map(|g| g.code().to_string())
-        .or(profile_game_code);
+    let game_code_arg = cli.game.map(|g| g.code().to_string()).or(profile_game_code);
     let direct_config = network::DirectConnectConfig::from_cli(
         cli.direct,
         cli.account.clone(),

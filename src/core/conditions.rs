@@ -190,9 +190,9 @@ fn eval(
             .unwrap_or(false),
         Condition::RtActive => gs.roundtime_end.is_some_and(|end| end > now_server),
         Condition::CtActive => gs.casttime_end.is_some_and(|end| end > now_server),
-        Condition::Indicator { id, active } => {
-            indicator_value(gs, id).map(|v| v == *active).unwrap_or(false)
-        }
+        Condition::Indicator { id, active } => indicator_value(gs, id)
+            .map(|v| v == *active)
+            .unwrap_or(false),
         Condition::Vital {
             vital,
             cmp,
@@ -238,11 +238,10 @@ fn eval(
             name_match,
             gameobj,
         ),
-        Condition::SpellPrepared { name, name_match } => prepared_spell(gs)
-            .is_some_and(|spell| {
-                name.as_deref()
-                    .is_none_or(|needle| name_matches(spell, needle, name_match))
-            }),
+        Condition::SpellPrepared { name, name_match } => prepared_spell(gs).is_some_and(|spell| {
+            name.as_deref()
+                .is_none_or(|needle| name_matches(spell, needle, name_match))
+        }),
     }
 }
 
@@ -361,7 +360,10 @@ pub(crate) fn effect_lookup<'a>(
 /// Effects without a parseable expiry (e.g. "Indefinite") count as active
 /// while present — the game removes them via dialog clears.
 fn effect_is_active(effect: &ActiveEffect, now_server: i64) -> bool {
-    effect.expires_at.map(|end| end > now_server).unwrap_or(true)
+    effect
+        .expires_at
+        .map(|end| end > now_server)
+        .unwrap_or(true)
 }
 
 /// Resolve a configured indicator id against reported status.
@@ -446,13 +448,38 @@ mod tests {
         gs.status.set("stunned", true);
 
         // Lowercase ids hit `indicator_value`'s match arms and resolve.
-        assert!(eval_condition(&indicator_cond("standing", true), &gs, 0, None));
-        assert!(eval_condition(&indicator_cond("stunned", true), &gs, 0, None));
+        assert!(eval_condition(
+            &indicator_cond("standing", true),
+            &gs,
+            0,
+            None
+        ));
+        assert!(eval_condition(
+            &indicator_cond("stunned", true),
+            &gs,
+            0,
+            None
+        ));
         // Negation works: asking active=false on a set flag is false.
-        assert!(!eval_condition(&indicator_cond("standing", false), &gs, 0, None));
+        assert!(!eval_condition(
+            &indicator_cond("standing", false),
+            &gs,
+            0,
+            None
+        ));
         // An unset flag reads false, and active=false matches it.
-        assert!(!eval_condition(&indicator_cond("kneeling", true), &gs, 0, None));
-        assert!(eval_condition(&indicator_cond("kneeling", false), &gs, 0, None));
+        assert!(!eval_condition(
+            &indicator_cond("kneeling", true),
+            &gs,
+            0,
+            None
+        ));
+        assert!(eval_condition(
+            &indicator_cond("kneeling", false),
+            &gs,
+            0,
+            None
+        ));
     }
 
     /// FIXED (was a defect): config and presets store indicator ids in
@@ -466,10 +493,25 @@ mod tests {
         let mut gs = GameState::new();
         gs.status.set("standing", true);
 
-        assert!(eval_condition(&indicator_cond("STANDING", true), &gs, 0, None));
-        assert!(eval_condition(&indicator_cond("standing", true), &gs, 0, None));
+        assert!(eval_condition(
+            &indicator_cond("STANDING", true),
+            &gs,
+            0,
+            None
+        ));
+        assert!(eval_condition(
+            &indicator_cond("standing", true),
+            &gs,
+            0,
+            None
+        ));
         // The negation is now a real boolean answer, not a `None` coercion.
-        assert!(!eval_condition(&indicator_cond("STANDING", false), &gs, 0, None));
+        assert!(!eval_condition(
+            &indicator_cond("STANDING", false),
+            &gs,
+            0,
+            None
+        ));
     }
 
     /// FIXED (was a defect): `element.rs` had no match arm writing
@@ -481,11 +523,26 @@ mod tests {
     fn joined_indicator_resolves_once_reported() {
         let mut gs = GameState::new();
         // Unreported: reads false, and is not "known".
-        assert!(!eval_condition(&indicator_cond("joined", true), &gs, 0, None));
+        assert!(!eval_condition(
+            &indicator_cond("joined", true),
+            &gs,
+            0,
+            None
+        ));
 
         gs.status.set("JOINED", true);
-        assert!(eval_condition(&indicator_cond("joined", true), &gs, 0, None));
-        assert!(!eval_condition(&indicator_cond("joined", false), &gs, 0, None));
+        assert!(eval_condition(
+            &indicator_cond("joined", true),
+            &gs,
+            0,
+            None
+        ));
+        assert!(!eval_condition(
+            &indicator_cond("joined", false),
+            &gs,
+            0,
+            None
+        ));
     }
 
     /// FIXED (was a defect): POISONED and DISEASED are shipped indicator
@@ -498,12 +555,32 @@ mod tests {
         gs.status.set("POISONED", true);
         gs.status.set("DISEASED", false);
 
-        assert!(eval_condition(&indicator_cond("POISONED", true), &gs, 0, None));
-        assert!(eval_condition(&indicator_cond("poisoned", true), &gs, 0, None));
+        assert!(eval_condition(
+            &indicator_cond("POISONED", true),
+            &gs,
+            0,
+            None
+        ));
+        assert!(eval_condition(
+            &indicator_cond("poisoned", true),
+            &gs,
+            0,
+            None
+        ));
         // Reported-inactive answers false to active=true and true to
         // active=false -- a real boolean, unlike the old `None`.
-        assert!(!eval_condition(&indicator_cond("DISEASED", true), &gs, 0, None));
-        assert!(eval_condition(&indicator_cond("DISEASED", false), &gs, 0, None));
+        assert!(!eval_condition(
+            &indicator_cond("DISEASED", true),
+            &gs,
+            0,
+            None
+        ));
+        assert!(eval_condition(
+            &indicator_cond("DISEASED", false),
+            &gs,
+            0,
+            None
+        ));
     }
 
     /// An id the game has never reported reads as inactive, so `active: false`
@@ -514,8 +591,18 @@ mod tests {
     #[test]
     fn unreported_indicator_reads_as_inactive() {
         let gs = GameState::new();
-        assert!(!eval_condition(&indicator_cond("poisoned", true), &gs, 0, None));
-        assert!(eval_condition(&indicator_cond("poisoned", false), &gs, 0, None));
+        assert!(!eval_condition(
+            &indicator_cond("poisoned", true),
+            &gs,
+            0,
+            None
+        ));
+        assert!(eval_condition(
+            &indicator_cond("poisoned", false),
+            &gs,
+            0,
+            None
+        ));
     }
 
     /// A typo'd or nonexistent id behaves the same as a real-but-unreported
@@ -525,8 +612,18 @@ mod tests {
     #[test]
     fn unknown_indicator_id_reads_as_inactive() {
         let gs = GameState::new();
-        assert!(!eval_condition(&indicator_cond("not_a_real_id", true), &gs, 0, None));
-        assert!(eval_condition(&indicator_cond("not_a_real_id", false), &gs, 0, None));
+        assert!(!eval_condition(
+            &indicator_cond("not_a_real_id", true),
+            &gs,
+            0,
+            None
+        ));
+        assert!(eval_condition(
+            &indicator_cond("not_a_real_id", false),
+            &gs,
+            0,
+            None
+        ));
     }
 
     /// CHARACTERIZATION: the full set of ids that DO resolve today, asserted
@@ -594,7 +691,9 @@ mod tests {
         assert!(eval_condition(&injury("leftArm", Cmp::Gt, 3), &gs, 0, None));
     }
 
-    fn template_with_states(states: Vec<crate::config::StatusIconState>) -> crate::config::IndicatorTemplateEntry {
+    fn template_with_states(
+        states: Vec<crate::config::StatusIconState>,
+    ) -> crate::config::IndicatorTemplateEntry {
         crate::config::IndicatorTemplateEntry {
             id: "BLEEDING".to_string(),
             icon: Some("*".to_string()),
@@ -617,7 +716,10 @@ mod tests {
         assert_eq!(active.color.as_deref(), Some("#ff0000"));
         assert_eq!(active.text.as_deref(), Some("*"));
         assert!(!active.state_matched);
-        assert!(matches!(active.icon, Some(crate::data::IconRef::Image { .. })));
+        assert!(matches!(
+            active.icon,
+            Some(crate::data::IconRef::Image { .. })
+        ));
         let inactive = resolve_status(&t, false, &gs, 0, None);
         assert_eq!(inactive.color.as_deref(), Some("#555555"));
     }
@@ -745,16 +847,42 @@ mod crtr_status_tests {
             ("rider", "1"),
             ("frobozzed", "1"), // open vocabulary: unknown server flag
         ]);
-        for id in ["stunned", "STUNNED", "immobilized", "immobile", "dead", "rider", "frobozzed"] {
+        for id in [
+            "stunned",
+            "STUNNED",
+            "immobilized",
+            "immobile",
+            "dead",
+            "rider",
+            "frobozzed",
+        ] {
             assert!(
                 eval_condition_for_creature(&crtr(id, true), &gs, 0, None, &f),
                 "{id} should read active"
             );
-            assert!(!eval_condition_for_creature(&crtr(id, false), &gs, 0, None, &f));
+            assert!(!eval_condition_for_creature(
+                &crtr(id, false),
+                &gs,
+                0,
+                None,
+                &f
+            ));
         }
         // Inactive flag: active=false matches, active=true doesn't.
-        assert!(!eval_condition_for_creature(&crtr("webbed", true), &gs, 0, None, &f));
-        assert!(eval_condition_for_creature(&crtr("webbed", false), &gs, 0, None, &f));
+        assert!(!eval_condition_for_creature(
+            &crtr("webbed", true),
+            &gs,
+            0,
+            None,
+            &f
+        ));
+        assert!(eval_condition_for_creature(
+            &crtr("webbed", false),
+            &gs,
+            0,
+            None,
+            &f
+        ));
     }
 
     /// Player-scoped evaluation has no creature: CrtrStatus fails closed in
@@ -795,11 +923,17 @@ mod crtr_status_tests {
             conditions: vec![crtr("flying", true), crtr("hovering", true)],
         };
         assert!(eval_condition_for_creature(
-            &airborne, &gs, 0, None,
+            &airborne,
+            &gs,
+            0,
+            None,
             &flags(&[("hovering", "1")])
         ));
         assert!(!eval_condition_for_creature(
-            &airborne, &gs, 0, None,
+            &airborne,
+            &gs,
+            0,
+            None,
             &flags(&[("prone", "1")])
         ));
     }
@@ -820,19 +954,16 @@ mod time_of_day_tests {
         let noonish = 1_786_394_661_i64;
 
         assert!(eval_condition(
-            &Condition::TimeOfDay { phase: DayPhase::Day },
+            &Condition::TimeOfDay {
+                phase: DayPhase::Day
+            },
             &gs,
             noonish,
             None
         ));
         for other in [DayPhase::Dawn, DayPhase::Dusk, DayPhase::Night] {
             assert!(
-                !eval_condition(
-                    &Condition::TimeOfDay { phase: other },
-                    &gs,
-                    noonish,
-                    None
-                ),
+                !eval_condition(&Condition::TimeOfDay { phase: other }, &gs, noonish, None),
                 "{other:?} must not match a Day timestamp"
             );
         }
@@ -844,13 +975,17 @@ mod time_of_day_tests {
     fn time_of_day_composes_with_other_conditions() {
         let gs = GameState::new();
         let night = 1_786_394_661_i64 - 10 * 3600; // 06:44 Eastern -> Dawn
-        let dawn = Condition::TimeOfDay { phase: DayPhase::Dawn };
+        let dawn = Condition::TimeOfDay {
+            phase: DayPhase::Dawn,
+        };
 
         assert!(eval_condition(&dawn, &gs, night, None), "fixture is Dawn");
         assert!(eval_condition(
             &Condition::Any {
                 conditions: vec![
-                    Condition::TimeOfDay { phase: DayPhase::Night },
+                    Condition::TimeOfDay {
+                        phase: DayPhase::Night
+                    },
                     dawn.clone(),
                 ],
             },
@@ -861,7 +996,9 @@ mod time_of_day_tests {
         assert!(!eval_condition(
             &Condition::All {
                 conditions: vec![
-                    Condition::TimeOfDay { phase: DayPhase::Night },
+                    Condition::TimeOfDay {
+                        phase: DayPhase::Night
+                    },
                     dawn,
                 ],
             },

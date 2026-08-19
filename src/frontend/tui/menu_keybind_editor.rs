@@ -107,7 +107,11 @@ impl MenuKeybindEditor {
         self.is_global = !self.is_global;
         self.status = format!(
             "Scope: {}",
-            if self.is_global { "Global" } else { "This character" }
+            if self.is_global {
+                "Global"
+            } else {
+                "This character"
+            }
         );
     }
 
@@ -120,14 +124,23 @@ impl MenuKeybindEditor {
         let height = POPUP_HEIGHT.min(area.height);
         let x = (area.width.saturating_sub(width)) / 2;
         let y = (area.height.saturating_sub(height)) / 2;
-        let popup = Rect { x, y, width, height };
+        let popup = Rect {
+            x,
+            y,
+            width,
+            height,
+        };
         Clear.render(popup, buf);
 
         let bg = crossterm_bridge::to_ratatui_color(theme.browser_background);
         let fg = crossterm_bridge::to_ratatui_color(theme.form_label);
         let focused = crossterm_bridge::to_ratatui_color(theme.form_label_focused);
 
-        let scope = if self.is_global { "[G] Global" } else { "[C] Character" };
+        let scope = if self.is_global {
+            "[G] Global"
+        } else {
+            "[C] Character"
+        };
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!(" Menu Keybinds — {} ", scope))
@@ -159,8 +172,7 @@ impl MenuKeybindEditor {
             field_row.push(items.len());
             let value = (field.get)(&self.working);
             let shown = if value.is_empty() { "(unset)" } else { value };
-            let armed = self.capturing
-                && field_row.len() - 1 == self.selected;
+            let armed = self.capturing && field_row.len() - 1 == self.selected;
             let value_text = if armed { "…press a key…" } else { shown };
             let label = format!("  {:<18} {}", field.label, value_text);
             items.push(ListItem::new(Line::from(Span::styled(
@@ -175,7 +187,9 @@ impl MenuKeybindEditor {
         let list = List::new(items)
             .highlight_style(
                 Style::default()
-                    .bg(crossterm_bridge::to_ratatui_color(theme.browser_item_selected))
+                    .bg(crossterm_bridge::to_ratatui_color(
+                        theme.browser_item_selected,
+                    ))
                     .fg(focused)
                     .add_modifier(Modifier::BOLD),
             )

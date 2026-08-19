@@ -372,7 +372,10 @@ mod tests {
         // thread_local state - force a known starting mode
         set_global_color_mode(ColorMode::Direct);
         let direct = parse_color_to_ratatui("#ff8040");
-        assert!(matches!(direct, Some(ratatui::style::Color::Rgb(0xff, 0x80, 0x40))));
+        assert!(matches!(
+            direct,
+            Some(ratatui::style::Color::Rgb(0xff, 0x80, 0x40))
+        ));
 
         // Same input parsed again from cache must still be Rgb
         assert_eq!(parse_color_to_ratatui("#ff8040"), direct);

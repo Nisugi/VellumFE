@@ -169,7 +169,9 @@ impl MessageProcessor {
             }
 
             if updated_count == 0 {
-                tracing::debug!("No spells windows found to update (buffer preserved for future windows)");
+                tracing::debug!(
+                    "No spells windows found to update (buffer preserved for future windows)"
+                );
             } else {
                 tracing::debug!("Updated {} spells window(s)", updated_count);
             }
@@ -201,10 +203,7 @@ impl MessageProcessor {
 
         for line_segments in &self.perception_buffer {
             // Get text from segment (should be a single segment with the entry text)
-            let text: String = line_segments
-                .iter()
-                .map(|seg| seg.text.as_str())
-                .collect();
+            let text: String = line_segments.iter().map(|seg| seg.text.as_str()).collect();
 
             // Skip empty lines
             if text.trim().is_empty() {
@@ -212,9 +211,7 @@ impl MessageProcessor {
             }
 
             // Get link data from segment
-            let link_data = line_segments
-                .iter()
-                .find_map(|seg| seg.link_data.clone());
+            let link_data = line_segments.iter().find_map(|seg| seg.link_data.clone());
 
             entries.push(Self::parse_perception_entry(&text, link_data));
         }
@@ -255,7 +252,10 @@ impl MessageProcessor {
     }
 
     /// Parse a perception entry from text and extract format/weight
-    pub(super) fn parse_perception_entry(text: &str, link_data: Option<LinkData>) -> PerceptionEntry {
+    pub(super) fn parse_perception_entry(
+        text: &str,
+        link_data: Option<LinkData>,
+    ) -> PerceptionEntry {
         let text = text.trim();
 
         // Parse format from parenthetical suffix
@@ -271,8 +271,7 @@ impl MessageProcessor {
                 PerceptionFormat::Fading
             } else if suffix.ends_with("%)") {
                 // Extract percentage: "(94%)"
-                if let Some(pct_str) = suffix.strip_prefix('(').and_then(|s| s.strip_suffix("%)"))
-                {
+                if let Some(pct_str) = suffix.strip_prefix('(').and_then(|s| s.strip_suffix("%)")) {
                     if let Ok(pct) = pct_str.parse::<u8>() {
                         PerceptionFormat::Percentage(pct)
                     } else {
@@ -485,5 +484,4 @@ impl MessageProcessor {
 
         None
     }
-
 }

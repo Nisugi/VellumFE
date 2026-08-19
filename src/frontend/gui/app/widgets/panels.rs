@@ -75,17 +75,10 @@ impl VellumGuiApp {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             if let Some(sprite) = icon_sprite {
-                let (rect, _) = ui.allocate_exact_size(
-                    Vec2::new(icon_width, row_height),
-                    egui::Sense::hover(),
-                );
+                let (rect, _) =
+                    ui.allocate_exact_size(Vec2::new(icon_width, row_height), egui::Sense::hover());
                 let dest = crate::frontend::gui::skin::icon_dest(&sprite, rect);
-                crate::frontend::gui::skin::paint_icon(
-                    ui.painter(),
-                    dest,
-                    &sprite,
-                    icon_tint,
-                );
+                crate::frontend::gui::skin::paint_icon(ui.painter(), dest, &sprite, icon_tint);
             } else {
                 let mut icon_rich = RichText::new(icon_text).monospace().strong();
                 if let Some(color) = resolved
@@ -95,10 +88,7 @@ impl VellumGuiApp {
                 {
                     icon_rich = icon_rich.color(color);
                 }
-                ui.add_sized(
-                    [icon_width, row_height],
-                    egui::Label::new(icon_rich),
-                );
+                ui.add_sized([icon_width, row_height], egui::Label::new(icon_rich));
             }
             ui.add_space(icon_gap);
             let text_width = (ui.available_width() - handle_gutter_width).max(1.0);
@@ -163,7 +153,10 @@ impl VellumGuiApp {
     }
 
     /// Per-window field toggles for the encum widget: (bar, blurb text).
-    pub(in crate::frontend::gui::app) fn encumbrance_flags(app_core: &AppCore, window_name: &str) -> (bool, bool) {
+    pub(in crate::frontend::gui::app) fn encumbrance_flags(
+        app_core: &AppCore,
+        window_name: &str,
+    ) -> (bool, bool) {
         match app_core
             .layout
             .windows
@@ -214,8 +207,11 @@ impl VellumGuiApp {
         }
         let bar_height = ui.spacing().interact_size.y.max(16.0);
         if show_mind_bar && !exp.mind_state_text.is_empty() {
-            let fraction =
-                Self::animated_fraction(ui, "gs4_mind", exp.mind_state_value.min(100) as f32 / 100.0);
+            let fraction = Self::animated_fraction(
+                ui,
+                "gs4_mind",
+                exp.mind_state_value.min(100) as f32 / 100.0,
+            );
             let bar = Self::styled_progress_bar(
                 ui,
                 settings,
@@ -226,8 +222,11 @@ impl VellumGuiApp {
             ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
         }
         if show_exp_bar && !exp.next_level_text.is_empty() {
-            let fraction =
-                Self::animated_fraction(ui, "gs4_next", exp.next_level_value.min(100) as f32 / 100.0);
+            let fraction = Self::animated_fraction(
+                ui,
+                "gs4_next",
+                exp.next_level_value.min(100) as f32 / 100.0,
+            );
             let bar = Self::styled_progress_bar(
                 ui,
                 settings,
@@ -376,7 +375,10 @@ impl VellumGuiApp {
         clicked_link
     }
 
-    pub(super) fn render_items_content(app_core: &AppCore, ui: &mut egui::Ui) -> Option<GuiLinkClick> {
+    pub(super) fn render_items_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+    ) -> Option<GuiLinkClick> {
         let objects = &app_core.game_state.room_objects;
         if objects.is_empty() {
             ui.weak("No objects here.");
@@ -450,7 +452,11 @@ impl VellumGuiApp {
         };
         let queue = |cmd: String| {
             if !cmd.trim().is_empty() {
-                app_core.ui_state.pending_panel_commands.borrow_mut().push(cmd);
+                app_core
+                    .ui_state
+                    .pending_panel_commands
+                    .borrow_mut()
+                    .push(cmd);
             }
         };
 
@@ -482,14 +488,12 @@ impl VellumGuiApp {
         // sprite found). Any commanded image NOT in here must still surface in
         // the footer fallback below, or the command is unreachable — the
         // default skin-less install has no sprites at all.
-        let mut drawn_images: std::collections::HashSet<usize> =
-            std::collections::HashSet::new();
+        let mut drawn_images: std::collections::HashSet<usize> = std::collections::HashSet::new();
         if let Some((controls, _)) = &positioned {
             use crate::data::ui_state::PositionedControlKind;
             for control in controls {
                 let (x, y, w, h) = control.rect;
-                let rect =
-                    egui::Rect::from_min_size(origin + egui::vec2(x, y), egui::vec2(w, h));
+                let rect = egui::Rect::from_min_size(origin + egui::vec2(x, y), egui::vec2(w, h));
                 match control.kind {
                     PositionedControlKind::Button(i) => {
                         if let Some(b) = dialog.buttons.get(i) {
@@ -557,7 +561,7 @@ impl VellumGuiApp {
                             // The InjuriesPanel doll is the character's own,
                             // so variants and hidden parts apply here too.
                             let (doll_variant, doll_hidden) =
-                                Self::resolve_doll_render(app_core, skin_art);
+                                Self::resolve_doll_render(app_core, skin_art, None);
                             Self::paint_dialog_skin(
                                 ui,
                                 rect,
@@ -624,9 +628,8 @@ impl VellumGuiApp {
                     PositionedControlKind::SpinBox(i) => {
                         if let Some(spin) = dialog.spinboxes.get(i) {
                             let mem = spin_mem(&spin.id);
-                            let mut value = ui
-                                .ctx()
-                                .data_mut(|d| *d.get_temp_mut_or(mem, spin.value));
+                            let mut value =
+                                ui.ctx().data_mut(|d| *d.get_temp_mut_or(mem, spin.value));
                             let range = spin.min..=spin.max.max(spin.min);
                             let resp = ui.put(
                                 rect,
@@ -660,8 +663,7 @@ impl VellumGuiApp {
                                         egui::Sense::hover()
                                     },
                                 );
-                                let dest =
-                                    crate::frontend::gui::skin::icon_dest(&icon, rect);
+                                let dest = crate::frontend::gui::skin::icon_dest(&icon, rect);
                                 crate::frontend::gui::skin::paint_icon(
                                     ui.painter(),
                                     dest,
@@ -966,6 +968,7 @@ impl VellumGuiApp {
                 skin_art,
                 doll_variant,
                 doll_hidden,
+                None,
                 false,
                 &Self::default_injury_palette(),
             );
@@ -1045,8 +1048,7 @@ impl VellumGuiApp {
         container_title: &str,
         wrap: bool,
     ) -> Option<GuiLinkClick> {
-        let Some(container) = app_core.game_state.objects.find_container(container_title)
-        else {
+        let Some(container) = app_core.game_state.objects.find_container(container_title) else {
             ui.weak(format!("No contents cached for \"{}\".", container_title));
             return None;
         };
@@ -1107,6 +1109,6 @@ impl VellumGuiApp {
 
     /// Sentinel exist_id used to route quickbar switching through the
     /// link-click channel (content renderers only get `&AppCore`).
-    pub(in crate::frontend::gui::app) const QUICKBAR_SWITCH_SENTINEL: &'static str = "_quickbar_switch_";
-
+    pub(in crate::frontend::gui::app) const QUICKBAR_SWITCH_SENTINEL: &'static str =
+        "_quickbar_switch_";
 }

@@ -9,8 +9,8 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::mapdb::{Room, RoomTable};
 use super::positioner::Group;
+use crate::core::mapdb::{Room, RoomTable};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entrance {
@@ -167,7 +167,10 @@ pub fn apply_sheet_overrides(
     }
     let mut by_anchor: HashMap<i64, usize> = HashMap::new();
     for group in groups {
-        by_anchor.insert(super::overrides::group_anchor_key(group, lookup), group.index);
+        by_anchor.insert(
+            super::overrides::group_anchor_key(group, lookup),
+            group.index,
+        );
     }
     for (&anchor, &choice) in sheets {
         let Some(&idx) = by_anchor.get(&anchor) else {
@@ -407,15 +410,7 @@ mod tests {
             positions: room_ids
                 .iter()
                 .enumerate()
-                .map(|(i, &id)| {
-                    (
-                        id,
-                        crate::core::layout_engine::Cell {
-                            x: i as i32,
-                            y: 0,
-                        },
-                    )
-                })
+                .map(|(i, &id)| (id, crate::core::layout_engine::Cell { x: i as i32, y: 0 }))
                 .collect(),
             violations: vec![],
             base_offset: None,
@@ -431,8 +426,8 @@ mod tests {
     #[test]
     fn go_arch_joins_a_building_but_out_does_not() {
         let rooms = vec![
-            room(3669, &[(3672, "go bank")]),               // outdoors
-            room(3670, &[(3672, "go arch")]),               // teller cage
+            room(3669, &[(3672, "go bank")]), // outdoors
+            room(3670, &[(3672, "go arch")]), // teller cage
             room(3672, &[(3850, "north"), (3670, "go arch"), (3669, "out")]),
             room(3850, &[(3672, "south")]),
         ];

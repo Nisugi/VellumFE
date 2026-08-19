@@ -53,7 +53,10 @@ pub enum WebUiEvent {
     /// Socket dropped; the task keeps retrying until `gave_up`.
     /// `never_connected` distinguishes "endpoint was never reachable"
     /// (wrong/loopback-bound host, firewall) from a lost session.
-    Disconnected { gave_up: bool, never_connected: bool },
+    Disconnected {
+        gave_up: bool,
+        never_connected: bool,
+    },
     /// Result of a `fetch_image` request (raw encoded bytes on success).
     ImageFetched {
         src: String,
@@ -75,7 +78,9 @@ impl WebUiHandle {
     }
 
     pub fn subscribe(&self, page: &str) {
-        self.send(WebUiClientMessage::Subscribe { page: page.to_string() });
+        self.send(WebUiClientMessage::Subscribe {
+            page: page.to_string(),
+        });
     }
 
     pub fn shutdown(&self) {
@@ -364,10 +369,7 @@ async fn connect(host: &str, port: u16, token: &str) -> anyhow::Result<WsStream>
     let url = format!("ws://{}:{}/ws", host, port);
     let mut request = url.into_client_request()?;
     let headers = request.headers_mut();
-    headers.insert(
-        "Origin",
-        format!("http://{}:{}", host, port).parse()?,
-    );
+    headers.insert("Origin", format!("http://{}:{}", host, port).parse()?);
     headers.insert("Cookie", format!("lich_webui={}", token).parse()?);
 
     let (socket, _response) = tokio_tungstenite::connect_async(request).await?;
@@ -428,7 +430,9 @@ mod tests {
     // not to reachability.
     #[tokio::test]
     async fn preflight_reports_connected_when_socket_accepts() {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let port = listener.local_addr().unwrap().port();
         assert!(matches!(
             preflight("127.0.0.1", port).await,
@@ -440,7 +444,9 @@ mod tests {
     // refused - the reachability failure whose remedy is bind/publish/firewall.
     #[tokio::test]
     async fn preflight_reports_refused_when_nothing_listens() {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         assert!(matches!(

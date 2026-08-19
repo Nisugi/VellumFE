@@ -227,7 +227,10 @@ mod tests {
     #[test]
     fn extent_addition_saturates() {
         assert_eq!(Width::new(4) + Width::new(6), Width::new(10));
-        assert_eq!(Height::new(u16::MAX) + Height::new(1), Height::new(u16::MAX));
+        assert_eq!(
+            Height::new(u16::MAX) + Height::new(1),
+            Height::new(u16::MAX)
+        );
         assert_eq!(Width::new(3) - Width::new(8), Width::new(0));
     }
 

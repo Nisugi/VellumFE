@@ -80,7 +80,11 @@ pub fn resolve(
                 "current room unknown - can't find the guild (see .room)".into(),
             );
         };
-        let suffix = if lower == "guild shop" { "guild shop" } else { "guild" };
+        let suffix = if lower == "guild shop" {
+            "guild shop"
+        } else {
+            "guild"
+        };
         return match character.and_then(|c| c.guild_tag(suffix)) {
             Some(tag) => resolve_nearest_tag(db, from, &tag),
             None => Resolved::NotFound(
@@ -146,7 +150,9 @@ pub fn resolve(
                     continue;
                 }
                 let hit = if title_only {
-                    room.title.iter().any(|t| t.to_lowercase().contains(&needle))
+                    room.title
+                        .iter()
+                        .any(|t| t.to_lowercase().contains(&needle))
                 } else {
                     room.description
                         .iter()
@@ -154,10 +160,7 @@ pub fn resolve(
                 };
                 if hit {
                     seen.insert(room.id);
-                    matches.push((
-                        room.id,
-                        room.title.first().cloned().unwrap_or_default(),
-                    ));
+                    matches.push((room.id, room.title.first().cloned().unwrap_or_default()));
                 }
             }
         }

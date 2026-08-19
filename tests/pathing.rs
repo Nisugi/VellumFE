@@ -55,7 +55,10 @@ fn residue_key(source: &str) -> String {
             // Run of digits -> N.
             d if d.is_ascii_digit() => {
                 out.push('N');
-                while chars.peek().is_some_and(|n| n.is_ascii_digit() || *n == '.') {
+                while chars
+                    .peek()
+                    .is_some_and(|n| n.is_ascii_digit() || *n == '.')
+                {
                     chars.next();
                 }
                 last_was_space = false;

@@ -709,7 +709,16 @@ mod tests {
     /// Move floors the origin at (0,0) — dragging past the top-left edge.
     #[test]
     fn apply_window_drag_move_floors_at_origin() {
-        let out = apply_window_drag(DragOperation::Move, pos(2, 2, 20, 8), -10, -10, 5, 3, 100, 40);
+        let out = apply_window_drag(
+            DragOperation::Move,
+            pos(2, 2, 20, 8),
+            -10,
+            -10,
+            5,
+            3,
+            100,
+            40,
+        );
         assert_eq!((out.x.get(), out.y.get()), (0, 0));
     }
 
@@ -717,16 +726,32 @@ mod tests {
     #[test]
     fn apply_window_drag_move_clamps_to_stay_onscreen() {
         // term 100x40, window 20x8 -> max origin (80, 32). Drag far right/down.
-        let out =
-            apply_window_drag(DragOperation::Move, pos(50, 20, 20, 8), 1000, 1000, 5, 3, 100, 40);
+        let out = apply_window_drag(
+            DragOperation::Move,
+            pos(50, 20, 20, 8),
+            1000,
+            1000,
+            5,
+            3,
+            100,
+            40,
+        );
         assert_eq!((out.x.get(), out.y.get()), (80, 32));
     }
 
     /// ResizeRight grows the width by dx; origin and height untouched.
     #[test]
     fn apply_window_drag_resize_right_grows_width() {
-        let out =
-            apply_window_drag(DragOperation::ResizeRight, pos(10, 5, 20, 8), 15, 0, 5, 3, 100, 40);
+        let out = apply_window_drag(
+            DragOperation::ResizeRight,
+            pos(10, 5, 20, 8),
+            15,
+            0,
+            5,
+            3,
+            100,
+            40,
+        );
         assert_eq!(
             (out.x.get(), out.y.get(), out.width.get(), out.height.get()),
             (10, 5, 35, 8)
@@ -753,16 +778,32 @@ mod tests {
     #[test]
     fn apply_window_drag_resize_right_clamps_to_terminal_edge() {
         // x=90 in a 100-wide terminal -> max width 10.
-        let out =
-            apply_window_drag(DragOperation::ResizeRight, pos(90, 5, 5, 8), 1000, 0, 3, 3, 100, 40);
+        let out = apply_window_drag(
+            DragOperation::ResizeRight,
+            pos(90, 5, 5, 8),
+            1000,
+            0,
+            3,
+            3,
+            100,
+            40,
+        );
         assert_eq!(out.width.get(), 10);
     }
 
     /// ResizeBottom grows height by dy, floored at min, clamped to term-y.
     #[test]
     fn apply_window_drag_resize_bottom() {
-        let grow =
-            apply_window_drag(DragOperation::ResizeBottom, pos(0, 10, 20, 8), 0, 12, 5, 3, 100, 40);
+        let grow = apply_window_drag(
+            DragOperation::ResizeBottom,
+            pos(0, 10, 20, 8),
+            0,
+            12,
+            5,
+            3,
+            100,
+            40,
+        );
         assert_eq!(grow.height.get(), 20);
         // Clamp: y=35 in 40-tall term -> max height 5.
         let clamp = apply_window_drag(

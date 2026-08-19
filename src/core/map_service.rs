@@ -12,11 +12,11 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::Arc;
 
+use crate::core::curated_maps::CuratedMaps;
 use crate::core::layout_engine::positioner::Cell;
 use crate::core::layout_engine::{
     build_scene, overrides, Layout, LayoutCache, LocationOverrides, MapOverrides, MapScene,
 };
-use crate::core::curated_maps::CuratedMaps;
 use crate::core::mapdb::{find_latest_mapdb, MapDb, Room, RoomTable};
 use crate::core::membership::Membership;
 
@@ -140,7 +140,21 @@ pub enum OverrideEdit {
     },
     /// Drop every override for the location.
     ResetLocation { location: String },
+    /// Move rooms (by uid) to another map's roster; `None` reverts the
+    /// personal move so the rooms fall back to community/curated placement.
+    MembershipMove { uids: Vec<i64>, to: Option<String> },
+    /// Create a user map (empty roster; fill via MembershipMove).
+    CreateMap { key: String, name: String },
+    /// Replace (or clear with `None`) a room's data edits, keyed by uid.
+    RoomEdit {
+        uid: i64,
+        edit: Option<crate::core::layout_engine::overrides::RoomDataEdit>,
+    },
 }
+
+/// The always-available staging map for rooms between homes.
+pub const PURGATORY_KEY: &str = "user-purgatory";
+pub const PURGATORY_NAME: &str = "Purgatory";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DbState {
@@ -236,12 +250,10 @@ impl MapService {
                 let cache = LayoutCache::new(cache_dir);
                 while let Ok(job) = job_rx.recv() {
                     let event = match job {
-                        MapJob::LoadDb(path) => {
-                            MapEvent::DbLoaded(match MapDb::load(&path) {
-                                Ok(db) => Ok(Arc::new(db)),
-                                Err(e) => Err(format!("{}: {e}", path.display())),
-                            })
-                        }
+                        MapJob::LoadDb(path) => MapEvent::DbLoaded(match MapDb::load(&path) {
+                            Ok(db) => Ok(Arc::new(db)),
+                            Err(e) => Err(format!("{}: {e}", path.display())),
+                        }),
                         MapJob::BuildMembership { db, curated } => {
                             MapEvent::MembershipReady(Membership::build(&db, &curated))
                         }
@@ -257,10 +269,9 @@ impl MapService {
                             // hash, so caches regenerate on their own when
                             // maze definitions change.
                             let maze_free: Vec<crate::core::mapdb::Room>;
-                            let rooms: &[crate::core::mapdb::Room] = if rooms
-                                .iter()
-                                .any(|r| crate::core::travel::mazes::maze_containing(r.id).is_some())
-                            {
+                            let rooms: &[crate::core::mapdb::Room] = if rooms.iter().any(|r| {
+                                crate::core::travel::mazes::maze_containing(r.id).is_some()
+                            }) {
                                 maze_free = rooms
                                     .iter()
                                     .filter(|r| {
@@ -279,12 +290,8 @@ impl MapService {
                             );
                             let lookup = RoomTable::new(rooms);
                             overrides::apply(&mut layout, &lookup, &location_overrides);
-                            let scene = build_scene(
-                                &location,
-                                &layout,
-                                &lookup,
-                                &location_overrides.edges,
-                            );
+                            let scene =
+                                build_scene(&location, &layout, &lookup, &location_overrides.edges);
                             MapEvent::LayoutReady {
                                 location,
                                 layout: Arc::new(layout),
@@ -360,9 +367,26 @@ impl MapService {
             self.membership_pending = true;
             let _ = self.job_tx.send(MapJob::BuildMembership {
                 db,
-                curated: self.curated.clone().expect("just set"),
+                curated: self.effective_curated().expect("just set"),
             });
         }
+    }
+
+    /// The curated rosters with membership overrides applied — what the
+    /// membership build actually consumes. Community moves under personal
+    /// ones, same layering as every other override.
+    fn effective_curated(&self) -> Option<CuratedMaps> {
+        let base = self.curated.as_ref()?;
+        let (moves, custom) = crate::core::layout_engine::overrides::merged_membership(
+            &self.community_overrides,
+            &self.overrides,
+        );
+        if moves.is_empty() && custom.is_empty() {
+            return Some(base.clone());
+        }
+        Some(crate::core::curated_maps::apply_membership_overrides(
+            base, &moves, &custom,
+        ))
     }
 
     /// Map key for a mappable room: membership when built, else the mapdb
@@ -470,8 +494,12 @@ impl MapService {
             // Same room; exits/title often arrive a line after the nav tag,
             // so keep the current ghost's sketch fresh.
             if let Some(uid) = self.current_ghost {
-                self.ghosts
-                    .visit(uid, snapshot, crate::core::ghost_rooms::Origin::Unknown, None);
+                self.ghosts.visit(
+                    uid,
+                    snapshot,
+                    crate::core::ghost_rooms::Origin::Unknown,
+                    None,
+                );
             }
             return;
         }
@@ -572,7 +600,11 @@ impl MapService {
         db: &crate::core::mapdb::MapDb,
         snapshot: &crate::core::ghost_rooms::RoomSnapshot,
     ) -> Option<u32> {
-        let title = snapshot.title.as_deref().map(str::trim).filter(|t| !t.is_empty())?;
+        let title = snapshot
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())?;
         let mut candidates: Vec<u32> = db.room_ids_with_title(title).to_vec();
         if candidates.is_empty() {
             return None;
@@ -601,8 +633,11 @@ impl MapService {
         }
 
         if candidates.len() > 1 && !snapshot.exits.is_empty() {
-            let mut exits: Vec<String> =
-                snapshot.exits.iter().map(|e| e.to_ascii_lowercase()).collect();
+            let mut exits: Vec<String> = snapshot
+                .exits
+                .iter()
+                .map(|e| e.to_ascii_lowercase())
+                .collect();
             exits.sort();
             let filtered: Vec<u32> = candidates
                 .iter()
@@ -720,10 +755,104 @@ impl MapService {
         self.overrides.locations.get(location)
     }
 
+    /// The personal membership move for a uid, if any (drives "Revert move").
+    pub fn personal_membership_move(&self, uid: i64) -> Option<&str> {
+        self.overrides
+            .membership_moves
+            .get(&uid)
+            .map(String::as_str)
+    }
+
+    /// The EFFECTIVE room-data edit for a uid (community under personal) —
+    /// what the editor composes its next whole-entry write from.
+    pub fn room_edit(
+        &self,
+        uid: i64,
+    ) -> Option<crate::core::layout_engine::overrides::RoomDataEdit> {
+        self.overrides
+            .room_edits
+            .get(&uid)
+            .or_else(|| self.community_overrides.room_edits.get(&uid))
+            .cloned()
+    }
+
+    /// True when the uid has a PERSONAL room-data edit (drives the revert UI).
+    pub fn has_personal_room_edit(&self, uid: i64) -> bool {
+        self.overrides.room_edits.contains_key(&uid)
+    }
+
+    /// Key for a user-created map: "user-" + kebab of the name, so user keys
+    /// can never collide with curated slugs or `sat-*` satellite keys.
+    pub fn user_map_key(name: &str) -> String {
+        let kebab: String = name
+            .trim()
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect();
+        let mut kebab = kebab.trim_matches('-').to_string();
+        while kebab.contains("--") {
+            kebab = kebab.replace("--", "-");
+        }
+        format!("user-{kebab}")
+    }
+
     /// Apply one editor action to the override store, persist it, and
     /// regenerate the affected location (cache makes this cheap: the clean
     /// layout reloads and the new diff re-applies).
     pub fn apply_override_edit(&mut self, edit: OverrideEdit) {
+        // Membership edits change which rooms belong to which maps, so they
+        // save and then rebuild the membership (satellites recompute) and
+        // drop every generated layout — cheap via the layout cache.
+        match edit {
+            OverrideEdit::MembershipMove { uids, to } => {
+                match to {
+                    Some(key) => {
+                        // Purgatory materializes on first use.
+                        if key == PURGATORY_KEY {
+                            self.overrides
+                                .custom_maps
+                                .entry(PURGATORY_KEY.to_string())
+                                .or_insert_with(|| PURGATORY_NAME.to_string());
+                        }
+                        for uid in uids {
+                            self.overrides.membership_moves.insert(uid, key.clone());
+                        }
+                    }
+                    None => {
+                        for uid in uids {
+                            self.overrides.membership_moves.remove(&uid);
+                        }
+                    }
+                }
+                self.after_membership_edit();
+                return;
+            }
+            OverrideEdit::CreateMap { key, name } => {
+                self.overrides.custom_maps.insert(key, name);
+                self.after_membership_edit();
+                return;
+            }
+            OverrideEdit::RoomEdit { uid, edit } => {
+                match edit {
+                    Some(edit) if !edit.is_empty() => {
+                        self.overrides.room_edits.insert(uid, edit);
+                    }
+                    _ => {
+                        self.overrides.room_edits.remove(&uid);
+                    }
+                }
+                if let Err(e) = overrides::save(&self.overrides_path, &self.overrides) {
+                    tracing::warn!("map overrides save failed: {e}");
+                }
+                // Room data lives inside the loaded db; reverting needs the
+                // pristine copy back, so reload from source — the worker
+                // re-reads, edits reapply on DbLoaded, membership rebuilds.
+                self.reload();
+                return;
+            }
+            _ => {}
+        }
         let location = match &edit {
             OverrideEdit::GroupOffset { location, .. }
             | OverrideEdit::RoomPin { location, .. }
@@ -731,6 +860,11 @@ impl MapService {
             | OverrideEdit::Edge { location, .. }
             | OverrideEdit::Sheet { location, .. }
             | OverrideEdit::ResetLocation { location } => location.clone(),
+            OverrideEdit::MembershipMove { .. }
+            | OverrideEdit::CreateMap { .. }
+            | OverrideEdit::RoomEdit { .. } => {
+                unreachable!("handled above")
+            }
         };
         {
             let entry = self
@@ -783,6 +917,11 @@ impl MapService {
                 OverrideEdit::ResetLocation { .. } => {
                     *entry = LocationOverrides::default();
                 }
+                OverrideEdit::MembershipMove { .. }
+                | OverrideEdit::CreateMap { .. }
+                | OverrideEdit::RoomEdit { .. } => {
+                    unreachable!("handled before the location block")
+                }
             }
             if entry.is_empty() {
                 self.overrides.locations.remove(&location);
@@ -796,6 +935,26 @@ impl MapService {
         self.scenes.remove(&location);
         self.revision += 1;
         self.request_location(&location);
+    }
+
+    /// Save membership-editing state and rebuild the world's membership:
+    /// scenes and layouts all drop (stale rosters), and the effective
+    /// curated set goes back through the worker.
+    fn after_membership_edit(&mut self) {
+        if let Err(e) = overrides::save(&self.overrides_path, &self.overrides) {
+            tracing::warn!("map overrides save failed: {e}");
+        }
+        self.layouts.clear();
+        self.scenes.clear();
+        self.pending.clear();
+        self.revision += 1;
+        if let (Some(db), Some(curated)) = (self.mapdb.clone(), self.effective_curated()) {
+            // Drop the stale membership so resolution holds until the
+            // rebuilt one lands (same as set_curated).
+            self.membership = None;
+            self.membership_pending = true;
+            let _ = self.job_tx.send(MapJob::BuildMembership { db, curated });
+        }
     }
 
     /// Promote personal map edits into the staging export that feeds the
@@ -818,23 +977,87 @@ impl MapService {
         key: Option<&str>,
     ) -> Result<(Vec<String>, PathBuf), String> {
         let staging_path = Self::staging_path(&self.overrides_path);
+        // Membership state (moves, custom maps, room edits) is global — it
+        // promotes on a specific-map promote only when it targets that map,
+        // and wholesale on a full promote.
+        let has_membership_edits = |ov: &MapOverrides, key: Option<&str>| match key {
+            None => {
+                !ov.membership_moves.is_empty()
+                    || !ov.custom_maps.is_empty()
+                    || !ov.room_edits.is_empty()
+            }
+            Some(k) => {
+                ov.membership_moves.values().any(|v| v == k) || ov.custom_maps.contains_key(k)
+            }
+        };
         let keys: Vec<String> = match key {
             Some(key) => {
-                if !self.overrides.locations.contains_key(key) {
+                if !self.overrides.locations.contains_key(key)
+                    && !has_membership_edits(&self.overrides, Some(key))
+                {
                     return Err(format!("no personal edits for '{key}'"));
                 }
                 vec![key.to_owned()]
             }
             None => self.overrides.locations.keys().cloned().collect(),
         };
-        if keys.is_empty() {
+        if keys.is_empty() && !has_membership_edits(&self.overrides, None) {
             return Err("no personal map edits to promote".into());
         }
         let mut staging = overrides::load(&staging_path);
+        // Membership promotion. Both layers merge as a union at use time, so
+        // moving entries between them leaves the effective membership
+        // unchanged — no rebuild needed.
+        {
+            let uids: Vec<i64> = match key {
+                None => self.overrides.membership_moves.keys().copied().collect(),
+                Some(k) => self
+                    .overrides
+                    .membership_moves
+                    .iter()
+                    .filter(|(_, v)| v.as_str() == k)
+                    .map(|(&u, _)| u)
+                    .collect(),
+            };
+            for uid in uids {
+                if let Some(target) = self.overrides.membership_moves.remove(&uid) {
+                    staging.membership_moves.insert(uid, target.clone());
+                    self.community_overrides
+                        .membership_moves
+                        .insert(uid, target);
+                }
+            }
+            let customs: Vec<String> = match key {
+                None => self.overrides.custom_maps.keys().cloned().collect(),
+                Some(k) => self
+                    .overrides
+                    .custom_maps
+                    .keys()
+                    .filter(|c| c.as_str() == k)
+                    .cloned()
+                    .collect(),
+            };
+            for ck in customs {
+                if let Some(name) = self.overrides.custom_maps.remove(&ck) {
+                    staging.custom_maps.insert(ck.clone(), name.clone());
+                    self.community_overrides.custom_maps.insert(ck, name);
+                }
+            }
+            // Room-data edits promote on full promotes only (they're keyed
+            // by uid, not map).
+            if key.is_none() {
+                let uids: Vec<i64> = self.overrides.room_edits.keys().copied().collect();
+                for uid in uids {
+                    if let Some(edit) = self.overrides.room_edits.remove(&uid) {
+                        staging.room_edits.insert(uid, edit.clone());
+                        self.community_overrides.room_edits.insert(uid, edit);
+                    }
+                }
+            }
+        }
         for key in &keys {
             if let Some(entry) = self.overrides.locations.remove(key) {
-                let merged =
-                    overrides::merge_location(staging.locations.get(key), Some(&entry));
+                let merged = overrides::merge_location(staging.locations.get(key), Some(&entry));
                 staging.locations.insert(key.clone(), merged);
             }
         }
@@ -891,10 +1114,24 @@ impl MapService {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 MapEvent::DbLoaded(Ok(db)) => {
+                    // Room-data edits bake into the loaded db (pathing and
+                    // layout generation read it); pristine data returns via
+                    // reload when an edit is reverted.
+                    let edits = crate::core::layout_engine::overrides::merged_room_edits(
+                        &self.community_overrides,
+                        &self.overrides,
+                    );
+                    let db = if edits.is_empty() {
+                        db
+                    } else {
+                        let mut edited = (*db).clone();
+                        edited.apply_room_edits(&edits);
+                        Arc::new(edited)
+                    };
                     self.mapdb = Some(db.clone());
                     self.db_state = DbState::Loaded;
                     self.revision += 1;
-                    if let Some(curated) = self.curated.clone() {
+                    if let Some(curated) = self.effective_curated() {
                         // Defer room resolution until membership lands so the
                         // first layout generated is the curated one, not a
                         // throwaway location layout.
@@ -963,7 +1200,13 @@ fn remap_overrides(store: &mut MapOverrides, db: &MapDb, membership: &Membership
         for (anchor, cell) in entry.group_offsets {
             match dest_of(anchor) {
                 Some(dest) if dest != key => {
-                    store.locations.entry(dest).or_default().group_offsets.entry(anchor).or_insert(cell);
+                    store
+                        .locations
+                        .entry(dest)
+                        .or_default()
+                        .group_offsets
+                        .entry(anchor)
+                        .or_insert(cell);
                     moved = true;
                 }
                 _ => {
@@ -974,7 +1217,13 @@ fn remap_overrides(store: &mut MapOverrides, db: &MapDb, membership: &Membership
         for (room, pin) in entry.room_pins {
             match dest_of(room) {
                 Some(dest) if dest != key => {
-                    store.locations.entry(dest).or_default().room_pins.entry(room).or_insert(pin);
+                    store
+                        .locations
+                        .entry(dest)
+                        .or_default()
+                        .room_pins
+                        .entry(room)
+                        .or_insert(pin);
                     moved = true;
                 }
                 _ => {
@@ -985,7 +1234,13 @@ fn remap_overrides(store: &mut MapOverrides, db: &MapDb, membership: &Membership
         for (anchor, name) in entry.names {
             match dest_of(anchor) {
                 Some(dest) if dest != key => {
-                    store.locations.entry(dest).or_default().names.entry(anchor).or_insert(name);
+                    store
+                        .locations
+                        .entry(dest)
+                        .or_default()
+                        .names
+                        .entry(anchor)
+                        .or_insert(name);
                     moved = true;
                 }
                 _ => {
@@ -996,7 +1251,13 @@ fn remap_overrides(store: &mut MapOverrides, db: &MapDb, membership: &Membership
         for (anchor, choice) in entry.sheets {
             match dest_of(anchor) {
                 Some(dest) if dest != key => {
-                    store.locations.entry(dest).or_default().sheets.entry(anchor).or_insert(choice);
+                    store
+                        .locations
+                        .entry(dest)
+                        .or_default()
+                        .sheets
+                        .entry(anchor)
+                        .or_insert(choice);
                     moved = true;
                 }
                 _ => {
@@ -1008,7 +1269,11 @@ fn remap_overrides(store: &mut MapOverrides, db: &MapDb, membership: &Membership
             match dest_of(edge.a) {
                 Some(dest) if dest != key => {
                     let dest_entry = store.locations.entry(dest).or_default();
-                    if !dest_entry.edges.iter().any(|e| (e.a, e.b) == (edge.a, edge.b)) {
+                    if !dest_entry
+                        .edges
+                        .iter()
+                        .any(|e| (e.a, e.b) == (edge.a, edge.b))
+                    {
                         dest_entry.edges.push(edge);
                     }
                     moved = true;
@@ -1183,7 +1448,10 @@ mod tests {
         assert_eq!(svc.current_room_id, Some(369), "anchor room is held");
         let front = svc.ghosts().get(633107).unwrap();
         assert_eq!(front.anchor.as_ref().unwrap().room_id, 369);
-        assert_eq!(front.anchor.as_ref().unwrap().command.as_deref(), Some("go shop"));
+        assert_eq!(
+            front.anchor.as_ref().unwrap().command.as_deref(),
+            Some("go shop")
+        );
 
         // Exits often arrive a line after the nav tag: same ids, richer data.
         svc.note_room(
@@ -1268,11 +1536,19 @@ mod tests {
 
         // While the build was pending, resolution held (nothing generated).
         svc.note_room(Some(100), Some(1), Default::default());
-        assert_eq!(svc.current_location.as_deref(), Some("town"), "covered → curated slug");
+        assert_eq!(
+            svc.current_location.as_deref(),
+            Some("town"),
+            "covered → curated slug"
+        );
         assert_eq!(svc.display_name("town"), "Town");
 
         svc.note_room(Some(200), Some(10), Default::default());
-        assert_eq!(svc.current_location.as_deref(), Some("sat-200"), "well → satellite");
+        assert_eq!(
+            svc.current_location.as_deref(),
+            Some("sat-200"),
+            "well → satellite"
+        );
 
         svc.note_room(Some(300), Some(20), Default::default());
         assert_eq!(
@@ -1280,7 +1556,11 @@ mod tests {
             Some("town"),
             "tiny closet holds the base map"
         );
-        assert_eq!(svc.current_room_id, Some(20), "but the room itself is tracked");
+        assert_eq!(
+            svc.current_room_id,
+            Some(20),
+            "but the room itself is tracked"
+        );
     }
 
     /// Promote moves a map's personal edits into the staging export, clears
@@ -1307,15 +1587,24 @@ mod tests {
 
         let (promoted, staging_path) = svc.promote_overrides(Some("town")).unwrap();
         assert_eq!(promoted, vec!["town".to_string()]);
-        assert!(svc.overrides_for("town").is_none(), "personal entry cleared");
-        assert!(svc.overrides_for("sat-200").is_some(), "other maps untouched");
+        assert!(
+            svc.overrides_for("town").is_none(),
+            "personal entry cleared"
+        );
+        assert!(
+            svc.overrides_for("sat-200").is_some(),
+            "other maps untouched"
+        );
         assert_eq!(
             svc.community_overrides.locations["town"].group_offsets[&100],
             Cell { x: 2, y: 1 },
             "community layer serves the promoted edits immediately"
         );
         let staged = overrides::load(&staging_path);
-        assert_eq!(staged.locations["town"].group_offsets[&100], Cell { x: 2, y: 1 });
+        assert_eq!(
+            staged.locations["town"].group_offsets[&100],
+            Cell { x: 2, y: 1 }
+        );
 
         // A fresh service (= app restart) loads the staging file as a
         // community layer: the promotion survives without any rebuild.
@@ -1334,7 +1623,11 @@ mod tests {
         assert_eq!(rest, vec!["sat-200".to_string()]);
         assert!(svc.promote_overrides(None).is_err());
         let staged = overrides::load(&staging_path);
-        assert_eq!(staged.locations.len(), 2, "staging accumulates across promotes");
+        assert_eq!(
+            staged.locations.len(),
+            2,
+            "staging accumulates across promotes"
+        );
     }
 
     /// Promote → edit → promote again must FOLD the new deltas onto the
@@ -1403,10 +1696,22 @@ mod tests {
     #[test]
     fn community_overlay_replaces_per_location() {
         let mut base = MapOverrides::default();
-        base.locations.entry("town".into()).or_default().names.insert(1, "Old".into());
-        base.locations.entry("keep".into()).or_default().names.insert(2, "Kept".into());
+        base.locations
+            .entry("town".into())
+            .or_default()
+            .names
+            .insert(1, "Old".into());
+        base.locations
+            .entry("keep".into())
+            .or_default()
+            .names
+            .insert(2, "Kept".into());
         let mut top = MapOverrides::default();
-        top.locations.entry("town".into()).or_default().names.insert(1, "New".into());
+        top.locations
+            .entry("town".into())
+            .or_default()
+            .names
+            .insert(1, "New".into());
         let merged = overrides::overlay(base, top);
         assert_eq!(merged.locations["town"].names[&1], "New");
         assert_eq!(merged.locations["keep"].names[&2], "Kept");
@@ -1550,5 +1855,274 @@ mod tests {
             },
         );
         assert_eq!(svc.current_room_id, Some(11));
+    }
+
+    /// Membership editing (P3): moving a room's uid to Purgatory rewrites
+    /// the effective rosters, rebuilds membership, and persists; reverting
+    /// restores curated placement. Purgatory materializes on first use and
+    /// lists even while empty.
+    #[test]
+    fn membership_move_to_purgatory_and_revert() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("db.json");
+        std::fs::write(
+            &db_path,
+            r#"[
+                {"id": 1, "uid": [100], "location": "Town",
+                 "title": ["[Town, Square]"], "wayto": {"2": "east"},
+                 "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [101], "location": "Town",
+                 "title": ["[Town, East]"], "wayto": {"1": "west"},
+                 "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut svc = MapService::new(
+            dir.path().join("cache"),
+            dir.path().join("map_overrides.json"),
+        );
+        svc.mapdb = Some(Arc::new(MapDb::load(&db_path).unwrap()));
+        svc.set_curated(
+            crate::core::curated_maps::CuratedMaps::from_saga_layouts_json(
+                r#"{"layoutVersion": 1, "layouts":
+                    {"town||i:1": {"pos": [[100, 0, 0], [101, 1, 0]]}}}"#,
+            )
+            .unwrap(),
+        );
+        let wait = |svc: &mut MapService| {
+            for _ in 0..500 {
+                svc.poll();
+                if svc.membership().is_some() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            panic!("membership build timed out");
+        };
+        wait(&mut svc);
+        assert_eq!(svc.membership().unwrap().map_of_room(2), Some("town"));
+
+        svc.apply_override_edit(OverrideEdit::MembershipMove {
+            uids: vec![101],
+            to: Some(PURGATORY_KEY.to_string()),
+        });
+        wait(&mut svc);
+        let m = svc.membership().unwrap();
+        assert_eq!(m.map_of_room(2), Some(PURGATORY_KEY), "room moved");
+        assert_eq!(
+            m.rooms_of_map("town"),
+            Some(&[1u32][..]),
+            "left the town roster"
+        );
+        assert!(
+            m.is_curated(PURGATORY_KEY),
+            "purgatory lists with the curated group"
+        );
+        assert_eq!(m.display_name(PURGATORY_KEY), PURGATORY_NAME);
+        // Persisted.
+        let reloaded =
+            crate::core::layout_engine::overrides::load(&dir.path().join("map_overrides.json"));
+        assert_eq!(
+            reloaded.membership_moves.get(&101).map(String::as_str),
+            Some(PURGATORY_KEY)
+        );
+        assert!(reloaded.custom_maps.contains_key(PURGATORY_KEY));
+
+        svc.apply_override_edit(OverrideEdit::MembershipMove {
+            uids: vec![101],
+            to: None,
+        });
+        wait(&mut svc);
+        let m = svc.membership().unwrap();
+        assert_eq!(
+            m.map_of_room(2),
+            Some("town"),
+            "revert restores curated placement"
+        );
+        assert_eq!(
+            m.rooms_of_map(PURGATORY_KEY),
+            Some(&[][..]),
+            "purgatory stays listed, now empty"
+        );
+    }
+
+    /// CreateMap + move: a user map mints from the editor and receives rooms.
+    #[test]
+    fn create_map_and_move_room_into_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("db.json");
+        std::fs::write(
+            &db_path,
+            r#"[
+                {"id": 1, "uid": [100], "location": "Town",
+                 "title": ["[Town, Square]"], "wayto": {"2": "east"},
+                 "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [101], "location": "Town",
+                 "title": ["[Town, East]"], "wayto": {"1": "west"},
+                 "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut svc = MapService::new(
+            dir.path().join("cache"),
+            dir.path().join("map_overrides.json"),
+        );
+        svc.mapdb = Some(Arc::new(MapDb::load(&db_path).unwrap()));
+        svc.set_curated(
+            crate::core::curated_maps::CuratedMaps::from_saga_layouts_json(
+                r#"{"layoutVersion": 1, "layouts":
+                    {"town||i:1": {"pos": [[100, 0, 0], [101, 1, 0]]}}}"#,
+            )
+            .unwrap(),
+        );
+        let wait = |svc: &mut MapService| {
+            for _ in 0..500 {
+                svc.poll();
+                if svc.membership().is_some() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            panic!("membership build timed out");
+        };
+        wait(&mut svc);
+
+        let key = MapService::user_map_key("My Arena Notes!");
+        assert_eq!(key, "user-my-arena-notes");
+        svc.apply_override_edit(OverrideEdit::CreateMap {
+            key: key.clone(),
+            name: "My Arena Notes!".into(),
+        });
+        wait(&mut svc);
+        svc.apply_override_edit(OverrideEdit::MembershipMove {
+            uids: vec![101],
+            to: Some(key.clone()),
+        });
+        wait(&mut svc);
+        let m = svc.membership().unwrap();
+        assert_eq!(m.map_of_room(2), Some(key.as_str()));
+        assert_eq!(m.display_name(&key), "My Arena Notes!");
+        assert_eq!(m.rooms_of_map(&key), Some(&[2u32][..]));
+    }
+
+    /// Room-data edits (P4): tags/exits/description bake into the reloaded
+    /// db; revert restores pristine data.
+    #[test]
+    fn room_edits_apply_and_revert() {
+        use crate::core::layout_engine::overrides::{RoomDataEdit, WaytoEdit};
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("db.json");
+        std::fs::write(
+            &db_path,
+            r#"[
+                {"id": 1, "uid": [100], "location": "Town",
+                 "title": ["[Town, Square]"], "description": ["Old square."],
+                 "tags": ["bank"],
+                 "wayto": {"2": "east"}, "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [101], "location": "Town",
+                 "title": ["[Town, East]"], "wayto": {"1": "west"},
+                 "timeto": {"1": 0.2}, "paths": ""},
+                {"id": 3, "uid": [102], "location": "Town",
+                 "title": ["[Town, Alley]"], "wayto": {},
+                 "timeto": {}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut svc = MapService::new(
+            dir.path().join("cache"),
+            dir.path().join("map_overrides.json"),
+        );
+        svc.ensure_db(MapDbSource::File(db_path.clone()));
+        let wait_db = |svc: &mut MapService| {
+            for _ in 0..500 {
+                svc.poll();
+                if svc.mapdb().is_some() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            panic!("db load timed out");
+        };
+        wait_db(&mut svc);
+
+        let mut edit = RoomDataEdit::default();
+        edit.add_tags.push("acantha leaf".into());
+        edit.remove_tags.push("bank".into());
+        edit.wayto.insert(
+            102,
+            Some(WaytoEdit {
+                command: "go alley".into(),
+                seconds: 1.5,
+            }),
+        );
+        edit.wayto.insert(101, None);
+        edit.description = Some("A rebuilt square.".into());
+        svc.apply_override_edit(OverrideEdit::RoomEdit {
+            uid: 100,
+            edit: Some(edit),
+        });
+        wait_db(&mut svc);
+
+        let db = svc.mapdb().unwrap();
+        let room = db.room(1).unwrap();
+        assert_eq!(room.tags, vec!["acantha leaf"], "tag added, bank removed");
+        assert_eq!(room.wayto.get(&3).map(String::as_str), Some("go alley"));
+        assert_eq!(
+            room.timeto.get(&3),
+            Some(&crate::core::mapdb::TimeTo::Seconds(1.5))
+        );
+        assert!(room.wayto.get(&2).is_none(), "edge to East removed");
+        assert_eq!(room.description, vec!["A rebuilt square."]);
+        assert!(db.room_ids_with_tag("bank").is_empty(), "tag index rebuilt");
+        assert_eq!(db.room_ids_with_tag("acantha leaf"), &[1]);
+
+        svc.apply_override_edit(OverrideEdit::RoomEdit {
+            uid: 100,
+            edit: None,
+        });
+        wait_db(&mut svc);
+        let db = svc.mapdb().unwrap();
+        let room = db.room(1).unwrap();
+        assert_eq!(room.tags, vec!["bank"], "pristine tags restored");
+        assert_eq!(room.wayto.get(&2).map(String::as_str), Some("east"));
+        assert!(room.wayto.get(&3).is_none());
+        assert_eq!(room.description, vec!["Old square."]);
+    }
+
+    /// Promote carries membership moves, custom maps, and room edits into
+    /// staging (room edits on full promotes), and clears them personally.
+    #[test]
+    fn promote_carries_membership_state() {
+        use crate::core::layout_engine::overrides::RoomDataEdit;
+        let dir = tempfile::tempdir().unwrap();
+        let overrides_path = dir.path().join("map_overrides.json");
+        let mut svc = MapService::new(dir.path().join("cache"), overrides_path.clone());
+        svc.overrides
+            .membership_moves
+            .insert(101, PURGATORY_KEY.to_string());
+        svc.overrides
+            .custom_maps
+            .insert(PURGATORY_KEY.to_string(), PURGATORY_NAME.to_string());
+        let mut edit = RoomDataEdit::default();
+        edit.add_tags.push("acantha leaf".into());
+        svc.overrides.room_edits.insert(100, edit);
+
+        let (_, staging_path) = svc.promote_overrides(None).unwrap();
+        assert!(svc.overrides.membership_moves.is_empty());
+        assert!(svc.overrides.custom_maps.is_empty());
+        assert!(svc.overrides.room_edits.is_empty());
+        let staged = crate::core::layout_engine::overrides::load(&staging_path);
+        assert_eq!(
+            staged.membership_moves.get(&101).map(String::as_str),
+            Some(PURGATORY_KEY)
+        );
+        assert!(staged.custom_maps.contains_key(PURGATORY_KEY));
+        assert!(staged.room_edits.contains_key(&100));
+        // Served from the community layer immediately.
+        assert_eq!(svc.personal_membership_move(101), None);
+        assert!(
+            svc.room_edit(100).is_some(),
+            "effective edit survives via community"
+        );
     }
 }

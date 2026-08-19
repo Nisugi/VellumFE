@@ -101,7 +101,11 @@ async fn bridge_full_round_trip() {
     socket.send(Message::text(hello_json())).await.unwrap();
 
     // Client surfaces the hello with session + page descriptors.
-    let WebUiEvent::Hello { schema_version, session, pages } = recv_event(&mut event_rx).await
+    let WebUiEvent::Hello {
+        schema_version,
+        session,
+        pages,
+    } = recv_event(&mut event_rx).await
     else {
         panic!("expected Hello first");
     };
@@ -182,11 +186,11 @@ async fn bridge_dials_the_handshake_host_not_loopback() {
 async fn fetch_image_sends_cookie_and_returns_body() {
     // Minimal 1x1 PNG (what the /files/ route would serve).
     let png: Vec<u8> = vec![
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
-        0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
-        0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78,
-        0x9C, 0x62, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
-        0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -201,7 +205,8 @@ async fn fetch_image_sends_cookie_and_returns_body() {
         let mut buffer = vec![0u8; 4096];
         let read = stream.read(&mut buffer).await.unwrap();
         let request = String::from_utf8_lossy(&buffer[..read]).to_string();
-        assert!(request.starts_with("GET /files/cbcal/greyscale/hinterwilds/angargeist.png HTTP/1.1\r\n"));
+        assert!(request
+            .starts_with("GET /files/cbcal/greyscale/hinterwilds/angargeist.png HTTP/1.1\r\n"));
         assert!(
             request.contains(&format!("Cookie: lich_webui={}", TOKEN)),
             "fetch must carry the auth cookie"
@@ -265,7 +270,11 @@ async fn fetch_image_reports_http_errors() {
         panic!("expected ImageFetched");
     };
     let err = data.expect_err("404 must surface as an error");
-    assert!(err.contains("404"), "error should mention the status: {}", err);
+    assert!(
+        err.contains("404"),
+        "error should mention the status: {}",
+        err
+    );
 }
 
 #[tokio::test]

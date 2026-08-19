@@ -100,7 +100,10 @@ mod tests {
     }
 
     fn repo(name: &str, url: &str) -> RepoSource {
-        RepoSource { name: name.into(), url: url.into() }
+        RepoSource {
+            name: name.into(),
+            url: url.into(),
+        }
     }
 
     #[test]

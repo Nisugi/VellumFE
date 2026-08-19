@@ -28,7 +28,10 @@ impl StatVal {
             return Some(StatVal::Int(i));
         }
         let arr = v.as_array()?;
-        Some(StatVal::Range(arr.first()?.as_i64()?, arr.get(1)?.as_i64()?))
+        Some(StatVal::Range(
+            arr.first()?.as_i64()?,
+            arr.get(1)?.as_i64()?,
+        ))
     }
 
     /// "194" or "108-114" — ebestiary's format_stat.
@@ -136,7 +139,10 @@ pub struct Treasure {
 
 impl Treasure {
     pub fn is_empty(&self) -> bool {
-        !self.coins && !self.gems && !self.boxes && !self.magic
+        !self.coins
+            && !self.gems
+            && !self.boxes
+            && !self.magic
             && self.skin.is_none()
             && self.other.is_none()
     }
@@ -249,8 +255,7 @@ impl BestiaryDb {
     }
 
     pub fn from_json(text: &str) -> Result<Self> {
-        let file: BestiaryFile =
-            serde_json::from_str(text).context("parsing bestiary json")?;
+        let file: BestiaryFile = serde_json::from_str(text).context("parsing bestiary json")?;
         Ok(Self::from_entries(file.entries))
     }
 
@@ -337,8 +342,7 @@ impl BestiaryDb {
     }
 
     pub fn undead(&self) -> Vec<&CreatureEntry> {
-        let mut out: Vec<&CreatureEntry> =
-            self.entries.iter().filter(|e| e.undead).collect();
+        let mut out: Vec<&CreatureEntry> = self.entries.iter().filter(|e| e.undead).collect();
         out.sort_by_key(|e| (e.level.unwrap_or(i64::MAX), e.name.clone()));
         out
     }
@@ -388,8 +392,7 @@ impl BestiaryDb {
 pub fn ruby_template_to_json(text: &str) -> String {
     let key_re = regex::Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)\s*:").expect("static regex");
     let nil_re = regex::Regex::new(r"\bnil\b").expect("static regex");
-    let range_re =
-        regex::Regex::new(r"\((-?\d+)\s*\.\.\s*(-?\d+)\)").expect("static regex");
+    let range_re = regex::Regex::new(r"\((-?\d+)\s*\.\.\s*(-?\d+)\)").expect("static regex");
     let paren_re = regex::Regex::new(r"\((-?\d+)\)").expect("static regex");
     let comment_re = regex::Regex::new(r"#[^\r\n]*").expect("static regex");
     let trailing_re = regex::Regex::new(r",(\s*[}\]])").expect("static regex");
@@ -439,14 +442,36 @@ pub fn ruby_template_to_json(text: &str) -> String {
                 _ => {}
             }
         } else if c == '"' {
-            flush(&mut code, &mut out, (&comment_re, &key_re, &nil_re, &range_re, &paren_re, &trailing_re));
+            flush(
+                &mut code,
+                &mut out,
+                (
+                    &comment_re,
+                    &key_re,
+                    &nil_re,
+                    &range_re,
+                    &paren_re,
+                    &trailing_re,
+                ),
+            );
             out.push(c);
             in_string = true;
         } else {
             code.push(c);
         }
     }
-    flush(&mut code, &mut out, (&comment_re, &key_re, &nil_re, &range_re, &paren_re, &trailing_re));
+    flush(
+        &mut code,
+        &mut out,
+        (
+            &comment_re,
+            &key_re,
+            &nil_re,
+            &range_re,
+            &paren_re,
+            &trailing_re,
+        ),
+    );
     out
 }
 
@@ -510,7 +535,10 @@ pub fn entry_from_template_json(v: &serde_json::Value) -> Option<CreatureEntry> 
                 .get("warding_spells")
                 .map(|x| v_attacks(x, "cs"))
                 .unwrap_or_default(),
-            spells: a.get("offensive_spells").map(v_str_list).unwrap_or_default(),
+            spells: a
+                .get("offensive_spells")
+                .map(v_str_list)
+                .unwrap_or_default(),
             maneuvers: a.get("maneuvers").map(v_str_list).unwrap_or_default(),
             specials: a
                 .get("special_abilities")
@@ -551,12 +579,18 @@ pub fn entry_from_template_json(v: &serde_json::Value) -> Option<CreatureEntry> 
             udf: d.get("udf").and_then(StatVal::from_json),
             td,
             immunities: d.get("immunities").map(v_str_list).unwrap_or_default(),
-            spells: d.get("defensive_spells").map(v_str_list).unwrap_or_default(),
+            spells: d
+                .get("defensive_spells")
+                .map(v_str_list)
+                .unwrap_or_default(),
             abilities: d
                 .get("defensive_abilities")
                 .map(v_str_list)
                 .unwrap_or_default(),
-            specials: d.get("special_defenses").map(v_str_list).unwrap_or_default(),
+            specials: d
+                .get("special_defenses")
+                .map(v_str_list)
+                .unwrap_or_default(),
         }
     });
     // A defense block with nothing in it is noise, not data.
@@ -650,7 +684,9 @@ pub fn join_spawns(
 
     let mut unmatched: Vec<String> = Vec::new();
     for gens in mongens.values() {
-        let Some(list) = gens.as_array() else { continue };
+        let Some(list) = gens.as_array() else {
+            continue;
+        };
         for gen in list {
             let Some(raw_name) = gen.get("name").and_then(|n| n.as_str()) else {
                 continue;
@@ -688,11 +724,7 @@ pub fn join_spawns(
             let entry = &mut entries[idx];
             // Same creature can have several generators per map; merge
             // ranges into one spawn per resolved map name.
-            if let Some(existing) = entry
-                .spawns
-                .iter_mut()
-                .find(|s| s.map == map)
-            {
+            if let Some(existing) = entry.spawns.iter_mut().find(|s| s.map == map) {
                 existing.uids.extend(uids);
             } else {
                 entry.spawns.push(Spawn { map, level, uids });
@@ -897,7 +929,10 @@ pub mod format {
         let mut header = vec![bold_seg(e.name.to_uppercase())];
         if let Some(level) = e.level {
             header.push(seg(" ("));
-            header.push(link(format!("Level {level}"), format!(".bestiary level {level}")));
+            header.push(link(
+                format!("Level {level}"),
+                format!(".bestiary level {level}"),
+            ));
             header.push(seg(")"));
         }
         out.push(boxed(header));
@@ -979,16 +1014,34 @@ pub mod format {
         if !e.offense.is_empty() {
             out.push(section("Offense"));
             for a in &e.offense.physical {
-                let val = a.value.map(|v| format!(" (AS: {})", v.display())).unwrap_or_default();
-                out.push(boxed(vec![label("  Physical: "), seg(format!("{}{val}", a.name))]));
+                let val = a
+                    .value
+                    .map(|v| format!(" (AS: {})", v.display()))
+                    .unwrap_or_default();
+                out.push(boxed(vec![
+                    label("  Physical: "),
+                    seg(format!("{}{val}", a.name)),
+                ]));
             }
             for a in &e.offense.bolt {
-                let val = a.value.map(|v| format!(" (AS: {})", v.display())).unwrap_or_default();
-                out.push(boxed(vec![label("  Bolt: "), seg(format!("{}{val}", a.name))]));
+                let val = a
+                    .value
+                    .map(|v| format!(" (AS: {})", v.display()))
+                    .unwrap_or_default();
+                out.push(boxed(vec![
+                    label("  Bolt: "),
+                    seg(format!("{}{val}", a.name)),
+                ]));
             }
             for a in &e.offense.warding {
-                let val = a.value.map(|v| format!(" (CS: {})", v.display())).unwrap_or_default();
-                out.push(boxed(vec![label("  Warding: "), seg(format!("{}{val}", a.name))]));
+                let val = a
+                    .value
+                    .map(|v| format!(" (CS: {})", v.display()))
+                    .unwrap_or_default();
+                out.push(boxed(vec![
+                    label("  Warding: "),
+                    seg(format!("{}{val}", a.name)),
+                ]));
             }
             for s in &e.offense.spells {
                 out.push(boxed(vec![label("  Spell: "), seg(s.clone())]));
@@ -997,8 +1050,15 @@ pub mod format {
                 out.push(boxed(vec![label("  Maneuver: "), seg(m.clone())]));
             }
             for s in &e.offense.specials {
-                let note = s.note.as_deref().map(|n| format!(" - {n}")).unwrap_or_default();
-                out.push(boxed(vec![bold_seg("  Special"), seg(format!(": {}{note}", s.name))]));
+                let note = s
+                    .note
+                    .as_deref()
+                    .map(|n| format!(" - {n}"))
+                    .unwrap_or_default();
+                out.push(boxed(vec![
+                    bold_seg("  Special"),
+                    seg(format!(": {}{note}", s.name)),
+                ]));
             }
         }
 
@@ -1024,17 +1084,19 @@ pub mod format {
                 out.push(boxed(vec![seg(format!("  {}", chunk.join("    ")))]));
             }
             if !d.td.is_empty() {
-                let tds: Vec<String> = d
-                    .td
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", capitalize(k), v.display()))
-                    .collect();
+                let tds: Vec<String> =
+                    d.td.iter()
+                        .map(|(k, v)| format!("{}: {}", capitalize(k), v.display()))
+                        .collect();
                 for l in wrap(&format!("TD: {}", tds.join(", ")), WIDTH - 6) {
                     out.push(boxed(vec![seg(format!("  {l}"))]));
                 }
             }
             if !d.immunities.is_empty() {
-                out.push(boxed(vec![seg(format!("  Immunities: {}", d.immunities.join(", ")))]));
+                out.push(boxed(vec![seg(format!(
+                    "  Immunities: {}",
+                    d.immunities.join(", ")
+                ))]));
             }
             if !d.spells.is_empty() {
                 for l in wrap(&format!("Spells: {}", d.spells.join(", ")), WIDTH - 6) {
@@ -1118,7 +1180,12 @@ pub mod format {
             return vec![line(vec![seg("No matching creatures.")])];
         }
         let mut out = vec![line(vec![seg(format!("{title} ({} found):", rows.len()))])];
-        let name_w = rows.iter().map(|e| e.name.chars().count()).max().unwrap_or(4).max(4);
+        let name_w = rows
+            .iter()
+            .map(|e| e.name.chars().count())
+            .max()
+            .unwrap_or(4)
+            .max(4);
         let fam_w = rows
             .iter()
             .map(|e| e.family.as_deref().unwrap_or("").chars().count())
@@ -1138,12 +1205,18 @@ pub mod format {
             let mut segs = vec![seg("| ")];
             segs.push(link(format!("{lvl:>3}"), format!(".bestiary level {lvl}")));
             segs.push(seg(" | "));
-            segs.push(link(format!("{:<name_w$}", e.name), format!(".bestiary {}", e.name)));
+            segs.push(link(
+                format!("{:<name_w$}", e.name),
+                format!(".bestiary {}", e.name),
+            ));
             segs.push(seg(" | "));
             if fam.is_empty() {
                 segs.push(seg(format!("{fam:<fam_w$}")));
             } else {
-                segs.push(link(format!("{fam:<fam_w$}"), format!(".bestiary family {fam}")));
+                segs.push(link(
+                    format!("{fam:<fam_w$}"),
+                    format!(".bestiary family {fam}"),
+                ));
             }
             segs.push(seg(" |"));
             out.push(line(segs));
@@ -1392,7 +1465,9 @@ mod tests {
             .collect();
         assert!(links.iter().any(|c| c == ".bestiary level 29"));
         assert!(links.iter().any(|c| c == ".bestiary family Chimeric"));
-        assert!(links.iter().any(|c| c == ".bestiary area Frozen Battlefield"));
+        assert!(links
+            .iter()
+            .any(|c| c == ".bestiary area Frozen Battlefield"));
         assert!(
             links.iter().any(|c| c == ".go2 u100"),
             "spawn location carries a go2 link to its first uid"
@@ -1444,5 +1519,30 @@ mod tests {
         let json = serde_json::to_string(&file).unwrap();
         let db = BestiaryDb::from_json(&json).unwrap();
         assert_eq!(db.len(), 1);
+    }
+
+    /// P2 (map explorer "Creatures" section): the bundled bestiary resolves
+    /// creatures for a real room uid via spawn ranges.
+    #[test]
+    fn shared_bestiary_resolves_creatures_for_a_room_uid() {
+        let db = super::format::shared();
+        // Any entry with a spawn range gives us a uid known to be covered.
+        let (uid, expected) = db
+            .entries
+            .iter()
+            .find_map(|e| {
+                e.spawns
+                    .iter()
+                    .flat_map(|s| s.uids.iter())
+                    .next()
+                    .map(|&(lo, _)| (lo, e.name.clone()))
+            })
+            .expect("bundled bestiary has spawn ranges");
+        let here = db.here(uid);
+        assert!(
+            here.iter().any(|e| e.name == expected),
+            "uid {uid} should resolve {expected}, got {:?}",
+            here.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
     }
 }

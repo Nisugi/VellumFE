@@ -87,7 +87,13 @@ impl GhostStore {
     /// Record arriving in unmapped room `uid`. Upserts the room (fresher
     /// title/exits win), anchors it on first entry from a mapped room, and
     /// records the traversed edge when coming from another ghost.
-    pub fn visit(&mut self, uid: i64, snapshot: RoomSnapshot, from: Origin, command: Option<String>) {
+    pub fn visit(
+        &mut self,
+        uid: i64,
+        snapshot: RoomSnapshot,
+        from: Origin,
+        command: Option<String>,
+    ) {
         let room = self.rooms.entry(uid).or_insert(GhostRoom {
             uid,
             title: None,
@@ -123,8 +129,12 @@ impl GhostStore {
     fn adjacency(&self) -> HashMap<i64, Vec<(i64, Option<&str>)>> {
         let mut adj: HashMap<i64, Vec<(i64, Option<&str>)>> = HashMap::new();
         for edge in &self.edges {
-            adj.entry(edge.a).or_default().push((edge.b, edge.label.as_deref()));
-            adj.entry(edge.b).or_default().push((edge.a, edge.label.as_deref()));
+            adj.entry(edge.a)
+                .or_default()
+                .push((edge.b, edge.label.as_deref()));
+            adj.entry(edge.b)
+                .or_default()
+                .push((edge.a, edge.label.as_deref()));
         }
         adj
     }
@@ -201,8 +211,7 @@ pub fn build_overlay(
         let Some((room_sheet, anchor_room)) = scene.room(anchor.room_id) else {
             continue;
         };
-        if room_sheet != sheet
-            || group_filter.is_some_and(|set| !set.contains(&anchor_room.group))
+        if room_sheet != sheet || group_filter.is_some_and(|set| !set.contains(&anchor_room.group))
         {
             continue;
         }
@@ -328,19 +337,30 @@ mod tests {
             Origin::Ghost(633107),
             Some("go curtain".into()),
         );
-        store.visit(633107, RoomSnapshot::default(), Origin::Ghost(633108), Some("out".into()));
+        store.visit(
+            633107,
+            RoomSnapshot::default(),
+            Origin::Ghost(633108),
+            Some("out".into()),
+        );
 
         assert_eq!(store.len(), 2);
         let front = store.get(633107).unwrap();
         assert_eq!(front.title.as_deref(), Some("[Shop, Front]"));
         assert_eq!(front.anchor.as_ref().unwrap().room_id, 369);
-        assert_eq!(front.anchor.as_ref().unwrap().command.as_deref(), Some("go shop"));
+        assert_eq!(
+            front.anchor.as_ref().unwrap().command.as_deref(),
+            Some("go shop")
+        );
         // The return trip must not duplicate the edge or overwrite its label.
         assert_eq!(store.edges.len(), 1);
         assert_eq!(store.edges[0].label.as_deref(), Some("go curtain"));
         // A later mapped entry doesn't re-anchor.
         store.visit(633107, RoomSnapshot::default(), Origin::Mapped(999), None);
-        assert_eq!(store.get(633107).unwrap().anchor.as_ref().unwrap().room_id, 369);
+        assert_eq!(
+            store.get(633107).unwrap().anchor.as_ref().unwrap().room_id,
+            369
+        );
     }
 
     #[test]
@@ -375,7 +395,9 @@ mod tests {
                 rooms: street,
                 ..Default::default()
             },
-            room_index: (0..3u32).map(|i| (368 + i, (Sheet::Outdoor, i as usize))).collect(),
+            room_index: (0..3u32)
+                .map(|i| (368 + i, (Sheet::Outdoor, i as usize)))
+                .collect(),
             ..Default::default()
         };
 
@@ -397,8 +419,7 @@ mod tests {
         assert_eq!(overlay.nodes.len(), 2);
         assert_eq!(overlay.edges.len(), 2);
         // No ghost sits on a street cell, and no two ghosts share a cell.
-        let street_cells: HashSet<Cell> =
-            scene.outdoor.rooms.iter().map(|r| r.cell).collect();
+        let street_cells: HashSet<Cell> = scene.outdoor.rooms.iter().map(|r| r.cell).collect();
         let mut seen = HashSet::new();
         for node in &overlay.nodes {
             assert!(!street_cells.contains(&node.cell), "ghost on a mapped room");
@@ -415,8 +436,16 @@ mod tests {
         // Same input, same layout: placement must be deterministic.
         let again = build_overlay(&store, &scene, Sheet::Outdoor, None);
         assert_eq!(
-            overlay.nodes.iter().map(|n| (n.uid, n.cell)).collect::<Vec<_>>(),
-            again.nodes.iter().map(|n| (n.uid, n.cell)).collect::<Vec<_>>()
+            overlay
+                .nodes
+                .iter()
+                .map(|n| (n.uid, n.cell))
+                .collect::<Vec<_>>(),
+            again
+                .nodes
+                .iter()
+                .map(|n| (n.uid, n.cell))
+                .collect::<Vec<_>>()
         );
         // Nothing renders on the wrong sheet, and a filter that hides the
         // anchor's group hides the sketch.

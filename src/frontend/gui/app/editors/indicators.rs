@@ -142,11 +142,10 @@ impl VellumGuiApp {
         // GUI icon art inputs, gathered up front; changes collected in the
         // closure and applied to ui_settings afterwards.
         let icon_sets = crate::config::pool::set_names("statusicons");
-        let pool_images: Vec<(String, String)> =
-            crate::config::pool::list_category("statusicons")
-                .iter()
-                .map(|image| (image.pool_path.clone(), image.display_label()))
-                .collect();
+        let pool_images: Vec<(String, String)> = crate::config::pool::list_category("statusicons")
+            .iter()
+            .map(|image| (image.pool_path.clone(), image.display_label()))
+            .collect();
         let art = self.skin_state.widget_art();
         let sheets: Vec<String> = art.as_ref().map(|a| a.sheet_names()).unwrap_or_default();
         // Effect-name suggestions for the shared condition builder (states).
@@ -228,147 +227,147 @@ impl VellumGuiApp {
                 const PANE_HEIGHT: f32 = 320.0;
                 let pane_size = egui::vec2(ui.available_width(), PANE_HEIGHT);
                 ui.allocate_ui(pane_size, |ui| {
-                ui.horizontal_top(|ui| {
-                    // Left: indicator list + add row.
-                    ui.vertical(|ui| {
-                        ui.set_width(200.0);
-                        ui.strong("Indicators");
-                        egui::ScrollArea::vertical()
-                            .id_salt("indicator_list_scroll")
-                            .max_height(PANE_HEIGHT)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                for index in 0..state.entries.len() {
-                                    let (label, enabled) = {
-                                        let e = &state.entries[index];
-                                        (e.list_label(), e.enabled)
-                                    };
-                                    ui.horizontal(|ui| {
-                                        let mut on = enabled;
-                                        if ui
-                                            .checkbox(&mut on, "")
-                                            .on_hover_text(
-                                                "Enabled: disabled indicators are skipped \
+                    ui.horizontal_top(|ui| {
+                        // Left: indicator list + add row.
+                        ui.vertical(|ui| {
+                            ui.set_width(200.0);
+                            ui.strong("Indicators");
+                            egui::ScrollArea::vertical()
+                                .id_salt("indicator_list_scroll")
+                                .max_height(PANE_HEIGHT)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    for index in 0..state.entries.len() {
+                                        let (label, enabled) = {
+                                            let e = &state.entries[index];
+                                            (e.list_label(), e.enabled)
+                                        };
+                                        ui.horizontal(|ui| {
+                                            let mut on = enabled;
+                                            if ui
+                                                .checkbox(&mut on, "")
+                                                .on_hover_text(
+                                                    "Enabled: disabled indicators are skipped \
                                                  when building indicator windows.",
-                                            )
-                                            .changed()
-                                        {
-                                            state.entries[index].enabled = on;
-                                        }
-                                        if ui
-                                            .selectable_label(state.selected == index, label)
-                                            .clicked()
-                                        {
-                                            state.selected = index;
-                                        }
-                                    });
+                                                )
+                                                .changed()
+                                            {
+                                                state.entries[index].enabled = on;
+                                            }
+                                            if ui
+                                                .selectable_label(state.selected == index, label)
+                                                .clicked()
+                                            {
+                                                state.selected = index;
+                                            }
+                                        });
+                                    }
+                                });
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut state.new_id)
+                                        .hint_text("new id")
+                                        .desired_width(120.0),
+                                );
+                                if ui.button("Add").clicked() {
+                                    let id = state.new_id.trim().to_ascii_uppercase();
+                                    if id.is_empty() {
+                                        state.error = Some("Enter an indicator id.".to_string());
+                                    } else if state
+                                        .entries
+                                        .iter()
+                                        .any(|e| e.id.eq_ignore_ascii_case(&id))
+                                    {
+                                        state.error = Some(format!("'{id}' already exists."));
+                                    } else {
+                                        state.entries.push(EntryBuffer::empty(&id));
+                                        state.selected = state.entries.len() - 1;
+                                        state.new_id.clear();
+                                        state.error = None;
+                                    }
                                 }
                             });
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut state.new_id)
-                                    .hint_text("new id")
-                                    .desired_width(120.0),
-                            );
-                            if ui.button("Add").clicked() {
-                                let id = state.new_id.trim().to_ascii_uppercase();
-                                if id.is_empty() {
-                                    state.error = Some("Enter an indicator id.".to_string());
-                                } else if state
-                                    .entries
-                                    .iter()
-                                    .any(|e| e.id.eq_ignore_ascii_case(&id))
-                                {
-                                    state.error = Some(format!("'{id}' already exists."));
-                                } else {
-                                    state.entries.push(EntryBuffer::empty(&id));
-                                    state.selected = state.entries.len() - 1;
-                                    state.new_id.clear();
-                                    state.error = None;
-                                }
-                            }
                         });
-                    });
 
-                    ui.separator();
+                        ui.separator();
 
-                    // Right: the selected indicator's image editor.
-                    ui.vertical(|ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("indicator_editor_scroll")
-                            .max_height(PANE_HEIGHT)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                if let Some(entry) = state.entries.get_mut(state.selected) {
-                                    ui.horizontal(|ui| {
-                                        ui.strong("Id");
-                                        ui.add(
-                                            egui::TextEdit::singleline(&mut entry.id)
-                                                .desired_width(160.0),
+                        // Right: the selected indicator's image editor.
+                        ui.vertical(|ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt("indicator_editor_scroll")
+                                .max_height(PANE_HEIGHT)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    if let Some(entry) = state.entries.get_mut(state.selected) {
+                                        ui.horizontal(|ui| {
+                                            ui.strong("Id");
+                                            ui.add(
+                                                egui::TextEdit::singleline(&mut entry.id)
+                                                    .desired_width(160.0),
+                                            );
+                                            if ui.button("Remove indicator").clicked() {
+                                                remove_index = Some(state.selected);
+                                            }
+                                        });
+                                        ui.separator();
+                                        // Active (Y) icon: shown when the game
+                                        // reports this indicator active. "Default
+                                        // (by id)" falls back to the built-in
+                                        // pictogram / skin sprite named for the id.
+                                        Self::render_icon_picker_row(
+                                            ui,
+                                            &format!("status_active_icon_{}", entry.id),
+                                            "Active icon (Y)",
+                                            &mut entry.icon_ref,
+                                            Some("Default (by id)"),
+                                            Some("None (no art)"),
+                                            &pool_images,
+                                            &sheets,
+                                            art.as_deref(),
                                         );
-                                        if ui.button("Remove indicator").clicked() {
-                                            remove_index = Some(state.selected);
-                                        }
-                                    });
-                                    ui.separator();
-                                    // Active (Y) icon: shown when the game
-                                    // reports this indicator active. "Default
-                                    // (by id)" falls back to the built-in
-                                    // pictogram / skin sprite named for the id.
-                                    Self::render_icon_picker_row(
-                                        ui,
-                                        &format!("status_active_icon_{}", entry.id),
-                                        "Active icon (Y)",
-                                        &mut entry.icon_ref,
-                                        Some("Default (by id)"),
-                                        Some("None (no art)"),
-                                        &pool_images,
-                                        &sheets,
-                                        art.as_deref(),
-                                    );
-                                    // Inactive (N) icon: shown when the game
-                                    // reports this indicator inactive. Defaults
-                                    // to no image — inactive art is opt-in, not
-                                    // a dimmed copy of the active icon.
-                                    Self::render_icon_picker_row(
-                                        ui,
-                                        &format!("status_inactive_icon_{}", entry.id),
-                                        "Inactive icon (N)",
-                                        &mut entry.inactive_icon_ref,
-                                        Some("None (blank)"),
-                                        None,
-                                        &pool_images,
-                                        &sheets,
-                                        art.as_deref(),
-                                    );
-                                    ui.weak(
-                                        "Active shows when the game reports this status on \
+                                        // Inactive (N) icon: shown when the game
+                                        // reports this indicator inactive. Defaults
+                                        // to no image — inactive art is opt-in, not
+                                        // a dimmed copy of the active icon.
+                                        Self::render_icon_picker_row(
+                                            ui,
+                                            &format!("status_inactive_icon_{}", entry.id),
+                                            "Inactive icon (N)",
+                                            &mut entry.inactive_icon_ref,
+                                            Some("None (blank)"),
+                                            None,
+                                            &pool_images,
+                                            &sheets,
+                                            art.as_deref(),
+                                        );
+                                        ui.weak(
+                                            "Active shows when the game reports this status on \
                                          (Y); inactive when off (N). Inactive is blank unless \
                                          you set an image. Conditions below override both.",
-                                    );
-                                    ui.separator();
-                                    ui.strong("Conditions (first match wins)");
-                                    ui.weak(
-                                        "Each condition that matches the game state can \
+                                        );
+                                        ui.separator();
+                                        ui.strong("Conditions (first match wins)");
+                                        ui.weak(
+                                            "Each condition that matches the game state can \
                                          show a different image. Checked top to bottom; \
                                          the first match's icon is used.",
-                                    );
-                                    Self::render_status_states(
-                                        ui,
-                                        &entry.id,
-                                        &mut entry.states,
-                                        &pool_images,
-                                        &sheets,
-                                        art.as_deref(),
-                                        &suggestions,
-                                    );
-                                } else {
-                                    ui.weak("Add or select an indicator to edit its icon.");
-                                }
-                            });
+                                        );
+                                        Self::render_status_states(
+                                            ui,
+                                            &entry.id,
+                                            &mut entry.states,
+                                            &pool_images,
+                                            &sheets,
+                                            art.as_deref(),
+                                            &suggestions,
+                                        );
+                                    } else {
+                                        ui.weak("Add or select an indicator to edit its icon.");
+                                    }
+                                });
+                        });
                     });
-                });
                 }); // close the fixed-size allocate_ui around the two panes
 
                 if let Some(error) = &state.error {
@@ -432,22 +431,25 @@ impl VellumGuiApp {
                                         ))
                                         .width(140.0)
                                         .selected_text(if on { "Grayscale" } else { "Alpha dim" })
-                                        .show_ui(ui, |ui| {
-                                            if ui.selectable_label(on, "Grayscale").clicked()
-                                                && !on
-                                            {
-                                                on = true;
-                                                gray_override_changes
-                                                    .push((id.clone(), Some(true)));
-                                            }
-                                            if ui.selectable_label(!on, "Alpha dim").clicked()
-                                                && on
-                                            {
-                                                on = false;
-                                                gray_override_changes
-                                                    .push((id.clone(), Some(false)));
-                                            }
-                                        });
+                                        .show_ui(
+                                            ui,
+                                            |ui| {
+                                                if ui.selectable_label(on, "Grayscale").clicked()
+                                                    && !on
+                                                {
+                                                    on = true;
+                                                    gray_override_changes
+                                                        .push((id.clone(), Some(true)));
+                                                }
+                                                if ui.selectable_label(!on, "Alpha dim").clicked()
+                                                    && on
+                                                {
+                                                    on = false;
+                                                    gray_override_changes
+                                                        .push((id.clone(), Some(false)));
+                                                }
+                                            },
+                                        );
                                         if ui
                                             .small_button("✕")
                                             .on_hover_text("Follow the global toggle again")
@@ -593,7 +595,9 @@ impl VellumGuiApp {
             } else {
                 state.error = None;
             }
-            let store = IndicatorTemplateStore { indicators: entries };
+            let store = IndicatorTemplateStore {
+                indicators: entries,
+            };
             match Config::save_indicator_template_store(&store) {
                 Ok(()) => {
                     // Refresh the render-loop cache so new icons/states show

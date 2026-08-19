@@ -30,7 +30,10 @@ impl StageMap {
     }
 
     fn pt(&self, x: f32, y: f32) -> egui::Pos2 {
-        egui::pos2(self.origin.x + x * self.scale, self.origin.y + y * self.scale)
+        egui::pos2(
+            self.origin.x + x * self.scale,
+            self.origin.y + y * self.scale,
+        )
     }
 
     fn rect(&self, r: &ScreenRect) -> egui::Rect {
@@ -93,8 +96,7 @@ impl VellumGuiApp {
             _ => (true, false),
         };
 
-        let (rect, response) =
-            ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
+        let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
         let painter = ui.painter_at(rect);
         let map = StageMap::fit(rect);
         let field = &app_core.creature_field;
@@ -166,7 +168,8 @@ impl VellumGuiApp {
 
         // The stun swirl is the only motion; idle rooms request no frames.
         if any_animated {
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(50));
         }
 
         // Click-to-target: nearest card under the pointer wins.
@@ -253,7 +256,11 @@ impl VellumGuiApp {
         // Column lines.
         for k in 0..=cols.len() {
             let (a, b) = field.floor_col_line(k);
-            let stroke = if k == 0 || k == cols.len() { edge } else { grid };
+            let stroke = if k == 0 || k == cols.len() {
+                edge
+            } else {
+                grid
+            };
             painter.line_segment([map.pt(a.0, a.1), map.pt(b.0, b.1)], stroke);
         }
     }
@@ -323,7 +330,11 @@ impl VellumGuiApp {
             .as_ref()
             .and_then(|r| r.lift())
             .map(|l| (l.shadow_scale, (l.shadow_opacity * 60.0) as u8))
-            .unwrap_or(if lift.is_some() { (0.55, 24) } else { (1.0, 60) });
+            .unwrap_or(if lift.is_some() {
+                (0.55, 24)
+            } else {
+                (1.0, 60)
+            });
         let shadow_w = card.width() * 0.55 * shadow_scale;
         painter.add(egui::epaint::PathShape::convex_polygon(
             ellipse_points(map.pt(foot_x, foot_y), shadow_w, shadow_w * 0.24),
@@ -451,7 +462,12 @@ impl VellumGuiApp {
                 .statuses
                 .iter()
                 .map(String::as_str)
-                .filter(|s| !matches!(*s, "prone" | "kneeling" | "sitting" | "flying" | "hovering" | "stunned"))
+                .filter(|s| {
+                    !matches!(
+                        *s,
+                        "prone" | "kneeling" | "sitting" | "flying" | "hovering" | "stunned"
+                    )
+                })
                 .collect();
             if !badges.is_empty() {
                 let text = badges.join(" ");
@@ -601,12 +617,7 @@ impl VellumGuiApp {
                         }
                         _ => 255,
                     };
-                    painter.image(
-                        texture.id(),
-                        rect,
-                        uv,
-                        Color32::from_white_alpha(alpha),
-                    );
+                    painter.image(texture.id(), rect, uv, Color32::from_white_alpha(alpha));
                 }
                 OverlaySpace::Screen => {
                     let pt = anchor_pt(overlay.anchor.as_deref().unwrap_or("head"));
@@ -618,8 +629,7 @@ impl VellumGuiApp {
                             let period = a.period_ms.max(1) as f64;
                             for k in 0..a.count.max(1) {
                                 let ph = (now_ms / period * std::f64::consts::TAU) as f32
-                                    + k as f32 * std::f32::consts::TAU
-                                        / a.count.max(1) as f32;
+                                    + k as f32 * std::f32::consts::TAU / a.count.max(1) as f32;
                                 let depth = (ph.sin() + 1.0) / 2.0;
                                 let size = dest.width() * (0.10 + 0.05 * depth);
                                 let center = egui::pos2(
@@ -628,10 +638,7 @@ impl VellumGuiApp {
                                 );
                                 painter.image(
                                     texture.id(),
-                                    egui::Rect::from_center_size(
-                                        center,
-                                        egui::vec2(size, size),
-                                    ),
+                                    egui::Rect::from_center_size(center, egui::vec2(size, size)),
                                     uv,
                                     Color32::from_white_alpha(140 + (depth * 100.0) as u8),
                                 );

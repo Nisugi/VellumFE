@@ -400,12 +400,14 @@ impl VellumGuiApp {
                     // Default to a night variant: that is the case this
                     // exists for, and it is one combo change away from any
                     // other phase.
-                    entry.variants.push(crate::config::room_images::RoomImageVariant {
-                        name: state.new_image.clone(),
-                        when: crate::config::Condition::TimeOfDay {
-                            phase: DayPhase::Night,
-                        },
-                    });
+                    entry
+                        .variants
+                        .push(crate::config::room_images::RoomImageVariant {
+                            name: state.new_image.clone(),
+                            when: crate::config::Condition::TimeOfDay {
+                                phase: DayPhase::Night,
+                            },
+                        });
                 }
             }
             Some(Op::RemoveVariant { image, variant }) => {

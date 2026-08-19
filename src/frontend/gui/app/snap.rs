@@ -281,13 +281,19 @@ fn axis_candidates<'a>(
                 value: lo,
                 kind: SnapGuideKind::Sibling,
                 target: Some(index),
-                promote: Some(EdgeRef::Sibling { key: key.clone(), side: AxisSide::Min }),
+                promote: Some(EdgeRef::Sibling {
+                    key: key.clone(),
+                    side: AxisSide::Min,
+                }),
             });
             candidates.push(AxisCandidate {
                 value: hi,
                 kind: SnapGuideKind::Sibling,
                 target: Some(index),
-                promote: Some(EdgeRef::Sibling { key: key.clone(), side: AxisSide::Max }),
+                promote: Some(EdgeRef::Sibling {
+                    key: key.clone(),
+                    side: AxisSide::Max,
+                }),
             });
         }
     }
@@ -394,54 +400,53 @@ pub(super) fn snap_rect(
     // goes first; the max edge then re-checks the extent so a tiny window
     // over a coarse grid never collapses onto a single line.
     if params.move_sizes_to_grid && params.grid > 0.0 {
-        let mut conform =
-            |gesture: AxisGesture,
-             lo: &mut f32,
-             hi: &mut f32,
-             origin: f32,
-             min_extent: f32,
-             max_extent: f32,
-             vertical: bool,
-             names: [&'static str; 2],
-             guides: &mut Vec<SnapGuide>| {
-                if gesture != AxisGesture::Translate {
-                    return;
+        let mut conform = |gesture: AxisGesture,
+                           lo: &mut f32,
+                           hi: &mut f32,
+                           origin: f32,
+                           min_extent: f32,
+                           max_extent: f32,
+                           vertical: bool,
+                           names: [&'static str; 2],
+                           guides: &mut Vec<SnapGuide>| {
+            if gesture != AxisGesture::Translate {
+                return;
+            }
+            let line_near =
+                |pos: f32| origin + ((pos - origin) / params.grid).round() * params.grid;
+            let lo_line = line_near(*lo);
+            let lo_delta = lo_line - *lo;
+            if lo_delta.abs() <= params.radius && lo_delta.abs() > 0.01 {
+                let extent = *hi - lo_line;
+                if extent >= min_extent - 0.01 && extent <= max_extent + 0.01 {
+                    *lo = lo_line;
+                    guides.push(SnapGuide {
+                        vertical,
+                        line: lo_line,
+                        kind: SnapGuideKind::Grid,
+                        edge: names[0],
+                        target: None,
+                        promote: None,
+                    });
                 }
-                let line_near =
-                    |pos: f32| origin + ((pos - origin) / params.grid).round() * params.grid;
-                let lo_line = line_near(*lo);
-                let lo_delta = lo_line - *lo;
-                if lo_delta.abs() <= params.radius && lo_delta.abs() > 0.01 {
-                    let extent = *hi - lo_line;
-                    if extent >= min_extent - 0.01 && extent <= max_extent + 0.01 {
-                        *lo = lo_line;
-                        guides.push(SnapGuide {
-                            vertical,
-                            line: lo_line,
-                            kind: SnapGuideKind::Grid,
-                            edge: names[0],
-                            target: None,
-                            promote: None,
-                        });
-                    }
+            }
+            let hi_line = line_near(*hi);
+            let hi_delta = hi_line - *hi;
+            if hi_delta.abs() <= params.radius && hi_delta.abs() > 0.01 {
+                let extent = hi_line - *lo;
+                if extent >= min_extent - 0.01 && extent <= max_extent + 0.01 {
+                    *hi = hi_line;
+                    guides.push(SnapGuide {
+                        vertical,
+                        line: hi_line,
+                        kind: SnapGuideKind::Grid,
+                        edge: names[1],
+                        target: None,
+                        promote: None,
+                    });
                 }
-                let hi_line = line_near(*hi);
-                let hi_delta = hi_line - *hi;
-                if hi_delta.abs() <= params.radius && hi_delta.abs() > 0.01 {
-                    let extent = hi_line - *lo;
-                    if extent >= min_extent - 0.01 && extent <= max_extent + 0.01 {
-                        *hi = hi_line;
-                        guides.push(SnapGuide {
-                            vertical,
-                            line: hi_line,
-                            kind: SnapGuideKind::Grid,
-                            edge: names[1],
-                            target: None,
-                            promote: None,
-                        });
-                    }
-                }
-            };
+            }
+        };
         let (mut lo, mut hi) = (rect.min.x, rect.max.x);
         conform(
             gesture_x,
@@ -535,10 +540,8 @@ impl VellumGuiApp {
             .map(|drag| drag.start)
             .expect("just ensured");
 
-        let gesture_x =
-            classify_axis(reported.min.x - start.min.x, reported.max.x - start.max.x);
-        let gesture_y =
-            classify_axis(reported.min.y - start.min.y, reported.max.y - start.max.y);
+        let gesture_x = classify_axis(reported.min.x - start.min.x, reported.max.x - start.max.x);
+        let gesture_y = classify_axis(reported.min.y - start.min.y, reported.max.y - start.max.y);
 
         let (snapped, guides) = if suspended {
             (reported, Vec::new())
@@ -608,7 +611,12 @@ impl VellumGuiApp {
     /// the live gesture draws anything — guides are cleared and rebuilt
     /// by the owning zone's pass each frame, and the grid check here
     /// keeps a header drag from carpeting the center in grid lines.
-    pub(super) fn paint_snap_overlays(&self, ctx: &egui::Context, zone: GuiShellZone, bounds: Rect) {
+    pub(super) fn paint_snap_overlays(
+        &self,
+        ctx: &egui::Context,
+        zone: GuiShellZone,
+        bounds: Rect,
+    ) {
         let settings = &self.ui_settings;
         let gesture_live = self
             .zone_snap_drag
@@ -718,7 +726,13 @@ mod tests {
     }
 
     fn sib(name: &str, r: Rect) -> (TabKey, String, Rect) {
-        (TabKey::TextByName { id: name.to_string() }, name.to_string(), r)
+        (
+            TabKey::TextByName {
+                id: name.to_string(),
+            },
+            name.to_string(),
+            r,
+        )
     }
 
     const MIN: Vec2 = Vec2::new(120.0, 90.0);
@@ -777,7 +791,9 @@ mod tests {
             &params(8.0),
         );
         assert_eq!(snapped.min.y, 197.0);
-        assert!(guides.iter().any(|guide| !guide.vertical && guide.line == 197.0));
+        assert!(guides
+            .iter()
+            .any(|guide| !guide.vertical && guide.line == 197.0));
     }
 
     #[test]
@@ -1081,13 +1097,19 @@ mod tests {
         for (bottom, expected_line) in [(290.0, 288.0), (338.0, 336.0), (387.0, 384.0)] {
             let reported = rect(100.0, 100.0, 300.0, bottom);
             // Classification straight from totals, as the hook computes it.
-            let gesture_y = classify_axis(
-                reported.min.y - start.min.y,
-                reported.max.y - start.max.y,
-            );
+            let gesture_y =
+                classify_axis(reported.min.y - start.min.y, reported.max.y - start.max.y);
             assert_eq!(gesture_y, AxisGesture::MaxEdge);
-            let (snapped, guides) =
-                snap_rect(reported, AxisGesture::Idle, gesture_y, BOUNDS, &[], MIN, MAX, &p);
+            let (snapped, guides) = snap_rect(
+                reported,
+                AxisGesture::Idle,
+                gesture_y,
+                BOUNDS,
+                &[],
+                MIN,
+                MAX,
+                &p,
+            );
             assert_eq!(guides.len(), 1, "exactly one guide for a side handle");
             assert!(!guides[0].vertical);
             assert_eq!(guides[0].edge, "bottom", "guide on the dragged edge");

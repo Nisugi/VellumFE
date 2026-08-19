@@ -35,10 +35,7 @@ pub fn addable_by_category(
 
 /// Layout windows by category filtered on shown state — the Hide/Edit
 /// menus' source.
-pub fn visible_by_category(
-    layout: &Layout,
-    shown: bool,
-) -> HashMap<WidgetCategory, Vec<String>> {
+pub fn visible_by_category(layout: &Layout, shown: bool) -> HashMap<WidgetCategory, Vec<String>> {
     Config::get_visible_templates_by_category(layout, shown)
 }
 
@@ -113,7 +110,7 @@ mod tests {
     /// replaces the delegation, THIS test (plus the Phase 0 golden)
     /// proves the swap changed nothing.
     #[test]
-    fn facade_is_equivalent_to_the_template_catalog()  {
+    fn facade_is_equivalent_to_the_template_catalog() {
         let empty: Layout = toml::from_str("windows = []").unwrap();
         for game in [None, Some(GameType::GS4), Some(GameType::DR)] {
             assert_eq!(

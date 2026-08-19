@@ -311,7 +311,10 @@ mod tests {
         // Name path with exclude veto; later entries still get a chance
         // (here none match, so the item is untyped).
         assert_eq!(data.classify("lucky rock", "rock"), None);
-        assert_eq!(data.classify("smooth rock", "rock").as_deref(), Some("junk"));
+        assert_eq!(
+            data.classify("smooth rock", "rock").as_deref(),
+            Some("junk")
+        );
         assert_eq!(data.classify("vultite greatsword", "greatsword"), None);
         assert_eq!(
             data.sellable("blue sapphire", "sapphire").as_deref(),
@@ -346,16 +349,22 @@ mod tests {
 
     #[test]
     fn bundled_snapshot_compiles_completely() {
-        let data =
-            GameObjData::parse(crate::core::data_pack::GAMEOBJ_DATA.bundled);
+        let data = GameObjData::parse(crate::core::data_pack::GAMEOBJ_DATA.bundled);
         assert!(data.type_count() >= 60, "types: {}", data.type_count());
-        assert!(data.sellable_count() >= 3, "sellable: {}", data.sellable_count());
+        assert!(
+            data.sellable_count() >= 3,
+            "sellable: {}",
+            data.sellable_count()
+        );
         // Every regex in the snapshot must compile on one of the two
         // engines. A future upstream copy that breaks this should fail
         // here, not silently drop categories.
         assert!(data.skipped.is_empty(), "skipped: {:?}", data.skipped);
         // Name path, noun path, and the lookahead against the real data.
-        assert_eq!(data.classify("quartz crystal", "crystal").as_deref(), Some("gem"));
+        assert_eq!(
+            data.classify("quartz crystal", "crystal").as_deref(),
+            Some("gem")
+        );
         assert!(data.is_type("sparkling ruby pendant", "pendant", "jewelry"));
         assert!(data.is_type("ornate silver plate", "plate", "jewelry"));
         assert!(!data.is_type("some plate", "plate", "jewelry"));

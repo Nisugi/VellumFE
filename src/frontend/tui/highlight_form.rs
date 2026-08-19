@@ -290,7 +290,7 @@ impl HighlightFormWidget {
             alert_anchor_index: 4, // Center, the schema default
             alert_duration,
             alert_cooldown,
-            is_global: true,        // Default to global scope
+            is_global: true, // Default to global scope
             rumble: None,
             rumble_options: vec!["(none)".to_string()],
             rumble_index: 0,
@@ -696,8 +696,7 @@ impl HighlightFormWidget {
                     19 => {
                         // Rumble dropdown: cycle (none) -> patterns -> (none)
                         if !self.rumble_options.is_empty() {
-                            self.rumble_index =
-                                (self.rumble_index + 1) % self.rumble_options.len();
+                            self.rumble_index = (self.rumble_index + 1) % self.rumble_options.len();
                             self.update_rumble_from_index();
                         }
                     }
@@ -2642,5 +2641,4 @@ mod tests {
         };
         assert!(pattern.alert.is_none());
     }
-
 }

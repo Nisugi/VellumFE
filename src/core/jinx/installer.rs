@@ -27,8 +27,7 @@ const MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 /// A shared HTTPS agent on the same native-tls stack as eAccess login and the
 /// mapdb downloader — no second TLS stack, no rustls.
 pub fn agent() -> Result<ureq::Agent, String> {
-    let connector =
-        native_tls::TlsConnector::new().map_err(|e| format!("TLS init failed: {e}"))?;
+    let connector = native_tls::TlsConnector::new().map_err(|e| format!("TLS init failed: {e}"))?;
     Ok(ureq::AgentBuilder::new()
         .tls_connector(std::sync::Arc::new(connector))
         .timeout_connect(Duration::from_secs(15))
@@ -482,7 +481,10 @@ mod tests {
     use crate::core::jinx::repo::RepoSource;
 
     fn repo(url: &str) -> RepoSource {
-        RepoSource { name: "test-repo".into(), url: url.into() }
+        RepoSource {
+            name: "test-repo".into(),
+            url: url.into(),
+        }
     }
 
     #[test]
@@ -511,8 +513,10 @@ mod tests {
             other => panic!("expected Installed, got {other:?}"),
         };
         assert_eq!(std::fs::read(&dest).unwrap(), body_v1);
-        assert!(dest.ends_with("global/data/gameobj-data.xml") ||
-                dest.ends_with("global\\data\\gameobj-data.xml"));
+        assert!(
+            dest.ends_with("global/data/gameobj-data.xml")
+                || dest.ends_with("global\\data\\gameobj-data.xml")
+        );
         // Metadata recorded with the delivered digest.
         assert_eq!(db.get("gameobj-data.xml").unwrap().digest, a1.md5);
         assert_eq!(db.get("gameobj-data.xml").unwrap().kind, "data");
@@ -527,7 +531,10 @@ mod tests {
         let a2 = asset("/data/gameobj-data.xml", &digest_b64(&body_v2));
         let base = spawn_stub(body_v2.clone());
         let err = install_asset(&ag, &repo(&base), &a2, &mut db, false).unwrap_err();
-        assert!(err.contains("already exists") && err.contains("--force"), "{err}");
+        assert!(
+            err.contains("already exists") && err.contains("--force"),
+            "{err}"
+        );
 
         // ...and applied with overwrite.
         let base = spawn_stub(body_v2.clone());
@@ -557,8 +564,12 @@ mod tests {
             InstallOutcome::Installed { path } => path,
             other => panic!("expected Installed, got {other:?}"),
         };
-        assert!(dest.ends_with("global/images/icons/runes.png") ||
-                dest.ends_with("global\\images\\icons\\runes.png"), "{}", dest.display());
+        assert!(
+            dest.ends_with("global/images/icons/runes.png")
+                || dest.ends_with("global\\images\\icons\\runes.png"),
+            "{}",
+            dest.display()
+        );
         assert_eq!(db.get("runes.png").unwrap().kind, "iconmap");
 
         std::env::remove_var("VELLUM_FE_DIR");
@@ -582,8 +593,12 @@ mod tests {
             InstallOutcome::Installed { path } => path,
             other => panic!("expected Installed, got {other:?}"),
         };
-        assert!(dest.ends_with("global/images/dolls/soldier.png") ||
-                dest.ends_with("global\\images\\dolls\\soldier.png"), "{}", dest.display());
+        assert!(
+            dest.ends_with("global/images/dolls/soldier.png")
+                || dest.ends_with("global\\images\\dolls\\soldier.png"),
+            "{}",
+            dest.display()
+        );
         assert_eq!(db.get("soldier.png").unwrap().kind, "doll");
 
         std::env::remove_var("VELLUM_FE_DIR");
@@ -733,7 +748,10 @@ mod tests {
             "{}",
             dest.display()
         );
-        assert!(dest.starts_with(cfg.path()), "must stay under the config dir");
+        assert!(
+            dest.starts_with(cfg.path()),
+            "must stay under the config dir"
+        );
 
         std::env::remove_var("VELLUM_FE_DIR");
     }

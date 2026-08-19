@@ -43,7 +43,6 @@ impl ThemeCache {
     pub fn get_theme_arc(&self) -> Arc<AppTheme> {
         Arc::clone(&self.cached_theme)
     }
-
 }
 
 impl Default for ThemeCache {

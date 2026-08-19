@@ -115,12 +115,12 @@ impl AppCore {
         // "That is already open" landed since the scan's `open` — the sack was
         // open before we touched it; don't close it at completion. Peeked (not
         // drained) here: tick_travel drains the queue right after us.
-        if self
-            .game_state
-            .move_feedback
-            .iter()
-            .any(|(_, f)| matches!(f, crate::core::move_feedback::MoveFeedback::ContainerAlreadyOpen))
-        {
+        if self.game_state.move_feedback.iter().any(|(_, f)| {
+            matches!(
+                f,
+                crate::core::move_feedback::MoveFeedback::ContainerAlreadyOpen
+            )
+        }) {
             if let Some(open) = self.day_pass_scan_open.as_mut() {
                 open.1 = true;
             }
@@ -128,8 +128,8 @@ impl AppCore {
         let Some((destination, deadline, ids)) = self.pending_day_pass_scan.clone() else {
             return;
         };
-        let learned = !ids.is_empty()
-            && ids.iter().all(|id| self.game_state.day_passes.contains(id));
+        let learned =
+            !ids.is_empty() && ids.iter().all(|id| self.game_state.day_passes.contains(id));
         // Probe round (no ids): done as soon as the contents line shows ANY
         // pass — unknown ones get their look round on the re-plan; already-
         // known ones proceed straight to planning (don't sit out the
@@ -247,9 +247,7 @@ impl AppCore {
                 use crate::core::game_objects::Location;
                 let in_hand = matches!(loc, Location::Hand(_));
                 let return_to = match &loc {
-                    Location::Container(id) => objects
-                        .container(id)
-                        .map(|c| c.command_target()),
+                    Location::Container(id) => objects.container(id).map(|c| c.command_target()),
                     // Worn / at-feet / held: nothing to return it to.
                     _ => None,
                 };
@@ -567,9 +565,7 @@ impl AppCore {
             if h.len() < 6 {
                 return 0.0;
             }
-            let c = |i: usize| {
-                u8::from_str_radix(&h[i..i + 2], 16).unwrap_or(0) as f32 / 255.0
-            };
+            let c = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).unwrap_or(0) as f32 / 255.0;
             0.2126 * c(0) + 0.7152 * c(2) + 0.0722 * c(4)
         }
         let mut commands = self.travel.take_outbound();
@@ -946,5 +942,4 @@ impl AppCore {
         };
         self.map.note_room(uid, lich_id, snapshot);
     }
-
 }

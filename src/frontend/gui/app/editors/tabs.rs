@@ -52,8 +52,16 @@ impl TabBuffer {
         tab.name = self.name.trim().to_string();
         tab.stream = None; // legacy single-stream field superseded below
         tab.streams = super::custom_windows::parse_streams(&self.streams);
-        tab.ignore_activity = if self.ignore_activity { Some(true) } else { None };
-        tab.show_timestamps = if self.show_timestamps { Some(true) } else { None };
+        tab.ignore_activity = if self.ignore_activity {
+            Some(true)
+        } else {
+            None
+        };
+        tab.show_timestamps = if self.show_timestamps {
+            Some(true)
+        } else {
+            None
+        };
         tab
     }
 }
@@ -318,9 +326,7 @@ impl VellumGuiApp {
                                     .streams
                                     .split(',')
                                     .map(str::trim)
-                                    .filter(|s| {
-                                        !s.is_empty() && s.to_ascii_lowercase() != lower
-                                    })
+                                    .filter(|s| !s.is_empty() && s.to_ascii_lowercase() != lower)
                                     .collect::<Vec<_>>()
                                     .join(", ");
                                 !tab.streams.trim().is_empty()

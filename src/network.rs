@@ -85,8 +85,7 @@ impl RawLogger {
 
         let dir = config.logging.resolve_dir(config.character.as_deref())?;
         let buffer_lines = config.logging.buffer_lines.max(1);
-        let flush_interval =
-            StdDuration::from_millis(config.logging.flush_interval_ms.max(1));
+        let flush_interval = StdDuration::from_millis(config.logging.flush_interval_ms.max(1));
         let max_lines_per_file = config.logging.max_lines_per_file.max(1);
         let timestamps = config.logging.timestamps;
 
@@ -139,33 +138,18 @@ fn run_log_writer(
             Ok(line) => {
                 buffer.push(line);
                 if buffer.len() >= settings.buffer_lines {
-                    flush_log_buffer(
-                        &mut writer,
-                        &mut buffer,
-                        &mut lines_written,
-                        &settings,
-                    )?;
+                    flush_log_buffer(&mut writer, &mut buffer, &mut lines_written, &settings)?;
                 }
             }
             Err(std_mpsc::RecvTimeoutError::Timeout) => {
                 if !buffer.is_empty() {
-                    flush_log_buffer(
-                        &mut writer,
-                        &mut buffer,
-                        &mut lines_written,
-                        &settings,
-                    )?;
+                    flush_log_buffer(&mut writer, &mut buffer, &mut lines_written, &settings)?;
                 }
                 report_dropped(&dropped);
             }
             Err(std_mpsc::RecvTimeoutError::Disconnected) => {
                 if !buffer.is_empty() {
-                    flush_log_buffer(
-                        &mut writer,
-                        &mut buffer,
-                        &mut lines_written,
-                        &settings,
-                    )?;
+                    flush_log_buffer(&mut writer, &mut buffer, &mut lines_written, &settings)?;
                 }
                 report_dropped(&dropped);
                 writer.flush().ok();
@@ -279,7 +263,9 @@ impl DirectConnectConfig {
                     rpassword::prompt_password(prompt).context("Failed to read password")?
                 }
                 #[cfg(not(feature = "desktop"))]
-                anyhow::bail!("Password required for account {account} (no prompt available in this build)")
+                anyhow::bail!(
+                    "Password required for account {account} (no prompt available in this build)"
+                )
             }
         };
 
@@ -418,9 +404,7 @@ impl DirectConnection {
                         break;
                     }
                     Ok(Err(e)) => last_err = Some(anyhow::Error::from(e)),
-                    Err(_) => {
-                        last_err = Some(anyhow::anyhow!("connect to {addr} timed out"))
-                    }
+                    Err(_) => last_err = Some(anyhow::anyhow!("connect to {addr} timed out")),
                 }
             }
             connected

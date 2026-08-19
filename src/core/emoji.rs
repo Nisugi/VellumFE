@@ -170,9 +170,7 @@ pub fn strip_outbound_emoji(text: &str) -> Option<String> {
                     // empty), to avoid a double space / leading space.
                     changed = true;
                     i = j + 1;
-                    if (out.is_empty() || out.ends_with(' '))
-                        && i < bytes.len()
-                        && bytes[i] == b' '
+                    if (out.is_empty() || out.ends_with(' ')) && i < bytes.len() && bytes[i] == b' '
                     {
                         i += 1;
                     }
@@ -292,8 +290,7 @@ fn split_segment_with_custom(seg: &TextSegment, out: &mut Vec<TextSegment>) {
         let mut piece = seg.clone();
         piece.custom_emoji = None;
         // Resolve gemoji within the plain slice.
-        piece.text = replace_shortcodes(slice)
-            .unwrap_or_else(|| slice.to_string());
+        piece.text = replace_shortcodes(slice).unwrap_or_else(|| slice.to_string());
         out.push(piece);
     };
 
@@ -520,12 +517,9 @@ mod tests {
     #[test]
     fn custom_emoji_splits_into_tagged_segment() {
         let _g = CUSTOM_LOCK.lock().unwrap();
-        crate::core::custom_emoji::set_for_test(
-            crate::core::custom_emoji::registry_from_names(&[(
-                "vibecat",
-                crate::core::custom_emoji::EmojiFormat::Png,
-            )]),
-        );
+        crate::core::custom_emoji::set_for_test(crate::core::custom_emoji::registry_from_names(&[
+            ("vibecat", crate::core::custom_emoji::EmojiFormat::Png),
+        ]));
 
         let mut segments = vec![seg("hey :VibeCat: there")];
         apply_to_segments(&mut segments);
@@ -546,23 +540,26 @@ mod tests {
         let _g = CUSTOM_LOCK.lock().unwrap();
         // Register a custom ":grin:" so it shadows the gemoji, plus a normal
         // gemoji ":heart:" that must still resolve to Unicode in the same line.
-        crate::core::custom_emoji::set_for_test(
-            crate::core::custom_emoji::registry_from_names(&[(
-                "grin",
-                crate::core::custom_emoji::EmojiFormat::Gif,
-            )]),
-        );
+        crate::core::custom_emoji::set_for_test(crate::core::custom_emoji::registry_from_names(&[
+            ("grin", crate::core::custom_emoji::EmojiFormat::Gif),
+        ]));
 
         let mut segments = vec![seg(":grin: and :heart:")];
         apply_to_segments(&mut segments);
 
         // :grin: → tagged custom (kept as text), :heart: → Unicode.
-        let tagged: Vec<_> = segments.iter().filter(|s| s.custom_emoji.is_some()).collect();
+        let tagged: Vec<_> = segments
+            .iter()
+            .filter(|s| s.custom_emoji.is_some())
+            .collect();
         assert_eq!(tagged.len(), 1);
         assert_eq!(tagged[0].custom_emoji.as_deref(), Some("grin"));
         assert_eq!(tagged[0].text, ":grin:");
         let joined: String = segments.iter().map(|s| s.text.as_str()).collect();
-        assert!(joined.contains('\u{2764}'), "gemoji heart still resolves: {joined:?}");
+        assert!(
+            joined.contains('\u{2764}'),
+            "gemoji heart still resolves: {joined:?}"
+        );
 
         crate::core::custom_emoji::set_for_test(Default::default());
     }
@@ -570,12 +567,9 @@ mod tests {
     #[test]
     fn unknown_custom_name_is_left_as_gemoji_only() {
         let _g = CUSTOM_LOCK.lock().unwrap();
-        crate::core::custom_emoji::set_for_test(
-            crate::core::custom_emoji::registry_from_names(&[(
-                "vibecat",
-                crate::core::custom_emoji::EmojiFormat::Png,
-            )]),
-        );
+        crate::core::custom_emoji::set_for_test(crate::core::custom_emoji::registry_from_names(&[
+            ("vibecat", crate::core::custom_emoji::EmojiFormat::Png),
+        ]));
 
         // :notinstalled: isn't custom and isn't gemoji → untouched, no split.
         let mut segments = vec![seg("a :notinstalled: b")];

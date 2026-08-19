@@ -62,7 +62,8 @@ impl VellumGuiApp {
         // stuck waiting for an idle frame.
         self.webui_rx = None;
         self.webui_fetches_inflight.clear();
-        self.app_core.start_webui(self._runtime.handle(), &handshake);
+        self.app_core
+            .start_webui(self._runtime.handle(), &handshake);
 
         let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<crate::webui::WebUiEvent>();
         let (forward_tx, forward_rx) = mpsc::unbounded_channel::<crate::webui::WebUiEvent>();
@@ -211,10 +212,7 @@ impl VellumGuiApp {
                                 self.app_core.layout.windows.retain(|w| w.name() != *name);
                             }
                             self.app_core.schedule_layout_autosave();
-                            tracing::info!(
-                                "WebUI page '{}' ended; closed transient panel",
-                                page
-                            );
+                            tracing::info!("WebUI page '{}' ended; closed transient panel", page);
                         }
                     }
                 }
@@ -278,7 +276,12 @@ impl VellumGuiApp {
         }
     }
 
-    pub(super) fn apply_webui_render(&mut self, page: &str, seq: u64, tree: crate::data::webui::WebUiNode) {
+    pub(super) fn apply_webui_render(
+        &mut self,
+        page: &str,
+        seq: u64,
+        tree: crate::data::webui::WebUiNode,
+    ) {
         let mut applied = false;
         for window in self.app_core.ui_state.windows.values_mut() {
             if let WindowContent::WebUi(content) = &mut window.content {
@@ -368,8 +371,7 @@ impl VellumGuiApp {
     pub(super) fn refresh_webui_window_kinds(&mut self) {
         for window in self.app_core.ui_state.windows.values_mut() {
             if let WindowContent::WebUi(content) = &mut window.content {
-                if let Some(descriptor) =
-                    self.webui_pages.iter().find(|p| p.id == content.page_id)
+                if let Some(descriptor) = self.webui_pages.iter().find(|p| p.id == content.page_id)
                 {
                     if descriptor.kind.is_some() {
                         content.kind = descriptor.kind.clone();
@@ -413,21 +415,27 @@ impl VellumGuiApp {
     /// sees the viewer leave (scripts with a window watchdog - ;map - treat
     /// that as the window closing, matching the GTK/browser lifecycle).
     pub(super) fn close_webui_window(&mut self, name: &str) {
-        let page_id = self.app_core.ui_state.windows.get(name).and_then(|w| {
-            match &w.content {
+        let page_id = self
+            .app_core
+            .ui_state
+            .windows
+            .get(name)
+            .and_then(|w| match &w.content {
                 WindowContent::WebUi(content) => Some(content.page_id.clone()),
                 _ => None,
-            }
-        });
+            });
         let Some(page_id) = page_id else { return };
         self.app_core.remove_window(name);
         self.app_core.layout.windows.retain(|w| w.name() != name);
         self.app_core.schedule_layout_autosave();
         self.layout_dirty = true;
         // Only unsubscribe when no other window still shows the page.
-        let still_hosted = self.app_core.ui_state.windows.values().any(|w| {
-            matches!(&w.content, WindowContent::WebUi(c) if c.page_id == page_id)
-        });
+        let still_hosted = self
+            .app_core
+            .ui_state
+            .windows
+            .values()
+            .any(|w| matches!(&w.content, WindowContent::WebUi(c) if c.page_id == page_id));
         if !still_hosted {
             self.app_core.webui_unsubscribe(&page_id);
         }

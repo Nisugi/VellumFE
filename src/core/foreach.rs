@@ -125,8 +125,7 @@ fn glob_to_regex(value: &str) -> Result<regex::Regex, String> {
 }
 
 pub fn parse(raw: &str) -> Result<ForeachSpec, String> {
-    const USAGE: &str =
-        "usage: .foreach [unique] [first N] [after N] [sorted] [reversed] \
+    const USAGE: &str = "usage: .foreach [unique] [first N] [after N] [sorted] [reversed] \
          [attr=]value in <container>[,...][; command; ...]";
 
     let mut segments = raw.split(';');
@@ -213,10 +212,7 @@ pub fn parse(raw: &str) -> Result<ForeachSpec, String> {
     );
     let (attr, value, quick) = if match_all {
         (FilterAttr::Type, String::new(), false)
-    } else if filter_expr.len() > 2
-        && filter_expr.starts_with('/')
-        && filter_expr.ends_with('/')
-    {
+    } else if filter_expr.len() > 2 && filter_expr.starts_with('/') && filter_expr.ends_with('/') {
         (FilterAttr::Name, filter_expr.clone(), false)
     } else if let Some((attr, value)) = filter_expr.split_once('=') {
         let (attr, quick) = match attr.to_lowercase().as_str() {
@@ -307,14 +303,8 @@ impl ForeachSpec {
                     }
                 })
             }
-            FilterAttr::Noun => self
-                .patterns
-                .iter()
-                .any(|re| re.is_match(&candidate.noun)),
-            FilterAttr::Name => self
-                .patterns
-                .iter()
-                .any(|re| re.is_match(&candidate.name)),
+            FilterAttr::Noun => self.patterns.iter().any(|re| re.is_match(&candidate.noun)),
+            FilterAttr::Name => self.patterns.iter().any(|re| re.is_match(&candidate.name)),
         }
     }
 
@@ -647,10 +637,9 @@ mod tests {
 
     #[test]
     fn parses_the_full_grammar() {
-        let spec = parse(
-            "unique first 3 after 1 sorted gem in backpack, red sack?; get item; sell item",
-        )
-        .unwrap();
+        let spec =
+            parse("unique first 3 after 1 sorted gem in backpack, red sack?; get item; sell item")
+                .unwrap();
         assert!(spec.unique && spec.sorted && !spec.reversed);
         assert_eq!(spec.first, Some(3));
         assert_eq!(spec.after, Some(1));
@@ -691,12 +680,16 @@ mod tests {
         assert_eq!(spec.status.registered, Some(true));
         assert!(spec.status.is_active());
 
-        let mut marked_reg =
-            candidate("1", "sapphire", "blue sapphire", &["gem"]);
-        marked_reg.status = ItemStatus { marked: Some(true), registered: Some(true) };
-        let mut marked_only =
-            candidate("2", "sapphire", "blue sapphire", &["gem"]);
-        marked_only.status = ItemStatus { marked: Some(true), registered: Some(false) };
+        let mut marked_reg = candidate("1", "sapphire", "blue sapphire", &["gem"]);
+        marked_reg.status = ItemStatus {
+            marked: Some(true),
+            registered: Some(true),
+        };
+        let mut marked_only = candidate("2", "sapphire", "blue sapphire", &["gem"]);
+        marked_only.status = ItemStatus {
+            marked: Some(true),
+            registered: Some(false),
+        };
         let unscanned = candidate("3", "sapphire", "blue sapphire", &["gem"]);
 
         let all = vec![marked_reg, marked_only, unscanned];
@@ -777,10 +770,7 @@ mod tests {
             ]
         );
 
-        let commands = vec![
-            "get item".to_string(),
-            "put item in container".to_string(),
-        ];
+        let commands = vec!["get item".to_string(), "put item in container".to_string()];
         let steps = build_steps(&commands, &item, |_| None).unwrap();
         assert_eq!(
             steps,

@@ -623,7 +623,10 @@ impl Creature {
         // User-configured noun exclusions (case-insensitive).
         if let Some(noun) = self.noun.as_deref() {
             let noun_lower = noun.to_ascii_lowercase();
-            if excluded_nouns.iter().any(|e| e.eq_ignore_ascii_case(&noun_lower)) {
+            if excluded_nouns
+                .iter()
+                .any(|e| e.eq_ignore_ascii_case(&noun_lower))
+            {
                 return false;
             }
         }
@@ -814,10 +817,7 @@ impl CreatureFlags {
             "challenging" => self.challenging,
             "rider" => self.rider,
             "mount" => self.mount,
-            _ => self
-                .statuses
-                .iter()
-                .any(|s| s.eq_ignore_ascii_case(name)),
+            _ => self.statuses.iter().any(|s| s.eq_ignore_ascii_case(name)),
         }
     }
 }
@@ -1182,7 +1182,11 @@ impl ManagedInventoryItem {
         // string as the noun rather than losing the item.
         let raw_name = get("name").unwrap_or_default();
         let (article, adjective, noun) = match raw_name.splitn(3, ',').collect::<Vec<_>>()[..] {
-            [a, adj, n] => (a.trim().to_string(), adj.trim().to_string(), n.trim().to_string()),
+            [a, adj, n] => (
+                a.trim().to_string(),
+                adj.trim().to_string(),
+                n.trim().to_string(),
+            ),
             _ => (String::new(), String::new(), raw_name.trim().to_string()),
         };
         let name = [article.as_str(), adjective.as_str(), noun.as_str()]
@@ -1203,7 +1207,9 @@ impl ManagedInventoryItem {
             adjective,
             noun,
             long,
-            weight: get("weight").and_then(|w| w.trim().parse().ok()).unwrap_or(0),
+            weight: get("weight")
+                .and_then(|w| w.trim().parse().ok())
+                .unwrap_or(0),
             encum: get("encum").and_then(|v| v.trim().parse().ok()),
             in_max: get("in_max").and_then(|v| v.trim().parse().ok()),
             on_max: get("on_max").and_then(|v| v.trim().parse().ok()),
@@ -1307,9 +1313,7 @@ impl ManagedInventoryState {
     /// 0.1 lb, and `in` contents are skipped when the container reports
     /// `in_encum == 0` (deep/weightless containers don't pass their
     /// contents' weight to the carrier). Cycle-safe.
-    pub fn weight_breakdowns(
-        &self,
-    ) -> std::collections::HashMap<String, WeightBreakdown> {
+    pub fn weight_breakdowns(&self) -> std::collections::HashMap<String, WeightBreakdown> {
         let mut children: std::collections::HashMap<&str, Vec<&ManagedInventoryItem>> =
             std::collections::HashMap::new();
         for item in &self.items {
@@ -1345,13 +1349,8 @@ impl ManagedInventoryState {
                 if kid.relation == "in" && item.in_encum == Some(0) {
                     continue;
                 }
-                match (
-                    contents,
-                    resolve(kid, children, memo, visiting).total,
-                ) {
-                    (Some(sum), Some(t)) => {
-                        contents = Some(((sum + t) * 10.0).round() / 10.0)
-                    }
+                match (contents, resolve(kid, children, memo, visiting).total) {
+                    (Some(sum), Some(t)) => contents = Some(((sum + t) * 10.0).round() / 10.0),
                     _ => {
                         contents = None;
                         break;
@@ -1406,8 +1405,7 @@ impl ManagedInventoryState {
     pub fn descendant_counts(&self) -> std::collections::HashMap<String, usize> {
         let by_id: std::collections::HashMap<&str, &ManagedInventoryItem> =
             self.items.iter().map(|i| (i.id.as_str(), i)).collect();
-        let mut counts: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         for item in &self.items {
             let mut seen = std::collections::HashSet::new();
             let mut parent = item.parent.as_str();
@@ -1872,7 +1870,8 @@ impl GameState {
         for effects in self.creature_effects.values_mut() {
             effects.retain(|e| e.expires_at > now_server);
         }
-        self.creature_effects.retain(|_, effects| !effects.is_empty());
+        self.creature_effects
+            .retain(|_, effects| !effects.is_empty());
         self.merge_creature_effect_statuses();
     }
 
@@ -1945,7 +1944,8 @@ impl GameState {
             return;
         }
         self.line_seq += 1;
-        self.recent_lines.push_back((self.line_seq, line.to_string()));
+        self.recent_lines
+            .push_back((self.line_seq, line.to_string()));
         while self.recent_lines.len() > RAW_LINE_RING {
             self.recent_lines.pop_front();
         }
@@ -2165,7 +2165,9 @@ mod tests {
 
     #[test]
     fn test_is_body_part_matches_appendage_nouns() {
-        for noun in ["arm", "arms", "tentacle", "claws", "limb", "pincer", "palpi"] {
+        for noun in [
+            "arm", "arms", "tentacle", "claws", "limb", "pincer", "palpi",
+        ] {
             assert!(
                 body_part_creature("a severed thing", Some(noun)).is_body_part(),
                 "noun '{}' should be a body part",
@@ -2224,7 +2226,10 @@ mod tests {
 
         // Dead fails.
         let dead = Creature {
-            flags: Some(CreatureFlags { dead: true, ..Default::default() }),
+            flags: Some(CreatureFlags {
+                dead: true,
+                ..Default::default()
+            }),
             ..body_part_creature("slain orc", Some("orc"))
         };
         assert!(!dead.is_valid_target(&excluded));

@@ -115,8 +115,7 @@ impl VellumGuiApp {
                 self.commit_alertpack_change(&state.approvals);
             }
             Some(Op::ToggleDetails(name)) => {
-                state.expanded = (state.expanded.as_deref() != Some(name.as_str()))
-                    .then_some(name);
+                state.expanded = (state.expanded.as_deref() != Some(name.as_str())).then_some(name);
             }
             None => {}
         }
@@ -201,7 +200,11 @@ impl VellumGuiApp {
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             let expanded = state.expanded.as_deref() == Some(pack.name.as_str());
-            let label = if expanded { "Hide details" } else { "Review details" };
+            let label = if expanded {
+                "Hide details"
+            } else {
+                "Review details"
+            };
             if ui.button(label).clicked() {
                 *op = Some(Op::ToggleDetails(pack.name.clone()));
             }
@@ -297,7 +300,11 @@ mod tests {
     }
 
     fn state(packs: Vec<AlertPack>, approvals: AlertPackApprovals) -> AlertPacksEditorState {
-        AlertPacksEditorState { packs, approvals, expanded: None }
+        AlertPacksEditorState {
+            packs,
+            approvals,
+            expanded: None,
+        }
     }
 
     #[test]
@@ -334,14 +341,27 @@ mod tests {
 
         // Engine's behavior must agree.
         let mut highlights = HashMap::new();
-        Config::merge_alert_packs(&mut highlights, &[sensitive.clone()], &approvals, &RoomScope::default());
+        Config::merge_alert_packs(
+            &mut highlights,
+            &[sensitive.clone()],
+            &approvals,
+            &RoomScope::default(),
+        );
         assert!(highlights["pack:p/rewrite"].replace.is_none());
 
         // After approval, both agree again.
         approvals.approve("p", &sensitive.hash);
         let mut highlights = HashMap::new();
-        Config::merge_alert_packs(&mut highlights, &[sensitive], &approvals, &RoomScope::default());
-        assert_eq!(highlights["pack:p/rewrite"].replace.as_deref(), Some("KOBOLD"));
+        Config::merge_alert_packs(
+            &mut highlights,
+            &[sensitive],
+            &approvals,
+            &RoomScope::default(),
+        );
+        assert_eq!(
+            highlights["pack:p/rewrite"].replace.as_deref(),
+            Some("KOBOLD")
+        );
     }
 
     #[test]

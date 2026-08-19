@@ -7,9 +7,8 @@
 use super::super::VellumGuiApp;
 use super::color_field;
 use crate::config::{
-    Config, EffectCategory, HotbarButton, HotbarButtonState, Cmp, Condition,
-    HotbarCountdownSource, HotbarDef, HotbarIcon, HotbarStyle, IconMode, NameMatch, VitalKind,
-    VitalUnit,
+    Cmp, Condition, Config, EffectCategory, HotbarButton, HotbarButtonState, HotbarCountdownSource,
+    HotbarDef, HotbarIcon, HotbarStyle, IconMode, NameMatch, VitalKind, VitalUnit,
 };
 use crate::data::InputMode;
 use crate::frontend::gui::skin::SkinWidgetArt;
@@ -29,12 +28,7 @@ const INDICATOR_IDS: &[&str] = &[
     "dead",
 ];
 
-const CMPS: &[Cmp] = &[
-    Cmp::Lt,
-    Cmp::Le,
-    Cmp::Gt,
-    Cmp::Ge,
-];
+const CMPS: &[Cmp] = &[Cmp::Lt, Cmp::Le, Cmp::Gt, Cmp::Ge];
 
 const VITALS: &[VitalKind] = &[
     VitalKind::Health,
@@ -337,10 +331,7 @@ impl VellumGuiApp {
                                     .desired_width(220.0),
                             );
                             ui.label("cell px:");
-                            ui.add(
-                                egui::DragValue::new(&mut state.new_sheet_cell)
-                                    .range(8..=512),
-                            );
+                            ui.add(egui::DragValue::new(&mut state.new_sheet_cell).range(8..=512));
                             if active_skin.is_some() {
                                 ui.checkbox(&mut state.new_sheet_shared, "All skins")
                                     .on_hover_text(
@@ -373,8 +364,7 @@ impl VellumGuiApp {
                         ui.strong("Bars");
                         ui.separator();
                         let character = self.app_core.config.character.clone();
-                        let bars: Vec<HotbarDef> =
-                            self.app_core.config.hotbars.bars.clone();
+                        let bars: Vec<HotbarDef> = self.app_core.config.hotbars.bars.clone();
                         ui.horizontal(|ui| {
                             ui.add(
                                 egui::TextEdit::singleline(&mut state.new_bar_name)
@@ -386,8 +376,7 @@ impl VellumGuiApp {
                                 if name.is_empty() {
                                     state.error = Some("Bar name is required.".to_string());
                                 } else if self.app_core.config.hotbars.find_bar(&name).is_some() {
-                                    state.error =
-                                        Some(format!("Bar '{}' already exists.", name));
+                                    state.error = Some(format!("Bar '{}' already exists.", name));
                                 } else {
                                     load_bar = Some((
                                         HotbarDef {
@@ -437,401 +426,392 @@ impl VellumGuiApp {
                     ui.separator();
 
                     ui.vertical(|ui| {
-                    let Some(working) = &mut state.working else {
-                        ui.weak("Select a bar on the left, or add a new one.");
-                        return;
-                    };
-
-                    ui.horizontal(|ui| {
-                        ui.strong(format!("Bar: {}", working.name));
-                        ui.label("Title:");
-                        let mut title = working.title.clone().unwrap_or_default();
-                        if ui
-                            .add(egui::TextEdit::singleline(&mut title).desired_width(140.0))
-                            .changed()
-                        {
-                            working.title =
-                                (!title.trim().is_empty()).then(|| title.clone());
-                            state.dirty = true;
-                        }
-                        ui.label("Icon px:");
-                        let mut px = working.icon_size.unwrap_or(24);
-                        if ui
-                            .add(egui::DragValue::new(&mut px).range(16..=128))
-                            .on_hover_text(
-                                "Icon face size in pixels for this bar (default 24; \
-                                 barbar-style art reads best at 32-64)",
-                            )
-                            .changed()
-                        {
-                            working.icon_size = Some(px);
-                            state.dirty = true;
-                        }
-                        ui.checkbox(&mut state.is_global, "Global (all characters)");
-                        if ui
-                            .add_enabled(state.dirty, egui::Button::new("Save bar"))
-                            .clicked()
-                        {
-                            save_requested = true;
-                        }
-                        if state.dirty {
-                            ui.weak("unsaved changes");
-                        }
-                    });
-
-                    // Live preview against the current game state
-                    let now_server = chrono::Utc::now().timestamp()
-                        + self.app_core.message_processor.server_time_offset;
-                    let preview = crate::core::hotbar::resolve_bar(
-                        working,
-                        &self.app_core.game_state,
-                        now_server,
-                        self.app_core.gameobj_data_cached(),
-                    );
-                    let icon_px = working.icon_size;
-                    if !preview.is_empty() {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.weak("Preview:");
-                            for b in &preview {
-                                // Icon faces preview exactly like the widget.
-                                let sprite = if b.icon_mode != IconMode::Text {
-                                    b.icon.as_ref().and_then(|icon| {
-                                        skin_art_arc.as_deref().and_then(|art| {
-                                            art.icon_ref_texture(
-                                                &icon.icon,
-                                                icon.grayscale || b.dim,
-                                            )
-                                        })
-                                    })
-                                } else {
-                                    None
-                                };
-                                if let Some((texture, uv)) = sprite {
-                                    let edge = Self::icon_edge(ui, icon_px);
-                                    let _ = Self::draw_icon_button(ui, b, texture, uv, edge);
-                                    continue;
-                                }
-                                let text = match b.countdown_secs {
-                                    Some(s) if s > 0 => format!("{}  {}s", b.label, s),
-                                    _ => b.label.clone(),
-                                };
-                                let mut rich = egui::RichText::new(text);
-                                if b.dim {
-                                    rich = rich.color(ui.visuals().weak_text_color());
-                                } else if let Some(fg) = b
-                                    .fg
-                                    .as_deref()
-                                    .and_then(super::super::widgets::parse_hex_color)
-                                {
-                                    rich = rich.color(fg);
-                                }
-                                let mut btn = egui::Button::new(rich);
-                                if !b.dim {
-                                    if let Some(bg) = b
-                                        .bg
-                                        .as_deref()
-                                        .and_then(super::super::widgets::parse_hex_color)
-                                    {
-                                        btn = btn.fill(bg);
-                                    }
-                                }
-                                let _ = ui.add(btn);
-                            }
-                        });
-                    }
-                    ui.separator();
-
-                    // Button list with reorder / add / delete / duplicate
-                    ui.horizontal(|ui| {
-                        ui.strong("Buttons");
-                        if ui.button("Add button").clicked() {
-                            let n = working.buttons.len() + 1;
-                            let mut id = format!("button{}", n);
-                            while working.buttons.iter().any(|b| b.id == id) {
-                                id.push('x');
-                            }
-                            working.buttons.push(HotbarButton {
-                                id,
-                                label: "New".to_string(),
-                                command: String::new(),
-                                ..Default::default()
-                            });
-                            state.selected_button = Some(working.buttons.len() - 1);
-                            state.dirty = true;
-                        }
-                    });
-
-                    let conflicts: Vec<(String, String)> = self
-                        .app_core
-                        .hotbar_key_conflicts
-                        .iter()
-                        .map(|c| (c.bar.clone(), c.button.clone()))
-                        .collect();
-
-                    let mut move_up: Option<usize> = None;
-                    let mut move_down: Option<usize> = None;
-                    let mut delete_button: Option<usize> = None;
-                    let mut duplicate_button: Option<usize> = None;
-
-                    egui::ScrollArea::vertical()
-                        .id_salt("hotbar_buttons_scroll")
-                        .auto_shrink([false, false])
-                        .max_height(120.0)
-                        .show(ui, |ui| {
-                            for (idx, button) in working.buttons.iter().enumerate() {
-                                ui.horizontal(|ui| {
-                                    if ui.small_button("^").clicked() {
-                                        move_up = Some(idx);
-                                    }
-                                    if ui.small_button("v").clicked() {
-                                        move_down = Some(idx);
-                                    }
-                                    if ui.small_button("Dup").clicked() {
-                                        duplicate_button = Some(idx);
-                                    }
-                                    if ui.small_button("Del").clicked() {
-                                        delete_button = Some(idx);
-                                    }
-                                    let selected = state.selected_button == Some(idx);
-                                    let mut label = format!(
-                                        "{}  ({})",
-                                        button.label, button.command
-                                    );
-                                    if let Some(hotkey) = &button.hotkey {
-                                        label.push_str(&format!("  [{}]", hotkey));
-                                    }
-                                    if conflicts.contains(&(
-                                        working.name.clone(),
-                                        button.id.clone(),
-                                    )) {
-                                        label.push_str("  (key conflict)");
-                                    }
-                                    if ui.selectable_label(selected, label).clicked() {
-                                        state.selected_button = Some(idx);
-                                        state.hotkey_capture_armed = false;
-                                    }
-                                });
-                            }
-                            if working.buttons.is_empty() {
-                                ui.weak("No buttons yet.");
-                            }
-                        });
-
-                    if let Some(idx) = move_up {
-                        if idx > 0 {
-                            working.buttons.swap(idx, idx - 1);
-                            state.selected_button = Some(idx - 1);
-                            state.dirty = true;
-                        }
-                    }
-                    if let Some(idx) = move_down {
-                        if idx + 1 < working.buttons.len() {
-                            working.buttons.swap(idx, idx + 1);
-                            state.selected_button = Some(idx + 1);
-                            state.dirty = true;
-                        }
-                    }
-                    if let Some(idx) = duplicate_button {
-                        let mut copy = working.buttons[idx].clone();
-                        copy.id = format!("{}_copy", copy.id);
-                        while working.buttons.iter().any(|b| b.id == copy.id) {
-                            copy.id.push('x');
-                        }
-                        copy.hotkey = None; // duplicating the key would always conflict
-                        working.buttons.insert(idx + 1, copy);
-                        state.selected_button = Some(idx + 1);
-                        state.dirty = true;
-                    }
-                    if let Some(idx) = delete_button {
-                        working.buttons.remove(idx);
-                        state.selected_button = None;
-                        state.dirty = true;
-                    }
-
-                    ui.separator();
-
-                    // Button form
-                    let Some(button_idx) = state.selected_button else {
-                        ui.weak("Select a button to edit it.");
-                        return;
-                    };
-                    let bar_name = working.name.clone();
-                    // Collect effect-name suggestions before borrowing the button
-                    let suggestions: std::collections::HashMap<&'static str, Vec<String>> =
-                        EffectCategory::ALL
-                            .iter()
-                            .map(|c| {
-                                (
-                                    c.state_key(),
-                                    self.app_core
-                                        .game_state
-                                        .effects
-                                        .get(c.state_key())
-                                        .map(|store| {
-                                            store
-                                                .effects
-                                                .iter()
-                                                .map(|e| e.text.clone())
-                                                .collect()
-                                        })
-                                        .unwrap_or_default(),
-                                )
-                            })
-                            .collect();
-                    let conflict_owner_lookup =
-                        |app: &Self, key: &str, own_button: &str| -> Option<String> {
-                            app.hotkey_conflict_owner(key, &bar_name, own_button)
+                        let Some(working) = &mut state.working else {
+                            ui.weak("Select a bar on the left, or add a new one.");
+                            return;
                         };
-                    let conflict_owner = {
-                        let button = &working.buttons[button_idx];
-                        button
-                            .hotkey
-                            .as_deref()
-                            .filter(|k| !k.is_empty())
-                            .and_then(|k| conflict_owner_lookup(self, k, &button.id))
-                    };
 
-                    let Some(button) = working.buttons.get_mut(button_idx) else {
-                        return;
-                    };
-
-                    egui::ScrollArea::vertical()
-                        .id_salt("hotbar_button_form_scroll")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            let mut changed = false;
-                            egui::Grid::new("hotbar_button_grid")
-                                .num_columns(2)
-                                .show(ui, |ui| {
-                                    ui.label("Label");
-                                    changed |= ui
-                                        .text_edit_singleline(&mut button.label)
-                                        .changed();
-                                    ui.end_row();
-
-                                    ui.label("Command");
-                                    changed |= ui
-                                        .text_edit_singleline(&mut button.command)
-                                        .changed();
-                                    ui.end_row();
-
-                                    ui.label("Tooltip");
-                                    let mut tooltip =
-                                        button.tooltip.clone().unwrap_or_default();
-                                    if ui.text_edit_singleline(&mut tooltip).changed() {
-                                        button.tooltip = (!tooltip.trim().is_empty())
-                                            .then(|| tooltip.clone());
-                                        changed = true;
-                                    }
-                                    ui.end_row();
-
-                                    ui.label("Category");
-                                    let mut category =
-                                        button.category.clone().unwrap_or_default();
-                                    if ui.text_edit_singleline(&mut category).changed() {
-                                        button.category = (!category.trim().is_empty())
-                                            .then(|| category.clone());
-                                        changed = true;
-                                    }
-                                    ui.end_row();
-
-                                    ui.label("Hotkey");
-                                    ui.horizontal(|ui| {
-                                        let mut hotkey =
-                                            button.hotkey.clone().unwrap_or_default();
-                                        if ui
-                                            .add(
-                                                egui::TextEdit::singleline(&mut hotkey)
-                                                    .desired_width(110.0),
-                                            )
-                                            .changed()
-                                        {
-                                            button.hotkey = (!hotkey.trim().is_empty())
-                                                .then(|| hotkey.trim().to_lowercase());
-                                            changed = true;
-                                        }
-                                        let capture_label = if state.hotkey_capture_armed {
-                                            "Press a key..."
-                                        } else {
-                                            "Capture"
-                                        };
-                                        if ui.button(capture_label).clicked() {
-                                            state.hotkey_capture_armed =
-                                                !state.hotkey_capture_armed;
-                                        }
-                                        if button.hotkey.is_some()
-                                            && ui.small_button("Clear").clicked()
-                                        {
-                                            button.hotkey = None;
-                                            changed = true;
-                                        }
-                                    });
-                                    ui.end_row();
-
-                                    ui.label("Face");
-                                    ui.horizontal(|ui| {
-                                        for (mode, text) in [
-                                            (IconMode::Text, "Text"),
-                                            (IconMode::Icon, "Icon"),
-                                            (IconMode::IconAndLabel, "Icon + label"),
-                                        ] {
-                                            if ui
-                                                .selectable_label(
-                                                    button.icon_mode == mode,
-                                                    text,
-                                                )
-                                                .clicked()
-                                                && button.icon_mode != mode
-                                            {
-                                                button.icon_mode = mode;
-                                                changed = true;
-                                            }
-                                        }
-                                    });
-                                    ui.end_row();
-                                });
-
-                            if button.icon_mode != IconMode::Text
-                                || button.icon.is_some()
+                        ui.horizontal(|ui| {
+                            ui.strong(format!("Bar: {}", working.name));
+                            ui.label("Title:");
+                            let mut title = working.title.clone().unwrap_or_default();
+                            if ui
+                                .add(egui::TextEdit::singleline(&mut title).desired_width(140.0))
+                                .changed()
                             {
-                                changed |= render_icon_editor(
-                                    ui,
-                                    "button_icon",
-                                    &mut button.icon,
-                                    skin_art_arc.as_deref(),
-                                );
+                                working.title = (!title.trim().is_empty()).then(|| title.clone());
+                                state.dirty = true;
                             }
-
-                            if let Some(owner) = &conflict_owner {
-                                ui.colored_label(
-                                    ui.visuals().warn_fg_color,
-                                    format!(
-                                        "Key is already bound by {} - it wins over this button.",
-                                        owner
-                                    ),
-                                );
+                            ui.label("Icon px:");
+                            let mut px = working.icon_size.unwrap_or(24);
+                            if ui
+                                .add(egui::DragValue::new(&mut px).range(16..=128))
+                                .on_hover_text(
+                                    "Icon face size in pixels for this bar (default 24; \
+                                 barbar-style art reads best at 32-64)",
+                                )
+                                .changed()
+                            {
+                                working.icon_size = Some(px);
+                                state.dirty = true;
                             }
+                            ui.checkbox(&mut state.is_global, "Global (all characters)");
+                            if ui
+                                .add_enabled(state.dirty, egui::Button::new("Save bar"))
+                                .clicked()
+                            {
+                                save_requested = true;
+                            }
+                            if state.dirty {
+                                ui.weak("unsaved changes");
+                            }
+                        });
 
-                            ui.separator();
-                            changed |= render_countdown_editor(
-                                ui,
-                                "hotbar_countdown",
-                                "Countdown overlay",
-                                &mut button.countdown,
-                                &suggestions,
-                            );
-                            ui.separator();
-                            changed |= render_states_editor(
-                                ui,
-                                button,
-                                &suggestions,
-                                skin_art_arc.as_deref(),
-                            );
+                        // Live preview against the current game state
+                        let now_server = chrono::Utc::now().timestamp()
+                            + self.app_core.message_processor.server_time_offset;
+                        let preview = crate::core::hotbar::resolve_bar(
+                            working,
+                            &self.app_core.game_state,
+                            now_server,
+                            self.app_core.gameobj_data_cached(),
+                        );
+                        let icon_px = working.icon_size;
+                        if !preview.is_empty() {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.weak("Preview:");
+                                for b in &preview {
+                                    // Icon faces preview exactly like the widget.
+                                    let sprite = if b.icon_mode != IconMode::Text {
+                                        b.icon.as_ref().and_then(|icon| {
+                                            skin_art_arc.as_deref().and_then(|art| {
+                                                art.icon_ref_texture(
+                                                    &icon.icon,
+                                                    icon.grayscale || b.dim,
+                                                )
+                                            })
+                                        })
+                                    } else {
+                                        None
+                                    };
+                                    if let Some((texture, uv)) = sprite {
+                                        let edge = Self::icon_edge(ui, icon_px);
+                                        let _ = Self::draw_icon_button(ui, b, texture, uv, edge);
+                                        continue;
+                                    }
+                                    let text = match b.countdown_secs {
+                                        Some(s) if s > 0 => format!("{}  {}s", b.label, s),
+                                        _ => b.label.clone(),
+                                    };
+                                    let mut rich = egui::RichText::new(text);
+                                    if b.dim {
+                                        rich = rich.color(ui.visuals().weak_text_color());
+                                    } else if let Some(fg) =
+                                        b.fg.as_deref()
+                                            .and_then(super::super::widgets::parse_hex_color)
+                                    {
+                                        rich = rich.color(fg);
+                                    }
+                                    let mut btn = egui::Button::new(rich);
+                                    if !b.dim {
+                                        if let Some(bg) =
+                                            b.bg.as_deref()
+                                                .and_then(super::super::widgets::parse_hex_color)
+                                        {
+                                            btn = btn.fill(bg);
+                                        }
+                                    }
+                                    let _ = ui.add(btn);
+                                }
+                            });
+                        }
+                        ui.separator();
 
-                            if changed {
+                        // Button list with reorder / add / delete / duplicate
+                        ui.horizontal(|ui| {
+                            ui.strong("Buttons");
+                            if ui.button("Add button").clicked() {
+                                let n = working.buttons.len() + 1;
+                                let mut id = format!("button{}", n);
+                                while working.buttons.iter().any(|b| b.id == id) {
+                                    id.push('x');
+                                }
+                                working.buttons.push(HotbarButton {
+                                    id,
+                                    label: "New".to_string(),
+                                    command: String::new(),
+                                    ..Default::default()
+                                });
+                                state.selected_button = Some(working.buttons.len() - 1);
                                 state.dirty = true;
                             }
                         });
+
+                        let conflicts: Vec<(String, String)> = self
+                            .app_core
+                            .hotbar_key_conflicts
+                            .iter()
+                            .map(|c| (c.bar.clone(), c.button.clone()))
+                            .collect();
+
+                        let mut move_up: Option<usize> = None;
+                        let mut move_down: Option<usize> = None;
+                        let mut delete_button: Option<usize> = None;
+                        let mut duplicate_button: Option<usize> = None;
+
+                        egui::ScrollArea::vertical()
+                            .id_salt("hotbar_buttons_scroll")
+                            .auto_shrink([false, false])
+                            .max_height(120.0)
+                            .show(ui, |ui| {
+                                for (idx, button) in working.buttons.iter().enumerate() {
+                                    ui.horizontal(|ui| {
+                                        if ui.small_button("^").clicked() {
+                                            move_up = Some(idx);
+                                        }
+                                        if ui.small_button("v").clicked() {
+                                            move_down = Some(idx);
+                                        }
+                                        if ui.small_button("Dup").clicked() {
+                                            duplicate_button = Some(idx);
+                                        }
+                                        if ui.small_button("Del").clicked() {
+                                            delete_button = Some(idx);
+                                        }
+                                        let selected = state.selected_button == Some(idx);
+                                        let mut label =
+                                            format!("{}  ({})", button.label, button.command);
+                                        if let Some(hotkey) = &button.hotkey {
+                                            label.push_str(&format!("  [{}]", hotkey));
+                                        }
+                                        if conflicts
+                                            .contains(&(working.name.clone(), button.id.clone()))
+                                        {
+                                            label.push_str("  (key conflict)");
+                                        }
+                                        if ui.selectable_label(selected, label).clicked() {
+                                            state.selected_button = Some(idx);
+                                            state.hotkey_capture_armed = false;
+                                        }
+                                    });
+                                }
+                                if working.buttons.is_empty() {
+                                    ui.weak("No buttons yet.");
+                                }
+                            });
+
+                        if let Some(idx) = move_up {
+                            if idx > 0 {
+                                working.buttons.swap(idx, idx - 1);
+                                state.selected_button = Some(idx - 1);
+                                state.dirty = true;
+                            }
+                        }
+                        if let Some(idx) = move_down {
+                            if idx + 1 < working.buttons.len() {
+                                working.buttons.swap(idx, idx + 1);
+                                state.selected_button = Some(idx + 1);
+                                state.dirty = true;
+                            }
+                        }
+                        if let Some(idx) = duplicate_button {
+                            let mut copy = working.buttons[idx].clone();
+                            copy.id = format!("{}_copy", copy.id);
+                            while working.buttons.iter().any(|b| b.id == copy.id) {
+                                copy.id.push('x');
+                            }
+                            copy.hotkey = None; // duplicating the key would always conflict
+                            working.buttons.insert(idx + 1, copy);
+                            state.selected_button = Some(idx + 1);
+                            state.dirty = true;
+                        }
+                        if let Some(idx) = delete_button {
+                            working.buttons.remove(idx);
+                            state.selected_button = None;
+                            state.dirty = true;
+                        }
+
+                        ui.separator();
+
+                        // Button form
+                        let Some(button_idx) = state.selected_button else {
+                            ui.weak("Select a button to edit it.");
+                            return;
+                        };
+                        let bar_name = working.name.clone();
+                        // Collect effect-name suggestions before borrowing the button
+                        let suggestions: std::collections::HashMap<&'static str, Vec<String>> =
+                            EffectCategory::ALL
+                                .iter()
+                                .map(|c| {
+                                    (
+                                        c.state_key(),
+                                        self.app_core
+                                            .game_state
+                                            .effects
+                                            .get(c.state_key())
+                                            .map(|store| {
+                                                store
+                                                    .effects
+                                                    .iter()
+                                                    .map(|e| e.text.clone())
+                                                    .collect()
+                                            })
+                                            .unwrap_or_default(),
+                                    )
+                                })
+                                .collect();
+                        let conflict_owner_lookup =
+                            |app: &Self, key: &str, own_button: &str| -> Option<String> {
+                                app.hotkey_conflict_owner(key, &bar_name, own_button)
+                            };
+                        let conflict_owner = {
+                            let button = &working.buttons[button_idx];
+                            button
+                                .hotkey
+                                .as_deref()
+                                .filter(|k| !k.is_empty())
+                                .and_then(|k| conflict_owner_lookup(self, k, &button.id))
+                        };
+
+                        let Some(button) = working.buttons.get_mut(button_idx) else {
+                            return;
+                        };
+
+                        egui::ScrollArea::vertical()
+                            .id_salt("hotbar_button_form_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                let mut changed = false;
+                                egui::Grid::new("hotbar_button_grid").num_columns(2).show(
+                                    ui,
+                                    |ui| {
+                                        ui.label("Label");
+                                        changed |=
+                                            ui.text_edit_singleline(&mut button.label).changed();
+                                        ui.end_row();
+
+                                        ui.label("Command");
+                                        changed |=
+                                            ui.text_edit_singleline(&mut button.command).changed();
+                                        ui.end_row();
+
+                                        ui.label("Tooltip");
+                                        let mut tooltip =
+                                            button.tooltip.clone().unwrap_or_default();
+                                        if ui.text_edit_singleline(&mut tooltip).changed() {
+                                            button.tooltip = (!tooltip.trim().is_empty())
+                                                .then(|| tooltip.clone());
+                                            changed = true;
+                                        }
+                                        ui.end_row();
+
+                                        ui.label("Category");
+                                        let mut category =
+                                            button.category.clone().unwrap_or_default();
+                                        if ui.text_edit_singleline(&mut category).changed() {
+                                            button.category = (!category.trim().is_empty())
+                                                .then(|| category.clone());
+                                            changed = true;
+                                        }
+                                        ui.end_row();
+
+                                        ui.label("Hotkey");
+                                        ui.horizontal(|ui| {
+                                            let mut hotkey =
+                                                button.hotkey.clone().unwrap_or_default();
+                                            if ui
+                                                .add(
+                                                    egui::TextEdit::singleline(&mut hotkey)
+                                                        .desired_width(110.0),
+                                                )
+                                                .changed()
+                                            {
+                                                button.hotkey = (!hotkey.trim().is_empty())
+                                                    .then(|| hotkey.trim().to_lowercase());
+                                                changed = true;
+                                            }
+                                            let capture_label = if state.hotkey_capture_armed {
+                                                "Press a key..."
+                                            } else {
+                                                "Capture"
+                                            };
+                                            if ui.button(capture_label).clicked() {
+                                                state.hotkey_capture_armed =
+                                                    !state.hotkey_capture_armed;
+                                            }
+                                            if button.hotkey.is_some()
+                                                && ui.small_button("Clear").clicked()
+                                            {
+                                                button.hotkey = None;
+                                                changed = true;
+                                            }
+                                        });
+                                        ui.end_row();
+
+                                        ui.label("Face");
+                                        ui.horizontal(|ui| {
+                                            for (mode, text) in [
+                                                (IconMode::Text, "Text"),
+                                                (IconMode::Icon, "Icon"),
+                                                (IconMode::IconAndLabel, "Icon + label"),
+                                            ] {
+                                                if ui
+                                                    .selectable_label(
+                                                        button.icon_mode == mode,
+                                                        text,
+                                                    )
+                                                    .clicked()
+                                                    && button.icon_mode != mode
+                                                {
+                                                    button.icon_mode = mode;
+                                                    changed = true;
+                                                }
+                                            }
+                                        });
+                                        ui.end_row();
+                                    },
+                                );
+
+                                if button.icon_mode != IconMode::Text || button.icon.is_some() {
+                                    changed |= render_icon_editor(
+                                        ui,
+                                        "button_icon",
+                                        &mut button.icon,
+                                        skin_art_arc.as_deref(),
+                                    );
+                                }
+
+                                if let Some(owner) = &conflict_owner {
+                                    ui.colored_label(
+                                        ui.visuals().warn_fg_color,
+                                        format!(
+                                        "Key is already bound by {} - it wins over this button.",
+                                        owner
+                                    ),
+                                    );
+                                }
+
+                                ui.separator();
+                                changed |= render_countdown_editor(
+                                    ui,
+                                    "hotbar_countdown",
+                                    "Countdown overlay",
+                                    &mut button.countdown,
+                                    &suggestions,
+                                );
+                                ui.separator();
+                                changed |= render_states_editor(
+                                    ui,
+                                    button,
+                                    &suggestions,
+                                    skin_art_arc.as_deref(),
+                                );
+
+                                if changed {
+                                    state.dirty = true;
+                                }
+                            });
                     });
                 });
             });
@@ -993,8 +973,7 @@ fn render_countdown_editor(
     {
         ui.horizontal(|ui| {
             changed |= category_combo(ui, &format!("{id}_cat"), category);
-            changed |=
-                effect_name_field(ui, &format!("{id}_name"), name, category, suggestions);
+            changed |= effect_name_field(ui, &format!("{id}_name"), name, category, suggestions);
             changed |= match_combo(ui, &format!("{id}_match"), name_match);
         });
     }
@@ -1139,12 +1118,7 @@ pub(super) fn render_condition_group(
     let mut changed = false;
 
     // Normalize a bare leaf at the root into a group so the UI is uniform
-    if depth == 0
-        && !matches!(
-            cond,
-            Condition::All { .. } | Condition::Any { .. }
-        )
-    {
+    if depth == 0 && !matches!(cond, Condition::All { .. } | Condition::Any { .. }) {
         let leaf = cond.clone();
         *cond = Condition::All {
             conditions: vec![leaf],
@@ -1159,15 +1133,18 @@ pub(super) fn render_condition_group(
         egui::ComboBox::from_id_salt(format!("{}_grouptype", id))
             .selected_text(if all_selected { "all of" } else { "any of" })
             .show_ui(ui, |ui| {
-                if ui.selectable_value(&mut all_selected, true, "all of").clicked()
+                if ui
+                    .selectable_value(&mut all_selected, true, "all of")
+                    .clicked()
                     || ui
                         .selectable_value(&mut all_selected, false, "any of")
                         .clicked()
                 {
                     if all_selected != is_all {
                         let conditions = match cond {
-                            Condition::All { conditions }
-                            | Condition::Any { conditions } => std::mem::take(conditions),
+                            Condition::All { conditions } | Condition::Any { conditions } => {
+                                std::mem::take(conditions)
+                            }
                             _ => vec![],
                         };
                         *cond = if all_selected {
@@ -1180,15 +1157,13 @@ pub(super) fn render_condition_group(
                 }
             });
         if ui.small_button("+ condition").clicked() {
-            if let Condition::All { conditions } | Condition::Any { conditions } = cond
-            {
+            if let Condition::All { conditions } | Condition::Any { conditions } = cond {
                 conditions.push(default_leaf(3));
                 changed = true;
             }
         }
         if depth == 0 && ui.small_button("+ group").clicked() {
-            if let Condition::All { conditions } | Condition::Any { conditions } = cond
-            {
+            if let Condition::All { conditions } | Condition::Any { conditions } = cond {
                 conditions.push(Condition::Any {
                     conditions: vec![default_leaf(3)],
                 });
@@ -1229,12 +1204,8 @@ pub(super) fn render_condition_group(
                     }
                 }
                 leaf => {
-                    changed |= render_leaf_condition(
-                        ui,
-                        &format!("{}_l{}", id, idx),
-                        leaf,
-                        suggestions,
-                    );
+                    changed |=
+                        render_leaf_condition(ui, &format!("{}_l{}", id, idx), leaf, suggestions);
                 }
             }
         });
@@ -1386,9 +1357,12 @@ fn render_leaf_condition(
             egui::ComboBox::from_id_salt(format!("{id}_phase"))
                 .selected_text(phase.as_str())
                 .show_ui(ui, |ui| {
-                    for option in
-                        [DayPhase::Dawn, DayPhase::Day, DayPhase::Dusk, DayPhase::Night]
-                    {
+                    for option in [
+                        DayPhase::Dawn,
+                        DayPhase::Day,
+                        DayPhase::Dusk,
+                        DayPhase::Night,
+                    ] {
                         changed |= ui
                             .selectable_value(phase, option, option.as_str())
                             .changed();
@@ -1404,7 +1378,10 @@ fn render_leaf_condition(
             // Bundled-table lookup as instant feedback on the number.
             match crate::core::spell_table::spell(*number) {
                 Some(info) if info.dynamic_cost => {
-                    ui.weak(format!("{} (variable cost - never affordable here)", info.name));
+                    ui.weak(format!(
+                        "{} (variable cost - never affordable here)",
+                        info.name
+                    ));
                 }
                 Some(info) => {
                     let mut costs = Vec::new();
@@ -1782,14 +1759,13 @@ fn render_icon_editor(
 /// The clickable cell grid for one sheet ref. Returns true when a cell is
 /// picked; no-op for non-sheet refs. Delegates to the shared
 /// `sheet_cell_grid` (also used by the indicator editor).
-fn cell_grid(
-    ui: &mut egui::Ui,
-    icon: &mut HotbarIcon,
-    art: &SkinWidgetArt,
-    count: u32,
-) -> bool {
+fn cell_grid(ui: &mut egui::Ui, icon: &mut HotbarIcon, art: &SkinWidgetArt, count: u32) -> bool {
     let grayscale = icon.grayscale;
-    let crate::data::IconRef::SheetCell { sheet, cell: current_cell } = &mut icon.icon else {
+    let crate::data::IconRef::SheetCell {
+        sheet,
+        cell: current_cell,
+    } = &mut icon.icon
+    else {
         return false;
     };
     super::sheet_cell_grid(ui, "hotbar", sheet, current_cell, art, count, grayscale)

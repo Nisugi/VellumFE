@@ -105,7 +105,10 @@ impl HotkeyBar {
         let local_y = y - inner.y;
         for item in &self.rendered_items {
             if local_y == item.row && local_x >= item.start && local_x < item.end {
-                return self.buttons.get(item.button_index).map(|b| b.command.clone());
+                return self
+                    .buttons
+                    .get(item.button_index)
+                    .map(|b| b.command.clone());
             }
         }
         None
@@ -318,7 +321,10 @@ mod tests {
     fn click_hits_button_and_returns_command() {
         let mut bar = HotkeyBar::new("test");
         bar.set_border_config(false, None, None);
-        bar.set_buttons(vec![button("a", "Look", "look"), button("b", "Hide", "hide")]);
+        bar.set_buttons(vec![
+            button("a", "Look", "look"),
+            button("b", "Hide", "hide"),
+        ]);
 
         let area = Rect::new(0, 0, 40, 1);
         let mut buf = Buffer::empty(area);
@@ -354,7 +360,10 @@ mod tests {
         let mut bar = HotkeyBar::new("test");
         bar.set_border_config(false, None, None);
         bar.set_vertical(true);
-        bar.set_buttons(vec![button("a", "Look", "look"), button("b", "Hide", "hide")]);
+        bar.set_buttons(vec![
+            button("a", "Look", "look"),
+            button("b", "Hide", "hide"),
+        ]);
 
         let area = Rect::new(0, 0, 20, 3);
         let mut buf = Buffer::empty(area);

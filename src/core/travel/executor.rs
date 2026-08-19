@@ -200,9 +200,8 @@ impl TravelContext<'_> {
         // An UNKNOWN value answers false: refusing a route we might have been
         // able to take is recoverable (re-path, or hand off to Lich), while
         // walking one we can't take strands the trip mid-route.
-        let matches = |actual: Option<&str>, want: &str| {
-            actual.is_some_and(|a| a.eq_ignore_ascii_case(want))
-        };
+        let matches =
+            |actual: Option<&str>, want: &str| actual.is_some_and(|a| a.eq_ignore_ascii_case(want));
         match cond {
             Cond::SpellActive(n) => self.active_spells.contains(n),
             Cond::Sitting => self.sitting,
@@ -213,10 +212,9 @@ impl TravelContext<'_> {
                 .compass_dirs
                 .iter()
                 .any(|d| d.eq_ignore_ascii_case(dir)),
-            Cond::RoomHasObject(noun) => self
-                .loot_nouns
-                .iter()
-                .any(|n| n.eq_ignore_ascii_case(noun)),
+            Cond::RoomHasObject(noun) => {
+                self.loot_nouns.iter().any(|n| n.eq_ignore_ascii_case(noun))
+            }
             Cond::Citizenship(want) => matches(self.citizenship, want),
             Cond::Profession(want) => matches(self.profession, want),
             Cond::Society(want) => matches(self.society, want),
@@ -248,7 +246,9 @@ impl TravelContext<'_> {
     /// guard for reactive recovery: a failure line older than our last send
     /// belongs to a superseded move and must not trigger a resend.
     fn saw_since(&self, since: u64, event: &crate::core::move_feedback::MoveFeedback) -> bool {
-        self.feedback.iter().any(|(no, f)| *no > since && f == event)
+        self.feedback
+            .iter()
+            .any(|(no, f)| *no > since && f == event)
     }
 }
 
@@ -303,9 +303,7 @@ pub fn classify_edge(db: &MapDb, from: u32, to: u32, command: &str) -> EdgeCross
     // `$mapdb_confluence_target = N; Room[N].wayto['N'].call` delegations that
     // set a goal and hand to the explorer. Once we are inside the zone the
     // explorer owns every edge, in or out, so classify on either side.
-    if super::confluence::is_confluence_room(from)
-        || super::confluence::is_confluence_room(to)
-    {
+    if super::confluence::is_confluence_room(from) || super::confluence::is_confluence_room(to) {
         return EdgeCrossing::Confluence;
     }
     if crate::core::pathing::overrides::edge_override(from, to).is_some() {
@@ -482,7 +480,11 @@ enum FundingPhase {
     RoutingToBank { real_dest: u32, need: u64 },
     /// `withdraw`/`ask banker for` sent at the bank; waiting for the silver to
     /// reflect the withdrawal, then re-plan to `real_dest`.
-    AwaitWithdraw { real_dest: u32, need: u64, sent_ms: u64 },
+    AwaitWithdraw {
+        real_dest: u32,
+        need: u64,
+        sent_ms: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -879,7 +881,11 @@ impl TravelTask {
             Step::Confluence { pending } => {
                 self.tick_confluence(pending, current, ctx, &mut events);
             }
-            Step::Minotaur { target, maze_rooms, pending } => {
+            Step::Minotaur {
+                target,
+                maze_rooms,
+                pending,
+            } => {
                 self.tick_minotaur(target, maze_rooms, pending, current, ctx, &mut events);
             }
             Step::AwaitStand { sent_ms, attempts } => {
@@ -939,10 +945,18 @@ impl TravelTask {
                     // Hold for the game's own "...wait N seconds" number so
                     // the resend can't hot-loop if the RT feed reads zero.
                     if let Some(secs) = rt_wait_secs(&ctx) {
-                        self.hold_until_ms =
-                            self.hold_until_ms.max(ctx.now_ms + secs * 1000 + 200);
+                        self.hold_until_ms = self.hold_until_ms.max(ctx.now_ms + secs * 1000 + 200);
                     }
-                    self.tick_script(actions, sent_pc, None, expected, from, None, ctx, &mut events);
+                    self.tick_script(
+                        actions,
+                        sent_pc,
+                        None,
+                        expected,
+                        from,
+                        None,
+                        ctx,
+                        &mut events,
+                    );
                     return events;
                 }
                 // Paced walk step in flight. Resume the script at `pc` when
@@ -954,20 +968,16 @@ impl TravelTask {
                 // failure line (the Ruby scripts' moves also proceeded on
                 // failure; retry loops re-evaluate immediately). The timeout
                 // stays as the backstop for silent responses.
-                let moved = current != sent_from
-                    || ctx.saw(&F::NavArrived);
+                let moved = current != sent_from || ctx.saw(&F::NavArrived);
                 let failed = ctx.now_ms >= self.orphan_until_ms
                     && self.failure_attributable
                     && (ctx.saw_since(self.sent_line_no, &F::MoveFailedRemovable)
-                    || ctx.saw_since(self.sent_line_no, &F::MoveFailedKeep)
-                    || ctx.saw_since(self.sent_line_no, &F::DoorClosed)
-                    || ctx.saw_since(self.sent_line_no, &F::Fell)
-                    || ctx.saw_since(self.sent_line_no, &F::NeedClimb)
-                    || ctx.saw_since(self.sent_line_no, &F::CantClimb));
-                if moved
-                    || failed
-                    || ctx.now_ms.saturating_sub(sent_ms) > SLOW_ARRIVAL_TIMEOUT_MS
-                {
+                        || ctx.saw_since(self.sent_line_no, &F::MoveFailedKeep)
+                        || ctx.saw_since(self.sent_line_no, &F::DoorClosed)
+                        || ctx.saw_since(self.sent_line_no, &F::Fell)
+                        || ctx.saw_since(self.sent_line_no, &F::NeedClimb)
+                        || ctx.saw_since(self.sent_line_no, &F::CantClimb));
+                if moved || failed || ctx.now_ms.saturating_sub(sent_ms) > SLOW_ARRIVAL_TIMEOUT_MS {
                     self.tick_script(actions, pc, None, expected, from, None, ctx, &mut events);
                 } else {
                     self.step = Step::ScriptWalk {
@@ -1006,7 +1016,14 @@ impl TravelTask {
                 // its await/step timeouts, and the off-route check after
                 // completion (AwaitArrival) still catches real strays.
                 self.tick_script(
-                    actions, pc, sleep_until, expected, from, awaiting, ctx, &mut events,
+                    actions,
+                    pc,
+                    sleep_until,
+                    expected,
+                    from,
+                    awaiting,
+                    ctx,
+                    &mut events,
                 );
             }
             Step::AwaitArrival {
@@ -1096,14 +1113,17 @@ impl TravelTask {
                 // did not fail.
                 if ctx.saw_since(self.sent_line_no, &MoveFeedback::RtWait) {
                     if let Some(secs) = rt_wait_secs(&ctx) {
-                        self.hold_until_ms =
-                            self.hold_until_ms.max(ctx.now_ms + secs * 1000 + 200);
+                        self.hold_until_ms = self.hold_until_ms.max(ctx.now_ms + secs * 1000 + 200);
                     }
                     self.step = Step::Prepare;
                     self.tick_prepare(current, ctx, &mut events);
                     return events;
                 }
-                let timeout = if slow { SLOW_ARRIVAL_TIMEOUT_MS } else { STEP_TIMEOUT_MS };
+                let timeout = if slow {
+                    SLOW_ARRIVAL_TIMEOUT_MS
+                } else {
+                    STEP_TIMEOUT_MS
+                };
                 if ctx.now_ms.saturating_sub(sent_ms) > timeout {
                     // The timed-out send's outcome is written off - without
                     // this, every silent retry inflates `owed` and starves
@@ -1208,7 +1228,10 @@ impl TravelTask {
                     maze.name,
                     route.len()
                 )));
-                (self.maze_entry_phase(maze, current, ctx, events), route.clone())
+                (
+                    self.maze_entry_phase(maze, current, ctx, events),
+                    route.clone(),
+                )
             }
             None => {
                 events.push(TravelEvent::Status(format!(
@@ -1216,7 +1239,12 @@ impl TravelTask {
                     maze.name
                 )));
                 events.push(TravelEvent::Send(maze.ask.clone()));
-                (MazePhase::AwaitCode { sent_ms: ctx.now_ms }, Vec::new())
+                (
+                    MazePhase::AwaitCode {
+                        sent_ms: ctx.now_ms,
+                    },
+                    Vec::new(),
+                )
             }
         };
         self.step = Step::Maze {
@@ -1252,7 +1280,9 @@ impl TravelTask {
         {
             Some(cmd) => {
                 events.push(TravelEvent::Send(cmd));
-                MazePhase::ToStart { sent_ms: ctx.now_ms }
+                MazePhase::ToStart {
+                    sent_ms: ctx.now_ms,
+                }
             }
             None => {
                 // Shouldn't happen with sane maze data; walk from here.
@@ -1294,7 +1324,14 @@ impl TravelTask {
                 ));
                 self.muckle_announced = true;
             }
-            self.step = Step::Maze { maze_name, phase, route, i, attempts, dest_inside };
+            self.step = Step::Maze {
+                maze_name,
+                phase,
+                route,
+                i,
+                attempts,
+                dest_inside,
+            };
             return;
         }
         self.muckle_announced = false;
@@ -1422,7 +1459,14 @@ impl TravelTask {
             }
         }
 
-        self.step = Step::Maze { maze_name, phase, route, i, attempts, dest_inside };
+        self.step = Step::Maze {
+            maze_name,
+            phase,
+            route,
+            i,
+            attempts,
+            dest_inside,
+        };
     }
 
     /// Cross the Confluence threshold: step into the Plane (the planned edge is
@@ -1528,9 +1572,7 @@ impl TravelTask {
         // Exits changed since we last stood here → the maze shifted and every
         // learned edge is now a lie. Wipe rather than route on stale data.
         if state.record_exits(current, ctx.compass_dirs) {
-            events.push(TravelEvent::Status(
-                "the maze shifted - relearning".into(),
-            ));
+            events.push(TravelEvent::Status("the maze shifted - relearning".into()));
             state.reset();
             state.record_exits(current, ctx.compass_dirs);
         }
@@ -1936,12 +1978,10 @@ impl TravelTask {
                                 // Fill {capture:...} from earlier awaits. An
                                 // unbound token means we'd send a half-formed
                                 // command, so fail the edge instead.
-                                let Some(cmd) =
-                                    crate::core::pathing::edge::expand_captures(
-                                        cmd,
-                                        &self.captures,
-                                    )
-                                else {
+                                let Some(cmd) = crate::core::pathing::edge::expand_captures(
+                                    cmd,
+                                    &self.captures,
+                                ) else {
                                     events.push(TravelEvent::Status(format!(
                                         "edge {from} -> {expected}: unbound capture in '{cmd}'"
                                     )));
@@ -1953,8 +1993,7 @@ impl TravelTask {
                             }
                             AwaitState {
                                 since_seq: ctx.line_seq,
-                                deadline_ms: ctx.now_ms
-                                    + (timeout.max(0.0) * 1000.0) as u64,
+                                deadline_ms: ctx.now_ms + (timeout.max(0.0) * 1000.0) as u64,
                                 retried: false,
                             }
                         }
@@ -1994,8 +2033,7 @@ impl TravelTask {
                         // it (or after one failed attempt), the edge fails
                         // closed with the reason named.
                         if ctx.saw(&crate::core::move_feedback::MoveFeedback::TooPoor) {
-                            let get_silvers =
-                                ctx.funding.map(|f| f.get_silvers).unwrap_or(false);
+                            let get_silvers = ctx.funding.map(|f| f.get_silvers).unwrap_or(false);
                             if !get_silvers {
                                 events.push(TravelEvent::Status(
                                     "not enough silver for this crossing and Get Silvers is off"
@@ -2042,8 +2080,7 @@ impl TravelTask {
                             sent_anything = true;
                             awaiting = Some(AwaitState {
                                 since_seq: ctx.line_seq,
-                                deadline_ms: ctx.now_ms
-                                    + (timeout.max(0.0) * 1000.0) as u64,
+                                deadline_ms: ctx.now_ms + (timeout.max(0.0) * 1000.0) as u64,
                                 retried: true,
                             });
                             break;
@@ -2232,9 +2269,9 @@ impl TravelTask {
                         self.handle_uncrossable_edge(from, expected, ctx, events);
                         return;
                     }
-                    let Some(pattern) = crate::core::pathing::edge::AwaitPattern::new(
-                        &titles.join("|"),
-                    ) else {
+                    let Some(pattern) =
+                        crate::core::pathing::edge::AwaitPattern::new(&titles.join("|"))
+                    else {
                         self.handle_uncrossable_edge(from, expected, ctx, events);
                         return;
                     };
@@ -2253,8 +2290,7 @@ impl TravelTask {
                                         timeout: SEEKING_OFFER_TIMEOUT,
                                         // A miss just means this cast offered
                                         // somewhere else; cast again.
-                                        on_timeout:
-                                            crate::core::pathing::edge::OnTimeout::Continue,
+                                        on_timeout: crate::core::pathing::edge::OnTimeout::Continue,
                                         // Confirm ONLY on a match, inside
                                         // the loop. The old shape confirmed
                                         // unconditionally AFTER it - an
@@ -2263,10 +2299,8 @@ impl TravelTask {
                                         // last cast happened to offer.
                                         if_match: Some((
                                             Box::new(
-                                                crate::core::pathing::edge::AwaitPattern::new(
-                                                    ".",
-                                                )
-                                                .expect("valid"),
+                                                crate::core::pathing::edge::AwaitPattern::new(".")
+                                                    .expect("valid"),
                                             ),
                                             vec![
                                                 WalkAction::StepMove(
@@ -2290,15 +2324,11 @@ impl TravelTask {
                     );
                 }
                 WalkAction::SetVar { name, value } => {
-                    use crate::core::pathing::transpile::{
-                        set_mapdb_var, CURRENT_ROOM_TOKEN,
-                    };
+                    use crate::core::pathing::transpile::{set_mapdb_var, CURRENT_ROOM_TOKEN};
                     // `Map.current.id` isn't knowable at transpile time; fill
                     // it from where we're standing as the action runs.
                     let value = match value.as_deref() {
-                        Some(CURRENT_ROOM_TOKEN) => {
-                            ctx.current_room.map(|id| id.to_string())
-                        }
+                        Some(CURRENT_ROOM_TOKEN) => ctx.current_room.map(|id| id.to_string()),
                         _ => value,
                     };
                     set_mapdb_var(&name, value);
@@ -2536,9 +2566,7 @@ impl TravelTask {
                     dest.ask_word
                 )));
                 Box::new(Step::DayPassUse(super::day_pass_buy::UseState::new(
-                    sack,
-                    pass,
-                    expired,
+                    sack, pass, expired,
                 )))
             }
             None => {
@@ -2704,7 +2732,14 @@ impl TravelTask {
             } = *resume
             {
                 self.tick_script(
-                    actions, pc, sleep_until, expected, from, awaiting, ctx, events,
+                    actions,
+                    pc,
+                    sleep_until,
+                    expected,
+                    from,
+                    awaiting,
+                    ctx,
+                    events,
                 );
             } else {
                 self.step = *resume;
@@ -2784,9 +2819,7 @@ impl TravelTask {
                     let mut done = false;
                     for sev in task.tick(inputs.to_stash_context(ctx.now_ms)) {
                         match sev {
-                            super::stash::StashEvent::Send(c) => {
-                                events.push(TravelEvent::Send(c))
-                            }
+                            super::stash::StashEvent::Send(c) => events.push(TravelEvent::Send(c)),
                             super::stash::StashEvent::Done
                             | super::stash::StashEvent::Failed(_) => done = true,
                         }
@@ -2834,7 +2867,8 @@ impl TravelTask {
                 events.push(TravelEvent::Status(format!("day pass: {why} - re-pathing")));
                 // Leave the sack the way we found it before re-pathing.
                 self.flush_day_pass_close(events);
-                self.banned.insert((self.day_pass_buy_from, self.day_pass_buy_dest));
+                self.banned
+                    .insert((self.day_pass_buy_from, self.day_pass_buy_dest));
                 self.repath(ctx.db, current, ctx.lich_fallback, events);
             }
             BuyEvent::FailedTooPoor(why) => {
@@ -2846,7 +2880,8 @@ impl TravelTask {
                 )));
                 events.push(TravelEvent::DisableDayPassBuy);
                 self.flush_day_pass_close(events);
-                self.banned.insert((self.day_pass_buy_from, self.day_pass_buy_dest));
+                self.banned
+                    .insert((self.day_pass_buy_from, self.day_pass_buy_dest));
                 self.repath(ctx.db, current, ctx.lich_fallback, events);
             }
         }
@@ -3095,8 +3130,7 @@ impl TravelTask {
                     // withdraw silently failed (don't spam `wealth quiet`).
                     if self.keep_retries >= MAX_EDGE_RETRIES {
                         events.push(TravelEvent::Failed(
-                            "the withdrawal never reflected in your wealth - travel aborted"
-                                .into(),
+                            "the withdrawal never reflected in your wealth - travel aborted".into(),
                         ));
                         return;
                     }
@@ -3227,7 +3261,16 @@ impl TravelTask {
         }
         // Curated override beats whatever the mapdb says about this edge.
         if let Some(ov) = crate::core::pathing::overrides::edge_override(current, next) {
-            self.tick_script(ov.actions.clone(), 0, None, next, current, None, ctx, events);
+            self.tick_script(
+                ov.actions.clone(),
+                0,
+                None,
+                next,
+                current,
+                None,
+                ctx,
+                events,
+            );
             return;
         }
         // Chronomage day-pass edge: a self-contained per-town script (open sack
@@ -3278,7 +3321,12 @@ impl TravelTask {
         use crate::core::move_feedback::MoveFeedback as F;
         // The command that failed is the wayto for this edge.
         let expected = match &self.step {
-            Step::AwaitArrival { expected, sent_ms, slow, .. } => (*expected, *sent_ms, *slow),
+            Step::AwaitArrival {
+                expected,
+                sent_ms,
+                slow,
+                ..
+            } => (*expected, *sent_ms, *slow),
             _ => return false,
         };
         let (expected, sent_ms, slow) = expected;
@@ -3340,7 +3388,9 @@ impl TravelTask {
             // character can't stand, and the stand check must stop firing.
             self.mounted = true;
         }
-        if ctx.saw_since(self.sent_line_no, &F::Mounted) && crate::core::pathing::transpile::urchins_valid() {
+        if ctx.saw_since(self.sent_line_no, &F::Mounted)
+            && crate::core::pathing::transpile::urchins_valid()
+        {
             crate::core::pathing::transpile::set_urchins_valid(false);
             events.push(TravelEvent::Status(
                 "you're mounted - urchin guides don't work mounted; re-routing on foot".into(),
@@ -3378,7 +3428,9 @@ impl TravelTask {
         // re-send - global_defs.rb:639-642) and only gives up at its own
         // timeout, returning nil ("don't delete the edge"). Retry with a
         // short backoff; exhaustion re-paths WITHOUT banning.
-        if ctx.saw_since(self.sent_line_no, &F::MoveFailedKeep) || ctx.saw_since(self.sent_line_no, &F::TransientRetry) {
+        if ctx.saw_since(self.sent_line_no, &F::MoveFailedKeep)
+            || ctx.saw_since(self.sent_line_no, &F::TransientRetry)
+        {
             if self.keep_retries >= MAX_EDGE_RETRIES + 2 {
                 events.push(TravelEvent::Status(format!(
                     "move {from} -> {expected} is blocked right now - re-pathing (edge kept)"
@@ -3408,7 +3460,9 @@ impl TravelTask {
         }
         // Throttles and short-lived incapacities: back off, then re-send via
         // Prepare (RT + muckled gated). None of these consume an edge retry.
-        if ctx.saw_since(self.sent_line_no, &F::TypeAhead) || ctx.saw_since(self.sent_line_no, &F::NoControl) {
+        if ctx.saw_since(self.sent_line_no, &F::TypeAhead)
+            || ctx.saw_since(self.sent_line_no, &F::NoControl)
+        {
             self.hold_until_ms = ctx.now_ms + 1_200;
             self.step = Step::Prepare;
             return true;
@@ -3684,9 +3738,7 @@ impl TravelTask {
                 return;
             }
             let banned = self.banned.clone();
-            match pathing::path_to_filtered(db, current, bank, &|a, b| {
-                !banned.contains(&(a, b))
-            }) {
+            match pathing::path_to_filtered(db, current, bank, &|a, b| !banned.contains(&(a, b))) {
                 Some(path) => {
                     self.path = path;
                     self.idx = 0;
@@ -3716,8 +3768,9 @@ impl TravelTask {
         }) {
             Some(path) => {
                 // go2 prints a fresh ETA on every restart (go2.lic:2296-2298).
-                let full_eta: Vec<u32> =
-                    std::iter::once(current).chain(path.iter().copied()).collect();
+                let full_eta: Vec<u32> = std::iter::once(current)
+                    .chain(path.iter().copied())
+                    .collect();
                 events.push(TravelEvent::Status(format!(
                     "re-routed: ETA {} ({} rooms)",
                     fmt_eta(pathing::estimate_time(db, &full_eta)),
@@ -3731,8 +3784,9 @@ impl TravelTask {
                 // trip through the Zul mining cart with silver_need still 0
                 // from the original free route, and the walker hit the till
                 // broke).
-                let full: Vec<u32> =
-                    std::iter::once(current).chain(self.path.iter().copied()).collect();
+                let full: Vec<u32> = std::iter::once(current)
+                    .chain(self.path.iter().copied())
+                    .collect();
                 self.silver_need = pathing::silver_cost(db, &full);
                 self.step = if self.silver_need > 0 {
                     Step::Funding(FundingPhase::AwaitWealth {
@@ -3787,16 +3841,14 @@ impl TravelTask {
     /// A `Failed`/`Arrived` event ends the task; the owner uses this to know
     /// whether the tick's events retired it.
     pub fn is_finished(events: &[TravelEvent]) -> bool {
-        events
-            .iter()
-            .any(|e| {
-                matches!(
-                    e,
-                    TravelEvent::Arrived { .. }
-                        | TravelEvent::Failed(_)
-                        | TravelEvent::LichFallback { .. }
-                )
-            })
+        events.iter().any(|e| {
+            matches!(
+                e,
+                TravelEvent::Arrived { .. }
+                    | TravelEvent::Failed(_)
+                    | TravelEvent::LichFallback { .. }
+            )
+        })
     }
 }
 
@@ -4041,8 +4093,7 @@ mod tests {
                         sim.standing = true;
                     } else if let Some(room) = db.room(sim.current) {
                         // Find which neighbor this command walks into.
-                        if let Some((&dest, _)) =
-                            room.wayto.iter().find(|(_, c)| c.as_str() == cmd)
+                        if let Some((&dest, _)) = room.wayto.iter().find(|(_, c)| c.as_str() == cmd)
                         {
                             sim.current = dest;
                         }
@@ -4151,9 +4202,8 @@ mod tests {
         // 1 first try + 2 retries on the broken edge, then the detour.
         assert!(sends >= 5, "retries then detour, got {sends} sends");
         assert!(
-            log.iter().any(
-                |e| matches!(e, TravelEvent::Status(s) if s.contains("disabling that edge"))
-            ),
+            log.iter()
+                .any(|e| matches!(e, TravelEvent::Status(s) if s.contains("disabling that edge"))),
             "edge ban should be announced"
         );
         assert!(matches!(
@@ -4437,7 +4487,11 @@ mod tests {
         // Tick 3: hands empty -> climb, then fill_hands sends the FIRST retrieve
         // (LIFO: the pick, stowed last, comes back first).
         let ev = task.tick(ctx!(&objs, 200, 1));
-        assert_eq!(sent(&ev), ["climb footpath", "get #4"], "climb + first retrieve: {ev:?}");
+        assert_eq!(
+            sent(&ev),
+            ["climb footpath", "get #4"],
+            "climb + first retrieve: {ev:?}"
+        );
         // The climb LANDS us at the destination (room 2) NOW, while the pick
         // retrieval is still in flight and the wand hasn't been retrieved yet.
         // The pick comes back to the right hand.
@@ -4448,7 +4502,11 @@ mod tests {
             !ev.iter().any(|e| matches!(e, TravelEvent::Arrived { .. })),
             "trip does not end mid-refill: {ev:?}"
         );
-        assert_eq!(sent(&ev), ["get #18"], "retrieves the SECOND item (the wand): {ev:?}");
+        assert_eq!(
+            sent(&ev),
+            ["get #18"],
+            "retrieves the SECOND item (the wand): {ev:?}"
+        );
         // The wand comes back; the refill completes (stash cycle ends) and the
         // suspended script resumes — no more actions left.
         objs.set_hand(Hand::Left, Some(GameItem::new("18", "wand", "a wand")));
@@ -4526,13 +4584,19 @@ mod tests {
         sim.feel(MoveFeedback::MoveFailedRemovable);
         let events = task.tick(sim.ctx(&db));
         assert!(
-            events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("keeps failing"))),
+            events
+                .iter()
+                .any(|e| matches!(e, TravelEvent::Status(s) if s.contains("keeps failing"))),
             "repeated failure finally bans + re-paths: {events:?}"
         );
         // The re-plan sends the detour's first hop.
         sim.now += 100;
         sim.feedback.clear();
-        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["east"], "re-routes via room 3");
+        assert_eq!(
+            sent(&task.tick(sim.ctx(&db))),
+            ["east"],
+            "re-routes via room 3"
+        );
     }
 
     #[test]
@@ -4675,7 +4739,10 @@ mod tests {
         sim.now += 100;
         sim.nav_count = 1;
         let ev = task.tick(sim.ctx(&db));
-        assert!(matches!(&ev[0], TravelEvent::Status(s) if s.contains("re-pathing")), "{ev:?}");
+        assert!(
+            matches!(&ev[0], TravelEvent::Status(s) if s.contains("re-pathing")),
+            "{ev:?}"
+        );
         sim.now += 100;
         let ev = task.tick(sim.ctx(&db));
         assert_eq!(sent(&ev), ["north"], "the new route walks: {ev:?}");
@@ -4776,7 +4843,7 @@ mod tests {
         // current_room becomes None, but a <nav> fired. Trust the edge.
         sim.now += 100;
         sim.current = 2; // sim always resolves; simulate unresolved via ctx override
-        // Force the "unresolved" case: build a ctx with current_room = None.
+                         // Force the "unresolved" case: build a ctx with current_room = None.
         let events = {
             let mut ctx = sim.ctx(&db);
             ctx.current_room = None;
@@ -4814,7 +4881,10 @@ mod tests {
                 .any(|e| matches!(e, TravelEvent::LichFallback { destination: 2 })),
             "hands off to ;go2 2: {events:?}"
         );
-        assert!(TravelTask::is_finished(&events), "the fallback ends the task");
+        assert!(
+            TravelTask::is_finished(&events),
+            "the fallback ends the task"
+        );
     }
 
     /// Two-room db with a scripted edge 1->2, for driving raw action lists.
@@ -4862,7 +4932,10 @@ mod tests {
         sim.say("The crewmember ignores you.");
         sim.now += 1_000;
         let ev = task.tick(sim.ctx(&db));
-        assert!(sent(&ev).is_empty(), "unrelated line doesn't release the await");
+        assert!(
+            sent(&ev).is_empty(),
+            "unrelated line doesn't release the await"
+        );
 
         // The awaited line does.
         sim.say("An elven crewmember lowers the gangplank.");
@@ -4894,7 +4967,11 @@ mod tests {
         assert!(sent(&ev).is_empty(), "passive await sends nothing");
         sim.now += 6_000;
         let ev = task.tick(sim.ctx(&db));
-        assert_eq!(sent(&ev), ["out"], "a Continue timeout runs the next action");
+        assert_eq!(
+            sent(&ev),
+            ["out"],
+            "a Continue timeout runs the next action"
+        );
 
         // Fail: the awaited line was the only evidence the crossing worked.
         let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
@@ -5215,8 +5292,7 @@ mod tests {
             WalkAction::Await {
                 cmd: Some("look wall".into()),
                 pattern: Box::new(
-                    crate::core::pathing::edge::AwaitPattern::new(r"The (?P<v>\w+) door")
-                        .unwrap(),
+                    crate::core::pathing::edge::AwaitPattern::new(r"The (?P<v>\w+) door").unwrap(),
                 ),
                 timeout: 8.0,
                 on_timeout: OnTimeout::Fail,
@@ -5398,7 +5474,11 @@ mod tests {
         );
         // It re-paths around via room 3.
         sim.now += 100;
-        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["east"], "re-routes natively");
+        assert_eq!(
+            sent(&task.tick(sim.ctx(&db))),
+            ["east"],
+            "re-routes natively"
+        );
     }
 
     fn funding_db() -> MapDb {
@@ -5422,7 +5502,12 @@ mod tests {
     fn fund(silver: Option<u64>, get_silvers: bool) -> FundingInputs {
         // Tests default to a FRESH reading (stamped after any probe); the
         // staleness test builds its own with an old line number.
-        FundingInputs { silver, silver_line_no: u64::MAX, get_silvers, get_return_trip: false }
+        FundingInputs {
+            silver,
+            silver_line_no: u64::MAX,
+            get_silvers,
+            get_return_trip: false,
+        }
     }
 
     #[test]
@@ -5453,7 +5538,7 @@ mod tests {
         let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
         let mut sim = Sim::new(1);
         sim.game_line = 100; // lines seen before the trip
-        // Stale cache: reads 2000, stamped from long before the probe.
+                             // Stale cache: reads 2000, stamped from long before the probe.
         sim.funding = Some(FundingInputs {
             silver: Some(2000),
             silver_line_no: 50,
@@ -5466,7 +5551,9 @@ mod tests {
         sim.now += 100;
         let events = task.tick(sim.ctx(&db));
         assert!(
-            !events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("funded"))),
+            !events
+                .iter()
+                .any(|e| matches!(e, TravelEvent::Status(s) if s.contains("funded"))),
             "a pre-probe reading must not fund: {events:?}"
         );
         assert_eq!(sent(&events), Vec::<String>::new());
@@ -5481,7 +5568,9 @@ mod tests {
         sim.now += 100;
         let events = task.tick(sim.ctx(&db));
         assert!(
-            events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("bank"))),
+            events
+                .iter()
+                .any(|e| matches!(e, TravelEvent::Status(s) if s.contains("bank"))),
             "fresh broke reading routes to the bank first: {events:?}"
         );
     }
@@ -5497,16 +5586,26 @@ mod tests {
         sim.funding = Some(fund(Some(100), false)); // short, no get_silvers
         let events = task.tick(sim.ctx(&db));
         assert!(
-            events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("short"))),
+            events
+                .iter()
+                .any(|e| matches!(e, TravelEvent::Status(s) if s.contains("short"))),
             "warns about being short"
         );
         // go2's 10-second grace (go2.lic:2288-2289): nothing sent during it...
-        assert_eq!(sent(&events), Vec::<String>::new(), "holds during the grace");
+        assert_eq!(
+            sent(&events),
+            Vec::<String>::new(),
+            "holds during the grace"
+        );
         sim.now += 5_000;
         assert_eq!(sent(&task.tick(sim.ctx(&db))), Vec::<String>::new());
         // ...then the walk proceeds anyway.
         sim.now += 6_000;
-        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["board"], "proceeds after 10s");
+        assert_eq!(
+            sent(&task.tick(sim.ctx(&db))),
+            ["board"],
+            "proceeds after 10s"
+        );
     }
 
     #[test]
@@ -5538,8 +5637,8 @@ mod tests {
         assert_eq!(sent(&task.tick(sim.ctx(&db))), ["wealth quiet"]);
         sim.now += 100;
         sim.funding = Some(fund(Some(0), true)); // broke, but get_silvers on
-        // Should collapse the `;e true` hideout and send `urchin guide bank`,
-        // NOT `urchin guide pier` or the portmaster ask.
+                                                 // Should collapse the `;e true` hideout and send `urchin guide bank`,
+                                                 // NOT `urchin guide pier` or the portmaster ask.
         let ev = task.tick(sim.ctx(&db));
         assert_eq!(
             sent(&ev),
@@ -5564,7 +5663,8 @@ mod tests {
         sim.funding = Some(fund(Some(25000), true));
         let ev = task.tick(sim.ctx(&db));
         assert!(
-            ev.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("continuing"))),
+            ev.iter()
+                .any(|e| matches!(e, TravelEvent::Status(s) if s.contains("continuing"))),
             "funded → continues to the real destination: {ev:?}"
         );
     }
@@ -5582,7 +5682,7 @@ mod tests {
         task.tick(sim.ctx(&db)); // wealth quiet
         sim.now += 100;
         sim.funding = Some(fund(Some(0), true)); // broke, get_silvers on
-        // Redirect to the bank (room 3): sends the walk toward it.
+                                                 // Redirect to the bank (room 3): sends the walk toward it.
         let ev = task.tick(sim.ctx(&db));
         assert_eq!(sent(&ev), ["west"], "routes toward the bank: {ev:?}");
         assert_eq!(task.funding_bank, Some(3));
@@ -5614,7 +5714,7 @@ mod tests {
         task.tick(sim.ctx(&db)); // wealth quiet
         sim.now += 100;
         sim.funding = Some(fund(Some(100), true)); // short, but get_silvers on
-        // Redirects to the bank (room 3) and starts walking there.
+                                                   // Redirects to the bank (room 3) and starts walking there.
         let events = task.tick(sim.ctx(&db));
         assert_eq!(sent(&events), ["west"], "routes toward the bank");
         // Arrive at the bank (this tick registers arrival + hands back to
@@ -5635,7 +5735,9 @@ mod tests {
         sim.funding = Some(fund(Some(25000), true));
         let events = task.tick(sim.ctx(&db));
         assert!(
-            events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("continuing"))),
+            events
+                .iter()
+                .any(|e| matches!(e, TravelEvent::Status(s) if s.contains("continuing"))),
             "funded → continues to the real destination: {events:?}"
         );
     }
@@ -5646,19 +5748,20 @@ mod tests {
         // a paid trip. Funding must withdraw right here, not "lose the route to
         // the bank" because path_to(bank, bank) is empty.
         let db = funding_db(); // room 3 is bank-tagged; 1 pays 25000 -> 2
-        // Plan a paid trip starting FROM the bank room (3). Route 3 -> 2 goes
-        // 3 -> 1 (east) -> 2 (board, the paid edge).
+                               // Plan a paid trip starting FROM the bank room (3). Route 3 -> 2 goes
+                               // 3 -> 1 (east) -> 2 (board, the paid edge).
         let mut task = TravelTask::start(&db, 3, 2, 0).unwrap();
         let mut sim = Sim::new(3);
         sim.funding = Some(fund(None, false));
         assert_eq!(sent(&task.tick(sim.ctx(&db))), ["wealth quiet"]);
         sim.now += 100;
         sim.funding = Some(fund(Some(0), true)); // broke, get_silvers on
-        // Must NOT abort — the nearest bank IS the current room, so it
-        // withdraws in place this same tick (no walk needed).
+                                                 // Must NOT abort — the nearest bank IS the current room, so it
+                                                 // withdraws in place this same tick (no walk needed).
         let ev = task.tick(sim.ctx(&db));
         assert!(
-            !ev.iter().any(|e| matches!(e, TravelEvent::Failed(s) if s.contains("lost the route"))),
+            !ev.iter()
+                .any(|e| matches!(e, TravelEvent::Failed(s) if s.contains("lost the route"))),
             "does not abort when already at the bank: {ev:?}"
         );
         assert!(
@@ -5713,7 +5816,9 @@ mod tests {
         sim.now += 300;
         let events = task.tick(sim.ctx(&db));
         assert!(
-            !events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("off the planned route"))),
+            !events.iter().any(
+                |e| matches!(e, TravelEvent::Status(s) if s.contains("off the planned route"))
+            ),
             "a mapped side room mid-script is NOT off-route: {events:?}"
         );
         assert_eq!(sent(&events), ["look trail"], "the script continues");
@@ -5721,7 +5826,9 @@ mod tests {
         sim.now += 300;
         let events = task.tick(sim.ctx(&db));
         assert!(
-            !events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("off the planned route"))),
+            !events.iter().any(
+                |e| matches!(e, TravelEvent::Status(s) if s.contains("off the planned route"))
+            ),
             "{events:?}"
         );
         // The scout line lands: capture the direction, climb down.
@@ -5740,7 +5847,10 @@ mod tests {
         let events = task.tick(sim.ctx(&db));
         assert!(matches!(
             events.last(),
-            Some(TravelEvent::Arrived { destination: 1041, .. })
+            Some(TravelEvent::Arrived {
+                destination: 1041,
+                ..
+            })
         ));
     }
 
@@ -5820,7 +5930,10 @@ mod tests {
         assert!(
             log.iter().any(|e| matches!(
                 e,
-                TravelEvent::Arrived { destination: 30870, .. }
+                TravelEvent::Arrived {
+                    destination: 30870,
+                    ..
+                }
             )),
             "maze walk reaches the guild side: {log:?}"
         );
@@ -5881,32 +5994,43 @@ mod tests {
         let mut sim = Sim::new(1);
         // Board: sends the portmaster ask, awaits arrival at the edge dest (9).
         let ev = task.tick(sim.ctx(&db));
-        assert!(sent(&ev).iter().any(|c| c.contains("portmaster")), "boards: {ev:?}");
+        assert!(
+            sent(&ev).iter().any(|c| c.contains("portmaster")),
+            "boards: {ev:?}"
+        );
         // The escort puts us on the SHIP (room 2, meta:transport) first.
         sim.current = 2;
         sim.now += 100;
         let ev = task.tick(sim.ctx(&db));
         assert!(
-            ev.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("aboard a transport"))),
+            ev.iter()
+                .any(|e| matches!(e, TravelEvent::Status(s) if s.contains("aboard a transport"))),
             "waits aboard the transport: {ev:?}"
         );
         assert!(sent(&ev).is_empty(), "sends nothing while sailing: {ev:?}");
         // Still sailing next tick — still silent.
         sim.now += 5_000;
-        assert!(sent(&task.tick(sim.ctx(&db))).is_empty(), "still waiting aboard");
+        assert!(
+            sent(&task.tick(sim.ctx(&db))).is_empty(),
+            "still waiting aboard"
+        );
         // The ride drops us at the landing (3), a normal room → re-plan to the
         // real destination (4) and walk.
         sim.current = 3;
         sim.now += 100;
         let ev = task.tick(sim.ctx(&db));
         assert!(
-            ev.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("off the transport"))),
+            ev.iter()
+                .any(|e| matches!(e, TravelEvent::Status(s) if s.contains("off the transport"))),
             "re-paths on leaving the transport: {ev:?}"
         );
         // Then it walks the final leg to the destination.
         let log = walk_to_completion(&db, &mut task, &mut sim);
         assert!(
-            matches!(log.last(), Some(TravelEvent::Arrived { destination: 4, .. })),
+            matches!(
+                log.last(),
+                Some(TravelEvent::Arrived { destination: 4, .. })
+            ),
             "reaches the real destination: {log:?}"
         );
     }
@@ -5946,13 +6070,33 @@ mod tests {
                     hidden: false,
                 };
                 TravelContext {
-                    db: &db, current_room: Some($cur), dead: false, muckled: false,
-                    standing: true, sitting: false, kneeling: false, active_spells: &[],
-                    hidden: false, citizenship: None, profession: None, society: None,
-                    rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
-                    hands: None, feedback: $fb, lich_fallback: false, funding: None,
-                    recent_lines: &[], line_seq: 0, game_line_no: 0, game_nav_count: 0,
-                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
+                    db: &db,
+                    current_room: Some($cur),
+                    dead: false,
+                    muckled: false,
+                    standing: true,
+                    sitting: false,
+                    kneeling: false,
+                    active_spells: &[],
+                    hidden: false,
+                    citizenship: None,
+                    profession: None,
+                    society: None,
+                    rt_remaining: 0.0,
+                    now_ms: $now,
+                    pathcodes: &Default::default(),
+                    hands: None,
+                    feedback: $fb,
+                    lich_fallback: false,
+                    funding: None,
+                    recent_lines: &[],
+                    line_seq: 0,
+                    game_line_no: 0,
+                    game_nav_count: 0,
+                    at_pinefar_depository: false,
+                    compass_dirs: &[],
+                    loot_nouns: &[],
+                    carried_names: &[],
                     fwi_trinket: None,
                     day_pass: Some(dp),
                 }
@@ -5964,7 +6108,11 @@ mod tests {
         use crate::core::move_feedback::MoveFeedback as F;
         // Tick 1: open the sack — and nothing else yet.
         let ev = task.tick(dpctx!(0, 8635));
-        assert_eq!(sent(&ev), ["open #99"], "opens the sack, ONE command: {ev:?}");
+        assert_eq!(
+            sent(&ev),
+            ["open #99"],
+            "opens the sack, ONE command: {ev:?}"
+        );
         // Tick 2: the open confirmed → get the held pass. Still one command.
         let ev = task.tick(dpctx!(1_000, 8635, &[(1u64, F::ContainerOpened)]));
         assert_eq!(sent(&ev), ["get #77"], "open answered -> get: {ev:?}");
@@ -5977,12 +6125,23 @@ mod tests {
         assert_eq!(sent(&ev), ["_drag #77 #99"], "drag alone, gated: {ev:?}");
         // Tick 5: the stow confirmed → the owed close settles and we conclude.
         let ev = task.tick(dpctx!(4_000, 8916, &[(1u64, F::ItemStowed)]));
-        assert!(sent(&ev).contains(&"close #99"), "closes the sack we opened: {ev:?}");
-        assert!(!sent(&ev).iter().any(|c| c.contains("ask ") || c.contains("withdraw")));
+        assert!(
+            sent(&ev).contains(&"close #99"),
+            "closes the sack we opened: {ev:?}"
+        );
+        assert!(!sent(&ev)
+            .iter()
+            .any(|c| c.contains("ask ") || c.contains("withdraw")));
         // Tick 6: trip complete.
         let ev = task.tick(dpctx!(5_000, 8916));
         assert!(
-            matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
+            matches!(
+                ev.last(),
+                Some(TravelEvent::Arrived {
+                    destination: 8916,
+                    ..
+                })
+            ),
             "arrives at the destination: {ev:?}"
         );
 
@@ -6004,7 +6163,13 @@ mod tests {
         );
         let ev = task.tick(dpctx!(5_000, 8916));
         assert!(
-            matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
+            matches!(
+                ev.last(),
+                Some(TravelEvent::Arrived {
+                    destination: 8916,
+                    ..
+                })
+            ),
             "still arrives: {ev:?}"
         );
     }
@@ -6042,13 +6207,33 @@ mod tests {
                     hidden: false,
                 };
                 TravelContext {
-                    db: &db, current_room: Some($cur), dead: false, muckled: false,
-                    standing: true, sitting: false, kneeling: false, active_spells: &[],
-                    hidden: false, citizenship: None, profession: None, society: None,
-                    rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
-                    hands: None, feedback: $fb, lich_fallback: false, funding: None,
-                    recent_lines: &[], line_seq: 0, game_line_no: 0, game_nav_count: 0,
-                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
+                    db: &db,
+                    current_room: Some($cur),
+                    dead: false,
+                    muckled: false,
+                    standing: true,
+                    sitting: false,
+                    kneeling: false,
+                    active_spells: &[],
+                    hidden: false,
+                    citizenship: None,
+                    profession: None,
+                    society: None,
+                    rt_remaining: 0.0,
+                    now_ms: $now,
+                    pathcodes: &Default::default(),
+                    hands: None,
+                    feedback: $fb,
+                    lich_fallback: false,
+                    funding: None,
+                    recent_lines: &[],
+                    line_seq: 0,
+                    game_line_no: 0,
+                    game_nav_count: 0,
+                    at_pinefar_depository: false,
+                    compass_dirs: &[],
+                    loot_nouns: &[],
+                    carried_names: &[],
                     fwi_trinket: None,
                     day_pass: Some(dp),
                 }
@@ -6063,7 +6248,10 @@ mod tests {
         // A stray nav with the room STILL the departure room: must NOT
         // conclude (no cleanup sends, no phantom crossing).
         let ev = task.tick(dpctx!(3_000, 8635, &[(1u64, F::NavArrived)]));
-        assert!(ev.is_empty(), "stale-room nav must not conclude the raise: {ev:?}");
+        assert!(
+            ev.is_empty(),
+            "stale-room nav must not conclude the raise: {ev:?}"
+        );
         // The whirlwind line arrives while the room is STILL stale: the
         // response-gated put-back runs — and nothing re-plans from the stale
         // departure room (no ask/open phantom).
@@ -6087,7 +6275,13 @@ mod tests {
         let _ = task.tick(dpctx!(6_000, 8916, &[]));
         let ev = task.tick(dpctx!(7_000, 8916, &[]));
         assert!(
-            matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
+            matches!(
+                ev.last(),
+                Some(TravelEvent::Arrived {
+                    destination: 8916,
+                    ..
+                })
+            ),
             "arrives once resolved: {ev:?}"
         );
     }
@@ -6122,13 +6316,33 @@ mod tests {
                     hidden: false,
                 };
                 TravelContext {
-                    db: &db, current_room: Some($cur), dead: false, muckled: false,
-                    standing: true, sitting: false, kneeling: false, active_spells: &[],
-                    hidden: false, citizenship: None, profession: None, society: None,
-                    rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
-                    hands: None, feedback: $fb, lich_fallback: false, funding: None,
-                    recent_lines: &[], line_seq: 0, game_line_no: 0, game_nav_count: 0,
-                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[], carried_names: &[],
+                    db: &db,
+                    current_room: Some($cur),
+                    dead: false,
+                    muckled: false,
+                    standing: true,
+                    sitting: false,
+                    kneeling: false,
+                    active_spells: &[],
+                    hidden: false,
+                    citizenship: None,
+                    profession: None,
+                    society: None,
+                    rt_remaining: 0.0,
+                    now_ms: $now,
+                    pathcodes: &Default::default(),
+                    hands: None,
+                    feedback: $fb,
+                    lich_fallback: false,
+                    funding: None,
+                    recent_lines: &[],
+                    line_seq: 0,
+                    game_line_no: 0,
+                    game_nav_count: 0,
+                    at_pinefar_depository: false,
+                    compass_dirs: &[],
+                    loot_nouns: &[],
+                    carried_names: &[],
                     fwi_trinket: None,
                     day_pass: Some(dp),
                 }
@@ -6144,7 +6358,10 @@ mod tests {
         let first: Vec<String> = sent(&ev).iter().map(|c| c.to_string()).collect();
         all.extend(first.clone());
         assert_eq!(first, ["open #99"], "opens the day-pass sack");
-        assert!(!first.iter().any(|c| c == "empty hands"), "never a raw `empty hands` string");
+        assert!(
+            !first.iter().any(|c| c == "empty hands"),
+            "never a raw `empty hands` string"
+        );
 
         // Now drive the response-driven conversation. Each tick we advance the
         // room and, based on the LAST command the machine sent, feed the game
@@ -6193,7 +6410,10 @@ mod tests {
                     }
                 } else if c == "raise pass" {
                     raised = true;
-                } else if !withdrew && (c.len() <= 5 || c.starts_with("go ") || c == "out") && !c.starts_with("ask") {
+                } else if !withdrew
+                    && (c.len() <= 5 || c.starts_with("go ") || c == "out")
+                    && !c.starts_with("ask")
+                {
                     bank_walk_steps += 1;
                 }
                 all.push(c.to_string());
@@ -6202,10 +6422,19 @@ mod tests {
                 break;
             }
         }
-        assert!(all.iter().any(|c| c == "ask clerk for icemule"), "asks the clerk: {all:?}");
+        assert!(
+            all.iter().any(|c| c == "ask clerk for icemule"),
+            "asks the clerk: {all:?}"
+        );
         assert!(withdrew, "funds at the bank when too poor: {all:?}");
-        assert!(!withdrew_before_bank_walk, "walks to the bank before withdrawing: {all:?}");
-        assert!(raised, "raises the bought pass (in the waiting room) to travel: {all:?}");
+        assert!(
+            !withdrew_before_bank_walk,
+            "walks to the bank before withdrawing: {all:?}"
+        );
+        assert!(
+            raised,
+            "raises the bought pass (in the waiting room) to travel: {all:?}"
+        );
     }
 
     // ---- Pass-through (`;e true`) edges: virtual urchin hideouts ------------
@@ -6233,14 +6462,21 @@ mod tests {
         // Tick 1: at room 1, the `;e true` entry collapses -> sends the
         // hideout's `urchin guide town` while still standing at room 1.
         let ev1 = task.tick(sim.ctx(&db));
-        assert_eq!(sent(&ev1), ["urchin guide town"], "collapses to the guide: {ev1:?}");
+        assert_eq!(
+            sent(&ev1),
+            ["urchin guide town"],
+            "collapses to the guide: {ev1:?}"
+        );
         // The guide jumps us straight to the real destination (room 3),
         // skipping the virtual hideout (room 2) entirely.
         sim.current = 3;
         sim.now += 100;
         let ev2 = task.tick(sim.ctx(&db));
         assert!(
-            matches!(ev2.last(), Some(TravelEvent::Arrived { destination: 3, .. })),
+            matches!(
+                ev2.last(),
+                Some(TravelEvent::Arrived { destination: 3, .. })
+            ),
             "arrives at the real destination: {ev2:?}"
         );
     }
@@ -6296,7 +6532,10 @@ mod tests {
         sim.compass_dirs = strs(&["north"]);
         // First explorer step: no landmark, one untraversed exit → go north.
         let events = task.tick(sim.ctx(&db));
-        assert!(sent(&events).contains(&"north"), "explores north: {events:?}");
+        assert!(
+            sent(&events).contains(&"north"),
+            "explores north: {events:?}"
+        );
         // Land in 23283; the executor records learned[23282][north]=23283.
         sim.current = 23283;
         sim.compass_dirs = strs(&["south"]);
@@ -6330,7 +6569,13 @@ mod tests {
         sim.now += 100;
         let events = task.tick(sim.ctx(&db));
         assert!(
-            matches!(events.last(), Some(TravelEvent::Arrived { destination: 1005, .. })),
+            matches!(
+                events.last(),
+                Some(TravelEvent::Arrived {
+                    destination: 1005,
+                    ..
+                })
+            ),
             "warping to the destination completes the trip: {events:?}"
         );
     }
@@ -6359,7 +6604,7 @@ mod tests {
         sim.compass_dirs = strs(&["north"]);
         sim.loot_nouns = strs(&[super::super::confluence::TRANQUILITY_LOOT]);
         task.tick(sim.ctx(&db)); // go tranquility
-        // Dropped at 2005 (not the destination) → explorer relinquishes + repaths.
+                                 // Dropped at 2005 (not the destination) → explorer relinquishes + repaths.
         sim.current = 2005;
         sim.loot_nouns.clear();
         sim.now += 100;
@@ -6386,13 +6631,13 @@ mod tests {
         sim.current = 23282;
         sim.compass_dirs = strs(&["north", "east"]);
         let _ = task.tick(sim.ctx(&db)); // records 23282's exits, sends a move (pending)
-        // The move lands in a neighbor (23283) — the executor learns the edge
-        // and clears the pending move.
+                                         // The move lands in a neighbor (23283) — the executor learns the edge
+                                         // and clears the pending move.
         sim.current = 23283;
         sim.compass_dirs = strs(&["south"]);
         sim.now += 100;
         let _ = task.tick(sim.ctx(&db)); // records 23283, sends a move
-        // Walk back to 23282, but its exits have SHIFTED since we recorded them.
+                                         // Walk back to 23282, but its exits have SHIFTED since we recorded them.
         sim.current = 23282;
         sim.compass_dirs = strs(&["north", "west"]);
         sim.now += 100;

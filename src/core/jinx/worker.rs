@@ -29,7 +29,10 @@ pub enum Request {
     /// Regex/substring search across asset names.
     Search { pattern: String },
     /// Show details for one named asset.
-    Info { name: String, only_repo: Option<String> },
+    Info {
+        name: String,
+        only_repo: Option<String>,
+    },
     /// Install (or update, when `overwrite`) one named asset.
     Install {
         name: String,
@@ -87,7 +90,10 @@ pub struct Update {
 /// install just reports the kind + name so the command layer can dispatch.
 #[derive(Debug, Clone)]
 pub enum Effect {
-    Installed { name: String, kind: String },
+    Installed {
+        name: String,
+        kind: String,
+    },
     /// The GUI panel's asset catalog (all repos), delivered by `Catalog`.
     Catalog(Vec<CatalogEntry>),
 }
@@ -158,7 +164,9 @@ fn request_ack(request: &Request) -> String {
         Request::List { .. } => "[jinx] listing assets…".to_string(),
         Request::Search { pattern } => format!("[jinx] searching for '{pattern}'…"),
         Request::Info { name, .. } => format!("[jinx] fetching info for {name}…"),
-        Request::Install { name, overwrite, .. } => {
+        Request::Install {
+            name, overwrite, ..
+        } => {
             let verb = if *overwrite { "updating" } else { "installing" };
             format!("[jinx] {verb} {name}…")
         }
@@ -205,8 +213,11 @@ fn run_job(game: Option<GameType>, request: Request, tx: &mpsc::Sender<Update>) 
                         if manifest.available.is_empty() {
                             continue;
                         }
-                        let installable: Vec<_> =
-                            manifest.available.iter().filter(|a| a.is_installable()).collect();
+                        let installable: Vec<_> = manifest
+                            .available
+                            .iter()
+                            .filter(|a| a.is_installable())
+                            .collect();
                         if installable.is_empty() {
                             continue;
                         }
@@ -228,8 +239,10 @@ fn run_job(game: Option<GameType>, request: Request, tx: &mpsc::Sender<Update>) 
                         }
                         for (set, kind, count) in sets {
                             send(
-                                format!("  {set} ({kind} set, {count} file{})",
-                                    if count == 1 { "" } else { "s" }),
+                                format!(
+                                    "  {set} ({kind} set, {count} file{})",
+                                    if count == 1 { "" } else { "s" }
+                                ),
                                 None,
                             );
                         }
@@ -246,7 +259,9 @@ fn run_job(game: Option<GameType>, request: Request, tx: &mpsc::Sender<Update>) 
             let needle = pattern.to_lowercase();
             let mut hits = 0;
             for repo in &repos.repos {
-                let Ok(manifest) = cache.get(&agent, repo) else { continue };
+                let Ok(manifest) = cache.get(&agent, repo) else {
+                    continue;
+                };
                 for asset in &manifest.available {
                     if !asset.is_installable() {
                         continue;
@@ -260,27 +275,53 @@ fn run_job(game: Option<GameType>, request: Request, tx: &mpsc::Sender<Update>) 
                     }
                 }
             }
-            send(format!("[jinx] {hits} match{}", if hits == 1 { "" } else { "es" }), None);
+            send(
+                format!("[jinx] {hits} match{}", if hits == 1 { "" } else { "es" }),
+                None,
+            );
         }
 
         Request::Info { name, only_repo } => {
             match resolve::resolve_one(&agent, &repos, &mut cache, &name, only_repo.as_deref()) {
                 Ok(m) => {
                     let a = &m.asset;
-                    send(format!("[jinx] {} ({}, repo: {})", a.basename(), a.kind(), m.repo.name), None);
+                    send(
+                        format!(
+                            "[jinx] {} ({}, repo: {})",
+                            a.basename(),
+                            a.kind(),
+                            m.repo.name
+                        ),
+                        None,
+                    );
                     if let Some(v) = &a.vellum {
-                        if let Some(t) = &v.title { send(format!("  {t}"), None); }
-                        if let Some(au) = &v.author { send(format!("  by {au}"), None); }
-                        if let Some(d) = &v.description { send(format!("  {d}"), None); }
-                        if let Some(ver) = &v.version { send(format!("  version {ver}"), None); }
-                        if !v.tags.is_empty() { send(format!("  tags: {}", v.tags.join(", ")), None); }
+                        if let Some(t) = &v.title {
+                            send(format!("  {t}"), None);
+                        }
+                        if let Some(au) = &v.author {
+                            send(format!("  by {au}"), None);
+                        }
+                        if let Some(d) = &v.description {
+                            send(format!("  {d}"), None);
+                        }
+                        if let Some(ver) = &v.version {
+                            send(format!("  version {ver}"), None);
+                        }
+                        if !v.tags.is_empty() {
+                            send(format!("  tags: {}", v.tags.join(", ")), None);
+                        }
                     }
                 }
                 Err(e) => send(format!("[jinx] {e}"), None),
             }
         }
 
-        Request::Install { name, category, only_repo, overwrite } => {
+        Request::Install {
+            name,
+            category,
+            only_repo,
+            overwrite,
+        } => {
             run_install(
                 &agent,
                 &repos,
@@ -351,7 +392,10 @@ fn run_job(game: Option<GameType>, request: Request, tx: &mpsc::Sender<Update>) 
             }
             let count = entries.len();
             send(
-                format!("[jinx] catalog: {count} asset{}", if count == 1 { "" } else { "s" }),
+                format!(
+                    "[jinx] catalog: {count} asset{}",
+                    if count == 1 { "" } else { "s" }
+                ),
                 Some(Effect::Catalog(entries)),
             );
         }
@@ -376,7 +420,10 @@ fn run_install(
         Ok(m) => m,
         Err(e) => return send(format!("[jinx] {e}"), None),
     };
-    let is_set = matches.len() > 1 || matches.first().is_some_and(|m| m.asset.set_name().is_some());
+    let is_set = matches.len() > 1
+        || matches
+            .first()
+            .is_some_and(|m| m.asset.set_name().is_some());
 
     let mut db = InstalledDb::load().unwrap_or_default();
     let (mut installed, mut current, mut failed) = (0usize, 0usize, 0usize);
@@ -395,7 +442,10 @@ fn run_install(
             Ok(InstallOutcome::AlreadyCurrent) => {
                 current += 1;
                 if !is_set {
-                    send(format!("[jinx] {} already up to date", m.asset.basename()), None);
+                    send(
+                        format!("[jinx] {} already up to date", m.asset.basename()),
+                        None,
+                    );
                 }
             }
             Err(e) => {
@@ -405,7 +455,10 @@ fn run_install(
         }
     }
     if let Err(e) = db.save() {
-        send(format!("[jinx] installed {name} but tracking save failed: {e}"), None);
+        send(
+            format!("[jinx] installed {name} but tracking save failed: {e}"),
+            None,
+        );
     }
 
     if is_set {
@@ -413,16 +466,27 @@ fn run_install(
         // rather than reporting a clean success.
         if failed > 0 {
             send(
-                format!("[jinx] {name}: {installed} installed, {failed} failed — set is incomplete"),
+                format!(
+                    "[jinx] {name}: {installed} installed, {failed} failed — set is incomplete"
+                ),
                 None,
             );
         } else if installed == 0 {
-            send(format!("[jinx] {name} already up to date ({current} files)"), None);
+            send(
+                format!("[jinx] {name} already up to date ({current} files)"),
+                None,
+            );
         } else {
             send(
-                format!("[jinx] {name} installed ({installed} file{}{})",
+                format!(
+                    "[jinx] {name} installed ({installed} file{}{})",
                     plural(installed),
-                    if current > 0 { format!(", {current} already current") } else { String::new() }),
+                    if current > 0 {
+                        format!(", {current} already current")
+                    } else {
+                        String::new()
+                    }
+                ),
                 None,
             );
         }
@@ -432,7 +496,10 @@ fn run_install(
     if installed > 0 {
         send(
             String::new(),
-            Some(Effect::Installed { name: name.to_string(), kind }),
+            Some(Effect::Installed {
+                name: name.to_string(),
+                kind,
+            }),
         );
     }
 }
@@ -460,10 +527,15 @@ fn run_auto_update(
     let mut available = 0;
     for (name, repo_name) in tracked {
         let Some(repo) = repos.find(&repo_name).cloned() else {
-            send(format!("[jinx] {name}: repo '{repo_name}' no longer configured"), None);
+            send(
+                format!("[jinx] {name}: repo '{repo_name}' no longer configured"),
+                None,
+            );
             continue;
         };
-        let Ok(manifest) = cache.get(agent, &repo) else { continue };
+        let Ok(manifest) = cache.get(agent, &repo) else {
+            continue;
+        };
         // Match on the tracking key, not the basename: set members share
         // basenames across sets, so a basename match could update a piece
         // from the wrong set over this one.
@@ -495,13 +567,23 @@ fn run_auto_update(
     }
 
     if dry_run {
-        send(format!("[jinx] {available} update{} available", plural(available)), None);
+        send(
+            format!("[jinx] {available} update{} available", plural(available)),
+            None,
+        );
     } else {
         let _ = db.save();
-        send(format!("[jinx] updated {updated} asset{}", plural(updated)), None);
+        send(
+            format!("[jinx] updated {updated} asset{}", plural(updated)),
+            None,
+        );
     }
 }
 
 fn plural(n: usize) -> &'static str {
-    if n == 1 { "" } else { "s" }
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
 }

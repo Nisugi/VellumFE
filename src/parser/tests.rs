@@ -1127,7 +1127,10 @@ fn test_vellum_img_breaks_surrounding_text() {
             _ => "other",
         })
         .collect();
-    let img_at = kinds.iter().position(|k| *k == "img").expect("image parsed");
+    let img_at = kinds
+        .iter()
+        .position(|k| *k == "img")
+        .expect("image parsed");
     assert!(
         kinds[..img_at].contains(&"text"),
         "text before the tag should flush first, got {:?}",
@@ -2274,27 +2277,43 @@ fn test_pulse_tag() {
     let elements = parser.parse_line(r#"<pulse mana="1"/>"#);
     assert!(matches!(
         elements.as_slice(),
-        [ParsedElement::Pulse { mana: true, min: 46, max: 75 }]
+        [ParsedElement::Pulse {
+            mana: true,
+            min: 46,
+            max: 75
+        }]
     ));
 
     let elements = parser.parse_line(r#"<pulse mana="0"/>"#);
     assert!(matches!(
         elements.as_slice(),
-        [ParsedElement::Pulse { mana: false, min: 46, max: 75 }]
+        [ParsedElement::Pulse {
+            mana: false,
+            min: 46,
+            max: 75
+        }]
     ));
 
     // Full wire form: explicit next-pulse window.
     let elements = parser.parse_line(r#"<pulse min="46" max="75" mana="1"/>"#);
     assert!(matches!(
         elements.as_slice(),
-        [ParsedElement::Pulse { mana: true, min: 46, max: 75 }]
+        [ParsedElement::Pulse {
+            mana: true,
+            min: 46,
+            max: 75
+        }]
     ));
 
     // Unparseable bounds degrade to the defaults, never drop the pulse.
     let elements = parser.parse_line(r#"<pulse min="soon" max="" mana="0"/>"#);
     assert!(matches!(
         elements.as_slice(),
-        [ParsedElement::Pulse { mana: false, min: 46, max: 75 }]
+        [ParsedElement::Pulse {
+            mana: false,
+            min: 46,
+            max: 75
+        }]
     ));
 }
 
@@ -2384,7 +2403,9 @@ fn test_inventory_manager_continuation_envelope_and_stale() {
     let elements = parser.parse_line(
         r#"<inventoryManager id='im3' room='2005' root='148848453' after='148848460'><i id='9' loc='in,148848453' name="a,silk,pouch" weight='1'/></inventoryManager>"#,
     );
-    let ParsedElement::InventoryManager { root, after, state, .. } = elements
+    let ParsedElement::InventoryManager {
+        root, after, state, ..
+    } = elements
         .iter()
         .find(|e| matches!(e, ParsedElement::InventoryManager { .. }))
         .unwrap()
@@ -2396,9 +2417,13 @@ fn test_inventory_manager_continuation_envelope_and_stale() {
     assert_eq!(state, &None);
 
     // Stale marker: dead cursor, empty self-closing response.
-    let elements =
-        parser.parse_line(r#"<inventoryManager id='im4' room='2005' state='stale'/>"#);
-    let ParsedElement::InventoryManager { state, items, continuations, .. } = elements
+    let elements = parser.parse_line(r#"<inventoryManager id='im4' room='2005' state='stale'/>"#);
+    let ParsedElement::InventoryManager {
+        state,
+        items,
+        continuations,
+        ..
+    } = elements
         .iter()
         .find(|e| matches!(e, ParsedElement::InventoryManager { .. }))
         .unwrap()
@@ -2424,7 +2449,10 @@ fn test_managed_inventory_item_from_attrs() {
         ("id", "148848453"),
         ("loc", "worn,player"),
         ("name", "a patchwork,dwarf skin,backpack"),
-        ("long", "a $_patchwork dwarf skin backpack$_ bound by interwoven briar vines"),
+        (
+            "long",
+            "a $_patchwork dwarf skin backpack$_ bound by interwoven briar vines",
+        ),
         ("weight", "5"),
         ("in_max", "2000"),
     ]))
@@ -2468,7 +2496,9 @@ fn test_managed_inventory_item_from_attrs() {
     assert_eq!(item.flags, vec!["closed".to_string()]);
 
     // Missing loc = unanchorable = dropped
-    assert!(ManagedInventoryItem::from_attrs(&to_attrs(&[("id", "1"), ("name", "a,b,c")])).is_none());
+    assert!(
+        ManagedInventoryItem::from_attrs(&to_attrs(&[("id", "1"), ("name", "a,b,c")])).is_none()
+    );
 
     // Capacity decode + locker metadata: packed v/10 pounds, v%10 count.
     let item = ManagedInventoryItem::from_attrs(&to_attrs(&[
@@ -2530,8 +2560,7 @@ fn test_inventory_view_item_block() {
     assert_eq!(resp.results.len(), 2);
     assert_eq!(resp.results[0].0, "look");
     assert_eq!(
-        resp.results[0].1,
-        "You see a patchwork backpack.\nIt is fairly full.",
+        resp.results[0].1, "You see a patchwork backpack.\nIt is fairly full.",
         "inline markup flattened, br = newline"
     );
     assert_eq!(resp.results[1], ("read".to_string(), String::new()));
@@ -2571,16 +2600,21 @@ fn test_inventory_view_item_open_container_and_prompt_tear() {
     };
     assert_eq!(resp.state.as_deref(), Some("malformed"));
     assert!(
-        elements.iter().any(|e| matches!(e, ParsedElement::Prompt { .. })),
+        elements
+            .iter()
+            .any(|e| matches!(e, ParsedElement::Prompt { .. })),
         "prompt parsed normally after the tear"
     );
 
     // Trailing content after the close re-enters the normal parser.
-    let elements = parser.parse_line(
-        r#"<inventoryViewItem id='im8' exist='44'/><pulse mana="1"/>"#,
-    );
-    assert!(elements.iter().any(|e| matches!(e, ParsedElement::InventoryViewItem(_))));
-    assert!(elements.iter().any(|e| matches!(e, ParsedElement::Pulse { .. })));
+    let elements =
+        parser.parse_line(r#"<inventoryViewItem id='im8' exist='44'/><pulse mana="1"/>"#);
+    assert!(elements
+        .iter()
+        .any(|e| matches!(e, ParsedElement::InventoryViewItem(_))));
+    assert!(elements
+        .iter()
+        .any(|e| matches!(e, ParsedElement::Pulse { .. })));
 }
 
 #[test]
@@ -2660,10 +2694,10 @@ fn test_weight_breakdowns_and_descendant_counts() {
     let snap = ManagedInventoryState {
         items: vec![
             sack,
-            item("gem", "sack", "in", 0),   // 0 lb -> counts as 0.1
+            item("gem", "sack", "in", 0), // 0 lb -> counts as 0.1
             item("rock", "sack", "in", 5),
             item("box", "sack", "in", 1),
-            item("coin", "box", "in", 0),   // nested: box total = 1.1
+            item("coin", "box", "in", 0), // nested: box total = 1.1
             deep,
             item("anvil", "deep", "in", 50), // skipped: in_encum == 0
             item("fixture", "room", "room", -1), // unknown own weight
@@ -2688,7 +2722,11 @@ fn test_weight_breakdowns_and_descendant_counts() {
     let counts = snap.descendant_counts();
     assert_eq!(counts.get("sack"), Some(&4), "nested coin counts too");
     assert_eq!(counts.get("box"), Some(&1));
-    assert_eq!(counts.get("deep"), Some(&1), "count includes skipped-weight items");
+    assert_eq!(
+        counts.get("deep"),
+        Some(&1),
+        "count includes skipped-weight items"
+    );
     assert_eq!(counts.get("gem"), None, "non-containers absent");
 }
 
@@ -2698,7 +2736,11 @@ fn test_world_event_tag() {
     let elements = parser.parse_line(
         r#"<worldEvent realm="Elanthia" expires="90" time="1755000000">A <b>storm of wild magic</b> sweeps the land!</worldEvent>"#,
     );
-    let ParsedElement::WorldEvent { realm, expires_min, text } = elements
+    let ParsedElement::WorldEvent {
+        realm,
+        expires_min,
+        text,
+    } = elements
         .iter()
         .find(|e| matches!(e, ParsedElement::WorldEvent { .. }))
         .unwrap()
@@ -2744,7 +2786,10 @@ fn test_crtr_status_health_condition_and_open_vocab() {
     assert_eq!(flags.max_health, Some(500));
     assert_eq!(flags.health_percent(), Some(90));
     assert_eq!(flags.condition.as_deref(), Some("bleeding heavily"));
-    assert_eq!(flags.statuses, vec!["stunned".to_string(), "frozen".to_string()]);
+    assert_eq!(
+        flags.statuses,
+        vec!["stunned".to_string(), "frozen".to_string()]
+    );
 
     // maxhealth 0 or missing pieces yield no percentage.
     assert_eq!(
@@ -3001,9 +3046,8 @@ fn test_stream_window_room() {
 #[test]
 fn test_stream_window_title_double_encoded() {
     let mut parser = test_parser();
-    let elements = parser.parse_line(
-        "<streamWindow id='friends' title='Friends &amp;amp;&amp;amp; Enemies'/>",
-    );
+    let elements = parser
+        .parse_line("<streamWindow id='friends' title='Friends &amp;amp;&amp;amp; Enemies'/>");
     let title = elements
         .iter()
         .find_map(|e| match e {
@@ -3829,4 +3873,85 @@ fn test_compdef_self_closing_is_ignored() {
     assert!(elements
         .iter()
         .any(|e| matches!(e, ParsedElement::Component { value, .. } if value.is_empty())));
+}
+
+// ==================== Same-stream repush glue (Duskruin spectate) ====================
+
+#[test]
+fn same_stream_repush_pairs_are_dropped() {
+    // Verbatim shape from a 2026-08-17 arena spectate log: Simu splits one
+    // logical familiar-stream line into fragments joined by
+    // <popStream/><pushStream id="familiar"/> pairs mid-sentence. The pair
+    // must be a no-op so the sentence stays one line.
+    let mut parser = test_parser();
+    let mut elements = parser.parse_line(
+        "<pushStream id=\"familiar\" ifClosedStyle=\"watching\"/> ... 20 point<popStream/><pushStream id=\"familiar\" ifClosedStyle=\"watching\"/>s<popStream/><pushStream id=\"familiar\" ifClosedStyle=\"watching\"/> of damage!<popStream/>",
+    );
+
+    // Exactly one push and one pop survive.
+    let pushes = elements
+        .iter()
+        .filter(|e| matches!(e, ParsedElement::StreamPush { .. }))
+        .count();
+    let pops = elements
+        .iter()
+        .filter(|e| matches!(e, ParsedElement::StreamPop))
+        .count();
+    assert_eq!(pushes, 1, "repush pairs must be swallowed: {:?}", elements);
+    assert_eq!(pops, 1, "repush pairs must be swallowed: {:?}", elements);
+
+    // The text arrives as one unbroken run.
+    let text: String = elements
+        .iter_mut()
+        .filter_map(|e| {
+            if let ParsedElement::Text { content, .. } = e {
+                Some(content.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(text, " ... 20 points of damage!");
+}
+
+#[test]
+fn different_stream_push_after_pop_still_switches() {
+    // A pop followed by a push of a DIFFERENT stream is a real switch and
+    // must still emit both elements.
+    let mut parser = test_parser();
+    let elements = parser.parse_line(
+        "<pushStream id=\"familiar\"/>familiar text<popStream/><pushStream id=\"thoughts\"/>a thought<popStream/>",
+    );
+    let pushes = elements
+        .iter()
+        .filter(|e| matches!(e, ParsedElement::StreamPush { .. }))
+        .count();
+    let pops = elements
+        .iter()
+        .filter(|e| matches!(e, ParsedElement::StreamPop))
+        .count();
+    assert_eq!(pushes, 2);
+    assert_eq!(pops, 2);
+}
+
+#[test]
+fn spectate_familiar_push_keeps_familiar_stream() {
+    // Owner decision 2026-08-17: NO synthetic "watching" reroute. Spectator
+    // broadcasts (`ifClosedStyle="watching"`) stay on the familiar stream so
+    // they land in the familiar window like every other familiar feed.
+    let mut parser = test_parser();
+    let elements = parser.parse_line(
+        "<pushStream id=\"familiar\" ifClosedStyle=\"watching\"/>spectate text<popStream/>",
+    );
+    let ids: Vec<&str> = elements
+        .iter()
+        .filter_map(|e| {
+            if let ParsedElement::StreamPush { id } = e {
+                Some(id.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(ids, vec!["familiar"]);
 }

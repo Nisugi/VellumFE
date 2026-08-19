@@ -131,11 +131,7 @@ fn alert_str<F>(pattern: &HighlightPattern, get: F) -> String
 where
     F: Fn(&crate::config::AlertSpec) -> Option<String>,
 {
-    pattern
-        .alert
-        .as_ref()
-        .and_then(get)
-        .unwrap_or_default()
+    pattern.alert.as_ref().and_then(get).unwrap_or_default()
 }
 
 impl HighlightFormState {
@@ -193,8 +189,7 @@ impl HighlightFormState {
         // so "nudge it down 20px" doesn't require typing a zero for x.
         let x = self.alert_offset_x.trim().parse::<f32>().ok();
         let y = self.alert_offset_y.trim().parse::<f32>().ok();
-        let offset = (x.is_some() || y.is_some())
-            .then(|| (x.unwrap_or(0.0), y.unwrap_or(0.0)));
+        let offset = (x.is_some() || y.is_some()).then(|| (x.unwrap_or(0.0), y.unwrap_or(0.0)));
 
         Some(crate::config::AlertSpec {
             id: opt(&self.alert_id),
@@ -312,11 +307,7 @@ impl HighlightFormState {
             alert_banner_bg: alert_str(pattern, |a| a.banner_bg.clone()),
             alert_art: alert_str(pattern, |a| a.art.clone()),
             alert_flash: alert_str(pattern, |a| a.flash.clone()),
-            alert_anchor: pattern
-                .alert
-                .as_ref()
-                .map(|a| a.anchor)
-                .unwrap_or_default(),
+            alert_anchor: pattern.alert.as_ref().map(|a| a.anchor).unwrap_or_default(),
             alert_offset_x: alert_str(pattern, |a| a.offset.map(|(x, _)| x.to_string())),
             alert_offset_y: alert_str(pattern, |a| a.offset.map(|(_, y)| y.to_string())),
             alert_duration: alert_str(pattern, |a| a.duration.map(|v| v.to_string())),
@@ -380,8 +371,7 @@ impl HighlightFormState {
         // entire rule shape unauthorable.
         if pattern_text.is_empty() && self.alert_when.is_none() {
             return Err(
-                "Pattern is required (or add a condition to trigger on game state)."
-                    .to_string(),
+                "Pattern is required (or add a condition to trigger on game state).".to_string(),
             );
         }
         // Only validate as a regex when there IS one. An empty pattern
@@ -625,7 +615,8 @@ impl VellumGuiApp {
         if let Some(mut form) = state.form.take() {
             // "(none)" + built-ins + user-defined patterns from the
             // controller editor's Rumble tab (shared source with the TUI form).
-            let rumble_options: Vec<String> = self.app_core.config.controller_rumble.pattern_names();
+            let rumble_options: Vec<String> =
+                self.app_core.config.controller_rumble.pattern_names();
             // Effect-name suggestions for the shared condition builder, built
             // the same way the hand-icons editor does.
             let condition_suggestions: std::collections::HashMap<&'static str, Vec<String>> =
@@ -638,9 +629,7 @@ impl VellumGuiApp {
                                 .game_state
                                 .effects
                                 .get(category.state_key())
-                                .map(|store| {
-                                    store.effects.iter().map(|e| e.text.clone()).collect()
-                                })
+                                .map(|store| store.effects.iter().map(|e| e.text.clone()).collect())
                                 .unwrap_or_default(),
                         )
                     })
@@ -995,8 +984,10 @@ impl VellumGuiApp {
             if submitted {
                 match self.save_highlight_from_form(&form) {
                     Ok(()) => {
-                        self.app_core
-                            .add_system_message(&format!("Highlight '{}' saved.", form.name.trim()));
+                        self.app_core.add_system_message(&format!(
+                            "Highlight '{}' saved.",
+                            form.name.trim()
+                        ));
                     }
                     Err(err) => {
                         form.error = Some(err);
@@ -1185,7 +1176,10 @@ mod tests {
                 _ => form.alert_flash = "#ff0000".to_string(),
             }
             let (_, pattern) = form.build_pattern().expect("builds");
-            assert!(pattern.alert.is_some(), "{field} alone should author an alert");
+            assert!(
+                pattern.alert.is_some(),
+                "{field} alone should author an alert"
+            );
         }
     }
 

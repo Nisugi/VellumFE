@@ -97,8 +97,10 @@ impl Room {
             climate: string_field(obj.get("climate")),
             terrain: string_field(obj.get("terrain")),
             image: string_field(obj.get("image")),
-            image_coords: obj.get("image_coords").and_then(Value::as_array).and_then(
-                |a| {
+            image_coords: obj
+                .get("image_coords")
+                .and_then(Value::as_array)
+                .and_then(|a| {
                     if a.len() == 4 {
                         let mut coords = [0.0; 4];
                         for (i, v) in a.iter().enumerate() {
@@ -108,8 +110,7 @@ impl Room {
                     } else {
                         None
                     }
-                },
-            ),
+                }),
         })
     }
 }

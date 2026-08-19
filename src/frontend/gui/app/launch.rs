@@ -223,5 +223,4 @@ impl VellumGuiApp {
         self.network_handle = Some(handle);
         self.app_core.needs_render = true;
     }
-
 }

@@ -188,5 +188,4 @@ mod tests {
         let line = buffer_line(&buf, 0, area.width);
         assert!(line.contains("[03:21]"));
     }
-
 }

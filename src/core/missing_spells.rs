@@ -119,14 +119,13 @@ mod tests {
     fn state_with_effects(pairs: &[(&str, u16, &str)]) -> GameState {
         let mut gs = GameState::default();
         for (category, number, name) in pairs {
-            let store = gs
-                .effects
-                .entry(category.to_string())
-                .or_insert_with(|| crate::data::ActiveEffectsContent {
+            let store = gs.effects.entry(category.to_string()).or_insert_with(|| {
+                crate::data::ActiveEffectsContent {
                     category: category.to_string(),
                     effects: Vec::new(),
                     generation: 0,
-                });
+                }
+            });
             store.effects.push(crate::data::ActiveEffect {
                 id: number.to_string(),
                 text: name.to_string(),
@@ -169,7 +168,8 @@ mod tests {
         // 101 is in the bundled effect-list.xml.
         assert_eq!(spell_display_name(&gs, 101), "Spirit Warding I");
         // Unknown number with a feed-seen name.
-        gs.spell_names_seen.insert(64000, "Custom Effect".to_string());
+        gs.spell_names_seen
+            .insert(64000, "Custom Effect".to_string());
         assert_eq!(spell_display_name(&gs, 64000), "Custom Effect");
         // Unknown number never seen.
         assert_eq!(spell_display_name(&gs, 64001), "64001");

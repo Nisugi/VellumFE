@@ -70,7 +70,8 @@ impl VellumGuiApp {
 
     /// Sentinel exist_id for switching the active tab of a tabbedtext window;
     /// noun is "<window_name>|<tab_index>".
-    pub(in crate::frontend::gui::app) const TABBED_SWITCH_SENTINEL: &'static str = "_tabbed_switch_";
+    pub(in crate::frontend::gui::app) const TABBED_SWITCH_SENTINEL: &'static str =
+        "_tabbed_switch_";
 
     /// Inner tab strip for tabbedtext windows. Unread tabs render bold; clicks
     /// flow through the link channel since renderers only get `&AppCore`.
@@ -156,17 +157,15 @@ impl VellumGuiApp {
                     } else {
                         "normal"
                     };
-                    if let Some(border) = skin_art.and_then(|art| art.control_border("tab", state)) {
+                    if let Some(border) = skin_art.and_then(|art| art.control_border("tab", state))
+                    {
                         crate::frontend::gui::skin::paint_nine_slice_filled(
                             ui.painter(),
                             rect,
                             border,
                         );
                     }
-                    ui.put(
-                        rect,
-                        egui::Label::new(label).selectable(false),
-                    );
+                    ui.put(rect, egui::Label::new(label).selectable(false));
                     resp.clicked()
                 } else {
                     ui.selectable_label(is_active, label).clicked()
@@ -340,10 +339,7 @@ impl VellumGuiApp {
                         button.icon.as_ref().and_then(|icon| {
                             skin_art.and_then(|art| {
                                 // Dim states reuse the grayscale twin, barbar-style.
-                                art.icon_ref_texture(
-                                    &icon.icon,
-                                    icon.grayscale || button.dim,
-                                )
+                                art.icon_ref_texture(&icon.icon, icon.grayscale || button.dim)
                             })
                         })
                     }
@@ -362,16 +358,13 @@ impl VellumGuiApp {
                     let mut rich = RichText::new(text);
                     if button.dim {
                         rich = rich.color(ui.visuals().weak_text_color());
-                    } else if let Some(fg) =
-                        button.fg.as_deref().and_then(parse_hex_color)
-                    {
+                    } else if let Some(fg) = button.fg.as_deref().and_then(parse_hex_color) {
                         rich = rich.color(fg);
                     }
 
                     let mut widget = egui::Button::new(rich);
                     if !button.dim {
-                        if let Some(bg) = button.bg.as_deref().and_then(parse_hex_color)
-                        {
+                        if let Some(bg) = button.bg.as_deref().and_then(parse_hex_color) {
                             widget = widget.fill(bg);
                         }
                     }
@@ -533,8 +526,7 @@ impl VellumGuiApp {
         if let Some(secs) = button.countdown_secs.filter(|s| *s > 0) {
             let text = format!("{}s", secs);
             let font = egui::TextStyle::Small.resolve(ui.style());
-            let galley =
-                painter.layout_no_wrap(text, font, egui::Color32::WHITE);
+            let galley = painter.layout_no_wrap(text, font, egui::Color32::WHITE);
             let pos = egui::pos2(
                 icon_rect.center().x - galley.size().x / 2.0,
                 icon_rect.max.y - galley.size().y - 1.0,
@@ -554,7 +546,11 @@ impl VellumGuiApp {
     /// Gradient position 0..1 at `pos` within `rect`, per barbar's cg
     /// direction formulas (horizontal px/w, diagonal averages, radial
     /// center distance, square Chebyshev distance).
-    pub(super) fn gradient_t(dir: crate::config::GradientDir, pos: egui::Pos2, rect: egui::Rect) -> f32 {
+    pub(super) fn gradient_t(
+        dir: crate::config::GradientDir,
+        pos: egui::Pos2,
+        rect: egui::Rect,
+    ) -> f32 {
         use crate::config::GradientDir;
         let w = rect.width().max(1.0);
         let h = rect.height().max(1.0);
@@ -602,7 +598,11 @@ impl VellumGuiApp {
         let step = rect.width() / SEGMENTS as f32;
         for i in 0..SEGMENTS {
             let x0 = rect.min.x + i as f32 * step;
-            let x1 = if i + 1 == SEGMENTS { rect.max.x } else { x0 + step };
+            let x1 = if i + 1 == SEGMENTS {
+                rect.max.x
+            } else {
+                x0 + step
+            };
             strip(egui::Rect::from_min_max(
                 egui::pos2(x0, rect.min.y),
                 egui::pos2(x1, rect.min.y + bw),
@@ -634,5 +634,4 @@ impl VellumGuiApp {
             }
         }
     }
-
 }

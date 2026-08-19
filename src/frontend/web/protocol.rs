@@ -162,12 +162,7 @@ fn group_is_empty(group: &crate::core::group::GroupState) -> bool {
 }
 
 /// First message on every connection.
-pub fn hello(
-    character: Option<String>,
-    streams: Vec<String>,
-    session: String,
-    seq: u64,
-) -> String {
+pub fn hello(character: Option<String>, streams: Vec<String>, session: String, seq: u64) -> String {
     encode(
         "hello",
         seq,
@@ -545,12 +540,16 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
             last_seq,
             serde_json::json!({ "page": page, "seq": seq, "tree": tree }),
         ),
-        RemoteDelta::WebUiPages(pages) => {
-            encode("webui_pages", last_seq, serde_json::json!({ "pages": pages }))
-        }
-        RemoteDelta::WebUiPageClosed { page } => {
-            encode("webui_closed", last_seq, serde_json::json!({ "page": page }))
-        }
+        RemoteDelta::WebUiPages(pages) => encode(
+            "webui_pages",
+            last_seq,
+            serde_json::json!({ "pages": pages }),
+        ),
+        RemoteDelta::WebUiPageClosed { page } => encode(
+            "webui_closed",
+            last_seq,
+            serde_json::json!({ "page": page }),
+        ),
         RemoteDelta::WebUiNotice { level, text } => encode(
             "webui_notice",
             last_seq,
@@ -595,7 +594,10 @@ pub fn profiles(list: &[ProfileEntry], seq: u64) -> String {
 /// Mask an account name for display: first two characters + asterisks.
 pub fn mask_account(account: &str) -> String {
     let visible: String = account.chars().take(2).collect();
-    format!("{visible}{}", "*".repeat(account.chars().count().saturating_sub(2)))
+    format!(
+        "{visible}{}",
+        "*".repeat(account.chars().count().saturating_sub(2))
+    )
 }
 
 /// Macro definitions; sent on connect and after `.reloadmacros`.
@@ -943,9 +945,16 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
         }
         "macro_save" => {
             let label = msg.d.get("label")?.as_str()?.trim().to_string();
-            let insert = msg.d.get("insert").and_then(|v| v.as_bool()).unwrap_or(false);
+            let insert = msg
+                .d
+                .get("insert")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let command = trim_macro_command(
-                msg.d.get("command").and_then(|v| v.as_str()).unwrap_or_default(),
+                msg.d
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default(),
                 insert,
             );
             let options: Vec<crate::config::MacroOption> = msg
@@ -957,8 +966,7 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                         .iter()
                         .filter_map(|o| {
                             let label = o.get("label")?.as_str()?.trim().to_string();
-                            let insert =
-                                o.get("insert").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let insert = o.get("insert").and_then(|v| v.as_bool()).unwrap_or(false);
                             let command = trim_macro_command(o.get("command")?.as_str()?, insert);
                             if label.is_empty() || command.is_empty() {
                                 return None;
@@ -966,7 +974,10 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                             Some(crate::config::MacroOption {
                                 label,
                                 command,
-                                confirm: o.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false),
+                                confirm: o
+                                    .get("confirm")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false),
                                 insert,
                             })
                         })
@@ -978,15 +989,26 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
             if label.is_empty() || (command.is_empty() && options.is_empty()) {
                 return None;
             }
-            let original = msg.d.get("original").filter(|v| !v.is_null()).and_then(|o| {
-                Some((opt_str(o.get("group")), o.get("label")?.as_str()?.to_string()))
-            });
+            let original = msg
+                .d
+                .get("original")
+                .filter(|v| !v.is_null())
+                .and_then(|o| {
+                    Some((
+                        opt_str(o.get("group")),
+                        o.get("label")?.as_str()?.to_string(),
+                    ))
+                });
             Some(ClientMessage::MacroSave {
                 group: opt_str(msg.d.get("group")),
                 label,
                 command,
                 color: opt_str(msg.d.get("color")),
-                confirm: msg.d.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false),
+                confirm: msg
+                    .d
+                    .get("confirm")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
                 insert,
                 options,
                 original,
@@ -1075,7 +1097,8 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 None => None,
             }
             .unwrap_or(22);
-            let remote_os = opt_str(msg.d.get("remote_os")).unwrap_or_else(|| "windows".to_string());
+            let remote_os =
+                opt_str(msg.d.get("remote_os")).unwrap_or_else(|| "windows".to_string());
             let generate_key = msg
                 .d
                 .get("generate_key")
@@ -1142,7 +1165,11 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 key,
                 value,
                 scope,
-                clear: msg.d.get("clear").and_then(|v| v.as_bool()).unwrap_or(false),
+                clear: msg
+                    .d
+                    .get("clear")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
             })
         }
         "streams_get" => {
@@ -1207,7 +1234,11 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
             let page = msg.d.get("page")?.as_str()?.to_string();
             let cid = msg.d.get("cid")?.as_str()?.to_string();
             // value is component-specific; null is valid (button clicks).
-            let value = msg.d.get("value").cloned().unwrap_or(serde_json::Value::Null);
+            let value = msg
+                .d
+                .get("value")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
             Some(ClientMessage::WebUiEvent { page, cid, value })
         }
         "highlight_delete" => {
@@ -1582,7 +1613,10 @@ mod tests {
             parse_client_message(
                 r#"{"t":"connect","d":{"account":"ACCT","character":"Testy","custom_launch":"x"}}"#
             ),
-            Some(ClientMessage::Connect { custom_launch: None, .. })
+            Some(ClientMessage::Connect {
+                custom_launch: None,
+                ..
+            })
         ));
         // Lich mode without a complete target or profile → rejected.
         assert_eq!(
@@ -1592,7 +1626,10 @@ mod tests {
         // Lich mode by saved profile name alone is fine.
         assert!(matches!(
             parse_client_message(r#"{"t":"connect","d":{"mode":"lich","profile":"Home"}}"#),
-            Some(ClientMessage::Connect { profile: Some(_), .. })
+            Some(ClientMessage::Connect {
+                profile: Some(_),
+                ..
+            })
         ));
         assert_eq!(
             parse_client_message(r#"{"t":"disconnect","d":{}}"#),
@@ -1867,7 +1904,10 @@ mod tests {
         assert_eq!(json["d"]["streams"][0]["id"], "bounty");
         assert_eq!(json["d"]["windows"][1], "thoughts");
         assert_eq!(json["d"]["fallback"], "main");
-        assert!(json["d"].get("client_id").is_none(), "client_id stays server-side");
+        assert!(
+            json["d"].get("client_id").is_none(),
+            "client_id stays server-side"
+        );
 
         // Put reply: no catalog, echoes the stream, carries saved/error.
         let d = RemoteDelta::Streams {

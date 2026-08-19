@@ -124,7 +124,10 @@ async fn main() {
         ];
         config.controller_wheels.insert(
             "spells".into(),
-            vec![slice("prep 101", "prep 101", None), slice("cast", "cast", None)],
+            vec![
+                slice("prep 101", "prep 101", None),
+                slice("cast", "cast", None),
+            ],
         );
         // Give the spells wheel a per-wheel aim-stick override so the
         // wheel_stick payload is exercised end-to-end.
@@ -148,7 +151,9 @@ async fn main() {
     sink.push_text(
         "main",
         std::sync::Arc::new(StyledLine {
-            segments: vec![TextSegment::plain("[web_harness] ready — no game connected]")],
+            segments: vec![TextSegment::plain(
+                "[web_harness] ready — no game connected]",
+            )],
             stream: "main".to_string(),
             timestamp: None,
         }),
@@ -194,16 +199,30 @@ async fn main() {
             });
             edges.push(edge(2, i, 2, i + 1, 0, None, None, None));
         }
-        rooms.push(RemoteMapRoom { i: 300, x: 7, y: 0, e: false });
+        rooms.push(RemoteMapRoom {
+            i: 300,
+            x: 7,
+            y: 0,
+            e: false,
+        });
         edges.push(edge(4, 0, 7, 0, 1, Some("go gate"), None, None));
-        rooms.push(RemoteMapRoom { i: 400, x: 0, y: 6, e: false });
+        rooms.push(RemoteMapRoom {
+            i: 400,
+            x: 0,
+            y: 6,
+            e: false,
+        });
         edges.push(edge(0, 0, 0, 6, 2, None, Some(100), Some(400)));
         let scene = std::sync::Arc::new(RemoteMapScene {
             location: "Harness Town".into(),
             sheet: "outdoor".into(),
             rooms,
             edges,
-            labels: vec![RemoteMapLabel { x: 2, y: 1, t: "The Grid".into() }],
+            labels: vec![RemoteMapLabel {
+                x: 2,
+                y: 1,
+                t: "The Grid".into(),
+            }],
         });
         let mut snap = RemoteStateSnapshot::default();
         // Scripted wounds/scars so the status drawer's injury doll has
@@ -251,9 +270,21 @@ async fn main() {
             cf.arrive("222", CardSize { w: 0.78, h: 1.52 }); // boss-sized
             cf.arrive("555", CardSize { w: 0.92, h: 0.60 }); // low, wide
             let meta = |id: &str| match id {
-                "111" => ("hog", "a muddy hog", vec!["stunned".to_string()], false, false),
+                "111" => (
+                    "hog",
+                    "a muddy hog",
+                    vec!["stunned".to_string()],
+                    false,
+                    false,
+                ),
                 "222" => ("kobold", "a kobold", vec![], true, true), // boss + current
-                _ => ("spider", "a dusky spider", vec!["webbed".to_string()], false, false),
+                _ => (
+                    "spider",
+                    "a dusky spider",
+                    vec!["webbed".to_string()],
+                    false,
+                    false,
+                ),
             };
             snap.field = cf
                 .draw_order()
@@ -335,7 +366,11 @@ async fn main() {
                 total: 47,
                 eta: "1:04".into(),
             }),
-            ghosts: vec![RemoteGhostNode { x: 3, y: -1, cur: false }],
+            ghosts: vec![RemoteGhostNode {
+                x: 3,
+                y: -1,
+                cur: false,
+            }],
             ghost_edges: vec![RemoteGhostEdge {
                 x1: 3,
                 y1: 0,
@@ -728,12 +763,25 @@ async fn main() {
                 // Echo which sections the phone sent so a save round-trip is
                 // visible on stdout (the highlight/colors editors send the
                 // whole ColorConfig back).
-                let sections: Vec<&str> = ["presets", "prompt_colors", "ui", "spell_colors", "color_palette"]
-                    .into_iter()
-                    .filter(|k| colors.get(*k).is_some())
-                    .collect();
+                let sections: Vec<&str> = [
+                    "presets",
+                    "prompt_colors",
+                    "ui",
+                    "spell_colors",
+                    "color_palette",
+                ]
+                .into_iter()
+                .filter(|k| colors.get(*k).is_some())
+                .collect();
                 println!("EVENT colors_put: scope={scope:?} sections={sections:?} body={colors}");
-                sink.push_colors(client_id, request_id, scope, serde_json::Value::Null, None, true);
+                sink.push_colors(
+                    client_id,
+                    request_id,
+                    scope,
+                    serde_json::Value::Null,
+                    None,
+                    true,
+                );
             }
             RemoteEvent::TouchWheelGet {
                 client_id,
@@ -850,9 +898,7 @@ async fn main() {
                     options,
                     ..Default::default()
                 };
-                let original = original
-                    .as_ref()
-                    .map(|(g, l)| (g.as_deref(), l.as_str()));
+                let original = original.as_ref().map(|(g, l)| (g.as_deref(), l.as_str()));
                 local.upsert_button(group.as_deref(), button, original);
                 sink.set_macros(&MacrosConfig::merge(base.clone(), local.clone()));
             }

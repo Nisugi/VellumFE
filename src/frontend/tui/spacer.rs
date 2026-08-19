@@ -69,5 +69,4 @@ impl Spacer {
             }
         }
     }
-
 }

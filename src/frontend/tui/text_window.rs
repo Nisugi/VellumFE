@@ -642,13 +642,7 @@ impl TextWindow {
                 } else {
                     // Non-whitespace character - add to word buffer
                     in_word = true;
-                    Self::append_char_to_line(
-                        &mut word_buffer,
-                        ch,
-                        *style,
-                        *span_type,
-                        link,
-                    );
+                    Self::append_char_to_line(&mut word_buffer, ch, *style, *span_type, link);
                     word_buffer_len += 1;
                 }
             }
@@ -1743,6 +1737,14 @@ impl Widget for &mut TextWindow {
         // No selection highlighting for basic Widget trait render
         // Use default dark theme (this trait doesn't allow passing theme)
         let theme = crate::theme::ThemePresets::dark();
-        self.render_with_focus(area, buf, false, None, "#4a4a4a", 0, theme.window_border_focused);
+        self.render_with_focus(
+            area,
+            buf,
+            false,
+            None,
+            "#4a4a4a",
+            0,
+            theme.window_border_focused,
+        );
     }
 }

@@ -66,10 +66,7 @@ pub fn ephemeral_placement(
         _ => default_anchor,
     };
     let (x, y) = match anchor {
-        PlacementAnchor::Center => (
-            term_w.saturating_sub(w) / 2,
-            term_h.saturating_sub(h) / 2,
-        ),
+        PlacementAnchor::Center => (term_w.saturating_sub(w) / 2, term_h.saturating_sub(h) / 2),
         PlacementAnchor::RightEdge => (term_w.saturating_sub(w + 1), 1),
         PlacementAnchor::LeftEdge => (1, 1),
     };
@@ -106,13 +103,11 @@ mod tests {
     #[test]
     fn location_hint_overrides_the_kind_default() {
         let h = hints(&[("location", "force-center")]);
-        let (x, y, ..) =
-            ephemeral_placement(Some(&h), (26, 20), PlacementAnchor::RightEdge, TERM);
+        let (x, y, ..) = ephemeral_placement(Some(&h), (26, 20), PlacementAnchor::RightEdge, TERM);
         assert_eq!((x, y), (47, 10), "force-center recenters a panel");
 
         let h = hints(&[("location", "right")]);
-        let (x, y, ..) =
-            ephemeral_placement(Some(&h), (40, 15), PlacementAnchor::Center, TERM);
+        let (x, y, ..) = ephemeral_placement(Some(&h), (40, 15), PlacementAnchor::Center, TERM);
         assert_eq!((x, y), (79, 1), "right docks a container");
     }
 
@@ -133,8 +128,7 @@ mod tests {
 
         // Garbage sizes fall back to the default.
         let h = hints(&[("width", "25%")]);
-        let (.., w, _) =
-            ephemeral_placement(Some(&h), (26, 20), PlacementAnchor::RightEdge, TERM);
+        let (.., w, _) = ephemeral_placement(Some(&h), (26, 20), PlacementAnchor::RightEdge, TERM);
         assert_eq!(w, 26);
     }
 }

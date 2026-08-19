@@ -96,7 +96,10 @@ mod tests {
         let toml = toml::to_string_pretty(&db).unwrap();
         let back: InstalledDb = toml::from_str(&toml).unwrap();
         assert_eq!(back.assets.len(), 2);
-        assert_eq!(back.get("parchment.vellumpack").unwrap().version.as_deref(), Some("1.2.0"));
+        assert_eq!(
+            back.get("parchment.vellumpack").unwrap().version.as_deref(),
+            Some("1.2.0")
+        );
         assert!(back.get("gameobj-data.xml").unwrap().version.is_none());
 
         let mut db = back;

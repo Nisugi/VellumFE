@@ -37,9 +37,7 @@ impl WindowEditor {
                 }
 
                 let icon = data.icon.unwrap_or_default();
-                let inactive = data
-                    .inactive_color
-                    .unwrap_or_else(|| "#555555".to_string());
+                let inactive = data.inactive_color.unwrap_or_else(|| "#555555".to_string());
                 let active = data.active_color.unwrap_or_else(|| "#00ff00".to_string());
 
                 seen.insert(key);
@@ -467,7 +465,10 @@ impl WindowEditor {
         if let crate::config::WindowDef::Targets { data, .. } = &window_def {
             entity_id_input.insert_str(&data.entity_id);
             targets_show_arms_count = data.show_body_part_count;
-            targets_status_position = data.status_position.clone().unwrap_or_else(|| "end".to_string());
+            targets_status_position = data
+                .status_position
+                .clone()
+                .unwrap_or_else(|| "end".to_string());
         }
         if let crate::config::WindowDef::Players { data, .. } = &window_def {
             entity_id_input.insert_str(&data.entity_id);
@@ -739,13 +740,27 @@ impl WindowEditor {
         ) = if let crate::config::WindowDef::Encumbrance { data, .. } = &window_def {
             (
                 data.show_label,
-                data.color_light.clone().unwrap_or_else(|| "#00FF00".to_string()),
-                data.color_moderate.clone().unwrap_or_else(|| "#FFFF00".to_string()),
-                data.color_heavy.clone().unwrap_or_else(|| "#FFA500".to_string()),
-                data.color_critical.clone().unwrap_or_else(|| "#FF0000".to_string()),
+                data.color_light
+                    .clone()
+                    .unwrap_or_else(|| "#00FF00".to_string()),
+                data.color_moderate
+                    .clone()
+                    .unwrap_or_else(|| "#FFFF00".to_string()),
+                data.color_heavy
+                    .clone()
+                    .unwrap_or_else(|| "#FFA500".to_string()),
+                data.color_critical
+                    .clone()
+                    .unwrap_or_else(|| "#FF0000".to_string()),
             )
         } else {
-            (true, "#00FF00".to_string(), "#FFFF00".to_string(), "#FFA500".to_string(), "#FF0000".to_string())
+            (
+                true,
+                "#00FF00".to_string(),
+                "#FFFF00".to_string(),
+                "#FFA500".to_string(),
+                "#FF0000".to_string(),
+            )
         };
 
         let mut encum_color_light_input = Self::create_textarea();
@@ -773,11 +788,21 @@ impl WindowEditor {
                 data.show_mind_bar,
                 data.show_total_exp,
                 data.show_ascension_exp,
-                data.mind_bar_color.clone().unwrap_or_else(|| "#00FFFF".to_string()),
+                data.mind_bar_color
+                    .clone()
+                    .unwrap_or_else(|| "#00FFFF".to_string()),
                 data.exp_bar_color.clone().unwrap_or_default(), // Empty = theme background
             )
         } else {
-            (true, true, true, false, false, "#00FFFF".to_string(), String::new())
+            (
+                true,
+                true,
+                true,
+                false,
+                false,
+                "#00FFFF".to_string(),
+                String::new(),
+            )
         };
 
         let mut gs4_exp_mind_bar_color_input = Self::create_textarea();
@@ -798,15 +823,31 @@ impl WindowEditor {
             (
                 data.numbers_only,
                 data.current_only,
-                data.health_color.clone().unwrap_or_else(|| "#6e0202".to_string()),
-                data.mana_color.clone().unwrap_or_else(|| "#08086d".to_string()),
-                data.stamina_color.clone().unwrap_or_else(|| "#bd7b00".to_string()),
-                data.spirit_color.clone().unwrap_or_else(|| "#6e727c".to_string()),
+                data.health_color
+                    .clone()
+                    .unwrap_or_else(|| "#6e0202".to_string()),
+                data.mana_color
+                    .clone()
+                    .unwrap_or_else(|| "#08086d".to_string()),
+                data.stamina_color
+                    .clone()
+                    .unwrap_or_else(|| "#bd7b00".to_string()),
+                data.spirit_color
+                    .clone()
+                    .unwrap_or_else(|| "#6e727c".to_string()),
                 // No default: empty means "use the window background"
                 data.depleted_color.clone().unwrap_or_default(),
             )
         } else {
-            (false, false, "#6e0202".to_string(), "#08086d".to_string(), "#bd7b00".to_string(), "#6e727c".to_string(), String::new())
+            (
+                false,
+                false,
+                "#6e0202".to_string(),
+                "#08086d".to_string(),
+                "#bd7b00".to_string(),
+                "#6e727c".to_string(),
+                String::new(),
+            )
         };
 
         let mut minivitals_health_color_input = Self::create_textarea();
@@ -825,7 +866,9 @@ impl WindowEditor {
             if let crate::config::WindowDef::Betrayer { data, .. } = &window_def {
                 (
                     data.show_items,
-                    data.bar_color.clone().unwrap_or_else(|| "#8b0000".to_string()),
+                    data.bar_color
+                        .clone()
+                        .unwrap_or_else(|| "#8b0000".to_string()),
                 )
             } else {
                 (true, "#8b0000".to_string())
@@ -990,8 +1033,8 @@ impl WindowEditor {
 
     pub fn new_window(widget_type: String) -> Self {
         use crate::config::{
-            BorderSides, CommandInputWidgetData, PerformanceWidgetData, RoomWidgetData, SpacerWidgetData,
-            TextWidgetData, WindowBase, WindowDef,
+            BorderSides, CommandInputWidgetData, PerformanceWidgetData, RoomWidgetData,
+            SpacerWidgetData, TextWidgetData, WindowBase, WindowDef,
         };
 
         // Create base configuration with defaults
@@ -1336,5 +1379,4 @@ impl WindowEditor {
 
         editor
     }
-
 }

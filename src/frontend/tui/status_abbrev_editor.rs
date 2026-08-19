@@ -158,7 +158,12 @@ impl StatusAbbrevEditor {
         let height = POPUP_HEIGHT.min(area.height);
         let x = (area.width.saturating_sub(width)) / 2;
         let y = (area.height.saturating_sub(height)) / 2;
-        let popup = Rect { x, y, width, height };
+        let popup = Rect {
+            x,
+            y,
+            width,
+            height,
+        };
         Clear.render(popup, buf);
 
         let bg = crossterm_bridge::to_ratatui_color(theme.browser_background);
@@ -209,7 +214,9 @@ impl StatusAbbrevEditor {
         let list = List::new(items)
             .highlight_style(
                 Style::default()
-                    .bg(crossterm_bridge::to_ratatui_color(theme.browser_item_selected))
+                    .bg(crossterm_bridge::to_ratatui_color(
+                        theme.browser_item_selected,
+                    ))
                     .fg(focused)
                     .add_modifier(Modifier::BOLD),
             )

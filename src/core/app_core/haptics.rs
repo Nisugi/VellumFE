@@ -127,7 +127,9 @@ mod tests {
         );
 
         // Within the cooldown window: dropped entirely, not queued for later.
-        core.message_processor.pending_rumbles.push("short".to_string());
+        core.message_processor
+            .pending_rumbles
+            .push("short".to_string());
         core.queue_highlight_rumbles();
         assert!(core.drain_haptics().is_empty(), "cooldown drops repeats");
         assert!(

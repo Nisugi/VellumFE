@@ -196,7 +196,10 @@ pub struct RemoteWheelSlice {
 
 impl RemoteWheels {
     pub fn from_config(config: &Config) -> Self {
-        fn wire_slices(config: &Config, slices: &[crate::config::WheelSlice]) -> Vec<RemoteWheelSlice> {
+        fn wire_slices(
+            config: &Config,
+            slices: &[crate::config::WheelSlice],
+        ) -> Vec<RemoteWheelSlice> {
             slices
                 .iter()
                 .map(|slice| RemoteWheelSlice {
@@ -237,7 +240,10 @@ impl RemoteWheels {
                 // shipped when configured — an empty touch_wheel lets the
                 // client fall back to its built-in default.
                 if !config.touch_wheel.is_empty() {
-                    named.insert("touch".to_string(), wire_slices(config, &config.touch_wheel));
+                    named.insert(
+                        "touch".to_string(),
+                        wire_slices(config, &config.touch_wheel),
+                    );
                 }
                 named
             },
@@ -256,9 +262,7 @@ impl RemoteWheels {
             wheel_stick: config
                 .controller_wheels_meta
                 .iter()
-                .filter_map(|(name, meta)| {
-                    meta.stick.clone().map(|s| (name.clone(), s))
-                })
+                .filter_map(|(name, meta)| meta.stick.clone().map(|s| (name.clone(), s)))
                 .collect(),
             wheel_start: config
                 .controller_wheels_meta
@@ -448,7 +452,10 @@ pub enum RemoteDelta {
     /// A highlight-triggered sound. Clients fetch the file from /sounds/
     /// and play it locally (the Android build has no native audio; the
     /// phone's browser engine is the sound device).
-    Sound { file: String, volume: Option<f32> },
+    Sound {
+        file: String,
+        volume: Option<f32>,
+    },
     /// The drawable map scene changed (location/sheet/building or a layout
     /// regeneration). Arc-shared with the snapshot watch.
     MapScene(Arc<RemoteMapScene>),
@@ -558,12 +565,19 @@ pub enum RemoteDelta {
     /// page). The phone updates its WebUI page picker.
     WebUiPages(Vec<crate::data::webui::WebUiPageDescriptor>),
     /// A WebUI page ended (script exited / page replaced).
-    WebUiPageClosed { page: String },
+    WebUiPageClosed {
+        page: String,
+    },
     /// A WebUI notice ("info" | "warn" | "error") for the user.
-    WebUiNotice { level: String, text: String },
+    WebUiNotice {
+        level: String,
+        text: String,
+    },
     /// The WebUI bridge connected or dropped; the phone shows/clears a
     /// "connecting…" state and re-subscribes on reconnect.
-    WebUiConnected { connected: bool },
+    WebUiConnected {
+        connected: bool,
+    },
 }
 
 /// Input from a remote client, drained by the active frontend's main loop
@@ -1263,11 +1277,13 @@ impl RemoteStateSnapshot {
                 if !exp.next_level_text.is_empty() {
                     // nextLvlPB's value is raw experience, not a percent, and
                     // the text already carries it ("63667 until next level").
-                    info.experience.push(format!("Next level: {}", exp.next_level_text));
+                    info.experience
+                        .push(format!("Next level: {}", exp.next_level_text));
                 }
                 let enc = &game_state.encumbrance;
                 if !enc.text.is_empty() {
-                    info.encumbrance.push(format!("{} ({}%)", enc.text, enc.value));
+                    info.encumbrance
+                        .push(format!("{} ({}%)", enc.text, enc.value));
                     if !enc.blurb.is_empty() {
                         info.encumbrance.push(enc.blurb.clone());
                     }
@@ -1302,10 +1318,7 @@ impl RemoteStateSnapshot {
                 }
                 // Both halves must be known: a value with no cap cannot be
                 // drawn as a bar, and a cap alone says nothing.
-                if let (Some(value), Some(max)) = (
-                    exp.field_exp,
-                    exp.max_field_exp,
-                ) {
+                if let (Some(value), Some(max)) = (exp.field_exp, exp.max_field_exp) {
                     if max > 0 {
                         info.gauges.field_exp = Some(RemoteFieldExp { value, max });
                     }
@@ -1499,7 +1512,9 @@ impl RemoteSink {
         seq: u64,
         tree: crate::data::webui::WebUiNode,
     ) {
-        let _ = self.delta_tx.send(RemoteDelta::WebUiRender { page, seq, tree });
+        let _ = self
+            .delta_tx
+            .send(RemoteDelta::WebUiRender { page, seq, tree });
     }
 
     /// Broadcast the WebUI registered-page list to phone clients, and store
@@ -1521,7 +1536,9 @@ impl RemoteSink {
 
     /// Broadcast the WebUI bridge's connected state to phone clients.
     pub fn push_webui_connected(&mut self, connected: bool) {
-        let _ = self.delta_tx.send(RemoteDelta::WebUiConnected { connected });
+        let _ = self
+            .delta_tx
+            .send(RemoteDelta::WebUiConnected { connected });
     }
 
     /// Reply to one client's map-locations request.
@@ -1749,7 +1766,7 @@ impl RemoteSink {
         // The sink owns session status; AppCore builds snapshots from
         // GameState which knows nothing about it.
         snap.session = self.session.clone();
-            snap.webui_pages = self.webui_pages.clone();
+        snap.webui_pages = self.webui_pages.clone();
         if snap == self.last {
             return;
         }
@@ -1808,8 +1825,7 @@ impl RemoteSink {
                 .delta_tx
                 .send(RemoteDelta::Injuries(snap.injuries.clone()));
         }
-        if snap.doll_variant != self.last.doll_variant
-            || snap.doll_hidden != self.last.doll_hidden
+        if snap.doll_variant != self.last.doll_variant || snap.doll_hidden != self.last.doll_hidden
         {
             let _ = self.delta_tx.send(RemoteDelta::Doll {
                 variant: snap.doll_variant.clone(),
@@ -1890,7 +1906,8 @@ mod tests {
     #[test]
     fn gauges_carry_numeric_mind_encumbrance_and_stance() {
         let mut gs = GameState::new();
-        gs.gs4_experience.update_mind_state(42, "muddled".to_string());
+        gs.gs4_experience
+            .update_mind_state(42, "muddled".to_string());
         gs.encumbrance.update_level(17, "Light".to_string());
         gs.stance.update(80, "defensive (80%)");
 
@@ -1951,14 +1968,29 @@ mod tests {
         // slice; the wheels message must expose it as named["touch"], with
         // the client action shipped (game commands never ship).
         config.touch_wheel = vec![
-            WheelSlice { label: "Room".into(), client: Some("open:room".into()), ..Default::default() },
-            WheelSlice { label: "Look".into(), command: "look".into(), ..Default::default() },
+            WheelSlice {
+                label: "Room".into(),
+                client: Some("open:room".into()),
+                ..Default::default()
+            },
+            WheelSlice {
+                label: "Look".into(),
+                command: "look".into(),
+                ..Default::default()
+            },
         ];
         let wheels = RemoteWheels::from_config(&config);
-        let touch = wheels.named.get("touch").expect("touch wheel must be named 'touch'");
+        let touch = wheels
+            .named
+            .get("touch")
+            .expect("touch wheel must be named 'touch'");
         assert_eq!(touch.len(), 2);
         assert_eq!(touch[0].label, "Room");
-        assert_eq!(touch[0].client.as_deref(), Some("open:room"), "client action must ship");
+        assert_eq!(
+            touch[0].client.as_deref(),
+            Some("open:room"),
+            "client action must ship"
+        );
         // The command slice ships its label but never its command (resolves
         // server-side by index, like every wheel slice).
         assert_eq!(touch[1].label, "Look");
@@ -1968,7 +2000,9 @@ mod tests {
         // built-in default ring.
         let empty = Config::default();
         assert!(
-            !RemoteWheels::from_config(&empty).named.contains_key("touch"),
+            !RemoteWheels::from_config(&empty)
+                .named
+                .contains_key("touch"),
             "unset touch_wheel must not create a named 'touch' wheel"
         );
     }
@@ -2026,7 +2060,10 @@ mod tests {
             name: name.to_string(),
             noun: Some(noun.to_string()),
             status: None,
-            flags: Some(CreatureFlags { hostile: true, ..Default::default() }),
+            flags: Some(CreatureFlags {
+                hostile: true,
+                ..Default::default()
+            }),
         };
 
         let mut gs = GameState::new();
@@ -2035,7 +2072,10 @@ mod tests {
             // Hostile but its noun is configured as excluded.
             hostile("#2", "practice dummy", "dummy"),
             // Not hostile (no flags) — must be excluded regardless.
-            Creature { flags: None, ..hostile("#3", "town crier", "crier") },
+            Creature {
+                flags: None,
+                ..hostile("#3", "town crier", "crier")
+            },
         ];
 
         let excluded = vec!["dummy".to_string()];
@@ -2053,7 +2093,12 @@ mod tests {
         let scene = Arc::new(RemoteMapScene {
             location: "Town".into(),
             sheet: "outdoor".into(),
-            rooms: vec![RemoteMapRoom { i: 1, x: 0, y: 0, e: false }],
+            rooms: vec![RemoteMapRoom {
+                i: 1,
+                x: 0,
+                y: 0,
+                e: false,
+            }],
             edges: vec![],
             labels: vec![],
         });

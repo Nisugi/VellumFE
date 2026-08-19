@@ -354,17 +354,22 @@ mod tests {
         let all: Vec<String> = lines.iter().map(|l| line_text(l)).collect();
         // Sapphires rerouted to "loot" (rule beats data pack "gem");
         // crystal stays gem; lockpick lands in "tools" via noun rule.
-        assert!(all.iter().any(|l| l.starts_with("  loot (2): blue sapphire (2)")));
-        assert!(all.iter().any(|l| l.starts_with("  gem (1): quartz crystal")));
-        assert!(all.iter().any(|l| l.starts_with("  tools (1): copper lockpick")));
+        assert!(all
+            .iter()
+            .any(|l| l.starts_with("  loot (2): blue sapphire (2)")));
+        assert!(all
+            .iter()
+            .any(|l| l.starts_with("  gem (1): quartz crystal")));
+        assert!(all
+            .iter()
+            .any(|l| l.starts_with("  tools (1): copper lockpick")));
     }
 
     #[test]
     fn category_order_labels_and_formatting_knobs() {
         let mut cfg = config();
         cfg.category_order = vec!["other".to_string(), "gem".to_string()];
-        cfg.labels
-            .insert("gem".to_string(), "Gems".to_string());
+        cfg.labels.insert("gem".to_string(), "Gems".to_string());
         cfg.show_counts = false;
         cfg.bold_labels = false;
         cfg.item_sort = "alpha".to_string();
@@ -373,7 +378,10 @@ mod tests {
         // "other" ordered before "gem"; label renamed; no counts anywhere;
         // plain (not monsterbold) labels; alpha item order (blue < quartz).
         assert_eq!(line_text(&lines[1]), "  other: copper lockpick");
-        assert_eq!(line_text(&lines[2]), "  Gems: blue sapphire, quartz crystal");
+        assert_eq!(
+            line_text(&lines[2]),
+            "  Gems: blue sapphire, quartz crystal"
+        );
         assert_eq!(lines[2][0].span_type, SpanType::default());
     }
 

@@ -517,15 +517,28 @@ mod tests {
     use crate::launcher::config::{CharacterLaunch, RemoteOs, SshConfig};
     use std::collections::BTreeMap;
 
-
     #[test]
     fn loopback_hosts_are_recognized_as_local() {
-        for host in ["localhost", "LOCALHOST", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "", "  "] {
+        for host in [
+            "localhost",
+            "LOCALHOST",
+            "127.0.0.1",
+            "::1",
+            "[::1]",
+            "0.0.0.0",
+            "",
+            "  ",
+        ] {
             assert!(is_local_host(host), "{host:?} should be local");
         }
         // A LAN address is NOT assumed local even if it happens to be this
         // box: guessing wrong would silently skip SSH on a real remote setup.
-        for host in ["192.168.86.234", "10.0.0.5", "home.example.com", "127.0.0.2"] {
+        for host in [
+            "192.168.86.234",
+            "10.0.0.5",
+            "home.example.com",
+            "127.0.0.2",
+        ] {
             assert!(!is_local_host(host), "{host:?} should be remote");
         }
     }
@@ -535,13 +548,20 @@ mod tests {
         let ssh = SshConfig::default();
 
         // Same machine: spawn directly, no SSH key required.
-        let spec = LaunchSpec::from_command("rubyw lich.rbw --login Nisugi", "127.0.0.1", 8000, "Nisugi", &ssh);
+        let spec = LaunchSpec::from_command(
+            "rubyw lich.rbw --login Nisugi",
+            "127.0.0.1",
+            8000,
+            "Nisugi",
+            &ssh,
+        );
         assert!(spec.local, "loopback attach host must launch locally");
         assert_eq!(spec.program, "rubyw");
         assert_eq!(spec.attach_port, 8000);
 
         // Remote host: SSH path, and the SSH host defaults to the attach host.
-        let spec = LaunchSpec::from_command("rubyw lich.rbw", "192.168.86.234", 8002, "Nisugi", &ssh);
+        let spec =
+            LaunchSpec::from_command("rubyw lich.rbw", "192.168.86.234", 8002, "Nisugi", &ssh);
         assert!(!spec.local, "a LAN host must still go over SSH");
         assert_eq!(spec.ssh_host, "192.168.86.234");
 
@@ -575,8 +595,9 @@ mod tests {
                 user: "u".to_string(),
                 port: 22,
                 remote_os: RemoteOs::Windows,
-                lich_command: "ruby lich.rb --login {character} --{game} --detachable-client={port}"
-                    .to_string(),
+                lich_command:
+                    "ruby lich.rb --login {character} --{game} --detachable-client={port}"
+                        .to_string(),
                 attach_host: "127.0.0.1".to_string(),
                 key_saved: false,
             },

@@ -3243,7 +3243,11 @@ fn group_reply_while_following_splits_leader_from_members() {
         vellum_fe::core::group::GroupLeader::Other(leader) => assert_eq!(leader.name, "Bob"),
         other => panic!("expected to follow Bob, got {other:?}"),
     }
-    assert_eq!(names(&group), vec!["Carol"], "the leader is not also a member");
+    assert_eq!(
+        names(&group),
+        vec!["Carol"],
+        "the leader is not also a member"
+    );
     assert!(group.confirmed);
 }
 
@@ -3271,19 +3275,16 @@ fn joining_another_group_records_the_leader_but_stays_unconfirmed() {
 fn joined_indicator_going_off_clears_the_roster() {
     // The falling edge of JOINED is the authoritative "no group" signal. It
     // arrives even when a leave message never does -- death, linkdeath.
-    let group = group_state(
-        &["<indicator id=\"IconJOINED\" visible=\"n\"/>"],
-        |gs| {
-            gs.group.replace(
-                vellum_fe::core::group::GroupLeader::SelfLed,
-                vec![vellum_fe::core::group::GroupMember {
-                    id: "-1".to_string(),
-                    noun: "bob".to_string(),
-                    name: "Bob".to_string(),
-                }],
-            );
-        },
-    );
+    let group = group_state(&["<indicator id=\"IconJOINED\" visible=\"n\"/>"], |gs| {
+        gs.group.replace(
+            vellum_fe::core::group::GroupLeader::SelfLed,
+            vec![vellum_fe::core::group::GroupMember {
+                id: "-1".to_string(),
+                noun: "bob".to_string(),
+                name: "Bob".to_string(),
+            }],
+        );
+    });
 
     assert!(!group.is_grouped());
     assert!(group.members.is_empty());

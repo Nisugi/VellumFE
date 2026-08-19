@@ -9,19 +9,19 @@ mod navigation;
 mod render;
 mod sync;
 
-use crate::data::input::{KeyCode, KeyEvent as TfKeyEvent};
 use crate::config::Config;
+use crate::config::{DashboardIndicatorDef, TabbedTextTab, WindowDef};
+use crate::data::input::{KeyCode, KeyEvent as TfKeyEvent};
 use crate::frontend::tui::crossterm_bridge;
 use crate::frontend::tui::textarea_bridge;
-use crate::config::{DashboardIndicatorDef, TabbedTextTab, WindowDef};
 use crate::theme::EditorTheme;
-use std::char;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Clear, Widget},
 };
+use std::char;
 use tui_textarea::TextArea;
 
 /// Available content alignment options (matches VellumFE)
@@ -46,10 +46,7 @@ const TITLE_POSITION_OPTIONS: &[&str] = &[
     "bottom-right",
 ];
 
-const SORT_DIRECTION_OPTIONS: &[&str] = &[
-    "ascending",
-    "descending",
-];
+const SORT_DIRECTION_OPTIONS: &[&str] = &["ascending", "descending"];
 
 /// Actions that can result from mouse interaction with the window editor
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -940,8 +937,7 @@ impl IndicatorEditor {
         self.id_input = WindowEditor::create_textarea();
         self.icon_input = WindowEditor::create_textarea();
         self.colors_input = WindowEditor::create_textarea();
-        self.colors_input
-            .insert_str("#000000, #ffffff".to_string());
+        self.colors_input.insert_str("#000000, #ffffff".to_string());
     }
 
     fn start_edit(&mut self) {
@@ -1061,9 +1057,9 @@ impl IndicatorEditor {
 /// Bar order item for MiniVitals editor
 #[derive(Clone, Debug)]
 struct BarOrderItem {
-    id: String,           // "health", "mana", "stamina", "spirit", "concentration"
-    label: String,        // Display name
-    enabled: bool,        // Whether this bar is shown
+    id: String,            // "health", "mana", "stamina", "spirit", "concentration"
+    label: String,         // Display name
+    enabled: bool,         // Whether this bar is shown
     color: Option<String>, // Custom color for the bar
 }
 
@@ -1264,7 +1260,9 @@ impl BarOrderEditor {
     fn sync_color_input_from_bar(&mut self) {
         self.color_input = WindowEditor::create_textarea();
         if let Some(bar) = self.bars.get(self.selected) {
-            let color_str = bar.color.as_deref()
+            let color_str = bar
+                .color
+                .as_deref()
                 .unwrap_or_else(|| Self::default_color_for_id(&bar.id));
             self.color_input.insert_str(color_str);
         }
@@ -1349,7 +1347,6 @@ impl BarOrderEditor {
             ClickResult::None => false,
         }
     }
-
 }
 
 /// Window editor widget - 70x20 popup with single-page layout
@@ -1509,9 +1506,7 @@ pub struct WindowEditor {
     field_click_areas: Vec<(u16, u16, FieldRef)>, // (y, x_start, field)
 }
 
-impl WindowEditor {
-
-}
+impl WindowEditor {}
 
 #[cfg(test)]
 mod tests;

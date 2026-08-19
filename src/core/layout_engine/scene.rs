@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 
 use super::classifier::interior_clusters;
 use super::direction::DirectionMap;
-use crate::core::mapdb::RoomTable;
 use super::overrides::{group_anchor_key, EdgeAction, EdgeOverride};
 use super::positioner::Cell;
 use super::Layout;
+use crate::core::mapdb::RoomTable;
 
 /// Directional edges longer than this render as stubs, not lines.
 pub const LONG_EDGE_CELLS: i32 = 8;
@@ -268,9 +268,7 @@ pub fn build_scene(
                 Sheet::Outdoor => &mut scene.outdoor,
                 Sheet::Interiors => &mut scene.interiors,
             };
-            scene
-                .room_index
-                .insert(id, (sheet, target.rooms.len()));
+            scene.room_index.insert(id, (sheet, target.rooms.len()));
             target.rooms.push(scene_room);
         }
     }
@@ -526,10 +524,7 @@ mod tests {
             location: Some("Test".into()),
             title: vec![format!("[Room {id}]")],
             description: Vec::new(),
-            wayto: wayto
-                .iter()
-                .map(|&(t, c)| (t, c.to_string()))
-                .collect(),
+            wayto: wayto.iter().map(|&(t, c)| (t, c.to_string())).collect(),
             timeto: Default::default(),
             dirto: Default::default(),
             tags: Vec::new(),
@@ -623,7 +618,10 @@ mod tests {
     #[test]
     fn connector_labels() {
         assert_eq!(connector_label("go dock"), Some("dock".into()));
-        assert_eq!(connector_label("climb rope ladder"), Some("rope ladder".into()));
+        assert_eq!(
+            connector_label("climb rope ladder"),
+            Some("rope ladder".into())
+        );
         assert_eq!(connector_label("north"), None);
         assert_eq!(connector_label("out"), None);
         assert_eq!(connector_label(";e fput 'go gate'"), None);

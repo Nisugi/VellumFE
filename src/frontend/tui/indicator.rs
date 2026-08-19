@@ -199,7 +199,6 @@ impl Indicator {
             }
         }
     }
-
 }
 
 #[cfg(test)]

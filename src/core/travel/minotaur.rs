@@ -149,7 +149,9 @@ impl MinotaurState {
         // (b) An exit we've never traversed — explore. Ordered by the live
         // exit list, not the map's iteration order, so the walk is stable.
         if let Some(dir) = exits.iter().find(|d| {
-            here.and_then(|h| h.get(*d)).map(Option::is_none).unwrap_or(true)
+            here.and_then(|h| h.get(*d))
+                .map(Option::is_none)
+                .unwrap_or(true)
         }) {
             return MinotaurMove::Go(dir.clone());
         }
@@ -250,7 +252,10 @@ mod tests {
     #[test]
     fn arriving_at_the_target_is_done() {
         let s = MinotaurState::new();
-        assert_eq!(s.choose_dir(99, 99, &["north".into()]), MinotaurMove::Arrive);
+        assert_eq!(
+            s.choose_dir(99, 99, &["north".into()]),
+            MinotaurMove::Arrive
+        );
     }
 
     #[test]

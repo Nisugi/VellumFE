@@ -49,7 +49,9 @@ impl HandsView {
 /// The hand-state change that proves the move happened.
 #[derive(Debug, Clone, PartialEq)]
 enum Expect {
-    AppearIn { left: bool },
+    AppearIn {
+        left: bool,
+    },
     LeaveHands,
     /// Item wasn't in a hand when the move fired (`_drag` handles
     /// container-direct moves server-side in one motion). Hand events can
@@ -69,11 +71,18 @@ struct Active {
 
 #[derive(Debug, PartialEq)]
 pub enum MoveOutcome {
-    Succeeded { desc: String },
+    Succeeded {
+        desc: String,
+    },
     /// The command went out but nothing observable can confirm it
     /// (container-direct move that never transited a hand).
-    Sent { desc: String },
-    Failed { desc: String, reason: String },
+    Sent {
+        desc: String,
+    },
+    Failed {
+        desc: String,
+        reason: String,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -147,11 +156,7 @@ impl ItemMover {
                 } else {
                     Expect::Unverifiable
                 };
-                (
-                    format!("WEAR #{item}"),
-                    expect,
-                    format!("wear #{item}"),
-                )
+                (format!("WEAR #{item}"), expect, format!("wear #{item}"))
             }
             MoveKind::PlaceFeet => {
                 let expect = if hands.holds(item) {
@@ -349,7 +354,10 @@ mod tests {
         assert_eq!(out, None, "transit upgrades, not completes");
         // ...and leaves: fully verified.
         let (_, out) = m.tick(&empty, 900);
-        assert!(matches!(out, Some(MoveOutcome::Succeeded { .. })), "{out:?}");
+        assert!(
+            matches!(out, Some(MoveOutcome::Succeeded { .. })),
+            "{out:?}"
+        );
     }
 
     #[test]

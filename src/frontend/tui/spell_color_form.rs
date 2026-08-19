@@ -255,10 +255,7 @@ impl SpellColorFormWidget {
         let on_title_bar = row == py && col > px && col < px + POPUP_WIDTH - 1;
         if pressed && on_title_bar && !self.is_dragging {
             self.is_dragging = true;
-            self.drag_offset = (
-                col.saturating_sub(px) as i16,
-                row.saturating_sub(py) as i16,
-            );
+            self.drag_offset = (col.saturating_sub(px) as i16, row.saturating_sub(py) as i16);
             return;
         }
         if self.is_dragging {

@@ -248,10 +248,7 @@ fn frames_to_emoji(
     if frames.is_empty() {
         return None;
     }
-    Some(EmojiFrames {
-        total: acc,
-        frames,
-    })
+    Some(EmojiFrames { total: acc, frames })
 }
 
 /// Decode an animated GIF into all its frames.
@@ -601,7 +598,10 @@ mod tests {
             .expect("png decodes");
         // A static PNG is simply a one-frame animation: same texture at any
         // elapsed time, and never "running", so it costs no repaints.
-        assert_eq!(frames.frame_once_at(0.0).id(), frames.frame_once_at(99.0).id());
+        assert_eq!(
+            frames.frame_once_at(0.0).id(),
+            frames.frame_once_at(99.0).id()
+        );
         assert!(!frames.one_shot_running(0.0));
     }
 
@@ -617,8 +617,8 @@ mod tests {
                 .write_image(&[255, 0, 0, 255], 1, 1, image::ExtendedColorType::Rgba8)
                 .unwrap();
         }
-        let frames = decode_static(&ctx, "static", &png, image::ImageFormat::Png)
-            .expect("png decodes");
+        let frames =
+            decode_static(&ctx, "static", &png, image::ImageFormat::Png).expect("png decodes");
         assert_eq!(frames.frames.len(), 1);
         assert_eq!(frames.total, 0.0);
         // Same texture at any time.

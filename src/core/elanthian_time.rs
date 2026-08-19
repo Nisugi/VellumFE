@@ -194,7 +194,10 @@ mod tests {
             night: 22,
         };
         assert_eq!(phase_for_hour(21, late), DayPhase::Dusk);
-        assert_eq!(phase_for_hour(21, PhaseBoundaries::default()), DayPhase::Night);
+        assert_eq!(
+            phase_for_hour(21, PhaseBoundaries::default()),
+            DayPhase::Night
+        );
         assert_eq!(phase_for_hour(5, late), DayPhase::Dawn);
     }
 

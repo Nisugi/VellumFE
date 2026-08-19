@@ -122,9 +122,7 @@ fn residue_costs_reachability() {
         }
     }
     worst.sort_by(|a, b| (b.2 - b.1).total_cmp(&(a.2 - a.1)));
-    println!(
-        "\n{worse} still-reachable rooms take a detour (>1s slower); worst 10:"
-    );
+    println!("\n{worse} still-reachable rooms take a detour (>1s slower); worst 10:");
     for (room, was, now) in worst.iter().take(10) {
         println!(
             "  room {room:>7}  {was:>7.1}s -> {now:>7.1}s  (+{:.1}s)  {}",
@@ -196,7 +194,10 @@ fn residue_costs_reachability() {
             db.room(*to)
                 .and_then(|r| r.location.as_deref())
                 .unwrap_or("?"),
-            body.replace('\n', " ").chars().take(110).collect::<String>()
+            body.replace('\n', " ")
+                .chars()
+                .take(110)
+                .collect::<String>()
         );
     }
 
@@ -215,7 +216,10 @@ fn residue_costs_reachability() {
             .copied()
             .collect();
         if cut_now.is_empty() || wave > 12 {
-            println!("\nafter wave {wave}: {} rooms still unreachable, cut empty or depth cap", full.len() - now.len());
+            println!(
+                "\nafter wave {wave}: {} rooms still unreachable, cut empty or depth cap",
+                full.len() - now.len()
+            );
             break;
         }
         let before = now.len();
@@ -223,7 +227,11 @@ fn residue_costs_reachability() {
             peeled.remove(e);
         }
         let after = reachable(&db, source, &peeled).len();
-        println!("\nwave {wave}: crossing {} edges unlocks {} rooms:", cut_now.len(), after - before);
+        println!(
+            "\nwave {wave}: crossing {} edges unlocks {} rooms:",
+            cut_now.len(),
+            after - before
+        );
         let mut cut_now = cut_now;
         cut_now.sort();
         for (f, t) in &cut_now {

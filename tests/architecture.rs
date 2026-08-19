@@ -73,11 +73,7 @@ fn core_and_data_do_not_reference_egui() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut violations = Vec::new();
     for layer in ["core", "data", "config"] {
-        scan_dir(
-            &src.join(layer),
-            &["egui", "eframe"],
-            &mut violations,
-        );
+        scan_dir(&src.join(layer), &["egui", "eframe"], &mut violations);
     }
     assert!(
         violations.is_empty(),

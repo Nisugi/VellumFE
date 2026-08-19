@@ -20,7 +20,9 @@ impl VellumGuiApp {
 
     /// Load history from the shared per-profile file (newest first, same
     /// format the TUI reads and writes).
-    pub(super) fn load_command_history(character: Option<&str>) -> std::collections::VecDeque<String> {
+    pub(super) fn load_command_history(
+        character: Option<&str>,
+    ) -> std::collections::VecDeque<String> {
         let mut history = std::collections::VecDeque::new();
         let Some(path) = Self::history_path_for(character) else {
             return history;
@@ -125,17 +127,13 @@ impl VellumGuiApp {
     }
 
     pub(super) fn command_completion_cursor_ready(ctx: &egui::Context, end: usize) -> bool {
-        if !ctx.memory(|memory| {
-            memory.focused() == Some(egui::Id::new(COMMAND_INPUT_EDIT_ID))
-        }) {
+        if !ctx.memory(|memory| memory.focused() == Some(egui::Id::new(COMMAND_INPUT_EDIT_ID))) {
             return false;
         }
 
         egui::TextEdit::load_state(ctx, egui::Id::new(COMMAND_INPUT_EDIT_ID))
             .and_then(|state| state.cursor.char_range())
-            .is_some_and(|range| {
-                range.primary.index.0 == end && range.secondary.index.0 == end
-            })
+            .is_some_and(|range| range.primary.index.0 == end && range.secondary.index.0 == end)
     }
 
     /// Up arrow: step back through history (stashing the in-progress text
@@ -216,5 +214,4 @@ impl VellumGuiApp {
             self.close_requested = true;
         }
     }
-
 }

@@ -197,10 +197,7 @@ pub(super) fn paint(
             for index in 0..8 {
                 let angle = index as f32 * std::f32::consts::FRAC_PI_4 + 0.4;
                 let dir = Vec2::new(angle.cos(), angle.sin());
-                painter.line_segment(
-                    [center + dir * s * 0.24, center + dir * s * 0.40],
-                    thin,
-                );
+                painter.line_segment([center + dir * s * 0.24, center + dir * s * 0.40], thin);
             }
             painter.circle_filled(at(0.44, 0.46), s * 0.05, bg);
             painter.circle_filled(at(0.58, 0.56), s * 0.04, bg);

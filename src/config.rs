@@ -4,52 +4,52 @@
 //! keybinds, colors, layouts, etc.), exposes helpers for resolving per-character
 //! overrides, and persists edits that come from the UI.
 
-use anyhow::{Context, Result};
 use crate::data::input::{KeyCode, KeyModifiers};
+use anyhow::{Context, Result};
 use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-pub mod menu_keybind_validator;
-pub mod wrayth_import;
 mod alertpacks;
 mod colors;
 mod conditions;
+mod defaults_refresh;
 mod highlights;
 mod hotbars;
 mod io;
-pub mod room_images;
-mod macros;
-mod paths;
-pub mod pool;
-pub mod profiles;
-pub mod skins;
-mod defaults_refresh;
 mod keybinds;
 mod layout;
-pub mod registry;
-mod settings;
-mod sparse;
+mod macros;
+pub mod menu_keybind_validator;
+mod paths;
+pub mod pool;
 mod presets;
+pub mod profiles;
+pub mod registry;
+pub mod room_images;
+mod settings;
+pub mod skins;
+mod sparse;
 mod widgets;
-mod window_registry;
 mod window_def;
+mod window_registry;
+pub mod wrayth_import;
 
+pub use alertpacks::{
+    pack_hash, AlertPack, AlertPackApprovals, AlertPackScope, RoomScope, SCOPE_KEY,
+};
 pub use colors::{
     ColorConfig, HarmonyRecipe, PaletteColor, PresetColor, PromptColor, SpellColorRange,
     SpellColorStyle, UiColors,
 };
-pub use highlights::{
-    highlight_web_fields, AlertAnchor, AlertSpec, AlertTimer, EventAction, EventPattern, HighlightPattern,
-    RedirectMode,
-};
-pub use alertpacks::{
-    pack_hash, AlertPack, AlertPackApprovals, AlertPackScope, RoomScope, SCOPE_KEY,
-};
 pub use conditions::{
     Cmp, Condition, EffectCategory, HandSlot, NameMatch, VitalKind, VitalUnit, INJURY_AREAS,
+};
+pub use highlights::{
+    highlight_web_fields, AlertAnchor, AlertSpec, AlertTimer, EventAction, EventPattern,
+    HighlightPattern, RedirectMode,
 };
 pub use hotbars::{
     GradientDir, HotbarButton, HotbarButtonState, HotbarCountdownSource, HotbarDef, HotbarIcon,
@@ -57,43 +57,39 @@ pub use hotbars::{
 };
 pub use keybinds::{
     canonicalize_keypad_bind, keyboard_dead_action_reason, parse_key_string,
-    reserved_combo_conflict,
-    touch_wheel_action_catalog, validate_wheel_spans, AppKeybinds,
+    reserved_combo_conflict, touch_wheel_action_catalog, validate_wheel_spans, AppKeybinds,
     ControllerBindKey, KeyAction, KeyBindAction, MacroAction, MenuKeybindField, MenuKeybinds,
     RumbleConfig, RumblePattern, TuningConfig, WheelMeta, WheelSlice, WheelSpanIssue,
     CONTROLLER_BUTTON_ORDER, TOUCH_WHEEL_CLIENT_ACTIONS, WHEEL_MIN_SPAN_DEG,
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
-pub use paths::{is_valid_layout_name, write_atomic, DialogPosition, SavedDialogPositions};
-pub use window_registry::{RegistryBinding, WindowRegistry};
 #[cfg(test)]
 pub use paths::VELLUM_FE_DIR_TEST_LOCK;
-pub use settings::{
-    ConnectionConfig, FocusConfig, Go2Config, HighlightsConfig, LoggingConfig, MapConfig,
-    GameArtSettings, RoomImagesSettings, SorterConfig, SorterRule, SoundConfig, StreamRoute, StreamsConfig, TargetListConfig,
-    TtsConfig, TtsSubstitution, UiConfig, WebConfig,
-};
+pub use paths::{is_valid_layout_name, write_atomic, DialogPosition, SavedDialogPositions};
 pub use presets::{IndicatorTemplateEntry, IndicatorTemplateStore, StatusIconState};
+pub use settings::{
+    ConnectionConfig, FocusConfig, GameArtSettings, Go2Config, HighlightsConfig, LoggingConfig,
+    MapConfig, RoomImagesSettings, SorterConfig, SorterRule, SoundConfig, StreamRoute,
+    StreamsConfig, TargetListConfig, TtsConfig, TtsSubstitution, UiConfig, WebConfig,
+};
 pub use widgets::{
     apply_compiled_text_replacements, compile_text_replacements, default_minivitals_bar_order,
-    DEFAULT_INJURY_PALETTE,
-    ActiveEffectsWidgetData, BetrayerWidgetData, BorderSides, CommandInputWidgetData,
-    CompassWidgetData, CompiledTextReplacement, ContainerWidgetData, CountdownWidgetData,
-    CreatureFieldWidgetData,
-    DashboardIndicatorDef, DashboardLayout, DashboardWidgetData, DialogPanelWidgetData,
-    EncumbranceWidgetData,
-    ExperienceWidgetData,
-    GS4ExperienceWidgetData, HandIconState, HandWidgetData, HotkeybarWidgetData, IndicatorWidgetData,
-    InjuryDollWidgetData, InventoryWidgetData, ItemsWidgetData, MapWidgetData,
-    BestiaryViewWidgetData, CardRow, ContainersWidgetData, MiniVitalsWidgetData, MissingSpellsWidgetData, MultiAccountWidgetData,
-    PerceptionWidgetData,
-    PerformanceWidgetData, PlayersWidgetData, ProgressWidgetData, QuickbarDefinition,
-    QuickbarEntryConfig, QuickbarWidgetData, QuickbarsConfig, RoomWidgetData, SortDirection,
-    SpacerWidgetData, SpellsWidgetData, TabbedTextTab, TabbedTextWidgetData, TargetsWidgetData,
-    TextReplacement, TextWidgetData, WebUiWidgetData, WindowBase, WindowBinding, WindowVisibility,
+    ActiveEffectsWidgetData, BestiaryViewWidgetData, BetrayerWidgetData, BorderSides, CardRow,
+    CommandInputWidgetData, CompassWidgetData, CompiledTextReplacement, ContainerWidgetData,
+    ContainersWidgetData, CountdownWidgetData, CreatureFieldWidgetData, DashboardIndicatorDef,
+    DashboardLayout, DashboardWidgetData, DialogPanelWidgetData, EncumbranceWidgetData,
+    ExperienceWidgetData, GS4ExperienceWidgetData, HandIconState, HandWidgetData,
+    HotkeybarWidgetData, IndicatorWidgetData, InjuryDollWidgetData, InventoryWidgetData,
+    ItemsWidgetData, MapWidgetData, MiniVitalsWidgetData, MissingSpellsWidgetData,
+    MultiAccountWidgetData, PerceptionWidgetData, PerformanceWidgetData, PlayersWidgetData,
+    ProgressWidgetData, QuickbarDefinition, QuickbarEntryConfig, QuickbarWidgetData,
+    QuickbarsConfig, RoomWidgetData, SortDirection, SpacerWidgetData, SpellsWidgetData,
+    TabbedTextTab, TabbedTextWidgetData, TargetsWidgetData, TextReplacement, TextWidgetData,
+    WebUiWidgetData, WindowBase, WindowBinding, WindowVisibility, DEFAULT_INJURY_PALETTE,
 };
 pub use window_def::WindowDef;
+pub use window_registry::{RegistryBinding, WindowRegistry};
 
 // Embed default configuration files at compile time
 // Files are under defaults/globals/ to mirror the user's ~/.vellum-fe/global/ structure
@@ -106,8 +102,10 @@ const DEFAULT_HOTBARS: &str = include_str!("../defaults/globals/hotbars.toml");
 const DEFAULT_MACROS: &str = include_str!("../defaults/globals/macros.toml");
 const DEFAULT_CMDLIST: &str = include_str!("../defaults/globals/cmdlist1.xml");
 const DEFAULT_SPELL_ABBREVS: &str = include_str!("../defaults/globals/spell_abbrev.toml");
-const DEFAULT_LAYOUT_TEMPLATE: &str = include_str!("../defaults/globals/templates/layout_template.toml");
-const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../defaults/globals/templates/config_template.toml");
+const DEFAULT_LAYOUT_TEMPLATE: &str =
+    include_str!("../defaults/globals/templates/layout_template.toml");
+const DEFAULT_CONFIG_TEMPLATE: &str =
+    include_str!("../defaults/globals/templates/config_template.toml");
 
 // Embed entire directories - automatically includes all files
 static LAYOUTS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/defaults/globals/layouts");
@@ -202,9 +200,7 @@ impl WidgetCategory {
             "targets" | "players" | "items" | "creaturefield" => Self::Entity,
             "inventory" | "spells" | "missingspells" | "containers" | "injury_doll"
             | "experience" | "gs4_experience" | "encum" | "reserve" | "perception"
-            | "multiaccount" => {
-                Self::Character
-            }
+            | "multiaccount" => Self::Character,
             "room" | "compass" | "map" => Self::Navigation,
             "quickbar" | "hotkeybar" => Self::Hotbars,
             "container" => Self::Container,
@@ -348,9 +344,17 @@ pub struct Config {
     // Empty string reads as None: a profile clearing a skin the global layer
     // sets must be able to STATE "no skin" (TOML has no null), or the sparse
     // save writes nothing and the next load re-inherits the global value.
-    #[serde(default, deserialize_with = "empty_string_as_none", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "empty_string_as_none",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub active_skin: Option<String>, // Active GUI skin (dir name under ~/.vellum-fe/global/skins/); None = plain theme colors. In the GUI this mirrors ui_settings.active_skin in the layout file (web doll + non-GUI frontends read it here)
-    #[serde(default, deserialize_with = "empty_string_as_none", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "empty_string_as_none",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub doll_image: Option<String>, // Injury doll image override (pool-relative, "dolls/x.png"); mirrors ui_settings.doll_image like active_skin (web doll endpoint reads it here)
     #[serde(default)] // Use defaults for stream routing
     pub streams: StreamsConfig, // Stream routing configuration (drop list, fallback)
@@ -375,7 +379,6 @@ pub struct Config {
     #[serde(skip)] // Phone-edited overlay, persisted to macros-local.toml
     pub macros_local: MacrosConfig,
 }
-
 
 /// Deserialize an optional string, treating "" as None. The sparse save
 /// writes an empty string to record a deliberately cleared Option, since
@@ -529,7 +532,6 @@ fn default_background_color() -> String {
     "-".to_string() // transparent/no background
 }
 
-
 fn default_selection_enabled() -> bool {
     true
 }
@@ -581,7 +583,6 @@ fn default_perf_stats_height() -> u16 {
 fn default_performance_stats_enabled() -> bool {
     false // Start disabled by default
 }
-
 
 // default_command_input* functions removed - command_input is now in windows array
 

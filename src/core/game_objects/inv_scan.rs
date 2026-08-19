@@ -96,10 +96,7 @@ impl InvScan {
     /// Reuses the main parser's resolved `link_data` for the exist id and
     /// reads the status column from the concatenated text after the link.
     /// Returns true if the line was a status-bearing item line.
-    pub fn ingest_segments(
-        &mut self,
-        segments: &[crate::data::widget::TextSegment],
-    ) -> bool {
+    pub fn ingest_segments(&mut self, segments: &[crate::data::widget::TextSegment]) -> bool {
         if !self.tick_window() {
             return false;
         }

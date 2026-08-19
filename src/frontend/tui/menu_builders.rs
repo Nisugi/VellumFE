@@ -172,8 +172,7 @@ fn known_stream_ids(app_core: &AppCore) -> Vec<String> {
             config::WindowDef::Text { data, .. } => {
                 layout_streams.extend(data.streams.iter().cloned());
             }
-            config::WindowDef::Inventory { data, .. }
-            | config::WindowDef::Reserve { data, .. } => {
+            config::WindowDef::Inventory { data, .. } | config::WindowDef::Reserve { data, .. } => {
                 layout_streams.extend(data.streams.iter().cloned());
             }
             config::WindowDef::TabbedText { data, .. } => {
@@ -327,7 +326,11 @@ pub fn build_stream_window_menu(app_core: &AppCore, stream: &str) -> Vec<PopupMe
         .map(|name| PopupMenuItem {
             text: format!(
                 "[{}] {}",
-                if Some(&name) == current.as_ref() { "✓" } else { " " },
+                if Some(&name) == current.as_ref() {
+                    "✓"
+                } else {
+                    " "
+                },
                 name
             ),
             command: format!("action:streamsub:{}:{}", name, stream),
@@ -371,7 +374,11 @@ mod tests {
                 matching.len()
             );
             let item = matching[0];
-            assert!(!item.category.is_empty(), "{} has an empty category", def.key);
+            assert!(
+                !item.category.is_empty(),
+                "{} has an empty category",
+                def.key
+            );
             assert_eq!(item.display_name, def.label, "{} label mismatch", def.key);
             assert_eq!(
                 item.description.as_deref(),
@@ -379,7 +386,11 @@ mod tests {
                 "{} description mismatch",
                 def.key
             );
-            assert_eq!(item.sensitive, def.sensitive, "{} sensitive mismatch", def.key);
+            assert_eq!(
+                item.sensitive, def.sensitive,
+                "{} sensitive mismatch",
+                def.key
+            );
         }
     }
 
@@ -393,7 +404,11 @@ mod tests {
             for item in &items {
                 let def = registry::find(&item.key).expect("item key is registered");
                 if def.scope == SettingScope::CharacterOnly {
-                    assert!(!item.is_global, "{} must always be character-scoped", item.key);
+                    assert!(
+                        !item.is_global,
+                        "{} must always be character-scoped",
+                        item.key
+                    );
                 } else {
                     assert_eq!(
                         item.is_global, !character_config_exists,
@@ -427,7 +442,8 @@ mod tests {
 
     #[test]
     fn label_counts_extra_subscribers() {
-        let label = stream_destination_label(&subs(&["a", "b", "c"]), "notes", &routes(&[]), "main");
+        let label =
+            stream_destination_label(&subs(&["a", "b", "c"]), "notes", &routes(&[]), "main");
         assert_eq!(label, "a +2");
     }
 
@@ -438,9 +454,15 @@ mod tests {
             ("ooc", StreamRoute::Main),
             ("bounty", StreamRoute::Window("bounty_win".to_string())),
         ]);
-        assert_eq!(stream_destination_label(&[], "SPEECH", &map, "main"), "Discard");
+        assert_eq!(
+            stream_destination_label(&[], "SPEECH", &map, "main"),
+            "Discard"
+        );
         assert_eq!(stream_destination_label(&[], "ooc", &map, "main"), "Main");
-        assert_eq!(stream_destination_label(&[], "Bounty", &map, "main"), "bounty_win");
+        assert_eq!(
+            stream_destination_label(&[], "Bounty", &map, "main"),
+            "bounty_win"
+        );
     }
 
     #[test]

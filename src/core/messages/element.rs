@@ -56,18 +56,24 @@ impl MessageProcessor {
         mut tts_manager: Option<&mut crate::tts::TtsManager>,
     ) {
         match element {
-            ParsedElement::StreamWindow { id, subtitle, title } => {
+            ParsedElement::StreamWindow {
+                id,
+                subtitle,
+                title,
+            } => {
                 self.note_seen_stream(id, title.as_deref());
                 // U3: record the stream as a window discovery for AppCore to
                 // register as a bound, Hidden-by-default layout entry (the
                 // processor can't reach the layout). Replaces the Stream
                 // offer.
-                ui_state.pending_window_discoveries.push(crate::data::WindowDiscovery {
-                    id: id.clone(),
-                    title: title.clone().unwrap_or_else(|| id.clone()),
-                    kind: crate::data::WindowDiscoveryKind::Stream,
-                    save: false,
-                });
+                ui_state
+                    .pending_window_discoveries
+                    .push(crate::data::WindowDiscovery {
+                        id: id.clone(),
+                        title: title.clone().unwrap_or_else(|| id.clone()),
+                        kind: crate::data::WindowDiscoveryKind::Stream,
+                        save: false,
+                    });
                 self.handle_stream_window(
                     id,
                     subtitle.as_deref(),
@@ -133,9 +139,10 @@ impl MessageProcessor {
                 // detection then never hangs on an unmapped room (§12).
                 self.game_line_no += 1;
                 game_state.nav_count += 1;
-                game_state
-                    .move_feedback
-                    .push_back((self.game_line_no, crate::core::move_feedback::MoveFeedback::NavArrived));
+                game_state.move_feedback.push_back((
+                    self.game_line_no,
+                    crate::core::move_feedback::MoveFeedback::NavArrived,
+                ));
                 tracing::debug!("Room ID updated: {}", id);
             }
             ParsedElement::RoomMeta { attrs } => {
@@ -361,8 +368,7 @@ impl MessageProcessor {
                 // Creature-effect events captured during flush apply now
                 // that game_state is in hand (starts re-arm, ends remove).
                 if !self.pending_creature_effects.is_empty() {
-                    let now_server =
-                        chrono::Utc::now().timestamp() + self.server_time_offset;
+                    let now_server = chrono::Utc::now().timestamp() + self.server_time_offset;
                     for (exist, name, severity, timeout_s) in
                         self.pending_creature_effects.drain(..).collect::<Vec<_>>()
                     {
@@ -388,9 +394,7 @@ impl MessageProcessor {
                 // Day-pass lines feed the cache in order (expiry follows the
                 // description, keyed by the same pass id).
                 for (line, pass_id) in self.pending_day_pass_lines.drain(..) {
-                    game_state
-                        .day_passes
-                        .observe(&line, pass_id.as_deref());
+                    game_state.day_passes.observe(&line, pass_id.as_deref());
                 }
                 if let Some(silver) = self.pending_silver.take() {
                     game_state.silver = Some(silver);
@@ -491,6 +495,47 @@ impl MessageProcessor {
                     self.flush_current_stream_with_tts(ui_state, tts_manager);
                 }
 
+                // Echo the prompt into the familiar window as a separator
+                // (arena-spectate parity with Wrayth's main view). Fires only
+                // when familiar text arrived since the last prompt, and
+                // independently of the main window's prompt dedupe above.
+                // Without a familiar window the spectate text fell back into
+                // main, whose own prompt logic above already covers it —
+                // echoing too would double the separator there.
+                if self.chunk_has_familiar_text {
+                    if !text.trim().is_empty()
+                        && self.stream_has_target_window(ui_state, "familiar")
+                    {
+                        let original_stream =
+                            std::mem::replace(&mut self.current_stream, "familiar".to_string());
+                        for ch in text.chars() {
+                            let color = self
+                                .prompt_color_map
+                                .get(&ch)
+                                .cloned()
+                                .unwrap_or_else(|| "#808080".to_string());
+                            self.current_segments.push(TextSegment {
+                                text: ch.to_string(),
+                                fg: Some(color),
+                                bg: None,
+                                bold: false,
+                                mono: false,
+                                span_type: SpanType::Normal,
+                                link_data: None,
+                                custom_emoji: None,
+                                inline_image: None,
+                            });
+                        }
+                        // A bare separator: no TTS.
+                        self.flush_current_stream_with_tts(ui_state, None);
+                        self.current_stream = original_stream;
+                    }
+                    // Reset AFTER the echo: the echoed line flows through the
+                    // same flush tracking and would re-arm the flag, echoing
+                    // a stray separator on the next idle prompt.
+                    self.chunk_has_familiar_text = false;
+                }
+
                 // Extract server time offset for countdown synchronization
                 if let Ok(server_time) = time.parse::<i64>() {
                     let local_time = std::time::SystemTime::now()
@@ -526,17 +571,17 @@ impl MessageProcessor {
             } => {
                 // Use the stream from the element (inline <stream id="...">) if different from current
                 // This handles both <pushStream> (which sets current_stream) and <stream> (inline)
-                let effective_stream = if !stream.is_empty()
-                    && stream.as_str() != self.current_stream.as_str()
-                {
-                    tracing::debug!(
-                        "Inline stream tag: switching from '{}' to '{}' for this text element",
-                        self.current_stream, stream
-                    );
-                    stream.as_str()
-                } else {
-                    self.current_stream.as_str()
-                };
+                let effective_stream =
+                    if !stream.is_empty() && stream.as_str() != self.current_stream.as_str() {
+                        tracing::debug!(
+                            "Inline stream tag: switching from '{}' to '{}' for this text element",
+                            self.current_stream,
+                            stream
+                        );
+                        stream.as_str()
+                    } else {
+                        self.current_stream.as_str()
+                    };
 
                 // Special handling for inline Spells stream - accumulate segments into line buffer
                 // Spells are sent once at login with inline <stream id="Spells"> tags
@@ -573,7 +618,11 @@ impl MessageProcessor {
                     self.spells_line_buffer.push(segment);
                     tracing::trace!(
                         "Accumulated Spells segment: '{}'",
-                        if content.len() > 50 { format!("{}...", &content[..50]) } else { content.to_string() }
+                        if content.len() > 50 {
+                            format!("{}...", &content[..50])
+                        } else {
+                            content.to_string()
+                        }
                     );
                     return; // Don't add to current_segments
                 }
@@ -703,9 +752,7 @@ impl MessageProcessor {
                 if command.starts_with('.') {
                     self.pending_client_commands.push(command.clone());
                 } else {
-                    tracing::warn!(
-                        "vellumCmd rejected (only dot-commands are allowed): {command}"
-                    );
+                    tracing::warn!("vellumCmd rejected (only dot-commands are allowed): {command}");
                 }
             }
             ParsedElement::RoomPicture { id } => {
@@ -991,7 +1038,9 @@ impl MessageProcessor {
                 // Note: DR uses "concentration" instead of "mana"
                 match id.as_str() {
                     "health" | "mana" | "concentration" | "stamina" | "spirit" => {
-                        game_state.minivitals.update_vital(id, *value, *max, text.clone());
+                        game_state
+                            .minivitals
+                            .update_vital(id, *value, *max, text.clone());
                     }
                     _ => {}
                 }
@@ -1001,10 +1050,14 @@ impl MessageProcessor {
                 // separate MindStateExp element right after this one)
                 match id.as_str() {
                     "mindState" => {
-                        game_state.gs4_experience.update_mind_state(*value, text.clone());
+                        game_state
+                            .gs4_experience
+                            .update_mind_state(*value, text.clone());
                     }
                     "nextLvlPB" => {
-                        game_state.gs4_experience.update_next_level(*value, text.clone());
+                        game_state
+                            .gs4_experience
+                            .update_next_level(*value, text.clone());
                     }
                     "encumlevel" => {
                         game_state.encumbrance.update_level(*value, text.clone());
@@ -1180,9 +1233,19 @@ impl MessageProcessor {
                     ui_state.quickbar_order.push(id.clone());
                 }
             }
-            ParsedElement::DialogOpen { id, title, save, location } => {
+            ParsedElement::DialogOpen {
+                id,
+                title,
+                save,
+                location,
+            } => {
                 self.chunk_has_silent_updates = true;
-                tracing::debug!("DialogOpen received: id={}, title={:?}, save={}", id, title, save);
+                tracing::debug!(
+                    "DialogOpen received: id={}, title={:?}, save={}",
+                    id,
+                    title,
+                    save
+                );
 
                 // U3: dialogs reaching here are non-resident (resident ones
                 // are mined into panels). Hidden-until-shown: a dialog the
@@ -1192,8 +1255,7 @@ impl MessageProcessor {
                 // (bugDialogBox, alert boxes) is a direct response to the
                 // user's own command — it pops without opt-in (live-test
                 // report: bug dialogs never appeared for anyone).
-                let utility_popup =
-                    location.as_deref() == Some("detach") && !save;
+                let utility_popup = location.as_deref() == Some("detach") && !save;
                 if !utility_popup && !Self::dialog_should_popup(ui_state, id) {
                     tracing::debug!("DialogOpen suppressed (not shown by user): id={}", id);
                     return;
@@ -1299,7 +1361,11 @@ impl MessageProcessor {
                 }
                 self.sync_shown_dialog(ui_state, id, show);
             }
-            ParsedElement::DialogDropDowns { id, clear, dropdowns } => {
+            ParsedElement::DialogDropDowns {
+                id,
+                clear,
+                dropdowns,
+            } => {
                 self.chunk_has_silent_updates = true;
                 let show = Self::dialog_should_popup(ui_state, id);
                 let dialog = ui_state.dialog_slot_mut(id);
@@ -1329,12 +1395,14 @@ impl MessageProcessor {
                 // for AppCore to register as a bound, Hidden-by-default
                 // dockable-panel layout entry. Replaces the resident Dialog
                 // offer. Seed the store title so the panel renders when shown.
-                ui_state.pending_window_discoveries.push(crate::data::WindowDiscovery {
-                    id: id.clone(),
-                    title: title.clone().unwrap_or_else(|| id.clone()),
-                    kind: crate::data::WindowDiscoveryKind::DialogPanel,
-                    save: *save,
-                });
+                ui_state
+                    .pending_window_discoveries
+                    .push(crate::data::WindowDiscovery {
+                        id: id.clone(),
+                        title: title.clone().unwrap_or_else(|| id.clone()),
+                        kind: crate::data::WindowDiscoveryKind::DialogPanel,
+                        save: *save,
+                    });
                 let dialog = ui_state.dialog_slot_mut(id);
                 if dialog.title.is_none() {
                     dialog.title = title.clone();
@@ -1493,8 +1561,9 @@ impl MessageProcessor {
                     dialog.fields = new_fields;
                 }
 
-                let fallback_focus =
-                    dialog.focused_field.filter(|idx| *idx < dialog.fields.len());
+                let fallback_focus = dialog
+                    .focused_field
+                    .filter(|idx| *idx < dialog.fields.len());
                 let focused_field = focused_index.or(fallback_focus).or_else(|| {
                     if dialog.fields.is_empty() {
                         None
@@ -1700,8 +1769,7 @@ impl MessageProcessor {
                 } else {
                     chrono::Utc::now().timestamp()
                 };
-                let expires_at =
-                    crate::data::parse_time_seconds(time).map(|secs| time_base + secs);
+                let expires_at = crate::data::parse_time_seconds(time).map(|secs| time_base + secs);
 
                 // Remember the feed's display name so the missing-spells
                 // window can label effects the static table doesn't know
@@ -1815,7 +1883,7 @@ impl MessageProcessor {
             }
             ParsedElement::TargetList {
                 current_target,
-                target_ids,  // Store IDs to filter room_creatures
+                target_ids, // Store IDs to filter room_creatures
             } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
@@ -1866,7 +1934,10 @@ impl MessageProcessor {
 
                 tracing::debug!("Cleared container: id='{}'", id);
             }
-            ParsedElement::ContainerItem { container_id, content } => {
+            ParsedElement::ContainerItem {
+                container_id,
+                content,
+            } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
                 // Parse the raw <inv> line into a structured GameItem,
@@ -1874,15 +1945,11 @@ impl MessageProcessor {
                 if let Some(container) = game_state.objects.container(container_id) {
                     let target = container.command_target();
                     if !crate::core::game_objects::parse::is_header_line(content, &target) {
-                        if let Some(item) =
-                            crate::core::game_objects::parse_anchor(content)
-                        {
+                        if let Some(item) = crate::core::game_objects::parse_anchor(content) {
                             game_state.objects.add_container_item(container_id, item);
                         }
                     }
-                } else if let Some(item) =
-                    crate::core::game_objects::parse_anchor(content)
-                {
+                } else if let Some(item) = crate::core::game_objects::parse_anchor(content) {
                     // Item arrived before the <container> tag; register it
                     // (auto-creates a title-less entry, same as the cache).
                     // Header lines have their own anchor id == container id,
@@ -1892,8 +1959,15 @@ impl MessageProcessor {
                     game_state.objects.add_container_item(container_id, item);
                 }
 
-                tracing::trace!("Added item to container '{}': {}", container_id,
-                    if content.len() > 50 { format!("{}...", &content[..50]) } else { content.clone() });
+                tracing::trace!(
+                    "Added item to container '{}': {}",
+                    container_id,
+                    if content.len() > 50 {
+                        format!("{}...", &content[..50])
+                    } else {
+                        content.clone()
+                    }
+                );
             }
             ParsedElement::LichWebUI(handshake) => {
                 self.chunk_has_silent_updates = true; // control line, not game text
@@ -1991,7 +2065,10 @@ impl MessageProcessor {
                     .filter_map(|attrs| {
                         let item = crate::core::state::ManagedInventoryItem::from_attrs(attrs);
                         if item.is_none() {
-                            tracing::warn!("inventoryManager item missing id/loc, dropped: {:?}", attrs);
+                            tracing::warn!(
+                                "inventoryManager item missing id/loc, dropped: {:?}",
+                                attrs
+                            );
                         }
                         item
                     })
@@ -2063,11 +2140,13 @@ impl MessageProcessor {
                 game_state
                     .world_events
                     .retain(|e| e.expires_at.is_none_or(|t| t > now));
-                game_state.world_events.push(crate::core::state::WorldEventState {
-                    realm: realm.clone(),
-                    text: text.clone(),
-                    expires_at: expires_min.map(|m| now + 60 * m as i64),
-                });
+                game_state
+                    .world_events
+                    .push(crate::core::state::WorldEventState {
+                        realm: realm.clone(),
+                        text: text.clone(),
+                        expires_at: expires_min.map(|m| now + 60 * m as i64),
+                    });
             }
             ParsedElement::PantheonStatus { value } => {
                 self.chunk_has_silent_updates = true;
@@ -2080,9 +2159,7 @@ impl MessageProcessor {
                 // state whichever path answered - apply it either way.
                 let apply_closed = |game_state: &mut GameState, exist: &str, closed: bool| {
                     if let Some(snapshot) = game_state.managed_inventory.as_mut() {
-                        if let Some(item) =
-                            snapshot.items.iter_mut().find(|i| i.id == exist)
-                        {
+                        if let Some(item) = snapshot.items.iter_mut().find(|i| i.id == exist) {
                             let was_closed = item.is_closed();
                             if closed && !was_closed {
                                 item.flags.push("closed".to_string());

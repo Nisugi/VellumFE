@@ -81,14 +81,15 @@ impl VellumGuiApp {
         // Unmapped interiors: session ghost sketches hang off their anchor
         // room; standing in one moves the camera and the current ring to it.
         // Rendered only in cartography mode — everyday play shows mapdb truth.
-        let ghost_overlay = (app_core.config.map.mapping_mode && !map.ghosts().is_empty()).then(|| {
-            crate::core::ghost_rooms::build_overlay(
-                map.ghosts(),
-                scene,
-                sheet_kind,
-                group_filter.as_ref(),
-            )
-        });
+        let ghost_overlay =
+            (app_core.config.map.mapping_mode && !map.ghosts().is_empty()).then(|| {
+                crate::core::ghost_rooms::build_overlay(
+                    map.ghosts(),
+                    scene,
+                    sheet_kind,
+                    group_filter.as_ref(),
+                )
+            });
         let current_ghost_cell = map
             .current_ghost
             .and_then(|uid| ghost_overlay.as_ref()?.cell_of(uid));
@@ -99,22 +100,18 @@ impl VellumGuiApp {
             return None;
         }
         // Glide toward the new room instead of jump-cutting.
-        let cx = ui.ctx().animate_value_with_time(
-            ui.id().with("map_center_x"),
-            center.x as f32,
-            0.25,
-        );
-        let cy = ui.ctx().animate_value_with_time(
-            ui.id().with("map_center_y"),
-            center.y as f32,
-            0.25,
-        );
+        let cx =
+            ui.ctx()
+                .animate_value_with_time(ui.id().with("map_center_x"), center.x as f32, 0.25);
+        let cy =
+            ui.ctx()
+                .animate_value_with_time(ui.id().with("map_center_y"), center.y as f32, 0.25);
         let camera = map_view::MapCamera {
             center: egui::Pos2::new(cx, cy),
             px_per_cell: zoom_override.unwrap_or(map_data.zoom).clamp(2.0, 96.0),
         };
-        let style = MapStyle::from_visuals(ui.visuals())
-            .with_accent(widget_accent(ui.ctx(), ui.visuals()));
+        let style =
+            MapStyle::from_visuals(ui.visuals()).with_accent(widget_accent(ui.ctx(), ui.visuals()));
         let compass = Some(app_core.game_state.compass_dirs.as_slice());
         // While standing in a ghost, the ring and compass ticks belong to the
         // sketch, not the held anchor room.
@@ -129,6 +126,9 @@ impl VellumGuiApp {
             true,
             group_filter.as_ref(),
             &app_core.config.map.pinned_tags,
+            // Creature highlighting is an explorer authoring aid; the live
+            // mini map never tints.
+            &std::collections::HashSet::new(),
             &style,
         );
         if let Some(overlay) = ghost_overlay.as_ref().filter(|o| !o.is_empty()) {
@@ -181,9 +181,7 @@ impl VellumGuiApp {
             } else {
                 format!(";go2 {id}")
             }),
-            click_pos: Self::click_pos_to_grid(
-                ui.ctx().pointer_latest_pos().unwrap_or(Pos2::ZERO),
-            ),
+            click_pos: Self::click_pos_to_grid(ui.ctx().pointer_latest_pos().unwrap_or(Pos2::ZERO)),
         })
     }
 
@@ -212,10 +210,7 @@ impl VellumGuiApp {
         // one axis and the art holds its size, grow both and it scales), so
         // extra space pads evenly around the rose instead of trailing off
         // one side.
-        let side = ui
-            .available_height()
-            .min(ui.available_width())
-            .max(40.0);
+        let side = ui.available_height().min(ui.available_width()).max(40.0);
         let (outer, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
         let rect = Rect::from_center_size(outer.center(), Vec2::splat(side));
         if let Some(click) = Self::paint_compass_rose(ui, rect, &available, skin_art) {
@@ -224,7 +219,6 @@ impl VellumGuiApp {
 
         clicked_link
     }
-
 
     /// Draw the compass rose into `rect`. Sprite mode (skin `[compass]`
     /// with a rose image) paints the rose plus a lit overlay per available
@@ -293,7 +287,11 @@ impl VellumGuiApp {
 
             let tip_r = if is_cardinal { radius } else { radius * 0.78 };
             let base_r = radius * 0.3;
-            let half_w = if is_cardinal { radius * 0.15 } else { radius * 0.11 };
+            let half_w = if is_cardinal {
+                radius * 0.15
+            } else {
+                radius * 0.11
+            };
 
             let is_available = available.contains(*direction);
             let hit_center = center + dir * ((tip_r + base_r) * 0.5);
@@ -316,10 +314,7 @@ impl VellumGuiApp {
                     center + dir * base_r - perp * half_w,
                 ];
                 let (fill, stroke) = if !is_available {
-                    (
-                        Color32::TRANSPARENT,
-                        egui::Stroke::new(1.0, idle_stroke),
-                    )
+                    (Color32::TRANSPARENT, egui::Stroke::new(1.0, idle_stroke))
                 } else if response.hovered() {
                     (hover_fill, egui::Stroke::new(1.0, hover_fill))
                 } else {
@@ -354,10 +349,8 @@ impl VellumGuiApp {
                 let y_sign = if points_up { -1.0 } else { 1.0 };
                 let arrow_center = center + Vec2::new(0.82, 0.82 * y_sign) * radius;
                 let half = (radius * 0.16).max(4.0);
-                let hit = Rect::from_center_size(
-                    arrow_center,
-                    Vec2::splat((radius * 0.3).max(10.0)),
-                );
+                let hit =
+                    Rect::from_center_size(arrow_center, Vec2::splat((radius * 0.3).max(10.0)));
                 let response = ui.interact(
                     hit,
                     ui.id().with(("compass_rose", direction)),
@@ -423,7 +416,12 @@ impl VellumGuiApp {
             } else {
                 available_fill
             };
-            painter.circle(center, hub_radius, hub_fill, egui::Stroke::new(1.0, idle_stroke));
+            painter.circle(
+                center,
+                hub_radius,
+                hub_fill,
+                egui::Stroke::new(1.0, idle_stroke),
+            );
         }
         if out_available {
             let hub_response = hub_response
@@ -449,7 +447,14 @@ impl VellumGuiApp {
                     continue;
                 }
                 let hit_center = center
-                    + Vec2::new(radius * 0.72, if points_up { -radius * 0.5 } else { radius * 0.5 });
+                    + Vec2::new(
+                        radius * 0.72,
+                        if points_up {
+                            -radius * 0.5
+                        } else {
+                            radius * 0.5
+                        },
+                    );
                 let hit_rect =
                     Rect::from_center_size(hit_center, Vec2::splat((radius * 0.4).max(12.0)));
                 let response = ui.interact(
@@ -498,5 +503,4 @@ impl VellumGuiApp {
             a.a(),
         )
     }
-
 }

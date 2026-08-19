@@ -244,8 +244,21 @@ pub struct Role {
     pub description: &'static str,
 }
 
-const fn free(name: &'static str, slot: usize, dl: f64, dc: f64, description: &'static str) -> Role {
-    Role { name, scheme_slot: Some(slot), anchor_hue: 0.0, dl, dc, description }
+const fn free(
+    name: &'static str,
+    slot: usize,
+    dl: f64,
+    dc: f64,
+    description: &'static str,
+) -> Role {
+    Role {
+        name,
+        scheme_slot: Some(slot),
+        anchor_hue: 0.0,
+        dl,
+        dc,
+        description,
+    }
 }
 
 /// The game-text preset roles, matching `[presets.*]` keys in colors.toml.
@@ -290,11 +303,41 @@ const WARN_HUE: f64 = 85.0;
 const HIDE_HUE: f64 = 300.0;
 
 pub const PROMPT_ROLES: [PromptRole; 5] = [
-    PromptRole { character: "R", label: "roundtime", anchor_hue: Some(ALARM_HUE), dl: 0.0, dc: 0.05 },
-    PromptRole { character: "!", label: "bleeding", anchor_hue: Some(ALARM_HUE), dl: -0.15, dc: 0.0 },
-    PromptRole { character: "S", label: "stunned", anchor_hue: Some(WARN_HUE), dl: 0.05, dc: 0.02 },
-    PromptRole { character: "H", label: "hiding", anchor_hue: Some(HIDE_HUE), dl: 0.0, dc: -0.06 },
-    PromptRole { character: ">", label: "prompt", anchor_hue: None, dl: -0.10, dc: -0.25 },
+    PromptRole {
+        character: "R",
+        label: "roundtime",
+        anchor_hue: Some(ALARM_HUE),
+        dl: 0.0,
+        dc: 0.05,
+    },
+    PromptRole {
+        character: "!",
+        label: "bleeding",
+        anchor_hue: Some(ALARM_HUE),
+        dl: -0.15,
+        dc: 0.0,
+    },
+    PromptRole {
+        character: "S",
+        label: "stunned",
+        anchor_hue: Some(WARN_HUE),
+        dl: 0.05,
+        dc: 0.02,
+    },
+    PromptRole {
+        character: "H",
+        label: "hiding",
+        anchor_hue: Some(HIDE_HUE),
+        dl: 0.0,
+        dc: -0.06,
+    },
+    PromptRole {
+        character: ">",
+        label: "prompt",
+        anchor_hue: None,
+        dl: -0.10,
+        dc: -0.25,
+    },
 ];
 
 // ─── Parameters and generation ──────────────────────────────────────────────
@@ -375,7 +418,9 @@ fn lift_to_contrast(mut l: f64, c: f64, h: f64, params: &HarmonyParams) -> Strin
     if wcag_contrast(&hex, &params.background) >= params.min_contrast {
         return hex;
     }
-    let bg_light = hex_to_lch(&params.background).map(|lch| lch[0]).unwrap_or(0.0);
+    let bg_light = hex_to_lch(&params.background)
+        .map(|lch| lch[0])
+        .unwrap_or(0.0);
     let step = if bg_light < 0.5 { 0.015 } else { -0.015 };
     for _ in 0..40 {
         l = (l + step).clamp(0.05, 0.99);
@@ -447,7 +492,13 @@ pub fn generate(params: &HarmonyParams) -> HarmonyResult {
             colors.push((role.name.to_string(), pinned.clone()));
             continue;
         }
-        let cands = candidates_at(hue_for(role, params, seed[2]), role.dl, role.dc, params, seed);
+        let cands = candidates_at(
+            hue_for(role, params, seed[2]),
+            role.dl,
+            role.dc,
+            params,
+            seed,
+        );
         let pick = pick_color(&cands, &used, params);
         used.push(pick.clone());
         colors.push((role.name.to_string(), pick));
@@ -507,7 +558,9 @@ pub fn hue_variants(role_name: &str, params: &HarmonyParams) -> Vec<String> {
     let l = (seed[0] + role.dl).clamp(0.30, 0.92);
     let c = (seed[1] + role.dc).clamp(0.03, 0.30);
     let mut out = Vec::new();
-    for d in [0.0, 30.0, -30.0, 60.0, -60.0, 90.0, -90.0, 140.0, 180.0, 220.0] {
+    for d in [
+        0.0, 30.0, -30.0, 60.0, -60.0, 90.0, -90.0, 140.0, 180.0, 220.0,
+    ] {
         let hex = lift_to_contrast(l, c, (base_h + d).rem_euclid(360.0), params);
         if !out.contains(&hex) {
             out.push(hex);
@@ -561,7 +614,7 @@ mod tests {
 
     fn params() -> HarmonyParams {
         HarmonyParams {
-            seed: "#bf616a".to_string(),   // Nord's red accent
+            seed: "#bf616a".to_string(), // Nord's red accent
             background: "#2e3440".to_string(),
             ..HarmonyParams::default()
         }
@@ -580,7 +633,9 @@ mod tests {
 
     #[test]
     fn oklch_roundtrip_stays_close() {
-        for hex in ["#ff0000", "#00ff00", "#0000ff", "#808080", "#bf616a", "#123456"] {
+        for hex in [
+            "#ff0000", "#00ff00", "#0000ff", "#808080", "#bf616a", "#123456",
+        ] {
             let lch = hex_to_lch(hex).unwrap();
             let back = lch_to_hex(lch);
             assert!(
@@ -594,7 +649,10 @@ mod tests {
     fn known_oklch_values() {
         // White: L=1, C~0. Black: L=0.
         let white = hex_to_lch("#ffffff").unwrap();
-        assert!((white[0] - 1.0).abs() < 0.01 && white[1] < 0.01, "{white:?}");
+        assert!(
+            (white[0] - 1.0).abs() < 0.01 && white[1] < 0.01,
+            "{white:?}"
+        );
         let black = hex_to_lch("#000000").unwrap();
         assert!(black[0].abs() < 0.01, "{black:?}");
         // sRGB red: Ottosson's reference gives L~0.628, C~0.258, h~29.2°.

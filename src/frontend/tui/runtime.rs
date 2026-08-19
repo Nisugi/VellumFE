@@ -450,8 +450,7 @@ async fn async_run(
                                 window: rect.clone(),
                                 monitors: screens,
                             };
-                            if crate::window_position::save(character.as_deref(), &config).is_ok()
-                            {
+                            if crate::window_position::save(character.as_deref(), &config).is_ok() {
                                 last_saved_window = Some(rect);
                             }
                         }
@@ -546,7 +545,8 @@ async fn async_run(
                 network_handle = match reconnect_direct.clone() {
                     Some(cfg) => tokio::spawn(async move {
                         if let Err(e) =
-                            DirectConnection::start(cfg, server_tx, new_command_rx, raw_logger).await
+                            DirectConnection::start(cfg, server_tx, new_command_rx, raw_logger)
+                                .await
                         {
                             tracing::error!(error = ?e, "Reconnect (direct) error");
                         }
@@ -664,7 +664,9 @@ async fn async_run(
                     crate::core::remote::RemoteEvent::Command(text) => {
                         tracing::debug!("remote command: '{}'", text);
                         frontend.command_input_record_external("command_input", &text);
-                        if let Some(cmd) = frontend.handle_command_submission(text, &mut app_core)? {
+                        if let Some(cmd) =
+                            frontend.handle_command_submission(text, &mut app_core)?
+                        {
                             app_core
                                 .perf_stats
                                 .record_bytes_sent((cmd.len() + 1) as u64);
@@ -744,7 +746,13 @@ async fn async_run(
                         generate_key,
                     } => {
                         app_core.handle_remote_launcher_ssh_put(
-                            client_id, request_id, user, host, port, remote_os, generate_key,
+                            client_id,
+                            request_id,
+                            user,
+                            host,
+                            port,
+                            remote_os,
+                            generate_key,
                         );
                     }
                     crate::core::remote::RemoteEvent::ConfigGet {
@@ -839,7 +847,8 @@ async fn async_run(
                         scope,
                         slices,
                     } => {
-                        app_core.handle_remote_touch_wheel_put(client_id, request_id, scope, slices);
+                        app_core
+                            .handle_remote_touch_wheel_put(client_id, request_id, scope, slices);
                     }
                     crate::core::remote::RemoteEvent::WebUiSubscribe { page } => {
                         app_core.webui_subscribe(&page);
@@ -869,8 +878,7 @@ async fn async_run(
                         scope,
                         name,
                     } => {
-                        app_core
-                            .handle_remote_highlight_delete(client_id, request_id, scope, name);
+                        app_core.handle_remote_highlight_delete(client_id, request_id, scope, name);
                     }
                     crate::core::remote::RemoteEvent::SessionConnect { .. }
                     | crate::core::remote::RemoteEvent::SessionDisconnect => {
@@ -888,11 +896,16 @@ async fn async_run(
                         // shouldn't bury real typed commands.
                         let Some(command) = app_core.config.macros.resolve(&id).map(String::from)
                         else {
-                            tracing::warn!("remote macro id '{}' did not resolve (stale client?)", id);
+                            tracing::warn!(
+                                "remote macro id '{}' did not resolve (stale client?)",
+                                id
+                            );
                             continue;
                         };
                         tracing::debug!("remote macro '{}': '{}'", id, command);
-                        if let Some(cmd) = frontend.handle_command_submission(command, &mut app_core)? {
+                        if let Some(cmd) =
+                            frontend.handle_command_submission(command, &mut app_core)?
+                        {
                             app_core
                                 .perf_stats
                                 .record_bytes_sent((cmd.len() + 1) as u64);
@@ -902,8 +915,7 @@ async fn async_run(
                     crate::core::remote::RemoteEvent::WheelPick { key, path } => {
                         // Resolved against config like macros; same dispatch
                         // as typed input, skipping history.
-                        let Some(command) = app_core.wheel_pick_command(&key, &path)
-                        else {
+                        let Some(command) = app_core.wheel_pick_command(&key, &path) else {
                             tracing::warn!(
                                 "remote wheel pick '{}' {:?} did not resolve (stale client?)",
                                 key,
@@ -912,7 +924,9 @@ async fn async_run(
                             continue;
                         };
                         tracing::debug!("remote wheel pick '{}' {:?}: '{}'", key, path, command);
-                        if let Some(cmd) = frontend.handle_command_submission(command, &mut app_core)? {
+                        if let Some(cmd) =
+                            frontend.handle_command_submission(command, &mut app_core)?
+                        {
                             app_core
                                 .perf_stats
                                 .record_bytes_sent((cmd.len() + 1) as u64);

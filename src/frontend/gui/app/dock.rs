@@ -69,7 +69,6 @@ pub(super) enum SizeRole {
     Fixed,
 }
 
-
 /// Everything a persisted layout file restores, reconciled against the tabs
 /// that actually exist this session. Built by [`VellumGuiApp::restore_layout_state`],
 /// consumed by the constructor (startup restore) and `.loadlayout` (runtime
@@ -102,10 +101,7 @@ pub(super) struct RestoredLayoutState {
 /// title) order. Front-to-back — topmost last — so `.loadlayout` restores who
 /// overlaps whom. `zorder` is the cached back-to-front order; `surface` is
 /// every currently visible, non-detached tab paired with its lowercased title.
-fn merge_zorder_with_leftover(
-    zorder: &[TabKey],
-    surface: Vec<(TabKey, String)>,
-) -> Vec<TabKey> {
+fn merge_zorder_with_leftover(zorder: &[TabKey], surface: Vec<(TabKey, String)>) -> Vec<TabKey> {
     let on_surface: HashSet<&TabKey> = surface.iter().map(|(key, _)| key).collect();
     let mut ordered: Vec<TabKey> = zorder
         .iter()
@@ -308,9 +304,7 @@ impl VellumGuiApp {
         }
     }
 
-    pub(super) fn dock_snapshot_from_layout(
-        layout: &GuiLayoutFileV1,
-    ) -> Option<DockStateSnapshot> {
+    pub(super) fn dock_snapshot_from_layout(layout: &GuiLayoutFileV1) -> Option<DockStateSnapshot> {
         if layout.dock_state_json.is_null() {
             return None;
         }
@@ -606,7 +600,6 @@ impl VellumGuiApp {
         }
     }
 
-
     pub(super) fn detached_viewports_from_layout(
         layout: &GuiLayoutFileV1,
         available_tabs: &HashMap<TabKey, GuiTab>,
@@ -715,8 +708,7 @@ mod tests {
         // Files from before the sidebar conversion have no field at all:
         // they deserialize to an empty list, which is what triggers the
         // legacy gap-stack bake.
-        let legacy: DockStateSnapshot =
-            serde_json::from_str(r#"{"visible_tabs":[]}"#).unwrap();
+        let legacy: DockStateSnapshot = serde_json::from_str(r#"{"visible_tabs":[]}"#).unwrap();
         assert!(legacy.free_sidebar_zones.is_empty());
     }
 
@@ -917,21 +909,31 @@ mod tests {
         };
         let from = Vec2::new(2000.0, 1000.0);
         let to = Vec2::new(2600.0, 1400.0);
-        assert!(VellumGuiApp::rescale_main_window_rects_ruled(&mut rects, from, to, rule));
+        assert!(VellumGuiApp::rescale_main_window_rects_ruled(
+            &mut rects, from, to, rule
+        ));
 
         let right = rects[&TabKey::Vitals];
         assert_eq!(right[0], 1700.0 + 600.0, "follows the right edge");
         assert_eq!(right[2], 280.0, "sidebar width never scales");
-        assert!((right[1] - 100.0 * 1.4).abs() < 0.01, "y still proportional");
+        assert!(
+            (right[1] - 100.0 * 1.4).abs() < 0.01,
+            "y still proportional"
+        );
         let left = rects[&TabKey::Targets];
         assert_eq!(left[0], 10.0, "left sidebar x pinned");
         assert_eq!(left[2], 280.0);
         let fixed = rects[&TabKey::Compass];
         assert_eq!((fixed[2], fixed[3]), (120.0, 120.0), "Fixed keeps size");
-        assert!((fixed[0] - 900.0 * 1.3).abs() < 0.01, "Fixed position scales");
+        assert!(
+            (fixed[0] - 900.0 * 1.3).abs() < 0.01,
+            "Fixed position scales"
+        );
 
         // Exact round trip back to the original canvas.
-        assert!(VellumGuiApp::rescale_main_window_rects_ruled(&mut rects, to, from, rule));
+        assert!(VellumGuiApp::rescale_main_window_rects_ruled(
+            &mut rects, to, from, rule
+        ));
         for (key, rect) in &original {
             for i in 0..4 {
                 assert!(
@@ -1061,13 +1063,10 @@ mod tests {
         let file_ref = Vec2::new(1000.0, 1000.0);
         let to = Vec2::new(2000.0, 500.0);
         let live = [TabKey::Vitals, TabKey::TextMain];
-        let applied = VellumGuiApp::merge_layout_geometry(
-            &mut store,
-            &saved,
-            file_ref,
-            to,
-            |key| live.contains(key),
-        );
+        let applied =
+            VellumGuiApp::merge_layout_geometry(&mut store, &saved, file_ref, to, |key| {
+                live.contains(key)
+            });
 
         assert_eq!(applied, 1, "only the live ∩ saved window is adopted");
         assert_eq!(
@@ -1103,8 +1102,7 @@ mod tests {
         );
         let main = rects[&TabKey::TextMain];
         assert!(
-            (main[0] + main[2] - 1500.0).abs() < 0.01
-                && (main[1] + main[3] - 1200.0).abs() < 0.01,
+            (main[0] + main[2] - 1500.0).abs() < 0.01 && (main[1] + main[3] - 1200.0).abs() < 0.01,
             "arrangement stretches to the full canvas, got {main:?}"
         );
     }

@@ -54,7 +54,7 @@ impl FrontendEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::input::{MouseEventKind, MouseButton};
+    use crate::data::input::{MouseButton, MouseEventKind};
 
     #[test]
     fn test_event_creation() {

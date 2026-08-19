@@ -59,9 +59,7 @@ impl MessageProcessor {
                 continue;
             };
             for spec in specs {
-                if let Some((_, severity)) =
-                    spec.starts.iter().find(|(re, _)| re.is_match(line))
-                {
+                if let Some((_, severity)) = spec.starts.iter().find(|(re, _)| re.is_match(line)) {
                     for exist in ids {
                         self.pending_creature_effects.push((
                             exist.clone(),
@@ -249,7 +247,8 @@ impl MessageProcessor {
                     .filter(|l| l.noun == "pass")
                     .map(|l| l.exist_id.clone())
             });
-            self.pending_day_pass_lines.push((full_text.clone(), pass_id));
+            self.pending_day_pass_lines
+                .push((full_text.clone(), pass_id));
         }
 
         // Active INVENTORY FULL scan: capture status lines into the scan
@@ -287,8 +286,7 @@ impl MessageProcessor {
             } else if let Some(data) = crate::core::evidence::parse_sense_line(&full_text) {
                 self.pending_evidence
                     .push(crate::core::evidence::Observation::Sense(data));
-            } else if let Some(route) =
-                crate::core::travel::mazes::parse_pathcode_line(&full_text)
+            } else if let Some(route) = crate::core::travel::mazes::parse_pathcode_line(&full_text)
             {
                 self.pending_pathcode = Some(route);
             }
@@ -297,18 +295,15 @@ impl MessageProcessor {
         // Sorter: replace a container-look line with categorized lines.
         // The flush wrapper drains the extras; generated lines can't
         // re-trigger (no " you see ").
-        if self.current_stream == "main"
-            && crate::core::sorter::is_container_look(&full_text)
-        {
+        if self.current_stream == "main" && crate::core::sorter::is_container_look(&full_text) {
             // Ingest the container's contents into the registry from the
             // VISIBLE look line — a plain `look in` (and Lich's ;sorter
             // reformat) can deliver contents only as this main-stream
             // prose, not as <inv> paired tags. Buffered here; the caller
             // drains it into game_state.objects (this fn lacks game_state).
-            if let Some(pending) = crate::core::sorter::extract_container_items(
-                &self.current_segments,
-                &full_text,
-            ) {
+            if let Some(pending) =
+                crate::core::sorter::extract_container_items(&self.current_segments, &full_text)
+            {
                 self.pending_container_ingest = Some(pending);
             }
 
@@ -395,10 +390,19 @@ impl MessageProcessor {
             }
         }
 
+        // Familiar text since the last prompt: the next prompt echoes into
+        // the familiar window as a separator (arena-spectate parity).
+        if self.current_stream == "familiar" && !highlight_result.line_is_silent {
+            self.chunk_has_familiar_text = true;
+        }
+
         // Filter out Speech-typed segments ONLY when on a speech-related stream with no consumer
         // When on main stream, keep Speech segments even if no speech window (main displays full text)
         // This prevents "You say" from being cut off when there's no speech window
-        let should_filter_speech = if self.current_stream == "speech" || self.current_stream == "talk" || self.current_stream == "whisper" {
+        let should_filter_speech = if self.current_stream == "speech"
+            || self.current_stream == "talk"
+            || self.current_stream == "whisper"
+        {
             // On speech stream - check if there's a consumer
             !ui_state.windows.iter().any(|(name, window)| {
                 if name == &self.current_stream {
@@ -484,7 +488,10 @@ impl MessageProcessor {
         if self.current_stream.eq_ignore_ascii_case("society") {
             let plain_text: String = line.segments.iter().map(|s| s.text.as_str()).collect();
             self.society_buffer.push(plain_text);
-            tracing::debug!("Buffered society line for reload ({} total)", self.society_buffer.len());
+            tracing::debug!(
+                "Buffered society line for reload ({} total)",
+                self.society_buffer.len()
+            );
             // Continue processing - don't return here, still send to windows
         }
 
@@ -538,7 +545,9 @@ impl MessageProcessor {
                 .values()
                 .any(|w| matches!(w.content, WindowContent::Perception(_)))
             {
-                tracing::debug!("Discarding percWindow stream content - no perception window exists");
+                tracing::debug!(
+                    "Discarding percWindow stream content - no perception window exists"
+                );
                 self.current_stream = original_stream;
                 return;
             }
@@ -553,7 +562,8 @@ impl MessageProcessor {
             for entry_text in split_entries {
                 // Find link data for this specific entry (if any)
                 let entry_name = entry_text.split('(').next().unwrap_or("").trim();
-                let link_data = line.segments
+                let link_data = line
+                    .segments
                     .iter()
                     .find(|seg| seg.text.trim() == entry_name)
                     .and_then(|seg| seg.link_data.clone());
@@ -595,7 +605,10 @@ impl MessageProcessor {
             Some(v) => v.as_slice(),
             None => {
                 let key = trimmed_stream.to_ascii_lowercase();
-                subscribers_map.get(&key).map(|v| v.as_slice()).unwrap_or(&[])
+                subscribers_map
+                    .get(&key)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[])
             }
         };
 
@@ -621,8 +634,8 @@ impl MessageProcessor {
                 WindowContent::Text(content) => {
                     // Subscription already verified by the index
                     {
-                        let is_compact_bounty = content.compact
-                            && self.current_stream.eq_ignore_ascii_case("bounty");
+                        let is_compact_bounty =
+                            content.compact && self.current_stream.eq_ignore_ascii_case("bounty");
                         // Move instead of clone when nothing after this add
                         // needs the line (compact bounty keeps the clone path:
                         // its parse-failure fallback and TTS-skip semantics
@@ -668,12 +681,18 @@ impl MessageProcessor {
                         // Check for compact bounty mode
                         if is_compact_bounty {
                             // Extract plain text from segments
-                            let plain_text: String = final_line.segments.iter().map(|s| s.text.as_str()).collect();
+                            let plain_text: String = final_line
+                                .segments
+                                .iter()
+                                .map(|s| s.text.as_str())
+                                .collect();
                             if let Some(compact) = bounty_parser::parse_bounty(&plain_text) {
                                 // Clear existing lines and add compact bounty lines
                                 content.lines.clear();
                                 for text in compact.lines {
-                                    content.add_line(StyledLine::from_text_with_stream(text, "bounty"));
+                                    content.add_line(StyledLine::from_text_with_stream(
+                                        text, "bounty",
+                                    ));
                                 }
                                 // Skip normal add_line - we've handled this specially
                                 // (matches prior behavior: no TTS, no
@@ -702,7 +721,12 @@ impl MessageProcessor {
                         text_added_to_any_window = true;
                         continue;
                     }
-                    content.add_line(line_slot.as_ref().expect("line present until moved").clone());
+                    content.add_line(
+                        line_slot
+                            .as_ref()
+                            .expect("line present until moved")
+                            .clone(),
+                    );
                     added_here = true;
                 }
                 WindowContent::Spells(content) => {
@@ -721,7 +745,12 @@ impl MessageProcessor {
                         text_added_to_any_window = true;
                         continue;
                     }
-                    content.add_line(line_slot.as_ref().expect("line present until moved").clone());
+                    content.add_line(
+                        line_slot
+                            .as_ref()
+                            .expect("line present until moved")
+                            .clone(),
+                    );
                     added_here = true;
                 }
                 WindowContent::TabbedText(tab_content) => {
@@ -741,11 +770,12 @@ impl MessageProcessor {
                                 src.clone()
                             } else {
                                 // Try window name first, then tab name
-                                let mut segments = crate::core::highlight_engine::apply_deferred_for_window(
-                                    &src.segments,
-                                    &deferred_replacements,
-                                    window_name,
-                                );
+                                let mut segments =
+                                    crate::core::highlight_engine::apply_deferred_for_window(
+                                        &src.segments,
+                                        &deferred_replacements,
+                                        window_name,
+                                    );
                                 // Also check tab name (allows targeting specific tabs)
                                 segments = crate::core::highlight_engine::apply_deferred_for_window(
                                     &segments,
@@ -793,7 +823,9 @@ impl MessageProcessor {
         // fallback window
         if !text_added_to_any_window {
             // A move implies text was added, so the line is always present here
-            let line = line_slot.as_ref().expect("line present when nothing was added");
+            let line = line_slot
+                .as_ref()
+                .expect("line present when nothing was added");
             match self.resolve_orphaned_stream(&self.current_stream) {
                 // resolve_orphaned_stream passes has_subscriber = false, so
                 // Subscribed can't come back; nothing to do if it did.
@@ -830,16 +862,26 @@ impl MessageProcessor {
                                 line.clone()
                             } else {
                                 StyledLine {
-                                    segments: crate::core::highlight_engine::apply_deferred_for_window(
-                                        &line.segments,
-                                        &deferred_replacements,
-                                        target,
-                                    ),
+                                    segments:
+                                        crate::core::highlight_engine::apply_deferred_for_window(
+                                            &line.segments,
+                                            &deferred_replacements,
+                                            target,
+                                        ),
                                     stream: line.stream.clone(),
                                     timestamp: line.timestamp,
                                 }
                             };
                             content.add_line(final_line);
+                            // The main window just displayed this line, so
+                            // the next prompt must render (Wrayth parity:
+                            // spectate/familiar text shown in main keeps its
+                            // `>` separators). Without this, stream text
+                            // falling back to main leaves chunk_has_main_text
+                            // false and every unchanged prompt is skipped.
+                            if target == "main" && !highlight_result.line_is_silent {
+                                self.chunk_has_main_text = true;
+                            }
                             if let Some(tts_mgr) = tts_manager.as_deref_mut() {
                                 self.enqueue_tts(tts_mgr, target, &line);
                             }
@@ -876,6 +918,13 @@ impl MessageProcessor {
                                         }
                                     };
                                     content.add_line(final_line);
+                                    // Delivered into the main-stream view:
+                                    // counts as main text so the next prompt
+                                    // renders (same rule as the named-"main"
+                                    // candidate above).
+                                    if !highlight_result.line_is_silent {
+                                        self.chunk_has_main_text = true;
+                                    }
                                     if let Some(tts_mgr) = tts_manager.as_deref_mut() {
                                         self.enqueue_tts(tts_mgr, win_name, line);
                                     }
@@ -884,8 +933,7 @@ impl MessageProcessor {
                                 }
                                 WindowContent::TabbedText(tab_content) => {
                                     let active_tab_index = tab_content.active_tab_index;
-                                    for (tab_index, tab) in
-                                        tab_content.tabs.iter_mut().enumerate()
+                                    for (tab_index, tab) in tab_content.tabs.iter_mut().enumerate()
                                     {
                                         if tab
                                             .definition
@@ -894,6 +942,12 @@ impl MessageProcessor {
                                             .any(|s| s.trim().eq_ignore_ascii_case("main"))
                                         {
                                             tab.content.add_line(line.clone());
+                                            // Main-stream tab displayed the
+                                            // line: counts as main text so
+                                            // the next prompt renders.
+                                            if !highlight_result.line_is_silent {
+                                                self.chunk_has_main_text = true;
+                                            }
                                             if tab_index != active_tab_index
                                                 && !tab.definition.ignore_activity
                                             {
@@ -924,7 +978,9 @@ impl MessageProcessor {
         // Handle redirect_copy mode: also send to original stream
         if should_send_to_original && self.current_stream != original_stream {
             // needed_later excluded this case from the move above
-            let line = line_slot.as_ref().expect("redirect-copy line excluded from move");
+            let line = line_slot
+                .as_ref()
+                .expect("redirect-copy line excluded from move");
             // Restore original stream and route line there too
             self.current_stream = original_stream.clone();
             let original_window_name = self.map_stream_to_window(&self.current_stream);
@@ -999,10 +1055,7 @@ impl MessageProcessor {
 
     /// Replace the set of indicator ids claimed by template condition states.
     /// Dashboard runtime auto-discovery skips these (uppercase-keyed).
-    pub fn set_claimed_indicator_ids(
-        &mut self,
-        ids: std::collections::HashSet<String>,
-    ) {
+    pub fn set_claimed_indicator_ids(&mut self, ids: std::collections::HashSet<String>) {
         self.claimed_indicator_ids = ids;
     }
 
@@ -1014,7 +1067,12 @@ impl MessageProcessor {
         self.config.tts = tts;
     }
 
-    pub(super) fn enqueue_tts(&self, tts_manager: &mut crate::tts::TtsManager, window_name: &str, line: &StyledLine) {
+    pub(super) fn enqueue_tts(
+        &self,
+        tts_manager: &mut crate::tts::TtsManager,
+        window_name: &str,
+        line: &StyledLine,
+    ) {
         // Early exit if TTS not enabled
         if !self.config.tts.enabled {
             return;
@@ -1044,7 +1102,10 @@ impl MessageProcessor {
 
         // Skip prompts (single character lines like ">")
         if text.trim().len() <= 1 {
-            tracing::trace!("Skipping TTS for single-character prompt: {:?}", text.trim());
+            tracing::trace!(
+                "Skipping TTS for single-character prompt: {:?}",
+                text.trim()
+            );
             return;
         }
 
@@ -1059,5 +1120,4 @@ impl MessageProcessor {
             repeats: 1,
         });
     }
-
 }

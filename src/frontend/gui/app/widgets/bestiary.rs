@@ -42,9 +42,7 @@ fn section_header(ui: &mut egui::Ui, title: &str) {
             .strong()
             .color(LABEL_GOLD),
     );
-    let rect = ui
-        .allocate_space(egui::vec2(ui.available_width(), 1.0))
-        .1;
+    let rect = ui.allocate_space(egui::vec2(ui.available_width(), 1.0)).1;
     ui.painter().hline(
         rect.x_range(),
         rect.center().y,
@@ -74,10 +72,8 @@ impl VellumGuiApp {
             return None;
         }
         let sid = state_id(window_name);
-        let mut state: BestiaryViewState = ui
-            .ctx()
-            .data_mut(|d| d.get_temp(sid))
-            .unwrap_or_default();
+        let mut state: BestiaryViewState =
+            ui.ctx().data_mut(|d| d.get_temp(sid)).unwrap_or_default();
 
         let clicked = if let Some(name) = state.selected.clone() {
             match db.resolve(&name) {
@@ -119,11 +115,8 @@ impl VellumGuiApp {
                     .desired_width(34.0),
             );
             let families: Vec<String> = {
-                let mut f: Vec<String> = db
-                    .entries
-                    .iter()
-                    .filter_map(|e| e.family.clone())
-                    .collect();
+                let mut f: Vec<String> =
+                    db.entries.iter().filter_map(|e| e.family.clone()).collect();
                 f.sort();
                 f.dedup();
                 f
@@ -136,7 +129,10 @@ impl VellumGuiApp {
                 })
                 .width(110.0)
                 .show_ui(ui, |ui| {
-                    if ui.selectable_label(state.family.is_empty(), "(any)").clicked() {
+                    if ui
+                        .selectable_label(state.family.is_empty(), "(any)")
+                        .clicked()
+                    {
                         state.family.clear();
                     }
                     for f in families {
@@ -159,9 +155,9 @@ impl VellumGuiApp {
             .filter(|e| q.is_empty() || e.name.to_ascii_lowercase().contains(&q))
             .filter(|e| match (lo, hi) {
                 (None, None) => true,
-                _ => e.level.is_some_and(|l| {
-                    lo.is_none_or(|lo| l >= lo) && hi.is_none_or(|hi| l <= hi)
-                }),
+                _ => e
+                    .level
+                    .is_some_and(|l| lo.is_none_or(|lo| l >= lo) && hi.is_none_or(|hi| l <= hi)),
             })
             .filter(|e| {
                 state.family.is_empty() || e.family.as_deref() == Some(state.family.as_str())
@@ -191,9 +187,7 @@ impl VellumGuiApp {
                         ui.label(egui::RichText::new("HP").small().weak());
                         ui.end_row();
                         for e in rows {
-                            ui.label(
-                                e.level.map(|l| l.to_string()).unwrap_or_else(|| "?".into()),
-                            );
+                            ui.label(e.level.map(|l| l.to_string()).unwrap_or_else(|| "?".into()));
                             if ui.link(&e.name).clicked() {
                                 state.selected = Some(e.name.clone());
                                 state.expanded_spawn = None;
@@ -205,9 +199,7 @@ impl VellumGuiApp {
                             } else {
                                 ui.label("");
                             }
-                            ui.label(
-                                e.max_hp.map(|h| h.to_string()).unwrap_or_default(),
-                            );
+                            ui.label(e.max_hp.map(|h| h.to_string()).unwrap_or_default());
                             ui.end_row();
                         }
                     });
@@ -278,9 +270,7 @@ impl VellumGuiApp {
                                         .size(9.5)
                                         .color(LABEL_GOLD),
                                 );
-                                ui.label(
-                                    egui::RichText::new(value).strong().size(15.0),
-                                );
+                                ui.label(egui::RichText::new(value).strong().size(15.0));
                             });
                         });
                 };
@@ -326,24 +316,19 @@ impl VellumGuiApp {
                 let mut tds: Vec<(String, String)> = Vec::new();
                 if let Some(d) = &entry.defense {
                     if !d.td.is_empty() {
-                        let values: Vec<String> =
-                            d.td.values().map(|v| v.display()).collect();
+                        let values: Vec<String> = d.td.values().map(|v| v.display()).collect();
                         if values.len() > 1 && values.iter().all(|v| v == &values[0]) {
                             tds.push(("TD (all)".into(), values[0].clone()));
                         } else {
                             for (k, v) in &d.td {
-                                tds.push((
-                                    format!("TD {}", k.to_uppercase()),
-                                    v.display(),
-                                ));
+                                tds.push((format!("TD {}", k.to_uppercase()), v.display()));
                             }
                         }
                     }
                 }
                 if !primary.is_empty() || !attacks.is_empty() || !tds.is_empty() {
                     ui.horizontal_wrapped(|ui| {
-                        for (label, value) in
-                            primary.iter().chain(attacks.iter()).chain(tds.iter())
+                        for (label, value) in primary.iter().chain(attacks.iter()).chain(tds.iter())
                         {
                             chip(ui, label, value);
                         }
@@ -362,8 +347,7 @@ impl VellumGuiApp {
                     for (si, spawn) in entry.spawns.iter().enumerate() {
                         ui.horizontal(|ui| {
                             let label = spawn.map.clone().unwrap_or_else(|| "?".into());
-                            let rooms: u64 =
-                                spawn.uids.iter().map(|(lo, hi)| hi - lo + 1).sum();
+                            let rooms: u64 = spawn.uids.iter().map(|(lo, hi)| hi - lo + 1).sum();
                             ui.label(format!("• {label}"));
                             let expanded = state.expanded_spawn == Some(si);
                             if ui
@@ -374,15 +358,13 @@ impl VellumGuiApp {
                                 .on_hover_text("Show the individual rooms")
                                 .clicked()
                             {
-                                state.expanded_spawn =
-                                    if expanded { None } else { Some(si) };
+                                state.expanded_spawn = if expanded { None } else { Some(si) };
                             }
                             if let Some((lo, _)) = spawn.uids.first() {
                                 if ui.small_button("go2").clicked() {
                                     clicked = Some(GuiLinkClick {
                                         link_data: crate::data::LinkData {
-                                            exist_id: crate::data::DIRECT_LINK_SENTINEL
-                                                .to_string(),
+                                            exist_id: crate::data::DIRECT_LINK_SENTINEL.to_string(),
                                             noun: format!(".go2 u{lo}"),
                                             text: "go2".into(),
                                             coord: None,

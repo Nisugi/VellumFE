@@ -752,7 +752,9 @@ mod tests {
         // Second word completes against window names.
         state.reset();
         assert_eq!(
-            state.advance(".editwindow ma", &commands, &windows).as_deref(),
+            state
+                .advance(".editwindow ma", &commands, &windows)
+                .as_deref(),
             Some(".editwindow main")
         );
         // Settled single candidate: nothing new.
@@ -769,7 +771,10 @@ mod tests {
         model.record_external_command(".launch nisugi");
         model.insert_text(".la");
 
-        assert!(model.try_complete(&commands, &windows), "first Tab completes");
+        assert!(
+            model.try_complete(&commands, &windows),
+            "first Tab completes"
+        );
         assert_eq!(model.text(), ".launch");
         assert_eq!(model.history_completion().as_deref(), Some(" nisugi"));
 

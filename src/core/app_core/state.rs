@@ -150,7 +150,8 @@ pub struct AppCore {
     /// (indicator windows + dashboards) reads this per frame; the underlying
     /// `Config::list_indicator_templates()` does file IO, so it must not run
     /// in the render loop.
-    pub indicator_templates: std::collections::HashMap<String, crate::config::IndicatorTemplateEntry>,
+    pub indicator_templates:
+        std::collections::HashMap<String, crate::config::IndicatorTemplateEntry>,
     /// Latest Jinx catalog (all installable assets across repos), delivered by
     /// the worker's `Catalog` request and read by the GUI Assets panel. None
     /// until first fetched; the panel triggers a refresh on open.
@@ -345,8 +346,7 @@ pub struct AppCore {
     pub(crate) webui_rx: Option<tokio::sync::mpsc::UnboundedReceiver<crate::webui::WebUiEvent>>,
     /// The sender half, cloned into `fetch_image` calls so results return
     /// on the same channel `pump_webui` drains.
-    pub(crate) webui_event_tx:
-        Option<tokio::sync::mpsc::UnboundedSender<crate::webui::WebUiEvent>>,
+    pub(crate) webui_event_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::webui::WebUiEvent>>,
     /// (host, port, token) for `/files/` image fetches; set at handshake.
     pub(crate) webui_endpoint: Option<(String, u16, String)>,
     /// True once a `;ui handshake` has been dispatched this session, so it
@@ -367,8 +367,7 @@ pub struct AppCore {
     /// GUI re-emit channel: `pump_webui` forwards every bridge event here so
     /// the GUI can do its GUI-side handling (image textures, window kinds)
     /// while core owns the socket. None in headless/TUI (no local renderer).
-    pub(crate) webui_gui_tx:
-        Option<tokio::sync::mpsc::UnboundedSender<crate::webui::WebUiEvent>>,
+    pub(crate) webui_gui_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::webui::WebUiEvent>>,
     /// Raw game commands core queued for the frontend to send (the WebUI
     /// `;ui handshake` — core has no game socket). Drained each tick.
     pub(crate) webui_pending_raw: Vec<String>,
@@ -567,17 +566,15 @@ impl AppCore {
 
         // Room art mappings (uid -> image), indexed room-major for the
         // per-room-change lookup.
-        let room_images = Config::load_room_images(config.character.as_deref())
-            .unwrap_or_default();
-        let room_image_index =
-            crate::config::room_images::RoomImageIndex::build(&room_images);
+        let room_images = Config::load_room_images(config.character.as_deref()).unwrap_or_default();
+        let room_image_index = crate::config::room_images::RoomImageIndex::build(&room_images);
         if !room_image_index.is_empty() {
             tracing::info!("Loaded room art for {} rooms", room_image_index.len());
         }
 
         // Load saved dialog positions from widget_state.toml
-        let saved_dialog_positions = Config::load_dialog_positions(config.character.as_deref())
-            .unwrap_or_default();
+        let saved_dialog_positions =
+            Config::load_dialog_positions(config.character.as_deref()).unwrap_or_default();
 
         // Discovery memory: load (missing/corrupt = empty), then seed the
         // well-known feeds on first run so a fresh character's registry
@@ -630,11 +627,8 @@ impl AppCore {
         }
 
         // Initialize TTS manager (respects config.tts.enabled)
-        let tts_manager = crate::tts::TtsManager::new(
-            config.tts.enabled,
-            config.tts.rate,
-            config.tts.volume
-        );
+        let tts_manager =
+            crate::tts::TtsManager::new(config.tts.enabled, config.tts.rate, config.tts.volume);
         if config.tts.enabled {
             tracing::info!("TTS enabled - accessibility features active");
         }
@@ -813,10 +807,7 @@ impl AppCore {
     }
 
     /// Look up a status template by id (case-insensitive) from the cache.
-    pub fn indicator_template(
-        &self,
-        id: &str,
-    ) -> Option<&crate::config::IndicatorTemplateEntry> {
+    pub fn indicator_template(&self, id: &str) -> Option<&crate::config::IndicatorTemplateEntry> {
         self.indicator_templates.get(&id.to_ascii_uppercase())
     }
 
@@ -1006,10 +997,8 @@ impl AppCore {
         // Skin camera for the field (throttled stat; hot-reloads with the
         // skin). Runs before the roster diff so arrivals this frame fit
         // against the current cell width.
-        self.creature_field_camera.sync(
-            &mut self.creature_field,
-            self.config.active_skin.as_deref(),
-        );
+        self.creature_field_camera
+            .sync(&mut self.creature_field, self.config.active_skin.as_deref());
         // Creature-field roster diff (no-op while the generation matches).
         crate::core::creature_cards::sync_field(
             &mut self.creature_field,
@@ -1039,7 +1028,6 @@ impl AppCore {
             self.flush_remote_state();
         }
     }
-
 
     /// Drain the asset-manager worker: print each line to the game text and
     /// apply any post-install effect. Called once per frame from `poll_map`,
@@ -1102,14 +1090,12 @@ impl AppCore {
                             "[jinx] skin installed — activate with .setskin {skin_name}"
                         ));
                     }
-                    "iconmap" | "image" | "icon" => self.add_system_message(&format!(
-                        "[jinx] {name} installed to the icon pool"
-                    )),
+                    "iconmap" | "image" | "icon" => self
+                        .add_system_message(&format!("[jinx] {name} installed to the icon pool")),
                     // A doll base image lands in the doll pool; a skin points
                     // its [injury_doll] base at it (paths may be absolute).
-                    "doll" => self.add_system_message(&format!(
-                        "[jinx] {name} installed to the doll pool"
-                    )),
+                    "doll" => self
+                        .add_system_message(&format!("[jinx] {name} installed to the doll pool")),
                     _ => {
                         tracing::info!("jinx installed {name} ({kind}); no reload hook");
                     }
@@ -1124,7 +1110,7 @@ impl AppCore {
     }
 
     fn apply_custom_quickbars(&mut self) {
-        use crate::config::{QuickbarEntryConfig, QuickbarDefinition};
+        use crate::config::{QuickbarDefinition, QuickbarEntryConfig};
         use crate::data::{QuickbarData, QuickbarEntry};
 
         fn is_quickbar_id(id: &str) -> bool {
@@ -1140,10 +1126,7 @@ impl AppCore {
                 .map(|t| t.to_string())
         }
 
-        fn insert_quickbar(
-            state: &mut crate::data::UiState,
-            def: &QuickbarDefinition,
-        ) {
+        fn insert_quickbar(state: &mut crate::data::UiState, def: &QuickbarDefinition) {
             let id = def.id.trim();
             if id.is_empty() {
                 return;
@@ -1157,7 +1140,11 @@ impl AppCore {
             let mut entries = Vec::new();
             for (index, entry) in def.entries.iter().enumerate() {
                 match entry {
-                    QuickbarEntryConfig::Link { label, command, echo } => {
+                    QuickbarEntryConfig::Link {
+                        label,
+                        command,
+                        echo,
+                    } => {
                         let value = label.trim();
                         let cmd = command.trim();
                         if value.is_empty() || cmd.is_empty() {
@@ -1221,10 +1208,7 @@ impl AppCore {
                     );
                 }
             } else if !trimmed.is_empty() {
-                tracing::warn!(
-                    "Quickbar default '{}' is not a valid quickbar id",
-                    trimmed
-                );
+                tracing::warn!("Quickbar default '{}' is not a valid quickbar id", trimmed);
             }
         }
     }
@@ -1256,10 +1240,13 @@ impl AppCore {
                 .filter(|id| allowed_ids.contains(*id))
                 .cloned()
                 .collect();
-            let active_quickbar_id = cache
-                .active_quickbar_id
-                .as_ref()
-                .and_then(|id| if allowed_ids.contains(id) { Some(id.clone()) } else { None });
+            let active_quickbar_id = cache.active_quickbar_id.as_ref().and_then(|id| {
+                if allowed_ids.contains(id) {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            });
 
             self.ui_state.quickbars = quickbars;
             self.ui_state.quickbar_order = quickbar_order;
@@ -1283,7 +1270,6 @@ impl AppCore {
                 }
             }
         }
-
     }
 
     fn allowed_quickbar_ids(&self) -> HashSet<String> {
@@ -1839,7 +1825,11 @@ impl AppCore {
         for window in self.ui_state.windows.values_mut() {
             match &mut window.content {
                 WindowContent::Text(ref mut content) => {
-                    if content.streams.iter().any(|s| s.eq_ignore_ascii_case("main")) {
+                    if content
+                        .streams
+                        .iter()
+                        .any(|s| s.eq_ignore_ascii_case("main"))
+                    {
                         content.add_line(line);
                         self.needs_render = true;
                         return;
@@ -1848,7 +1838,12 @@ impl AppCore {
                 WindowContent::TabbedText(ref mut content) => {
                     // Find tab subscribed to "main" stream
                     for tab in content.tabs.iter_mut() {
-                        if tab.definition.streams.iter().any(|s| s.eq_ignore_ascii_case("main")) {
+                        if tab
+                            .definition
+                            .streams
+                            .iter()
+                            .any(|s| s.eq_ignore_ascii_case("main"))
+                        {
                             tab.content.add_line(line);
                             self.needs_render = true;
                             return;
@@ -1860,7 +1855,10 @@ impl AppCore {
         }
 
         // No window found - log warning
-        tracing::warn!("No window found subscribed to 'main' stream for system message: {}", message);
+        tracing::warn!(
+            "No window found subscribed to 'main' stream for system message: {}",
+            message
+        );
     }
 
     /// Deliver a client-generated line to every window subscribed to a
@@ -1905,7 +1903,11 @@ impl AppCore {
         for window in self.ui_state.windows.values_mut() {
             match &mut window.content {
                 WindowContent::Text(ref mut content) => {
-                    if content.streams.iter().any(|s| s.eq_ignore_ascii_case(stream)) {
+                    if content
+                        .streams
+                        .iter()
+                        .any(|s| s.eq_ignore_ascii_case(stream))
+                    {
                         content.add_line(line.clone());
                         delivered = true;
                     }
@@ -1949,7 +1951,8 @@ impl AppCore {
         }
 
         // Flush any accumulated segments to ensure the line is rendered
-        self.message_processor.flush_current_stream(&mut self.ui_state);
+        self.message_processor
+            .flush_current_stream(&mut self.ui_state);
 
         self.add_system_message(&format!("[TEST] Injected: {}", text));
         self.needs_render = true;
@@ -1998,8 +2001,6 @@ impl AppCore {
         self.ui_state.search_cursor = 0;
         self.needs_render = true;
     }
-
-
 }
 
 /// Project one sheet of a generated scene into the phone wire format,
@@ -2039,8 +2040,7 @@ fn wire_map_scene(
             .map(|e| {
                 // Stubs and dot pairs both need their room ids on the wire
                 // (stub labels; dot-pair color hashing).
-                let wants_rooms =
-                    matches!(e.kind, SceneEdgeKind::Stub | SceneEdgeKind::DotPair);
+                let wants_rooms = matches!(e.kind, SceneEdgeKind::Stub | SceneEdgeKind::DotPair);
                 RemoteMapEdge {
                     x1: e.a.x,
                     y1: e.a.y,

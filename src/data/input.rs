@@ -134,9 +134,7 @@ impl KeyCode {
     pub fn from_keypad_name(name: &str) -> Option<Self> {
         KEYPAD_NAMES
             .iter()
-            .find(|(_, canonical, aliases)| {
-                *canonical == name || aliases.contains(&name)
-            })
+            .find(|(_, canonical, aliases)| *canonical == name || aliases.contains(&name))
             .map(|(code, _, _)| *code)
     }
 
@@ -342,7 +340,10 @@ mod tests {
 
     #[test]
     fn legacy_symbol_names_resolve_to_canonical_codes() {
-        assert_eq!(KeyCode::from_keypad_name("num_+"), Some(KeyCode::KeypadPlus));
+        assert_eq!(
+            KeyCode::from_keypad_name("num_+"),
+            Some(KeyCode::KeypadPlus)
+        );
         assert_eq!(
             KeyCode::from_keypad_name("num_-"),
             Some(KeyCode::KeypadMinus)
@@ -390,7 +391,11 @@ mod tests {
     #[test]
     fn unknown_names_do_not_resolve() {
         for name in ["num_", "num_x", "numpad_1", "", "ctrl+num_1"] {
-            assert_eq!(KeyCode::from_keypad_name(name), None, "{name} should not resolve");
+            assert_eq!(
+                KeyCode::from_keypad_name(name),
+                None,
+                "{name} should not resolve"
+            );
         }
     }
 

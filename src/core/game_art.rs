@@ -47,10 +47,7 @@ fn attempted() -> &'static Mutex<HashSet<u32>> {
 /// downloaded art is referenced by name like any other picture, so it goes
 /// through one lookup path instead of a second, path-based one.
 pub fn cache_dir() -> Option<PathBuf> {
-    crate::config::Config::global_image_category_dir(
-        crate::core::inline_image::POOL_CATEGORY,
-    )
-    .ok()
+    crate::config::Config::global_image_category_dir(crate::core::inline_image::POOL_CATEGORY).ok()
 }
 
 /// Pool name for a downloaded picture.
@@ -133,8 +130,8 @@ pub fn fetch_blocking(id: u32) -> Result<PathBuf, FetchError> {
         return Ok(path);
     }
 
-    let connector = native_tls::TlsConnector::new()
-        .map_err(|e| Transient(format!("TLS init failed: {e}")))?;
+    let connector =
+        native_tls::TlsConnector::new().map_err(|e| Transient(format!("TLS init failed: {e}")))?;
     let agent = ureq::AgentBuilder::new()
         .tls_connector(std::sync::Arc::new(connector))
         // A missing id redirects to an HTML error page. Following that would
@@ -229,7 +226,10 @@ mod tests {
     fn html_error_pages_are_not_accepted_as_art() {
         assert!(!looks_like_jpeg(b"<html><body>Not found</body></html>"));
         assert!(!looks_like_jpeg(b""));
-        assert!(!looks_like_jpeg(&[0x89, b'P', b'N', b'G']), "PNG is not JPEG");
+        assert!(
+            !looks_like_jpeg(&[0x89, b'P', b'N', b'G']),
+            "PNG is not JPEG"
+        );
         assert!(looks_like_jpeg(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00]));
     }
 

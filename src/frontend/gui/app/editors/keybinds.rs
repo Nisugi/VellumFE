@@ -102,7 +102,10 @@ fn display_action(action: &KeyBindAction) -> String {
         KeyBindAction::Action(name) => name.clone(),
         KeyBindAction::Macro(macro_action) => format!(
             "macro: {}",
-            macro_action.macro_text.replace('\r', "\\r").replace('\n', "\\n")
+            macro_action
+                .macro_text
+                .replace('\r', "\\r")
+                .replace('\n', "\\n")
         ),
     }
 }
@@ -211,10 +214,9 @@ impl VellumGuiApp {
                 let row_count = entries.len();
                 // Character overrides (vs global) for the [C]/[G] row tags,
                 // loaded once per render rather than per row.
-                let char_keybinds = Config::load_character_keybinds_only(
-                    self.app_core.config.character.as_deref(),
-                )
-                .unwrap_or_default();
+                let char_keybinds =
+                    Config::load_character_keybinds_only(self.app_core.config.character.as_deref())
+                        .unwrap_or_default();
                 egui::ScrollArea::vertical()
                     .id_salt("keybind_browser_scroll")
                     .auto_shrink([false, false])
@@ -277,16 +279,12 @@ impl VellumGuiApp {
                 // Numpad keys arrive through eframe's own channel, stashed by
                 // `handle_global_input` earlier this frame; they take priority because
                 // a numpad press can also surface as its navigation twin.
-                let captured = self
-                    .frame_numpad_presses
-                    .first()
-                    .copied()
-                    .or_else(|| {
-                        Self::collect_pressed_key_events(ctx)
-                            .into_iter()
-                            .next()
-                            .map(|press| press.key_event)
-                    });
+                let captured = self.frame_numpad_presses.first().copied().or_else(|| {
+                    Self::collect_pressed_key_events(ctx)
+                        .into_iter()
+                        .next()
+                        .map(|press| press.key_event)
+                });
 
                 if let Some(key_event) = captured {
                     form.key = crate::core::menu_actions::key_event_to_string(key_event);

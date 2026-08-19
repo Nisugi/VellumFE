@@ -9,7 +9,6 @@
 use super::*;
 
 impl VellumGuiApp {
-
     /// Floating search bar shown while in Search mode (Ctrl+F). Matching
     /// segments highlight via the theme selection color in text windows.
     pub(super) fn render_search_bar(&mut self, ctx: &egui::Context) {
@@ -109,8 +108,7 @@ impl VellumGuiApp {
                 // The cursor is an absolute line number; map it back through
                 // the current buffer so the readout stays correct as lines
                 // scroll off the top.
-                let content =
-                    Self::search_content(&self.app_core, target.as_deref()?)?;
+                let content = Self::search_content(&self.app_core, target.as_deref()?)?;
                 let index = Self::line_index_of(content, absolute)?;
                 matches.iter().position(|hit| *hit == index)
             });
@@ -140,10 +138,12 @@ impl VellumGuiApp {
                     }
                     // Enter advances (Shift+Enter goes back) without leaving
                     // the text field — the browser find-bar reflex.
-                    if response.lost_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                    {
-                        step = if ui.input(|i| i.modifiers.shift) { -1 } else { 1 };
+                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        step = if ui.input(|i| i.modifiers.shift) {
+                            -1
+                        } else {
+                            1
+                        };
                         response.request_focus();
                     }
                     // Which window to search — an explicit choice, so a
@@ -178,9 +178,7 @@ impl VellumGuiApp {
                         // 1-based position once the user has stepped; the
                         // bare count before that.
                         match position {
-                            Some(pos) => {
-                                ui.weak(format!("{} of {}", pos + 1, match_count))
-                            }
+                            Some(pos) => ui.weak(format!("{} of {}", pos + 1, match_count)),
                             None => ui.weak(format!("{match_count} matching lines")),
                         };
                         if ui
@@ -190,11 +188,7 @@ impl VellumGuiApp {
                         {
                             step = -1;
                         }
-                        if ui
-                            .button("▾")
-                            .on_hover_text("Next match (F3)")
-                            .clicked()
-                        {
+                        if ui.button("▾").on_hover_text("Next match (F3)").clicked() {
                             step = 1;
                         }
                     }

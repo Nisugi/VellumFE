@@ -139,14 +139,48 @@ pub const DEPARTURES: &[DayPassDeparture] = &[
         enter_move: "out",
         exit_move: "go arch",
         to_bank: &[
-            "out", "down", "down", "down", "down", "go ramp", "east", "northwest", "north",
-            "north", "northwest", "north", "north", "north", "north", "north", "north",
-            "northwest", "east", "go doors",
+            "out",
+            "down",
+            "down",
+            "down",
+            "down",
+            "go ramp",
+            "east",
+            "northwest",
+            "north",
+            "north",
+            "northwest",
+            "north",
+            "north",
+            "north",
+            "north",
+            "north",
+            "north",
+            "northwest",
+            "east",
+            "go doors",
         ],
         from_bank: &[
-            "out", "west", "southeast", "south", "south", "south", "south", "south", "south",
-            "southeast", "south", "south", "southeast", "west", "climb ramp", "climb stairway",
-            "up", "up", "up", "go building",
+            "out",
+            "west",
+            "southeast",
+            "south",
+            "south",
+            "south",
+            "south",
+            "south",
+            "south",
+            "southeast",
+            "south",
+            "south",
+            "southeast",
+            "west",
+            "climb ramp",
+            "climb stairway",
+            "up",
+            "up",
+            "up",
+            "go building",
         ],
         destinations: &[
             DayPassDestination {
@@ -169,7 +203,14 @@ pub const DEPARTURES: &[DayPassDeparture] = &[
         enter_move: "south",
         exit_move: "north",
         to_bank: &["up", "north", "out", "north", "go bank", "go arch"],
-        from_bank: &["go arch", "out", "south", "go wood-sided shop", "south", "down"],
+        from_bank: &[
+            "go arch",
+            "out",
+            "south",
+            "go wood-sided shop",
+            "south",
+            "down",
+        ],
         destinations: &[
             DayPassDestination {
                 dest_room: 14360,
@@ -191,12 +232,42 @@ pub const DEPARTURES: &[DayPassDeparture] = &[
         enter_move: "go corridor",
         exit_move: "go corridor",
         to_bank: &[
-            "out", "go gate", "southeast", "southeast", "northeast", "southeast", "south", "west",
-            "south", "east", "east", "south", "south", "east", "north", "north", "go archway",
+            "out",
+            "go gate",
+            "southeast",
+            "southeast",
+            "northeast",
+            "southeast",
+            "south",
+            "west",
+            "south",
+            "east",
+            "east",
+            "south",
+            "south",
+            "east",
+            "north",
+            "north",
+            "go archway",
         ],
         from_bank: &[
-            "out", "south", "south", "west", "north", "north", "west", "west", "north", "east",
-            "north", "northwest", "southwest", "northwest", "northwest", "go gate", "go door",
+            "out",
+            "south",
+            "south",
+            "west",
+            "north",
+            "north",
+            "west",
+            "west",
+            "north",
+            "east",
+            "north",
+            "northwest",
+            "southwest",
+            "northwest",
+            "northwest",
+            "go gate",
+            "go door",
         ],
         destinations: &[
             DayPassDestination {
@@ -217,7 +288,10 @@ pub const DEPARTURES: &[DayPassDeparture] = &[
 
 /// The departure + destination for a given `(source_room, dest_room)` edge, if
 /// it's a day-pass edge.
-pub fn edge(source: u32, dest: u32) -> Option<(&'static DayPassDeparture, &'static DayPassDestination)> {
+pub fn edge(
+    source: u32,
+    dest: u32,
+) -> Option<(&'static DayPassDeparture, &'static DayPassDestination)> {
     let dep = DEPARTURES.iter().find(|d| d.room == source)?;
     let d = dep.destinations.iter().find(|d| d.dest_room == dest)?;
     Some((dep, d))
@@ -287,14 +361,20 @@ impl DayPassCache {
         if let Some(c) = PASS_DESC_TEXT.captures(line) {
             let Some(id) = pass_id else { return false };
             let towns = vec![c["a"].to_string(), c["b"].to_string()];
-            self.passes.insert(id.to_string(), DayPass { towns, expires: 0 });
+            self.passes
+                .insert(id.to_string(), DayPass { towns, expires: 0 });
             self.pending_id = Some(id.to_string());
             return true;
         }
         if line.contains("\"EXPIRED\" appear") {
             if let Some(id) = pass_id {
-                self.passes
-                    .insert(id.to_string(), DayPass { towns: Vec::new(), expires: 0 });
+                self.passes.insert(
+                    id.to_string(),
+                    DayPass {
+                        towns: Vec::new(),
+                        expires: 0,
+                    },
+                );
                 self.pending_id = None;
                 return true;
             }
@@ -318,13 +398,8 @@ impl DayPassCache {
         if let Some(c) = PASS_DESC.captures(line) {
             let id = c["id"].to_string();
             let towns = vec![c["a"].to_string(), c["b"].to_string()];
-            self.passes.insert(
-                id.clone(),
-                DayPass {
-                    towns,
-                    expires: 0,
-                },
-            );
+            self.passes
+                .insert(id.clone(), DayPass { towns, expires: 0 });
             self.pending_id = Some(id);
             return true;
         }
@@ -503,7 +578,10 @@ mod tests {
         let desc = "This pass entitles the original purchaser to one (1) day of unlimited travel between the towns of Solhaven and Wehnimer's Landing, commencing at dawn.";
         assert!(c.observe(desc, Some("999")));
         assert!(c.observe(EXPIRES, None)); // expiry line has no link
-        assert_eq!(c.valid_pass_id("Solhaven", "Wehnimer's Landing", 0), Some("999"));
+        assert_eq!(
+            c.valid_pass_id("Solhaven", "Wehnimer's Landing", 0),
+            Some("999")
+        );
         // No id supplied → the description is ignored (can't key it).
         let mut c2 = DayPassCache::default();
         assert!(!c2.observe(desc, None));
@@ -538,7 +616,7 @@ mod tests {
         assert!(buy_permits("sol,wl", a, b));
         assert!(buy_permits("wl,sol", a, b)); // reverse code also permits
         assert!(buy_permits("imt,wl sol,wl", a, b)); // in a list
-        // Off / empty / a different pair → not permitted.
+                                                     // Off / empty / a different pair → not permitted.
         assert!(!buy_permits("", a, b));
         assert!(!buy_permits("off", a, b));
         assert!(!buy_permits("no", a, b));
@@ -564,7 +642,13 @@ mod tests {
     #[test]
     fn departure_table_covers_the_six_edges() {
         // Each departure has 2 destinations; all 6 edges resolve.
-        assert_eq!(DEPARTURES.iter().map(|d| d.destinations.len()).sum::<usize>(), 6);
+        assert_eq!(
+            DEPARTURES
+                .iter()
+                .map(|d| d.destinations.len())
+                .sum::<usize>(),
+            6
+        );
         assert!(is_departure(14359) && is_departure(8635) && is_departure(15619));
         let (dep, dest) = edge(8635, 8916).expect("Wehnimer's -> Icemule edge");
         assert_eq!(dep.npc, "clerk");

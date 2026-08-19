@@ -5,11 +5,11 @@
 //! - Windows Terminal: Walks process tree to find the WindowsTerminal.exe window
 
 use anyhow::{Context, Result};
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
 };
-use windows::core::PCWSTR;
 use windows::Win32::System::Console::{GetConsoleTitleW, GetConsoleWindow, SetConsoleTitleW};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
@@ -56,8 +56,8 @@ impl WindowsPositioner {
         // to mirroring a unique console title for hosts with a different
         // process shape.
         if !hwnd.0.is_null() && is_pseudo_console_window(hwnd) {
-            if let Some(host) = find_host_window_by_process(hwnd)
-                .or_else(|| find_host_window_by_title(hwnd))
+            if let Some(host) =
+                find_host_window_by_process(hwnd).or_else(|| find_host_window_by_title(hwnd))
             {
                 tracing::debug!("Console is ConPTY-hosted; using host window {:?}", host);
                 return Self {

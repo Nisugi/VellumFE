@@ -24,13 +24,11 @@ impl AppCore {
                     Some(secs) if secs > 0.0 => {
                         self.custom_status_expiries.insert(
                             id.to_ascii_uppercase(),
-                            std::time::Instant::now()
-                                + std::time::Duration::from_secs_f32(secs),
+                            std::time::Instant::now() + std::time::Duration::from_secs_f32(secs),
                         );
                     }
                     _ => {
-                        self.custom_status_expiries
-                            .remove(&id.to_ascii_uppercase());
+                        self.custom_status_expiries.remove(&id.to_ascii_uppercase());
                     }
                 }
             }

@@ -199,15 +199,16 @@ pub fn render_panel(size: u32, top: &str, bottom: &str, spec: &PanelSpec) -> Vec
                 };
             }
             if spec.grain > 0.0 {
-                rng_state = rng_state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                rng_state = rng_state
+                    .wrapping_mul(1_664_525)
+                    .wrapping_add(1_013_904_223);
                 let unit = ((rng_state >> 16) & 0xffff) as f64 / 65_535.0;
                 noise += (unit - 0.5) * spec.grain;
             }
 
             let idx = (y * w + x) * 4;
             for (offset, channel) in rgb.iter().enumerate() {
-                out[idx + offset] =
-                    ((channel * 255.0 + noise).round().clamp(0.0, 255.0)) as u8;
+                out[idx + offset] = ((channel * 255.0 + noise).round().clamp(0.0, 255.0)) as u8;
             }
             out[idx + 3] = 255;
         }

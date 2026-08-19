@@ -301,14 +301,12 @@ impl LauncherApp {
                     }
                     LP::HostKeyChanged => {
                         self.status = Some(Status::error(
-                            "Host key CHANGED — refusing to connect (possible MITM)."
-                                .to_string(),
+                            "Host key CHANGED — refusing to connect (possible MITM).".to_string(),
                         ));
                         finished = true;
                     }
                     LP::Spawning { character } => {
-                        self.status =
-                            Some(Status::ok(format!("Starting Lich for {character}…")))
+                        self.status = Some(Status::ok(format!("Starting Lich for {character}…")))
                     }
                     LP::WaitingForPort { host, port } => {
                         self.status =
@@ -540,10 +538,7 @@ impl LauncherApp {
                                     if ui.button("Edit").clicked() {
                                         edit_request = Some(profile.name.clone());
                                     }
-                                    if ui
-                                        .button(egui::RichText::new("Launch").strong())
-                                        .clicked()
-                                    {
+                                    if ui.button(egui::RichText::new("Launch").strong()).clicked() {
                                         launch_request = Some(profile.name.clone());
                                     }
                                 },
@@ -673,8 +668,7 @@ impl LauncherApp {
 
                             ui.label("Port").on_hover_text(help::PORT);
                             ui.add(
-                                egui::TextEdit::singleline(&mut form.port_text)
-                                    .desired_width(80.0),
+                                egui::TextEdit::singleline(&mut form.port_text).desired_width(80.0),
                             );
                             ui.end_row();
 

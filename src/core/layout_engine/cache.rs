@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::mapdb::Room;
 use super::{generate_layout, Layout};
+use crate::core::mapdb::Room;
 
 /// Bump when the algorithms change so stale cached layouts regenerate.
 /// v4: zone-sized components (catacombs) no longer weld their neighbors.

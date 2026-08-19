@@ -8,10 +8,10 @@
 //! that still expects crossterm types. This is temporary until Phase 2 (Core Decoupling)
 //! removes crossterm from core.
 
-use crossterm::event as ct;
-use ratatui::style as ratatui_style;
 use crate::data::input::*;
 use crate::frontend::common::*;
+use crossterm::event as ct;
+use ratatui::style as ratatui_style;
 
 /// Convert crossterm KeyCode to frontend-agnostic KeyCode
 pub fn convert_keycode(code: ct::KeyCode) -> Option<KeyCode> {
@@ -66,10 +66,7 @@ pub fn convert_keycode(code: ct::KeyCode) -> Option<KeyCode> {
 /// speak the protocol (Alacritty, kitty, WezTerm, ...) exactly like they do
 /// under the Windows VK_NUMPAD path. Keypad navigation keys (NumLock off)
 /// deliberately stay on their plain codes — they should act as Home/arrows.
-pub fn convert_keycode_with_state(
-    code: ct::KeyCode,
-    state: ct::KeyEventState,
-) -> Option<KeyCode> {
+pub fn convert_keycode_with_state(code: ct::KeyCode, state: ct::KeyEventState) -> Option<KeyCode> {
     if state.contains(ct::KeyEventState::KEYPAD) {
         let promoted = match code {
             ct::KeyCode::Char('0') => Some(KeyCode::Keypad0),

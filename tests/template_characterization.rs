@@ -71,7 +71,11 @@ const PROBE_IDS: &[&str] = &[
 fn build_golden() -> String {
     let mut out = String::new();
 
-    writeln!(out, "# Template catalog characterization (generated — see file header test)").unwrap();
+    writeln!(
+        out,
+        "# Template catalog characterization (generated — see file header test)"
+    )
+    .unwrap();
 
     // ── 1. Per-game template lists ──────────────────────────────────────
     for (label, game) in [
@@ -122,17 +126,22 @@ fn build_golden() -> String {
     //      layout, per game — the "no dead menu" tripwires. Phase 3 swaps
     //      these paths to the resolver+catalog; the snapshots must stay
     //      green UNCHANGED (the transparency proof).
-    let categorized = |label: &str,
-                       map: std::collections::HashMap<vellum_fe::config::WidgetCategory, Vec<String>>,
-                       out: &mut String| {
-        writeln!(out, "\n[{label}]").unwrap();
-        let mut entries: Vec<_> = map.into_iter().collect();
-        entries.sort_by_key(|(category, _)| format!("{category:?}"));
-        for (category, names) in entries {
-            writeln!(out, "{category:?}: {}", names.join(", ")).unwrap();
-        }
-    };
-    categorized("templates_by_category", Config::get_templates_by_category(), &mut out);
+    let categorized =
+        |label: &str,
+         map: std::collections::HashMap<vellum_fe::config::WidgetCategory, Vec<String>>,
+         out: &mut String| {
+            writeln!(out, "\n[{label}]").unwrap();
+            let mut entries: Vec<_> = map.into_iter().collect();
+            entries.sort_by_key(|(category, _)| format!("{category:?}"));
+            for (category, names) in entries {
+                writeln!(out, "{category:?}: {}", names.join(", ")).unwrap();
+            }
+        };
+    categorized(
+        "templates_by_category",
+        Config::get_templates_by_category(),
+        &mut out,
+    );
     // Layout has no Default; a windowless TOML is the empty layout.
     let empty_layout: vellum_fe::config::Layout =
         toml::from_str("windows = []").expect("empty layout parses");
@@ -153,14 +162,13 @@ fn build_golden() -> String {
         writeln!(out, "\n[template.{name}]").unwrap();
         match Config::get_window_template(&name) {
             Some(def) => {
-                let toml = toml::to_string(&def)
-                    .unwrap_or_else(|e| format!("<serialize error: {e}>"));
+                let toml =
+                    toml::to_string(&def).unwrap_or_else(|e| format!("<serialize error: {e}>"));
                 for line in toml.lines() {
                     writeln!(out, "  {line}").unwrap();
                 }
             }
-            None => writeln!(out, "  <listed but get_window_template returned None>")
-                .unwrap(),
+            None => writeln!(out, "  <listed but get_window_template returned None>").unwrap(),
         }
     }
     out

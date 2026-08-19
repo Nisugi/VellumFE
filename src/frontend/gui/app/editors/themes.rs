@@ -62,12 +62,13 @@ impl VellumGuiApp {
             .default_width(420.0)
             .default_height(380.0)
             .show(ctx, |ui| {
-                ui.weak("Apply switches and persists the theme. Edit opens a copy in the theme editor.");
+                ui.weak(
+                    "Apply switches and persists the theme. Edit opens a copy in the theme editor.",
+                );
                 ui.separator();
 
-                let presets = ThemePresets::all_with_custom(
-                    self.app_core.config.character.as_deref(),
-                );
+                let presets =
+                    ThemePresets::all_with_custom(self.app_core.config.character.as_deref());
                 let mut names: Vec<&String> = presets.keys().collect();
                 names.sort();
 

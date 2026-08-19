@@ -213,8 +213,10 @@ mod tests {
         let mut wm = WidgetManager::new();
         // A tabbed window "combat" with two tabs, plus an unrelated window.
         wm.last_synced_generation.insert("combat".to_string(), 5);
-        wm.last_synced_generation.insert("combat:melee".to_string(), 3);
-        wm.last_synced_generation.insert("combat:ranged".to_string(), 4);
+        wm.last_synced_generation
+            .insert("combat:melee".to_string(), 3);
+        wm.last_synced_generation
+            .insert("combat:ranged".to_string(), 4);
         wm.last_synced_generation.insert("thoughts".to_string(), 9);
         // A window whose name is a prefix of another must not over-match:
         // "combat" removal must NOT touch "combative".

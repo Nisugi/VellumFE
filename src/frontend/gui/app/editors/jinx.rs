@@ -111,8 +111,21 @@ impl VellumGuiApp {
 
         // Categories present in the catalog, in a stable friendly order.
         const KIND_ORDER: &[&str] = &[
-            "data", "skin", "layout", "uipack", "statusicon", "compass", "hand", "creature",
-            "doll", "frame", "background", "icon", "iconmap", "image", "sound",
+            "data",
+            "skin",
+            "layout",
+            "uipack",
+            "statusicon",
+            "compass",
+            "hand",
+            "creature",
+            "doll",
+            "frame",
+            "background",
+            "icon",
+            "iconmap",
+            "image",
+            "sound",
         ];
         let mut kinds: Vec<String> = Vec::new();
         for entry in &catalog {
@@ -120,12 +133,7 @@ impl VellumGuiApp {
                 kinds.push(entry.kind.clone());
             }
         }
-        kinds.sort_by_key(|k| {
-            KIND_ORDER
-                .iter()
-                .position(|o| o == k)
-                .unwrap_or(usize::MAX)
-        });
+        kinds.sort_by_key(|k| KIND_ORDER.iter().position(|o| o == k).unwrap_or(usize::MAX));
 
         let mut open = true;
         let mut refresh = false;
@@ -210,8 +218,10 @@ impl VellumGuiApp {
                                                         continue;
                                                     }
                                                 }
-                                                ui.label(entry.title.as_deref().unwrap_or(&entry.name))
-                                                    .on_hover_text(&entry.name);
+                                                ui.label(
+                                                    entry.title.as_deref().unwrap_or(&entry.name),
+                                                )
+                                                .on_hover_text(&entry.name);
                                                 ui.weak(&entry.repo);
                                                 ui.weak(entry.version.as_deref().unwrap_or("—"));
                                                 if entry.update_available {
@@ -317,20 +327,26 @@ impl VellumGuiApp {
         // Apply deferred actions after the window closure (they borrow
         // app_core mutably / start worker jobs).
         if refresh {
-            state.log.push(self.app_core.jinx_worker.start(Request::Catalog));
-        }
-        if update_all {
             state
                 .log
-                .push(self.app_core.jinx_worker.start(Request::AutoUpdate { dry_run: false }));
+                .push(self.app_core.jinx_worker.start(Request::Catalog));
+        }
+        if update_all {
+            state.log.push(
+                self.app_core
+                    .jinx_worker
+                    .start(Request::AutoUpdate { dry_run: false }),
+            );
         }
         if let Some((name, category, repo, overwrite)) = install {
-            state.log.push(self.app_core.jinx_worker.start(Request::Install {
-                name,
-                category: Some(category),
-                only_repo: Some(repo),
-                overwrite,
-            }));
+            state
+                .log
+                .push(self.app_core.jinx_worker.start(Request::Install {
+                    name,
+                    category: Some(category),
+                    only_repo: Some(repo),
+                    overwrite,
+                }));
         }
         if let Some((name, url)) = repo_add {
             match self.jinx_repo_add(&name, &url) {
@@ -341,7 +357,9 @@ impl VellumGuiApp {
                     state.log.push(format!("[jinx] added repo '{name}'"));
                     // New repo may add assets: refresh the catalog.
                     if !self.app_core.jinx_worker.in_flight() {
-                        state.log.push(self.app_core.jinx_worker.start(Request::Catalog));
+                        state
+                            .log
+                            .push(self.app_core.jinx_worker.start(Request::Catalog));
                     }
                 }
                 Err(e) => state.repo_error = Some(e),

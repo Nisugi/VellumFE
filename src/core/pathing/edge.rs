@@ -244,10 +244,7 @@ impl PartialEq for AwaitPattern {
 /// An unbound token yields `None` rather than an empty string: sending
 /// "pull  lever" because a capture didn't fire is worse than not sending at
 /// all, since a half-formed command can do something unintended.
-pub fn expand_captures(
-    template: &str,
-    bindings: &[(String, String)],
-) -> Option<String> {
+pub fn expand_captures(template: &str, bindings: &[(String, String)]) -> Option<String> {
     // Cheap exit for the overwhelmingly common tokenless command.
     if !template.contains("{capture:") {
         return Some(template.to_string());

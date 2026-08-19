@@ -38,8 +38,8 @@ pub fn install_skin(archive_stem: &str, zip_bytes: &[u8]) -> Result<String, Stri
             continue;
         }
         let raw = entry.name().to_string();
-        let rel = safe_relative(&raw)
-            .ok_or_else(|| format!("skin zip has an unsafe path: '{raw}'"))?;
+        let rel =
+            safe_relative(&raw).ok_or_else(|| format!("skin zip has an unsafe path: '{raw}'"))?;
         if rel == Path::new("skin.toml") {
             saw_manifest = true;
         }
@@ -138,8 +138,14 @@ mod tests {
 
     #[test]
     fn sanitize_rejects_bad_names() {
-        assert_eq!(sanitize_skin_name("parchment").as_deref(), Some("parchment"));
-        assert_eq!(sanitize_skin_name("my-skin_2").as_deref(), Some("my-skin_2"));
+        assert_eq!(
+            sanitize_skin_name("parchment").as_deref(),
+            Some("parchment")
+        );
+        assert_eq!(
+            sanitize_skin_name("my-skin_2").as_deref(),
+            Some("my-skin_2")
+        );
         assert!(sanitize_skin_name("no/slash").is_none());
         assert!(sanitize_skin_name("no space").is_none());
         assert!(sanitize_skin_name("..").is_none());
@@ -159,7 +165,9 @@ mod tests {
         let name = install_skin("parchment", &zip).unwrap();
         assert_eq!(name, "parchment");
 
-        let root = crate::config::Config::skins_dir().unwrap().join("parchment");
+        let root = crate::config::Config::skins_dir()
+            .unwrap()
+            .join("parchment");
         assert!(root.join("skin.toml").is_file());
         assert_eq!(std::fs::read(root.join("bg/paper.png")).unwrap(), b"PNG1");
 
@@ -167,7 +175,10 @@ mod tests {
         let zip2 = make_zip(&[("skin.toml", b"[meta]\nname=\"P2\"\n")]);
         install_skin("parchment", &zip2).unwrap();
         assert!(root.join("skin.toml").is_file());
-        assert!(!root.join("bg/paper.png").exists(), "stale file must be cleared");
+        assert!(
+            !root.join("bg/paper.png").exists(),
+            "stale file must be cleared"
+        );
 
         std::env::remove_var("VELLUM_FE_DIR");
     }
@@ -180,12 +191,19 @@ mod tests {
 
         // No skin.toml -> rejected, nothing written.
         let no_manifest = make_zip(&[("readme.txt", b"hi")]);
-        assert!(install_skin("x", &no_manifest).unwrap_err().contains("no skin.toml"));
+        assert!(install_skin("x", &no_manifest)
+            .unwrap_err()
+            .contains("no skin.toml"));
 
         // A traversal entry aborts the whole extraction.
         let evil = make_zip(&[("skin.toml", b"x"), ("../evil.png", b"bad")]);
-        assert!(install_skin("y", &evil).unwrap_err().contains("unsafe path"));
-        assert!(!crate::config::Config::skins_dir().unwrap().join("y").exists());
+        assert!(install_skin("y", &evil)
+            .unwrap_err()
+            .contains("unsafe path"));
+        assert!(!crate::config::Config::skins_dir()
+            .unwrap()
+            .join("y")
+            .exists());
 
         std::env::remove_var("VELLUM_FE_DIR");
     }

@@ -239,9 +239,8 @@ impl VellumGuiApp {
                     // Sidecar sessions are owned by this local UI; the web
                     // client shouldn't offer these (session_control is
                     // false), but answer stray requests politely.
-                    self.app_core.add_system_message(
-                        "Session control is only available in headless mode.",
-                    );
+                    self.app_core
+                        .add_system_message("Session control is only available in headless mode.");
                 }
                 crate::core::remote::RemoteEvent::Macro { id } => {
                     // Resolve the id against config; the command runs the
@@ -380,8 +379,13 @@ impl VellumGuiApp {
 
         // Send commands queued by dialog-panel widgets this frame
         // (they render from an immutable AppCore borrow).
-        let panel_commands: Vec<String> =
-            self.app_core.ui_state.pending_panel_commands.borrow_mut().drain(..).collect();
+        let panel_commands: Vec<String> = self
+            .app_core
+            .ui_state
+            .pending_panel_commands
+            .borrow_mut()
+            .drain(..)
+            .collect();
         for command in panel_commands {
             // Client-side panel verbs never reach the game. A dialog's
             // closeButton hides the window hosting it (bound layout window

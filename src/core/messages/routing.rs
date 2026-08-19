@@ -478,7 +478,10 @@ impl MessageProcessor {
     /// Check if a line should be squelched (ignored/filtered)
     pub(super) fn should_squelch_line(&self, text: &str) -> bool {
         // Check Aho-Corasick fast patterns (case-sensitive, then not)
-        for matcher in [self.squelch_matcher.as_ref(), self.squelch_matcher_ci.as_ref()] {
+        for matcher in [
+            self.squelch_matcher.as_ref(),
+            self.squelch_matcher_ci.as_ref(),
+        ] {
             if let Some(matcher) = matcher {
                 if matcher.is_match(text) {
                     return true;

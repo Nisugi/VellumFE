@@ -220,8 +220,7 @@ fn split_room_images(
     // the character copy, so carry the global original forward — but not past a
     // full delete.
     for def in &global_prior.images {
-        if character_names.contains(def.name.as_str()) && merged_names.contains(def.name.as_str())
-        {
+        if character_names.contains(def.name.as_str()) && merged_names.contains(def.name.as_str()) {
             global_out.images.push(def.clone());
         }
     }
@@ -259,9 +258,7 @@ impl Config {
     }
 
     /// Load only character-specific room images (not merged with global).
-    pub fn load_character_room_images_only(
-        character: Option<&str>,
-    ) -> Result<RoomImagesConfig> {
+    pub fn load_character_room_images_only(character: Option<&str>) -> Result<RoomImagesConfig> {
         let path = Self::room_images_path(character)?;
         if !path.exists() {
             return Ok(RoomImagesConfig::default());
@@ -397,8 +394,16 @@ mod tests {
 
         assert_eq!(character_out.images.len(), 1);
         assert_eq!(character_out.images[0].rooms, vec![1, 2]);
-        assert_eq!(global_out.images.len(), 1, "shadowed global copy must survive");
-        assert_eq!(global_out.images[0].rooms, vec![1], "global keeps ITS version");
+        assert_eq!(
+            global_out.images.len(),
+            1,
+            "shadowed global copy must survive"
+        );
+        assert_eq!(
+            global_out.images[0].rooms,
+            vec![1],
+            "global keeps ITS version"
+        );
     }
 
     /// Deleting an entry from the merged view means "gone": it must vanish
@@ -472,7 +477,10 @@ mod tests {
         let pier = base.images.iter().find(|d| d.name == "pier").unwrap();
         assert_eq!(pier.rooms, vec![9], "same name replaces wholesale");
         assert!(base.images.iter().any(|d| d.name == "river"), "global kept");
-        assert!(base.images.iter().any(|d| d.name == "forest"), "new appended");
+        assert!(
+            base.images.iter().any(|d| d.name == "forest"),
+            "new appended"
+        );
         assert_eq!(base.names.get("1").unwrap(), "Pier One");
         assert_eq!(base.names.get("4").unwrap(), "Deep Forest");
     }

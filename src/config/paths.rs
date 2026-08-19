@@ -321,8 +321,8 @@ impl Config {
             fs::create_dir_all(parent)?;
         }
 
-        let contents = toml::to_string_pretty(positions)
-            .context("Failed to serialize dialog positions")?;
+        let contents =
+            toml::to_string_pretty(positions).context("Failed to serialize dialog positions")?;
         write_atomic(&path, contents)
             .context(format!("Failed to write widget state to {:?}", path))?;
         Ok(())
@@ -394,7 +394,6 @@ impl Config {
         let layouts_dir = Self::layouts_dir()?;
         Ok(layouts_dir.join(format!("{}.toml", name)))
     }
-
 
     /// List all saved keybind profiles
     pub fn list_saved_keybinds() -> Result<Vec<String>> {

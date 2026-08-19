@@ -15,8 +15,8 @@ pub mod widget;
 pub mod window;
 
 pub use input::*;
-pub use ui_action::{CommandOutcome, ShellZoneTarget, UiAction, ZoneOp};
 pub use remote_buffer::*;
+pub use ui_action::{CommandOutcome, ShellZoneTarget, UiAction, ZoneOp};
 pub use ui_state::*;
 pub use webui::*;
 pub use widget::*;

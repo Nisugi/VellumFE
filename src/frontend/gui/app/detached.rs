@@ -96,7 +96,8 @@ impl VellumGuiApp {
                 bounds[2].min(640.0).max(320.0),
                 bounds[3].min(480.0).max(240.0),
             ]);
-        let viewport = ViewportState::new(key.clone(), [bounds[0] + 120.0, bounds[1] + 120.0], size);
+        let viewport =
+            ViewportState::new(key.clone(), [bounds[0] + 120.0, bounds[1] + 120.0], size);
         self.detached_tabs
             .insert(key.clone(), DetachedWindowState::new(&key, viewport));
         self.layout_dirty = true;
@@ -258,9 +259,11 @@ impl VellumGuiApp {
         keys.sort_by_key(|key| key.short_id());
         // Fresh detached menu, fresh Delete confirmation (mirrors the
         // attached menu's just_opened disarm).
-        if let Some(menu_key) = self.detached_context_menu.as_mut().and_then(|menu| {
-            std::mem::take(&mut menu.just_opened).then(|| menu.tab_key.clone())
-        }) {
+        if let Some(menu_key) = self
+            .detached_context_menu
+            .as_mut()
+            .and_then(|menu| std::mem::take(&mut menu.just_opened).then(|| menu.tab_key.clone()))
+        {
             if let Some(tab) = self.available_tabs.get(&menu_key) {
                 Self::disarm_window_delete(ctx, &tab.window_name.clone());
             }
@@ -280,7 +283,10 @@ impl VellumGuiApp {
             let builder = egui::ViewportBuilder::default()
                 .with_title(format!("VellumFE - {}", tab.id.title))
                 .with_position(Pos2::new(initial.outer_pos_px[0], initial.outer_pos_px[1]))
-                .with_inner_size(Vec2::new(initial.outer_size_px[0], initial.outer_size_px[1]))
+                .with_inner_size(Vec2::new(
+                    initial.outer_size_px[0],
+                    initial.outer_size_px[1],
+                ))
                 .with_min_inner_size(Vec2::new(MIN_VIEWPORT_WIDTH, MIN_VIEWPORT_HEIGHT))
                 .with_maximized(initial.maximized);
             let menu = self
@@ -296,14 +302,14 @@ impl VellumGuiApp {
             let render_settings = self.widget_render_settings(&tab.id.key);
             let command_completion_end = (key == TabKey::CommandInput
                 && render_settings.command_input_completion.is_some())
-                .then(|| {
-                    render_settings
-                        .command_input_seed
-                        .as_deref()
-                        .unwrap_or("")
-                        .chars()
-                        .count()
-                });
+            .then(|| {
+                render_settings
+                    .command_input_seed
+                    .as_deref()
+                    .unwrap_or("")
+                    .chars()
+                    .count()
+            });
             let app_core = &self.app_core;
             // The viewport callback is FnMut to egui but runs exactly once
             // per show call; take() lets the owned menu data move through.
@@ -491,8 +497,7 @@ impl VellumGuiApp {
                 ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
             }
             ui.push_id(&tab.id.key, |ui| {
-                if let Some(click) =
-                    Self::render_window_content(app_core, ui, tab, render_settings)
+                if let Some(click) = Self::render_window_content(app_core, ui, tab, render_settings)
                 {
                     out.link_click = Some(click);
                 }
@@ -712,11 +717,8 @@ mod tests {
 
     #[test]
     fn test_sanitize_viewport_state_fixes_non_finite_and_min_size() {
-        let viewport = ViewportState::new(
-            TabKey::Vitals,
-            [f32::NAN, f32::INFINITY],
-            [20.0, f32::NAN],
-        );
+        let viewport =
+            ViewportState::new(TabKey::Vitals, [f32::NAN, f32::INFINITY], [20.0, f32::NAN]);
         let sanitized = VellumGuiApp::sanitize_viewport_state(&viewport);
         assert_eq!(sanitized.outer_pos_px, [120.0, 120.0]);
         assert!(sanitized.outer_size_px[0] >= MIN_VIEWPORT_WIDTH);
@@ -735,7 +737,9 @@ mod tests {
     fn test_rect_within_virtual_desktop() {
         let bounds = [0.0, 0.0, 1920.0, 1080.0];
         let on_primary = Rect::from_min_size(Pos2::new(100.0, 100.0), Vec2::new(640.0, 480.0));
-        assert!(VellumGuiApp::rect_within_virtual_desktop(on_primary, bounds));
+        assert!(VellumGuiApp::rect_within_virtual_desktop(
+            on_primary, bounds
+        ));
         let on_second_monitor =
             Rect::from_min_size(Pos2::new(-1900.0, 0.0), Vec2::new(640.0, 480.0));
         assert!(VellumGuiApp::rect_within_virtual_desktop(

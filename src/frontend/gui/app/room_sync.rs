@@ -4,7 +4,9 @@
 use super::*;
 
 impl VellumGuiApp {
-    pub(super) fn room_component_lines(component: Option<&Vec<Vec<TextSegment>>>) -> Vec<StyledLine> {
+    pub(super) fn room_component_lines(
+        component: Option<&Vec<Vec<TextSegment>>>,
+    ) -> Vec<StyledLine> {
         component
             .map(|lines| {
                 lines
@@ -102,10 +104,7 @@ impl VellumGuiApp {
         // Drop a trailing " - <digits>" the name already carries so the id
         // isn't printed twice.
         if let Some(dash) = base.rfind(" - ") {
-            if base[dash + 3..]
-                .trim()
-                .chars()
-                .all(|c| c.is_ascii_digit())
+            if base[dash + 3..].trim().chars().all(|c| c.is_ascii_digit())
                 && !base[dash + 3..].trim().is_empty()
             {
                 base.truncate(dash);
@@ -243,5 +242,4 @@ impl VellumGuiApp {
 
         self.app_core.room_window_dirty = false;
     }
-
 }

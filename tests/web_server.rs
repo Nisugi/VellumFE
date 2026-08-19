@@ -32,8 +32,7 @@ async fn start_server(
         .expect("bind ephemeral port");
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        let _ =
-            server::serve_listener_with_token(listener, handles, TEST_TOKEN.to_string()).await;
+        let _ = server::serve_listener_with_token(listener, handles, TEST_TOKEN.to_string()).await;
     });
     (sink, event_rx, addr)
 }
@@ -101,7 +100,10 @@ impl WsClient {
     /// Read one text frame's payload as parsed JSON.
     async fn read_json(&mut self) -> serde_json::Value {
         let mut header = [0u8; 2];
-        self.stream.read_exact(&mut header).await.expect("frame header");
+        self.stream
+            .read_exact(&mut header)
+            .await
+            .expect("frame header");
         let opcode = header[0] & 0x0f;
         assert_eq!(opcode, 0x1, "expected a text frame");
         assert_eq!(header[0] & 0x80, 0x80, "expected FIN (no fragmentation)");
@@ -120,7 +122,10 @@ impl WsClient {
             n => n as usize,
         };
         let mut payload = vec![0u8; len];
-        self.stream.read_exact(&mut payload).await.expect("frame payload");
+        self.stream
+            .read_exact(&mut payload)
+            .await
+            .expect("frame payload");
         serde_json::from_slice(&payload).expect("frame payload is JSON")
     }
 
@@ -136,12 +141,7 @@ impl WsClient {
             frame.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
         }
         frame.extend_from_slice(&mask);
-        frame.extend(
-            bytes
-                .iter()
-                .enumerate()
-                .map(|(i, b)| b ^ mask[i % 4]),
-        );
+        frame.extend(bytes.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
         self.stream.write_all(&frame).await.expect("send frame");
     }
 
@@ -159,7 +159,10 @@ async fn read_json_timeout(client: &mut WsClient) -> serde_json::Value {
 
 /// Connect, drain hello (answering with resume seq) and the macros message
 /// that follows the snapshot; return the client and the snapshot message.
-async fn connect_and_sync(addr: std::net::SocketAddr, resume_seq: u64) -> (WsClient, serde_json::Value) {
+async fn connect_and_sync(
+    addr: std::net::SocketAddr,
+    resume_seq: u64,
+) -> (WsClient, serde_json::Value) {
     let mut client = WsClient::connect(addr).await;
     let hello = read_json_timeout(&mut client).await;
     assert_eq!(hello["t"], "hello");
@@ -199,7 +202,10 @@ async fn health_and_static_assets_are_served() {
     // mode client-side, so serving the page is all the server does.
     let wall = http_get(addr, "/characters").await;
     assert!(wall.contains("200"));
-    assert!(wall.contains("mode: \"watch\""), "the wall subscribes as a watcher");
+    assert!(
+        wall.contains("mode: \"watch\""),
+        "the wall subscribes as a watcher"
+    );
     assert!(
         wall.contains("subscribe") && wall.contains("resume"),
         "handshake mirrors the hub: auth, subscribe watch, resume"
@@ -279,15 +285,15 @@ async fn client_cmd_arrives_as_remote_event() {
     let (_sink, mut event_rx, addr) = start_server(100).await;
 
     let (mut client, _) = connect_and_sync(addr, 0).await;
-    client
-        .send_text(r#"{"t":"cmd","d":{"text":"look"}}"#)
-        .await;
+    client.send_text(r#"{"t":"cmd","d":{"text":"look"}}"#).await;
 
     let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
         .await
         .expect("timed out waiting for remote event")
         .expect("event channel open");
-    let RemoteEvent::Command(text) = event else { panic!("expected Command event") };
+    let RemoteEvent::Command(text) = event else {
+        panic!("expected Command event")
+    };
     assert_eq!(text, "look");
 
     // Unknown/malformed messages are ignored, not fatal.
@@ -300,7 +306,9 @@ async fn client_cmd_arrives_as_remote_event() {
         .await
         .expect("timed out")
         .expect("channel open");
-    let RemoteEvent::Command(text) = event else { panic!("expected Command event") };
+    let RemoteEvent::Command(text) = event else {
+        panic!("expected Command event")
+    };
     assert_eq!(text, "second");
 }
 
@@ -422,7 +430,10 @@ async fn macros_flow_definitions_out_taps_in() {
     let d = &macros["d"];
     assert_eq!(d["groups"][0]["name"], "Town");
     assert_eq!(d["groups"][0]["buttons"][0]["id"], "g:0:b:0");
-    assert_eq!(d["groups"][0]["buttons"][1]["options"][0]["id"], "g:0:b:1:o:0");
+    assert_eq!(
+        d["groups"][0]["buttons"][1]["options"][0]["id"],
+        "g:0:b:1:o:0"
+    );
     assert_eq!(d["floating"][0]["id"], "f:0");
     assert!(
         !macros.to_string().contains(";go2 bank"),
@@ -442,7 +453,9 @@ async fn macros_flow_definitions_out_taps_in() {
     assert_eq!(macros_config.resolve("g:0:b:2"), None);
 
     // A tap comes back as an id-only event.
-    client.send_text(r#"{"t":"macro","d":{"id":"g:0:b:1:o:0"}}"#).await;
+    client
+        .send_text(r#"{"t":"macro","d":{"id":"g:0:b:1:o:0"}}"#)
+        .await;
     let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
         .await
         .expect("timed out")
@@ -485,7 +498,10 @@ async fn entities_flow_in_snapshot_and_deltas() {
     );
     assert_eq!(snapshot["d"]["entities"]["creatures"][0]["noun"], "hog");
     assert_eq!(
-        snapshot["d"]["entities"]["objects"].as_array().unwrap().len(),
+        snapshot["d"]["entities"]["objects"]
+            .as_array()
+            .unwrap()
+            .len(),
         0
     );
 
@@ -681,13 +697,17 @@ async fn touch_wheel_get_and_put_arrive_as_addressed_events() {
     // A malformed put (slices not an array) is rejected client-side and
     // produces no event.
     editor
-        .send_text(r#"{"t":"touch_wheel_put","d":{"request_id":5,"scope":"profile","slices":"nope"}}"#)
+        .send_text(
+            r#"{"t":"touch_wheel_put","d":{"request_id":5,"scope":"profile","slices":"nope"}}"#,
+        )
         .await;
-    let timed_out =
-        tokio::time::timeout(std::time::Duration::from_millis(300), event_rx.recv())
-            .await
-            .is_err();
-    assert!(timed_out, "a non-array touch_wheel_put must not emit an event");
+    let timed_out = tokio::time::timeout(std::time::Duration::from_millis(300), event_rx.recv())
+        .await
+        .is_err();
+    assert!(
+        timed_out,
+        "a non-array touch_wheel_put must not emit an event"
+    );
 }
 
 #[tokio::test]
@@ -848,7 +868,10 @@ async fn macro_save_and_delete_arrive_as_events() {
         .await
         .expect("timed out")
         .expect("channel open");
-    let RemoteEvent::MacroSave { command, insert, .. } = event else {
+    let RemoteEvent::MacroSave {
+        command, insert, ..
+    } = event
+    else {
         panic!("expected MacroSave");
     };
     assert!(insert);
@@ -864,7 +887,13 @@ async fn macro_save_and_delete_arrive_as_events() {
         .await
         .expect("timed out")
         .expect("channel open");
-    let RemoteEvent::MacroSave { label, command, options, .. } = event else {
+    let RemoteEvent::MacroSave {
+        label,
+        command,
+        options,
+        ..
+    } = event
+    else {
         panic!("expected MacroSave");
     };
     assert_eq!(label, "Travel");
@@ -1144,7 +1173,8 @@ async fn hub_applies_real_server_frames_to_a_peer() {
     gs.status.set("IconSTUNNED", true);
     gs.injuries.insert("head".to_string(), 2);
     gs.stance.update(80, "defensive (80%)");
-    gs.gs4_experience.update_mind_state(42, "muddled".to_string());
+    gs.gs4_experience
+        .update_mind_state(42, "muddled".to_string());
     gs.encumbrance.update_level(17, "Light".to_string());
     gs.group.replace(
         vellum_fe::core::group::GroupLeader::SelfLed,
@@ -1176,7 +1206,10 @@ async fn hub_applies_real_server_frames_to_a_peer() {
         Some(80),
         "numeric stance, not a re-parsed display string"
     );
-    assert_eq!(peer.stance.as_ref().map(|g| g.text.as_str()), Some("defensive"));
+    assert_eq!(
+        peer.stance.as_ref().map(|g| g.text.as_str()),
+        Some("defensive")
+    );
     assert_eq!(peer.mind.as_ref().map(|g| g.value), Some(42));
     assert_eq!(peer.encumbrance.as_ref().map(|g| g.value), Some(17));
     assert!(peer.connected);
@@ -1342,7 +1375,9 @@ async fn watchers_receive_room_changes_without_the_prose() {
     // The prose is the bulk; a watcher must not pay for it.
     assert!(
         frame["d"].get("description").is_none()
-            || frame["d"]["description"].as_array().is_some_and(|a| a.is_empty()),
+            || frame["d"]["description"]
+                .as_array()
+                .is_some_and(|a| a.is_empty()),
         "prose must be stripped for watchers: {}",
         frame["d"]
     );

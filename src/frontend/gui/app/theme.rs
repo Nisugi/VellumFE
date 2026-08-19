@@ -268,9 +268,7 @@ pub(super) fn system_font_families() -> &'static [String] {
 
 /// Load raw font data for a font reference. Named fonts resolve through the
 /// system font database; custom fonts read from the given file path.
-fn font_data_from_ref(
-    font: &crate::frontend::gui::persistence::FontRef,
-) -> Option<egui::FontData> {
+fn font_data_from_ref(font: &crate::frontend::gui::persistence::FontRef) -> Option<egui::FontData> {
     use crate::frontend::gui::persistence::FontRef;
 
     match font {
@@ -310,7 +308,11 @@ fn font_data_from_ref(
         FontRef::Custom(path) => match std::fs::read(path) {
             Ok(bytes) => {
                 if let Err(err) = validate_font_bytes(&bytes, 0) {
-                    tracing::warn!("Font file '{}' is not usable ({}); keeping default", path, err);
+                    tracing::warn!(
+                        "Font file '{}' is not usable ({}); keeping default",
+                        path,
+                        err
+                    );
                     return None;
                 }
                 Some(egui::FontData::from_owned(bytes))
@@ -448,17 +450,15 @@ impl VellumGuiApp {
         // `skin_state.loaded_skin()`: re-apply until the loaded skin actually
         // matches the target AND we've recorded applying from it. This covers
         // every case — none→skin, skin→none, and skin→skin — in one condition.
-        let loaded_matches_target =
-            self.skin_state.loaded_skin() == active_skin.as_deref();
+        let loaded_matches_target = self.skin_state.loaded_skin() == active_skin.as_deref();
         let art_settled = loaded_matches_target && self.applied_skin_art_settled;
         if theme_unchanged && skin_unchanged && art_settled {
             return;
         }
         let active = self.app_core.config.active_theme.clone();
 
-        let presets = crate::theme::ThemePresets::all_with_custom(
-            self.app_core.config.character.as_deref(),
-        );
+        let presets =
+            crate::theme::ThemePresets::all_with_custom(self.app_core.config.character.as_deref());
         if let Some(theme) = presets.get(&active) {
             let mut visuals = visuals_from_theme(theme);
             // The raw accent widgets paint with (map, dialog progress fills,
@@ -469,11 +469,7 @@ impl VellumGuiApp {
             // Overlay the active skin's UI palette (derived from art + [ui]
             // overrides) so config editors, menus, and native controls take
             // on the skin. No skin / no palette -> plain theme visuals.
-            if let Some(palette) = self
-                .skin_state
-                .widget_art()
-                .and_then(|art| art.ui_palette)
-            {
+            if let Some(palette) = self.skin_state.widget_art().and_then(|art| art.ui_palette) {
                 apply_ui_palette(&mut visuals, &palette);
                 widget_accent = palette.accent;
             }
@@ -481,8 +477,7 @@ impl VellumGuiApp {
             // "Settled" = the art we just read belongs to the target skin. When
             // the loaded skin still lags the target (async switch frame), this
             // stays false so the next frame re-applies from the correct art.
-            self.applied_skin_art_settled =
-                self.skin_state.loaded_skin() == active_skin.as_deref();
+            self.applied_skin_art_settled = self.skin_state.loaded_skin() == active_skin.as_deref();
             ctx.set_visuals(visuals);
             // set_visuals rebuilds Visuals wholesale; force the ui_settings
             // window radius to re-apply over it next frame.
@@ -497,9 +492,8 @@ impl VellumGuiApp {
 
     /// Handle `action:settheme:<name>` from dot-commands or menus.
     pub(super) fn apply_theme_by_name(&mut self, name: &str) {
-        let presets = crate::theme::ThemePresets::all_with_custom(
-            self.app_core.config.character.as_deref(),
-        );
+        let presets =
+            crate::theme::ThemePresets::all_with_custom(self.app_core.config.character.as_deref());
         if !presets.contains_key(name) {
             let mut names: Vec<&String> = presets.keys().collect();
             names.sort();

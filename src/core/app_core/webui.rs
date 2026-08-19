@@ -22,10 +22,7 @@ impl AppCore {
     /// Install the GUI re-emit channel. The GUI calls this once at startup so
     /// core-pumped bridge events reach the GUI-side handling. Headless/TUI
     /// leave it None (no local WebUI renderer).
-    pub fn set_webui_gui_channel(
-        &mut self,
-        tx: tokio::sync::mpsc::UnboundedSender<WebUiEvent>,
-    ) {
+    pub fn set_webui_gui_channel(&mut self, tx: tokio::sync::mpsc::UnboundedSender<WebUiEvent>) {
         self.webui_gui_tx = Some(tx);
     }
 
@@ -98,11 +95,7 @@ impl AppCore {
     /// Start (or restart) the bridge from a handshake reply, using the
     /// frontend's tokio handle. Idempotent-ish: an existing bridge is dropped
     /// first (its task aborts on Drop).
-    pub fn start_webui(
-        &mut self,
-        runtime: &tokio::runtime::Handle,
-        handshake: &WebUiHandshake,
-    ) {
+    pub fn start_webui(&mut self, runtime: &tokio::runtime::Handle, handshake: &WebUiHandshake) {
         let (host, port) = handshake.endpoint();
         let Some(token) = handshake.token() else {
             self.add_system_message("Lich WebUI handshake carried no auth token.");
@@ -130,9 +123,7 @@ impl AppCore {
 
     /// The sender the GUI clones into `fetch_image` so results return on the
     /// channel `pump_webui` drains (image results also reach the GUI re-emit).
-    pub fn webui_event_sender(
-        &self,
-    ) -> Option<tokio::sync::mpsc::UnboundedSender<WebUiEvent>> {
+    pub fn webui_event_sender(&self) -> Option<tokio::sync::mpsc::UnboundedSender<WebUiEvent>> {
         self.webui_event_tx.clone()
     }
 
@@ -149,7 +140,9 @@ impl AppCore {
     pub fn webui_unsubscribe(&mut self, page: &str) {
         self.webui_subscribed.remove(page);
         if let Some(bridge) = &self.webui_bridge {
-            bridge.send(WebUiClientMessage::Unsubscribe { page: page.to_string() });
+            bridge.send(WebUiClientMessage::Unsubscribe {
+                page: page.to_string(),
+            });
         }
     }
 

@@ -35,9 +35,17 @@ pub fn parse_anchor(line: &str) -> Option<GameItem> {
     });
 
     let (id, noun, inner) = if let Some(caps) = fwd.captures(line) {
-        (caps[1].to_string(), caps[2].to_string(), caps[3].to_string())
+        (
+            caps[1].to_string(),
+            caps[2].to_string(),
+            caps[3].to_string(),
+        )
     } else if let Some(caps) = rev.captures(line) {
-        (caps[2].to_string(), caps[1].to_string(), caps[3].to_string())
+        (
+            caps[2].to_string(),
+            caps[1].to_string(),
+            caps[3].to_string(),
+        )
     } else {
         return None;
     };
@@ -45,7 +53,9 @@ pub fn parse_anchor(line: &str) -> Option<GameItem> {
     Some(GameItem {
         id,
         noun: decode_entities(&noun),
-        name: decode_entities(&strip_inner_tags(&inner)).trim().to_string(),
+        name: decode_entities(&strip_inner_tags(&inner))
+            .trim()
+            .to_string(),
         weight: None,
     })
 }
@@ -146,8 +156,10 @@ mod tests {
     fn anchor_tolerates_order_attributes_nesting_entities() {
         // normal
         let i = parse_anchor(r#" a <a exist="101" noun="crystal">quartz crystal</a>"#).unwrap();
-        assert_eq!((i.id.as_str(), i.noun.as_str(), i.name.as_str()),
-                   ("101", "crystal", "quartz crystal"));
+        assert_eq!(
+            (i.id.as_str(), i.noun.as_str(), i.name.as_str()),
+            ("101", "crystal", "quartz crystal")
+        );
         // extra attribute after noun
         let i = parse_anchor(r#" a <a exist="102" noun="rod" class="x">iridian rod</a>"#).unwrap();
         assert_eq!(i.name, "iridian rod");

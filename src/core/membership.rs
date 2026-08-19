@@ -86,15 +86,21 @@ impl Membership {
             for room in db.rooms(location).unwrap_or(&[]) {
                 if let Some(&slug) = room.uid.iter().find_map(|uid| uid_index.get(uid)) {
                     map_of_room.insert(room.id, slug.to_string());
-                    rooms_of_map.entry(slug.to_string()).or_default().push(room.id);
+                    rooms_of_map
+                        .entry(slug.to_string())
+                        .or_default()
+                        .push(room.id);
                 }
             }
         }
+        // Every curated map registers — including EMPTY rosters. A user-
+        // created map (or Purgatory) starts with no rooms and must still
+        // appear in the picker and as a move target; from_saga drops empty
+        // layouts, so empties here are user-authored, not Simu noise.
         for (slug, map) in &curated.maps {
-            if rooms_of_map.contains_key(slug) {
-                names.insert(slug.clone(), map.name.clone());
-                curated_keys.insert(slug.clone());
-            }
+            rooms_of_map.entry(slug.clone()).or_default();
+            names.insert(slug.clone(), map.name.clone());
+            curated_keys.insert(slug.clone());
         }
 
         // Satellites claim the remainder. Tiny ones resolve to the base map
@@ -104,12 +110,7 @@ impl Membership {
         for satellite in satellites.satellites.values() {
             let tiny_home = satellite
                 .tiny
-                .then(|| {
-                    satellite
-                        .portals
-                        .iter()
-                        .find_map(|p| p.base_map.clone())
-                })
+                .then(|| satellite.portals.iter().find_map(|p| p.base_map.clone()))
                 .flatten();
             match tiny_home {
                 Some(base) => {
@@ -223,7 +224,10 @@ mod tests {
         let m = Membership::build(&db, &curated());
         let list = m.list_maps();
         assert_eq!(list.first().map(|e| e.0.as_str()), Some("town"));
-        assert!(list.iter().skip(1).all(|e| !e.3), "satellites after curated");
+        assert!(
+            list.iter().skip(1).all(|e| !e.3),
+            "satellites after curated"
+        );
     }
 
     #[test]

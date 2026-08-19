@@ -280,8 +280,7 @@ mod tests {
     /// wayto/timeto both present unless a cost is None.
     fn graph(edges: &[(u32, u32, &str, Option<f64>)], extra: &str) -> MapDb {
         use std::collections::BTreeMap;
-        let mut rooms: BTreeMap<u32, (BTreeMap<u32, String>, BTreeMap<u32, f64>)> =
-            BTreeMap::new();
+        let mut rooms: BTreeMap<u32, (BTreeMap<u32, String>, BTreeMap<u32, f64>)> = BTreeMap::new();
         for &(from, to, cmd, cost) in edges {
             let entry = rooms.entry(from).or_default();
             entry.0.insert(to, cmd.to_string());
@@ -297,8 +296,10 @@ mod tests {
                     .iter()
                     .map(|(k, v)| format!(r#""{k}": "{v}""#))
                     .collect();
-                let timeto: Vec<String> =
-                    timeto.iter().map(|(k, v)| format!(r#""{k}": {v}"#)).collect();
+                let timeto: Vec<String> = timeto
+                    .iter()
+                    .map(|(k, v)| format!(r#""{k}": {v}"#))
+                    .collect();
                 format!(
                     r#"{{"id": {id}, "uid": [{}], "location": "Test", "title": ["[Room {id}]"],
                         "wayto": {{{}}}, "timeto": {{{}}}, "paths": ""}}"#,
@@ -396,7 +397,11 @@ mod tests {
             "",
         );
         assert_eq!(find_nearest(&db, 1, &[3, 4]), Some(3));
-        assert_eq!(find_nearest(&db, 1, &[4, 1]), Some(1), "already standing on one");
+        assert_eq!(
+            find_nearest(&db, 1, &[4, 1]),
+            Some(1),
+            "already standing on one"
+        );
         assert_eq!(find_nearest(&db, 1, &[]), None);
     }
 

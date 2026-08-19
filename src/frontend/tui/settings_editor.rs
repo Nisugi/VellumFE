@@ -1248,7 +1248,11 @@ mod tests {
         let mut config = Config::default();
         config.tts.voice = Some("Old Voice".to_string());
         let mut editor = SettingsEditor::new(build_settings_items(&config));
-        set_item(&mut editor, "tts.voice", SettingValue::String(String::new()));
+        set_item(
+            &mut editor,
+            "tts.voice",
+            SettingValue::String(String::new()),
+        );
 
         let errors = editor.apply_to_config(&mut config);
         assert!(errors.is_empty(), "unexpected apply errors: {:?}", errors);

@@ -141,7 +141,11 @@ impl AppCore {
     /// Slices for a wheel key: the dynamic portals wheel first
     /// (shadowing any static wheel of that name), else the static
     /// config lookup. Owned — dynamic slices have no home in config.
-    pub fn wheel_slices(&self, key: &str, path: &[usize]) -> Option<Vec<crate::config::WheelSlice>> {
+    pub fn wheel_slices(
+        &self,
+        key: &str,
+        path: &[usize],
+    ) -> Option<Vec<crate::config::WheelSlice>> {
         if key == Self::PORTAL_WHEEL_KEY {
             if !path.is_empty() {
                 return None; // flat wheel: portals have no folders
@@ -245,7 +249,11 @@ impl AppCore {
     /// Delete a phone-authored macro button. Buttons from the hand-written
     /// macros.toml are not deletable remotely.
     pub fn apply_macro_delete(&mut self, group: Option<String>, label: String) {
-        if self.config.macros_local.delete_button(group.as_deref(), &label) {
+        if self
+            .config
+            .macros_local
+            .delete_button(group.as_deref(), &label)
+        {
             self.persist_and_push_macros(&format!("Deleted macro '{}'", label));
         } else {
             self.add_system_message(&format!(
@@ -299,8 +307,7 @@ impl AppCore {
         // just switch sets by name instead of re-implementing eval in JS.
         // Disjoint field borrows on purpose — gameobj_data_cached() would
         // hold all of &self against &mut self.doll_rules.
-        let now_server =
-            chrono::Utc::now().timestamp() + self.message_processor.server_time_offset;
+        let now_server = chrono::Utc::now().timestamp() + self.message_processor.server_time_offset;
         let (doll_variant, doll_hidden) = self.doll_rules.resolve(
             self.config.active_skin.as_deref(),
             self.config.doll_image.as_deref(),
@@ -317,7 +324,11 @@ impl AppCore {
         // Real sessions rarely set game_state.room_name/exits; fall back
         // the same way the room widget does (see gui sync_room_windows):
         // subtitle from <streamWindow> for the name, compass for exits.
-        if snap.room_name.as_deref().is_none_or(|n| n.trim().is_empty()) {
+        if snap
+            .room_name
+            .as_deref()
+            .is_none_or(|n| n.trim().is_empty())
+        {
             snap.room_name = self.room_subtitle.as_ref().map(|subtitle| {
                 subtitle
                     .trim()
@@ -389,22 +400,16 @@ impl AppCore {
                 });
                 out.push(crate::core::remote::RemoteFieldCard {
                     id: member.trim_start_matches('#').to_string(),
-                    noun: c
-                        .noun
-                        .clone()
-                        .unwrap_or_else(|| {
-                            c.name.rsplit(' ').next().unwrap_or(&c.name).to_string()
-                        }),
+                    noun: c.noun.clone().unwrap_or_else(|| {
+                        c.name.rsplit(' ').next().unwrap_or(&c.name).to_string()
+                    }),
                     name: c.name.clone(),
                     rect: [rect.x0, rect.y0, rect.x1, rect.y1],
                     foot: [fx, fy],
                     dead: c.is_dead(),
                     boss: flags.is_some_and(|f| f.is_boss()),
-                    current: !current.is_empty()
-                        && member.trim_start_matches('#') == current,
-                    statuses: flags
-                        .map(|f| f.statuses.clone())
-                        .unwrap_or_default(),
+                    current: !current.is_empty() && member.trim_start_matches('#') == current,
+                    statuses: flags.map(|f| f.statuses.clone()).unwrap_or_default(),
                     lift,
                 });
             }
@@ -559,7 +564,8 @@ impl AppCore {
             return;
         }
         self.map.request_location(&location);
-        self.pending_map_views.push((client_id, request_id, location));
+        self.pending_map_views
+            .push((client_id, request_id, location));
         self.service_pending_map_views();
     }
 

@@ -190,7 +190,15 @@ mod tests {
     /// un-seedable windows.
     #[test]
     fn dedicated_views_are_seedable() {
-        for id in ["inv", "reserve", "room", "Spells", "minivitals", "expr", "encum"] {
+        for id in [
+            "inv",
+            "reserve",
+            "room",
+            "Spells",
+            "minivitals",
+            "expr",
+            "encum",
+        ] {
             for binding in [
                 WindowBinding::Stream(id.to_string()),
                 WindowBinding::Dialog(id.to_string()),

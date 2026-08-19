@@ -71,7 +71,10 @@ fn parse_table(source: &str, origin: &str, table: &mut Vec<MazeDef>) {
             continue;
         }
         if entry.rooms.is_empty() || entry.ask.trim().is_empty() {
-            tracing::warn!("{origin}: maze '{}' skipped (empty rooms or ask)", entry.name);
+            tracing::warn!(
+                "{origin}: maze '{}' skipped (empty rooms or ask)",
+                entry.name
+            );
             continue;
         }
         let def = MazeDef {
@@ -164,7 +167,14 @@ mod tests {
         let line = r#"Your route is:  go clearing, west, west, south, go path, southeast.  If you become lost on the way, or make a wrong turn, you can always search around to get your bearings, then start again.""#;
         assert_eq!(
             parse_pathcode_line(line).unwrap(),
-            vec!["go clearing", "west", "west", "south", "go path", "southeast"]
+            vec![
+                "go clearing",
+                "west",
+                "west",
+                "south",
+                "go path",
+                "southeast"
+            ]
         );
         assert!(parse_pathcode_line("He points off towards the north.").is_none());
         assert!(parse_pathcode_line("Your route is:  .").is_none());

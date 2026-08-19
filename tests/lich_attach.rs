@@ -55,7 +55,10 @@ async fn detachable_attach_handshakes_streams_and_ends_on_close() {
     });
 
     // Session comes up and the fake's lines arrive as text.
-    assert!(matches!(recv(&mut server_rx).await, ServerMessage::Connected));
+    assert!(matches!(
+        recv(&mut server_rx).await,
+        ServerMessage::Connected
+    ));
     match recv(&mut server_rx).await {
         ServerMessage::Text(line) => assert_eq!(line, "<pushBold/>Welcome back<popBold/>"),
         other => panic!("expected text, got {other:?}"),
@@ -139,7 +142,10 @@ async fn aborting_the_task_closes_the_socket_so_reattach_works() {
     let task = tokio::spawn(async move {
         LichConnection::start("127.0.0.1", addr.port(), None, server_tx, command_rx, None).await
     });
-    assert!(matches!(recv(&mut server_rx).await, ServerMessage::Connected));
+    assert!(matches!(
+        recv(&mut server_rx).await,
+        ServerMessage::Connected
+    ));
 
     // Supervisor-style teardown.
     task.abort();
@@ -157,9 +163,20 @@ async fn aborting_the_task_closes_the_socket_so_reattach_works() {
     let (server_tx2, mut server_rx2) = mpsc::channel::<ServerMessage>(64);
     let (_command_tx2, command_rx2) = mpsc::unbounded_channel::<String>();
     tokio::spawn(async move {
-        LichConnection::start("127.0.0.1", addr.port(), None, server_tx2, command_rx2, None).await
+        LichConnection::start(
+            "127.0.0.1",
+            addr.port(),
+            None,
+            server_tx2,
+            command_rx2,
+            None,
+        )
+        .await
     });
-    assert!(matches!(recv(&mut server_rx2).await, ServerMessage::Connected));
+    assert!(matches!(
+        recv(&mut server_rx2).await,
+        ServerMessage::Connected
+    ));
     match recv(&mut server_rx2).await {
         ServerMessage::Text(line) => assert_eq!(line, "attached"),
         other => panic!("expected text, got {other:?}"),

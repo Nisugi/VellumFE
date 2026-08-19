@@ -16,10 +16,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use crate::core::remote::{RemoteSessionInfo, SessionState};
+use crate::core::AppCore;
 use crate::network::{
     AuthFailed, DirectConnectConfig, DirectConnection, LichConnection, RawLogger, ServerMessage,
 };
-use crate::core::AppCore;
 
 /// Windows are layout containers for stream routing; with no terminal we
 /// still initialize them at a nominal size so highlight/stream processing
@@ -270,8 +270,7 @@ fn resolve_connect(req: &SessionRequest) -> Result<ResolvedConnect, String> {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
         if profile_name.is_some() {
-            let mut store =
-                crate::config::profiles::LauncherStore::load().unwrap_or_default();
+            let mut store = crate::config::profiles::LauncherStore::load().unwrap_or_default();
             let mut saved = crate::config::profiles::LauncherProfile::new_direct();
             saved.mode = crate::config::profiles::LaunchMode::Lich;
             saved.name = profile_name
@@ -438,7 +437,9 @@ pub async fn async_run(
         {
             if let Some(conn) = supervisor.connection.as_ref() {
                 app_core.message_processor.skip_next_spells_clear();
-                let _ = conn.command_tx.send("_spell _spell_update_links\n".to_string());
+                let _ = conn
+                    .command_tx
+                    .send("_spell _spell_update_links\n".to_string());
             }
         }
     }
@@ -794,11 +795,9 @@ pub async fn async_run(
                     if supervisor.connection.is_some() {
                         app_core.add_system_message("Already connected.");
                     } else if !supervisor.can_reconnect_after_clear() {
-                        app_core.add_system_message(
-                            "Nothing to reconnect to — log in from the app.",
-                        );
                         app_core
-                            .set_remote_session_state(supervisor.status(SessionState::Idle));
+                            .add_system_message("Nothing to reconnect to — log in from the app.");
+                        app_core.set_remote_session_state(supervisor.status(SessionState::Idle));
                     } else {
                         supervisor.user_disconnected = false;
                         supervisor.reconnect_attempt = 0;
@@ -853,12 +852,11 @@ pub async fn async_run(
                                         );
                                         let trust =
                                             crate::launcher::flow::HostKeyTrust::AutoPinFirstUse;
-                                        let outcome = crate::launcher::flow::launch_spec(
-                                            &spec,
-                                            trust,
-                                            |p| tracing::debug!("launch progress: {p:?}"),
-                                        )
-                                        .await;
+                                        let outcome =
+                                            crate::launcher::flow::launch_spec(&spec, trust, |p| {
+                                                tracing::debug!("launch progress: {p:?}")
+                                            })
+                                            .await;
                                         match outcome {
                                             Ok(_) => {
                                                 supervisor.character = character;
@@ -916,14 +914,11 @@ pub async fn async_run(
                     let config = match crate::launcher::config::LauncherConfig::load() {
                         Ok(cfg) => cfg,
                         Err(err) => {
-                            app_core
-                                .add_system_message(&format!("Launcher config error: {err:#}"));
+                            app_core.add_system_message(&format!("Launcher config error: {err:#}"));
                             continue;
                         }
                     };
-                    app_core.set_remote_session_state(
-                        supervisor.status(SessionState::Connecting),
-                    );
+                    app_core.set_remote_session_state(supervisor.status(SessionState::Connecting));
                     // Auto-pin the host key on first use: over an already-private
                     // tunnel there is no interactive prompt on this path, and a
                     // changed key is still hard-rejected inside the flow.
@@ -933,12 +928,9 @@ pub async fn async_run(
                         // callback can't borrow app_core while it's borrowed by
                         // the surrounding loop).
                         let mut messages = Vec::new();
-                        let res = crate::launcher::flow::launch(
-                            &config,
-                            &character,
-                            trust,
-                            |p| messages.push(format!("{p:?}")),
-                        )
+                        let res = crate::launcher::flow::launch(&config, &character, trust, |p| {
+                            messages.push(format!("{p:?}"))
+                        })
                         .await;
                         for m in messages {
                             tracing::debug!("launch progress: {m}");
@@ -1093,10 +1085,7 @@ fn should_send_to_network(command: &str) -> bool {
 /// phone user at the client's own on-device surface; actions the headless
 /// runtime genuinely supports (reconnect, UI pack import/export, perf dump) do
 /// the real work.
-fn dispatch_ui_action(
-    app_core: &mut AppCore,
-    action: crate::data::UiAction,
-) -> DispatchResult {
+fn dispatch_ui_action(app_core: &mut AppCore, action: crate::data::UiAction) -> DispatchResult {
     use crate::data::UiAction as A;
 
     // Notice shown for actions whose editing UI lives on the desktop clients.
@@ -1230,7 +1219,10 @@ fn handle_remote_event(
     match event {
         RemoteEvent::Command(text) => {
             tracing::debug!("remote command: '{}'", text);
-            push_dispatch_request(dispatch_command(app_core, connection, text), session_requests);
+            push_dispatch_request(
+                dispatch_command(app_core, connection, text),
+                session_requests,
+            );
             true
         }
         RemoteEvent::LinkTap {
@@ -1255,7 +1247,9 @@ fn handle_remote_event(
                 },
             ) {
                 if let Some(conn) = connection {
-                    app_core.perf_stats.record_bytes_sent((cmd.len() + 1) as u64);
+                    app_core
+                        .perf_stats
+                        .record_bytes_sent((cmd.len() + 1) as u64);
                     let _ = conn.command_tx.send(cmd);
                 }
             }

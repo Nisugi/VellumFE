@@ -28,8 +28,10 @@ fn grapheme_display_width(grapheme: &str) -> usize {
 fn text_char_widths(text: &str) -> Vec<usize> {
     text.graphemes(true)
         .flat_map(|grapheme| {
-            std::iter::once(grapheme_display_width(grapheme))
-                .chain(std::iter::repeat_n(0, grapheme.chars().count().saturating_sub(1)))
+            std::iter::once(grapheme_display_width(grapheme)).chain(std::iter::repeat_n(
+                0,
+                grapheme.chars().count().saturating_sub(1),
+            ))
         })
         .collect()
 }
@@ -119,8 +121,8 @@ impl CommandInput {
             text_color: None,       // Will use global default
             completion_color: None, // Will use a visible muted fallback
             history_suggestions: true,
-            cursor_fg_color: None,  // Default: black
-            cursor_bg_color: None,  // Default: white
+            cursor_fg_color: None, // Default: black
+            cursor_bg_color: None, // Default: white
             prompt_icon: None,
             prompt_icon_color: None,
         }
@@ -375,8 +377,7 @@ impl CommandInput {
         if let Some(icon) = icon_text {
             let max_icon_width = inner.width as usize;
             if max_icon_width > 0 {
-                let (icon_render, icon_render_width) =
-                    prefix_fitting_width(icon, max_icon_width);
+                let (icon_render, icon_render_width) = prefix_fitting_width(icon, max_icon_width);
                 let icon_color = self
                     .prompt_icon_color
                     .as_ref()
@@ -448,8 +449,8 @@ impl CommandInput {
                 .get(self.model.cursor_pos())
                 .copied()
                 .unwrap_or(1);
-            let target_cursor_width = (available_width * 3 / 10)
-                .min(available_width.saturating_sub(cursor_width));
+            let target_cursor_width =
+                (available_width * 3 / 10).min(available_width.saturating_sub(cursor_width));
             let mut start = self.model.cursor_pos();
             let mut width = 0;
             while start > 0 && width + char_widths[start - 1] <= target_cursor_width {
@@ -839,8 +840,6 @@ mod tests {
         assert_eq!(buf[(3, 0)].bg, Color::White);
         assert_eq!(buf[(4, 0)].symbol(), "e");
         assert_eq!(buf[(4, 0)].fg, Color::Rgb(216, 222, 233));
-        assert!(!buf[(4, 0)]
-            .modifier
-            .contains(ratatui::style::Modifier::DIM));
+        assert!(!buf[(4, 0)].modifier.contains(ratatui::style::Modifier::DIM));
     }
 }

@@ -179,12 +179,8 @@ fn parse_effect_list(xml: &str) -> Tables {
                     // older clients ignore the unknown tag, Lich untouched).
                     "effect" if attr("availability").as_deref() == Some("creature") => {
                         if let Some(name) = attr("name").filter(|n| !n.is_empty()) {
-                            current_effect = Some((
-                                name,
-                                DEFAULT_CREATURE_TIMEOUT_S,
-                                Vec::new(),
-                                Vec::new(),
-                            ));
+                            current_effect =
+                                Some((name, DEFAULT_CREATURE_TIMEOUT_S, Vec::new(), Vec::new()));
                         }
                     }
                     "cost" | "message" if current.is_some() || current_effect.is_some() => {
@@ -244,47 +240,43 @@ fn parse_effect_list(xml: &str) -> Tables {
                     }
                 }
             }
-            Ok(Event::End(e)) => {
-                match e.name().as_ref() {
-                    b"spell" => {
-                        if let Some(spell) = current.take() {
-                            tables.spells.insert(spell.number, spell);
-                        }
+            Ok(Event::End(e)) => match e.name().as_ref() {
+                b"spell" => {
+                    if let Some(spell) = current.take() {
+                        tables.spells.insert(spell.number, spell);
                     }
-                    b"effect" => {
-                        if let Some((name, timeout_s, starts, ends)) = current_effect.take() {
-                            let compile = |src: &str| -> Option<regex::Regex> {
-                                regex::Regex::new(src)
-                                    .map_err(|e| {
-                                        tracing::warn!(
-                                            "effect-list creature effect '{}': bad regex {:?}: {}",
-                                            name,
-                                            src,
-                                            e
-                                        )
-                                    })
-                                    .ok()
-                            };
-                            let spec = CreatureEffectSpec {
-                                starts: starts
-                                    .iter()
-                                    .filter_map(|(src, sev)| {
-                                        compile(src).map(|re| (re, *sev))
-                                    })
-                                    .collect(),
-                                ends: ends.iter().filter_map(|src| compile(src)).collect(),
-                                name,
-                                timeout_s,
-                            };
-                            if !spec.starts.is_empty() {
-                                tables.creature_effects.push(spec);
-                            }
-                        }
-                    }
-                    b"cost" | b"message" | b"duration" => pending = None,
-                    _ => {}
                 }
-            }
+                b"effect" => {
+                    if let Some((name, timeout_s, starts, ends)) = current_effect.take() {
+                        let compile = |src: &str| -> Option<regex::Regex> {
+                            regex::Regex::new(src)
+                                .map_err(|e| {
+                                    tracing::warn!(
+                                        "effect-list creature effect '{}': bad regex {:?}: {}",
+                                        name,
+                                        src,
+                                        e
+                                    )
+                                })
+                                .ok()
+                        };
+                        let spec = CreatureEffectSpec {
+                            starts: starts
+                                .iter()
+                                .filter_map(|(src, sev)| compile(src).map(|re| (re, *sev)))
+                                .collect(),
+                            ends: ends.iter().filter_map(|src| compile(src)).collect(),
+                            name,
+                            timeout_s,
+                        };
+                        if !spec.starts.is_empty() {
+                            tables.creature_effects.push(spec);
+                        }
+                    }
+                }
+                b"cost" | b"message" | b"duration" => pending = None,
+                _ => {}
+            },
             Ok(Event::Eof) => break,
             Err(err) => {
                 tracing::warn!("effect-list.xml parse stopped: {}", err);
@@ -360,7 +352,9 @@ mod tests {
         // No severity attr -> rank 1.
         assert_eq!(bleed.starts[2].1, 1);
         assert_eq!(bleed.ends.len(), 1);
-        assert!(bleed.starts[0].0.is_match("A troll gushes blood everywhere!"));
+        assert!(bleed.starts[0]
+            .0
+            .is_match("A troll gushes blood everywhere!"));
     }
 
     #[test]
@@ -374,7 +368,10 @@ mod tests {
                </spells>"#,
         );
         // Formula duration keeps the safety-net default.
-        assert_eq!(tables.creature_effects[0].timeout_s, DEFAULT_CREATURE_TIMEOUT_S);
+        assert_eq!(
+            tables.creature_effects[0].timeout_s,
+            DEFAULT_CREATURE_TIMEOUT_S
+        );
     }
 
     #[test]

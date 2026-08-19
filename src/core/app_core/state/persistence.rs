@@ -156,7 +156,6 @@ impl AppCore {
 
     /// Helper to get minimum widget size based on widget type (from VellumFE)
 
-
     /// Apply proportional height resize (from VellumFE apply_height_resize)
     /// Adapted for WindowDef enum structure
 
@@ -377,11 +376,13 @@ impl AppCore {
             .filter(|id| allowed_ids.contains(*id))
             .cloned()
             .collect();
-        let active_quickbar_id = self
-            .ui_state
-            .active_quickbar_id
-            .as_ref()
-            .and_then(|id| if allowed_ids.contains(id) { Some(id.clone()) } else { None });
+        let active_quickbar_id = self.ui_state.active_quickbar_id.as_ref().and_then(|id| {
+            if allowed_ids.contains(id) {
+                Some(id.clone())
+            } else {
+                None
+            }
+        });
 
         let character = (self.game_state.character != Default::default())
             .then(|| self.game_state.character.clone());
@@ -583,7 +584,8 @@ impl AppCore {
 
     /// Reload settings (UI, connection, sound) from disk
     pub fn reload_settings(&mut self) {
-        let config_path = match crate::config::Config::config_path(self.config.character.as_deref()) {
+        let config_path = match crate::config::Config::config_path(self.config.character.as_deref())
+        {
             Ok(path) => path,
             Err(e) => {
                 self.add_system_message(&format!("Failed to get config path: {}", e));

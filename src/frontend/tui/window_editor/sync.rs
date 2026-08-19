@@ -15,10 +15,16 @@ impl WindowEditor {
             crate::data::geometry::Col::new(self.col_input.lines()[0].parse().unwrap_or(0));
         // Rows/cols is now total size (VellumFE style), not content size
         // User specifies actual widget dimensions; content adjusts based on borders
-        let total_rows = self.rows_input.lines().first()
+        let total_rows = self
+            .rows_input
+            .lines()
+            .first()
             .and_then(|s| s.parse::<u16>().ok())
             .unwrap_or(1);
-        let total_cols = self.cols_input.lines().first()
+        let total_cols = self
+            .cols_input
+            .lines()
+            .first()
             .and_then(|s| s.parse::<u16>().ok())
             .unwrap_or(40);
         self.window_def.base_mut().rows = crate::data::geometry::Height::new(total_rows.max(1));
@@ -134,7 +140,8 @@ impl WindowEditor {
             data.buffer_size = 100;
 
             // Parse sort direction
-            data.sort_direction = match self.perception_sort_direction_input
+            data.sort_direction = match self
+                .perception_sort_direction_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_lowercase())
@@ -169,22 +176,26 @@ impl WindowEditor {
 
         if let crate::config::WindowDef::Encumbrance { data, .. } = &mut self.window_def {
             data.show_label = self.show_label_encum;
-            data.color_light = self.encum_color_light_input
+            data.color_light = self
+                .encum_color_light_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            data.color_moderate = self.encum_color_moderate_input
+            data.color_moderate = self
+                .encum_color_moderate_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            data.color_heavy = self.encum_color_heavy_input
+            data.color_heavy = self
+                .encum_color_heavy_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            data.color_critical = self.encum_color_critical_input
+            data.color_critical = self
+                .encum_color_critical_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_string())
@@ -197,12 +208,14 @@ impl WindowEditor {
             data.show_mind_bar = self.gs4_exp_show_mind_bar;
             data.show_total_exp = self.gs4_exp_show_total_exp;
             data.show_ascension_exp = self.gs4_exp_show_ascension_exp;
-            data.mind_bar_color = self.gs4_exp_mind_bar_color_input
+            data.mind_bar_color = self
+                .gs4_exp_mind_bar_color_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            data.exp_bar_color = self.gs4_exp_exp_bar_color_input
+            data.exp_bar_color = self
+                .gs4_exp_exp_bar_color_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_string())
@@ -212,27 +225,32 @@ impl WindowEditor {
         if let crate::config::WindowDef::MiniVitals { data, .. } = &mut self.window_def {
             data.numbers_only = self.minivitals_numbers_only;
             data.current_only = self.minivitals_current_only;
-            data.health_color = self.minivitals_health_color_input
+            data.health_color = self
+                .minivitals_health_color_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            data.mana_color = self.minivitals_mana_color_input
+            data.mana_color = self
+                .minivitals_mana_color_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            data.stamina_color = self.minivitals_stamina_color_input
+            data.stamina_color = self
+                .minivitals_stamina_color_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            data.spirit_color = self.minivitals_spirit_color_input
+            data.spirit_color = self
+                .minivitals_spirit_color_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            data.depleted_color = self.minivitals_depleted_color_input
+            data.depleted_color = self
+                .minivitals_depleted_color_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_string())
@@ -241,7 +259,8 @@ impl WindowEditor {
 
         if let crate::config::WindowDef::Betrayer { data, .. } = &mut self.window_def {
             data.show_items = self.betrayer_show_items;
-            data.bar_color = self.betrayer_bar_color_input
+            data.bar_color = self
+                .betrayer_bar_color_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_string())
@@ -439,9 +458,8 @@ impl WindowEditor {
                 .filter(|s| !s.is_empty());
             data.cursor_background_color =
                 Some(self.cursor_bg_input.lines()[0].trim().to_string()).filter(|s| !s.is_empty());
-            data.completion_color =
-                Some(self.completion_color_input.lines()[0].trim().to_string())
-                    .filter(|s| !s.is_empty());
+            data.completion_color = Some(self.completion_color_input.lines()[0].trim().to_string())
+                .filter(|s| !s.is_empty());
         }
         if let crate::config::WindowDef::Targets { data, .. } = &mut self.window_def {
             data.entity_id = self.entity_id_input.lines()[0].trim().to_string();
@@ -509,7 +527,11 @@ impl WindowEditor {
 
     /// Get the current editor window position and size for persistence
     pub fn get_editor_geometry(&self) -> (u16, u16, u16, u16) {
-        (self.popup_x, self.popup_y, self.popup_width, self.popup_height)
+        (
+            self.popup_x,
+            self.popup_y,
+            self.popup_width,
+            self.popup_height,
+        )
     }
-
 }

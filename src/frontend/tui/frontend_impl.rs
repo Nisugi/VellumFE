@@ -1,13 +1,13 @@
-use anyhow::Result;
+use super::*;
 use crate::core::AppCore;
 use crate::frontend::{Frontend, FrontendEvent};
+use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, LeaveAlternateScreen},
 };
 use std::time::Instant;
-use super::*;
 
 impl Frontend for TuiFrontend {
     fn poll_events(&mut self) -> Result<Vec<FrontendEvent>> {
@@ -38,7 +38,10 @@ impl Frontend for TuiFrontend {
                 Event::Resize(width, height) => {
                     // Apply resize debouncing to prevent excessive layout recalculations
                     if let Some((w, h)) = self.resize_debouncer.check_resize(width, height) {
-                        events.push(FrontendEvent::Resize { width: w, height: h });
+                        events.push(FrontendEvent::Resize {
+                            width: w,
+                            height: h,
+                        });
                     }
                 }
                 Event::Mouse(mouse) => {
@@ -113,7 +116,7 @@ impl Frontend for TuiFrontend {
         self.sync_quickbar_widgets(app_core, &theme);
         self.sync_hotkey_bars(app_core, &theme);
         self.sync_indicator_widgets(app_core, &theme);
-        self.sync_targets_widgets(app_core, &theme);  // New component-based
+        self.sync_targets_widgets(app_core, &theme); // New component-based
         self.sync_players_widgets(app_core, &theme);
         self.sync_missing_spells_widgets(app_core);
         self.sync_containers_widgets(app_core);
@@ -139,7 +142,8 @@ impl Frontend for TuiFrontend {
         let mut perception_windows = std::mem::take(&mut self.widget_manager.perception_windows);
         let mut progress_bars = std::mem::take(&mut self.widget_manager.progress_bars);
         let mut countdowns = std::mem::take(&mut self.widget_manager.countdowns);
-        let mut active_effects_windows = std::mem::take(&mut self.widget_manager.active_effects_windows);
+        let mut active_effects_windows =
+            std::mem::take(&mut self.widget_manager.active_effects_windows);
         let mut hand_widgets = std::mem::take(&mut self.widget_manager.hand_widgets);
         let mut spacer_widgets = std::mem::take(&mut self.widget_manager.spacer_widgets);
         let mut quickbar_widgets = std::mem::take(&mut self.widget_manager.quickbar_widgets);
@@ -158,7 +162,8 @@ impl Frontend for TuiFrontend {
         let mut injury_doll_widgets = std::mem::take(&mut self.widget_manager.injury_doll_widgets);
         let mut performance_widgets = std::mem::take(&mut self.widget_manager.performance_widgets);
         let mut experience_widgets = std::mem::take(&mut self.widget_manager.experience_widgets);
-        let mut gs4_experience_widgets = std::mem::take(&mut self.widget_manager.gs4_experience_widgets);
+        let mut gs4_experience_widgets =
+            std::mem::take(&mut self.widget_manager.gs4_experience_widgets);
         let mut encumbrance_widgets = std::mem::take(&mut self.widget_manager.encumbrance_widgets);
         let mut minivitals_widgets = std::mem::take(&mut self.widget_manager.minivitals_widgets);
         let mut betrayer_widgets = std::mem::take(&mut self.widget_manager.betrayer_widgets);
@@ -252,7 +257,9 @@ impl Frontend for TuiFrontend {
                                 let search_info = if let Some(focused_name) =
                                     &app_core.ui_state.focused_window
                                 {
-                                    if let Some(window) = app_core.ui_state.windows.get(focused_name) {
+                                    if let Some(window) =
+                                        app_core.ui_state.windows.get(focused_name)
+                                    {
                                         if let WindowContent::Text(_) = &window.content {
                                             text_windows
                                                 .get(focused_name)
@@ -267,9 +274,7 @@ impl Frontend for TuiFrontend {
                                     // No focused window, try main
                                     if let Some(window) = app_core.ui_state.windows.get("main") {
                                         if let WindowContent::Text(_) = &window.content {
-                                            text_windows
-                                                .get("main")
-                                                .and_then(|tw| tw.search_info())
+                                            text_windows.get("main").and_then(|tw| tw.search_info())
                                         } else {
                                             None
                                         }
@@ -389,16 +394,13 @@ impl Frontend for TuiFrontend {
                             .ui_state
                             .dialog_store
                             .get(dialog_id)
-                            .filter(|d| {
-                                d.positioned_controls().is_some() || !d.buttons.is_empty()
-                            })
+                            .filter(|d| d.positioned_controls().is_some() || !d.buttons.is_empty())
                             .or_else(|| {
                                 crate::core::local_catalog::dialog_content_alias(dialog_id)
                                     .and_then(|a| app_core.ui_state.dialog_store.get(a))
                             })
                             .or_else(|| app_core.ui_state.dialog_store.get(dialog_id));
-                        if let Some(dialog) = slot
-                        {
+                        if let Some(dialog) = slot {
                             crate::frontend::tui::dialog::render_dialog_panel(
                                 dialog,
                                 area,
@@ -432,8 +434,7 @@ impl Frontend for TuiFrontend {
                         )
                         .wrap(ratatui::widgets::Wrap { trim: true })
                         .style(
-                            ratatui::style::Style::default()
-                                .fg(ratatui::style::Color::DarkGray),
+                            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
                         );
                         f.render_widget(note, area);
                     }
@@ -446,8 +447,7 @@ impl Frontend for TuiFrontend {
                         )
                         .wrap(ratatui::widgets::Wrap { trim: true })
                         .style(
-                            ratatui::style::Style::default()
-                                .fg(ratatui::style::Color::DarkGray),
+                            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
                         );
                         f.render_widget(note, area);
                     }
@@ -460,8 +460,7 @@ impl Frontend for TuiFrontend {
                         )
                         .wrap(ratatui::widgets::Wrap { trim: true })
                         .style(
-                            ratatui::style::Style::default()
-                                .fg(ratatui::style::Color::DarkGray),
+                            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
                         );
                         f.render_widget(note, area);
                     }
@@ -480,10 +479,8 @@ impl Frontend for TuiFrontend {
                     WindowContent::TabbedText(_) => {
                         // Use the TabbedTextWindow widget
                         if let Some(tabbed_window) = tabbed_text_windows.get_mut(name) {
-                            let focused =
-                                app_core.ui_state.focused_window.as_ref() == Some(name);
-                            let window_index =
-                                window_index_map.get(name).copied().unwrap_or(0);
+                            let focused = app_core.ui_state.focused_window.as_ref() == Some(name);
+                            let window_index = window_index_map.get(name).copied().unwrap_or(0);
                             tabbed_window.render_with_focus(
                                 area,
                                 f.buffer_mut(),
@@ -711,7 +708,6 @@ impl Frontend for TuiFrontend {
                 theme_editor.render(screen_area, f.buffer_mut(), &app_core.config, &theme);
             }
             if let Some(ref theme_browser) = self.theme_browser {
-                
                 f.render_widget(theme_browser, screen_area);
             }
             if let Some(ref mut settings_editor) = self.settings_editor {
@@ -739,7 +735,12 @@ impl Frontend for TuiFrontend {
 
             // Render injuries popup if active (viewing another player's injuries)
             if let Some(ref injuries_popup) = app_core.ui_state.injuries_popup {
-                injury_doll::render_injuries_popup(injuries_popup, screen_area, f.buffer_mut(), &theme);
+                injury_doll::render_injuries_popup(
+                    injuries_popup,
+                    screen_area,
+                    f.buffer_mut(),
+                    &theme,
+                );
             }
 
             // Widget pass ends here; the terminal flush happens after the
@@ -762,7 +763,9 @@ impl Frontend for TuiFrontend {
         // Record frame/render timings for the performance monitor:
         // "Render" = whole pass including terminal flush, "Draw" = the
         // widget pass only.
-        app_core.perf_stats.record_render_time(render_start.elapsed());
+        app_core
+            .perf_stats
+            .record_render_time(render_start.elapsed());
         app_core.perf_stats.record_ui_render_time(widget_pass);
         app_core.perf_stats.record_frame();
         for (name, duration) in window_times.drain(..) {

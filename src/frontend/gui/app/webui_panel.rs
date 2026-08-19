@@ -80,7 +80,12 @@ fn marker_display_rect(marker: &WebUiMapMarker, origin: egui::Pos2, scale: f32) 
 
 /// Marker visuals matching the browser bundle: "current" is a red glow
 /// circle, "pin" a filled warm dot, everything else an accent-colored box.
-fn paint_marker(painter: &egui::Painter, marker: &WebUiMapMarker, rect: egui::Rect, accent: Color32) {
+fn paint_marker(
+    painter: &egui::Painter,
+    marker: &WebUiMapMarker,
+    rect: egui::Rect,
+    accent: Color32,
+) {
     match marker.kind.as_deref() {
         Some("current") => {
             let red = Color32::from_rgb(229, 22, 22);
@@ -483,12 +488,7 @@ impl VellumGuiApp {
 
     fn render_webui_node(ui: &mut egui::Ui, page: &str, node: &WebUiNode) {
         let scratch_id = |suffix: &str| {
-            egui::Id::new((
-                "webui",
-                page,
-                node.cid.as_deref().unwrap_or(""),
-                suffix,
-            ))
+            egui::Id::new(("webui", page, node.cid.as_deref().unwrap_or(""), suffix))
         };
 
         match node.t.as_str() {
@@ -663,10 +663,7 @@ impl VellumGuiApp {
                         .selected_text(current.clone())
                         .show_ui(ui, |ui| {
                             for option in options {
-                                if ui
-                                    .selectable_label(*option == current, option)
-                                    .clicked()
-                                {
+                                if ui.selectable_label(*option == current, option).clicked() {
                                     queue_event(
                                         ui.ctx(),
                                         page,
@@ -739,8 +736,11 @@ impl VellumGuiApp {
                             }
                             ui.add(slider)
                         } else {
-                            let mut drag = egui::DragValue::new(&mut value)
-                                .speed(if step > 0.0 { step } else { 1.0 });
+                            let mut drag = egui::DragValue::new(&mut value).speed(if step > 0.0 {
+                                step
+                            } else {
+                                1.0
+                            });
                             if node.min.is_some() || node.max.is_some() {
                                 drag = drag.range(min..=max);
                             }
@@ -847,7 +847,11 @@ impl VellumGuiApp {
                 }
                 let cols = (node.cols.unwrap_or(1).max(1) as usize).min(cells.len().max(1));
                 let compact = node.compact.unwrap_or(false);
-                let spacing = if compact { 2.0 } else { ui.spacing().item_spacing.x };
+                let spacing = if compact {
+                    2.0
+                } else {
+                    ui.spacing().item_spacing.x
+                };
                 let avail = ui.available_width() - spacing * (cols.saturating_sub(1)) as f32;
                 let cell_width = (avail / cols as f32).max(10.0);
                 for row in cells.chunks(cols) {
@@ -862,14 +866,10 @@ impl VellumGuiApp {
                             } else {
                                 egui::Layout::top_down(egui::Align::Min)
                             };
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(cell_width, 0.0),
-                                layout,
-                                |ui| {
-                                    ui.set_width(cell_width);
-                                    Self::render_webui_nodes(ui, page, cell.children());
-                                },
-                            );
+                            ui.allocate_ui_with_layout(egui::vec2(cell_width, 0.0), layout, |ui| {
+                                ui.set_width(cell_width);
+                                Self::render_webui_nodes(ui, page, cell.children());
+                            });
                         }
                     });
                 }
@@ -895,7 +895,9 @@ impl VellumGuiApp {
                 Self::render_webui_nodes(ui, page, tabs[active].children());
             }
             "image" => {
-                let Some(src) = node.src.as_deref() else { return };
+                let Some(src) = node.src.as_deref() else {
+                    return;
+                };
                 match Self::resolve_webui_image(ui, src) {
                     WebUiImageState::Ready(texture) => {
                         let natural = texture.size_vec2();
@@ -912,7 +914,10 @@ impl VellumGuiApp {
                             ui.painter().image(
                                 texture.id(),
                                 rect,
-                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                egui::Rect::from_min_max(
+                                    egui::pos2(0.0, 0.0),
+                                    egui::pos2(1.0, 1.0),
+                                ),
                                 Color32::WHITE,
                             );
                         }
@@ -958,7 +963,9 @@ impl VellumGuiApp {
     /// same payload the browser bundle emits, so script callbacks can't
     /// tell the difference.
     fn render_webui_image_map(ui: &mut egui::Ui, page: &str, node: &WebUiNode, id: egui::Id) {
-        let Some(src) = node.src.as_deref() else { return };
+        let Some(src) = node.src.as_deref() else {
+            return;
+        };
         let texture = match Self::resolve_webui_image(ui, src) {
             WebUiImageState::Ready(texture) => texture,
             WebUiImageState::Loading => {
@@ -969,7 +976,11 @@ impl VellumGuiApp {
                 return;
             }
             WebUiImageState::Failed(err) => {
-                ui.label(RichText::new(format!("[image_map: {}]", err)).weak().italics());
+                ui.label(
+                    RichText::new(format!("[image_map: {}]", err))
+                        .weak()
+                        .italics(),
+                );
                 return;
             }
         };
@@ -1029,8 +1040,7 @@ impl VellumGuiApp {
                             center.y.round() as i64
                         );
                         let seen_id = id.with("scrolled_to");
-                        let seen: String =
-                            ui.data(|d| d.get_temp(seen_id)).unwrap_or_default();
+                        let seen: String = ui.data(|d| d.get_temp(seen_id)).unwrap_or_default();
                         if seen != signature {
                             ui.data_mut(|d| d.insert_temp(seen_id, signature));
                             ui.scroll_to_rect(marker_rect, Some(egui::Align::Center));
@@ -1147,8 +1157,7 @@ mod tests {
     // lich5-docker/docs/vellum-tabs-crash-report.md.
     const ECLEANSE: &str =
         include_str!("../../../../tests/data/vellum-crash-payload-ecleanse.json");
-    const BIGSHOT: &str =
-        include_str!("../../../../tests/data/vellum-crash-payload-bigshot.json");
+    const BIGSHOT: &str = include_str!("../../../../tests/data/vellum-crash-payload-bigshot.json");
 
     fn content_from_capture(raw: &str) -> WebUiPanelContent {
         let msg: WebUiServerMessage = serde_json::from_str(raw).expect("captured payload parses");

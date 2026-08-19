@@ -416,7 +416,7 @@ mod tests {
         let mut core = core_with_room();
         core.enter_interact_mode();
         core.interact_move(1); // focus kobold (#222)
-        // Room update: a new creature is prepended (indices shift)
+                               // Room update: a new creature is prepended (indices shift)
         core.game_state.room_creatures.insert(
             0,
             Creature {

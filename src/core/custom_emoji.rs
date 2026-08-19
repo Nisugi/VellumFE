@@ -136,11 +136,9 @@ impl CustomEmojiRegistry {
             // First file wins on a name collision (stable across a rescan
             // because read_dir order is otherwise unspecified — but two files
             // sharing a stem with different extensions is a user mistake).
-            by_name.entry(name.clone()).or_insert(CustomEmoji {
-                name,
-                path,
-                format,
-            });
+            by_name
+                .entry(name.clone())
+                .or_insert(CustomEmoji { name, path, format });
         }
         Self { by_name }
     }
@@ -199,9 +197,7 @@ fn png_is_animated(path: &Path) -> bool {
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 /// Process-wide registry snapshot. Empty until [`reload`] runs at startup.
@@ -209,7 +205,9 @@ static REGISTRY: RwLock<Option<CustomEmojiRegistry>> = RwLock::new(None);
 
 /// The custom emoji directory: `~/.vellum-fe/emoji/` (respects `VELLUM_FE_DIR`).
 pub fn emoji_dir() -> Option<PathBuf> {
-    crate::config::Config::base_dir().ok().map(|d| d.join("emoji"))
+    crate::config::Config::base_dir()
+        .ok()
+        .map(|d| d.join("emoji"))
 }
 
 /// (Re)scan the emoji directory and publish the new snapshot. Call at startup
@@ -293,10 +291,7 @@ mod tests {
 
     #[test]
     fn scan_picks_up_named_images_case_insensitively() {
-        let tmp = std::env::temp_dir().join(format!(
-            "vellum_emoji_test_{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("vellum_emoji_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
 
@@ -323,15 +318,16 @@ mod tests {
 
     #[test]
     fn animated_png_detected_by_actl_before_idat() {
-        let tmp = std::env::temp_dir().join(format!(
-            "vellum_emoji_apng_{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("vellum_emoji_apng_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
 
         // acTL before IDAT => animated.
-        write_file(&tmp, "wave.png", &[PNG_SIG, b"....acTL....IDAT...."].concat());
+        write_file(
+            &tmp,
+            "wave.png",
+            &[PNG_SIG, b"....acTL....IDAT...."].concat(),
+        );
         // IDAT with no acTL => static.
         write_file(&tmp, "still.png", &[PNG_SIG, b"....IDAT...."].concat());
 
@@ -346,10 +342,8 @@ mod tests {
 
     #[test]
     fn rejects_names_that_are_not_valid_shortcodes() {
-        let tmp = std::env::temp_dir().join(format!(
-            "vellum_emoji_badnames_{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("vellum_emoji_badnames_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
 
@@ -366,9 +360,8 @@ mod tests {
 
     #[test]
     fn missing_dir_yields_empty_registry() {
-        let reg = CustomEmojiRegistry::scan_dir(Path::new(
-            "/definitely/not/a/real/emoji/dir/xyzzy",
-        ));
+        let reg =
+            CustomEmojiRegistry::scan_dir(Path::new("/definitely/not/a/real/emoji/dir/xyzzy"));
         assert!(reg.is_empty());
     }
 }

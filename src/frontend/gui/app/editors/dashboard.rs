@@ -102,10 +102,7 @@ impl VellumGuiApp {
                         .selected_text(current_label)
                         .show_ui(ui, |ui| {
                             for (value, label) in LAYOUT_CHOICES {
-                                if ui
-                                    .selectable_label(current == *value, *label)
-                                    .clicked()
-                                {
+                                if ui.selectable_label(current == *value, *label).clicked() {
                                     state.working.layout = value.to_string();
                                     state.dirty = true;
                                 }
@@ -272,8 +269,7 @@ impl VellumGuiApp {
                     state.error = None;
                 }
                 _ => {
-                    state.error =
-                        Some(format!("Window '{}' no longer exists.", state.window_name));
+                    state.error = Some(format!("Window '{}' no longer exists.", state.window_name));
                 }
             }
         }

@@ -142,9 +142,7 @@ fn press_became_drag(
         return true;
     }
     match (press_origin, pointer_pos) {
-        (Some(origin), Some(current)) => {
-            (current - origin).length() > PRESS_DRAG_THRESHOLD
-        }
+        (Some(origin), Some(current)) => (current - origin).length() > PRESS_DRAG_THRESHOLD,
         _ => false,
     }
 }
@@ -244,8 +242,7 @@ fn should_relax_size_pin(
     pointer_pos: Option<egui::Pos2>,
     latched_and_drag_seen: bool,
 ) -> bool {
-    window_is_engaged
-        && press_became_drag(press_origin, pointer_pos, latched_and_drag_seen)
+    window_is_engaged && press_became_drag(press_origin, pointer_pos, latched_and_drag_seen)
 }
 
 /// Whether this window should claim the engagement latch on a fresh press
@@ -273,8 +270,7 @@ fn should_claim_latch(
         return false;
     };
     let in_window = rect.expand(RESIZE_GRAB).contains(pos);
-    let topmost =
-        top_is_self || (!contested && (top_is_none || top_is_background));
+    let topmost = top_is_self || (!contested && (top_is_none || top_is_background));
     in_window && topmost
 }
 
@@ -529,12 +525,16 @@ impl VellumGuiApp {
         // Fill the zone's full height; render-time clamping (max_window_height)
         // keeps it within the zone, and filling avoids a bottom-edge gap.
         match zone {
-            GuiShellZone::Header => {
-                Some(self.shell_layout.header_height.max(MIN_DOCKED_WINDOW_HEIGHT))
-            }
-            GuiShellZone::Footer => {
-                Some(self.shell_layout.footer_height.max(MIN_DOCKED_WINDOW_HEIGHT))
-            }
+            GuiShellZone::Header => Some(
+                self.shell_layout
+                    .header_height
+                    .max(MIN_DOCKED_WINDOW_HEIGHT),
+            ),
+            GuiShellZone::Footer => Some(
+                self.shell_layout
+                    .footer_height
+                    .max(MIN_DOCKED_WINDOW_HEIGHT),
+            ),
             _ => None,
         }
     }
@@ -674,9 +674,7 @@ impl VellumGuiApp {
     /// Assign a tab to a zone. Grouped tabs move as a unit so the group
     /// keeps rendering on one surface.
     pub(super) fn set_tab_zone(&mut self, key: TabKey, zone: GuiShellZone) {
-        let group_members = self
-            .group_for_tab(&key)
-            .map(|group| group.members.clone());
+        let group_members = self.group_for_tab(&key).map(|group| group.members.clone());
         if let Some(members) = group_members {
             for member in members {
                 self.set_tab_zone_single(member, zone);
@@ -708,10 +706,12 @@ impl VellumGuiApp {
                     .map(|rect| rect[0] + rect[2])
                     .filter(|value| value.is_finite())
                     .fold(0.0f32, f32::max);
-                let entry = self
-                    .main_window_rects
-                    .entry(key.clone())
-                    .or_insert([after + 4.0, 0.0, 240.0, target_height]);
+                let entry = self.main_window_rects.entry(key.clone()).or_insert([
+                    after + 4.0,
+                    0.0,
+                    240.0,
+                    target_height,
+                ]);
                 entry[0] = after + 4.0;
                 entry[1] = 0.0;
                 entry[3] = target_height;
@@ -733,10 +733,12 @@ impl VellumGuiApp {
                     GuiShellZone::LeftSidebar => self.shell_layout.left_sidebar_width,
                     _ => self.shell_layout.right_sidebar_width,
                 };
-                let entry = self
-                    .main_window_rects
-                    .entry(key.clone())
-                    .or_insert([16.0, below + 4.0, zone_width, 160.0]);
+                let entry = self.main_window_rects.entry(key.clone()).or_insert([
+                    16.0,
+                    below + 4.0,
+                    zone_width,
+                    160.0,
+                ]);
                 entry[1] = below + 4.0;
                 entry[3] = entry[3].clamp(40.0, 600.0);
             }
@@ -872,10 +874,13 @@ impl VellumGuiApp {
     fn surface_layer_to_tab(&self) -> HashMap<egui::Id, TabKey> {
         self.available_tabs
             .keys()
-            .filter(|key| {
-                !self.hidden_tabs.contains(key) && !self.detached_tabs.contains_key(key)
+            .filter(|key| !self.hidden_tabs.contains(key) && !self.detached_tabs.contains_key(key))
+            .map(|key| {
+                (
+                    Self::zone_window_id(self.zone_for_tab(key), key),
+                    key.clone(),
+                )
             })
-            .map(|key| (Self::zone_window_id(self.zone_for_tab(key), key), key.clone()))
             .collect()
     }
 
@@ -945,7 +950,11 @@ impl VellumGuiApp {
         ctx.request_repaint();
     }
 
-    fn zone_surface_tabs(&self, detached_tabs: &HashSet<TabKey>, zone: GuiShellZone) -> Vec<GuiTab> {
+    fn zone_surface_tabs(
+        &self,
+        detached_tabs: &HashSet<TabKey>,
+        zone: GuiShellZone,
+    ) -> Vec<GuiTab> {
         let mut tabs: Vec<(i32, i32, String, GuiTab)> = self
             .available_tabs
             .iter()
@@ -991,10 +1000,10 @@ impl VellumGuiApp {
             let Some(window) = self.app_core.ui_state.windows.get(&tab.window_name) else {
                 continue;
             };
-            max_col = max_col
-                .max((window.position.x.get() + window.position.width.get()).max(1) as f32);
-            max_row = max_row
-                .max((window.position.y.get() + window.position.height.get()).max(1) as f32);
+            max_col =
+                max_col.max((window.position.x.get() + window.position.width.get()).max(1) as f32);
+            max_row =
+                max_row.max((window.position.y.get() + window.position.height.get()).max(1) as f32);
         }
         (max_col.max(1.0), max_row.max(1.0))
     }
@@ -1016,7 +1025,8 @@ impl VellumGuiApp {
             root_rect.left() + (window.position.x.get() as f32 / max_col) * root_rect.width();
         let top = root_rect.top() + (window.position.y.get() as f32 / max_row) * root_rect.height();
         let min_width = Self::min_window_width_for(&window.widget_type);
-        let width = ((window.position.width.get() as f32 / max_col) * root_rect.width()).max(min_width);
+        let width =
+            ((window.position.width.get() as f32 / max_col) * root_rect.width()).max(min_width);
         let height = ((window.position.height.get() as f32 / max_row) * root_rect.height())
             .max(MIN_DOCKED_WINDOW_HEIGHT);
         if !left.is_finite() || !top.is_finite() || !width.is_finite() || !height.is_finite() {
@@ -1190,10 +1200,8 @@ impl VellumGuiApp {
             if let Some(stored) = self.main_window_rects.get(&state.tab_key).copied() {
                 let size = Vec2::new(stored[2].max(60.0), stored[3].max(24.0));
                 // Grab point: top-center, where a title bar would be held.
-                let target = Rect::from_min_size(
-                    Pos2::new(pos.x - size.x * 0.5, pos.y - 10.0),
-                    size,
-                );
+                let target =
+                    Rect::from_min_size(Pos2::new(pos.x - size.x * 0.5, pos.y - 10.0), size);
                 let clamped = Self::clamp_main_window_rect(target, zone_rect);
                 if clamped.is_finite() {
                     self.main_window_rects
@@ -1278,8 +1286,8 @@ impl VellumGuiApp {
                     .unwrap_or(false);
                 let min_height = if compact { 40.0 } else { 120.0 };
                 let default_height = if compact { 72.0 } else { 240.0 };
-                let height_cap = window
-                    .and_then(|window| self.compact_height_cap(ctx, &tab.id.key, window));
+                let height_cap =
+                    window.and_then(|window| self.compact_height_cap(ctx, &tab.id.key, window));
                 let desired_height = self
                     .main_window_rects
                     .get(&tab.id.key)
@@ -1323,8 +1331,7 @@ impl VellumGuiApp {
         for (index, (key, min_height, desired_height)) in tab_metrics.iter().enumerate() {
             remaining_min -= min_height + gap;
             y += effective_gaps.get(index).copied().unwrap_or(0.0);
-            let max_height_here =
-                (root_rect.max.y - margin - y - remaining_min).max(*min_height);
+            let max_height_here = (root_rect.max.y - margin - y - remaining_min).max(*min_height);
             let slot_height = desired_height.clamp(*min_height, max_height_here);
             let slot_bottom = (y + slot_height).min(root_rect.max.y - margin - remaining_min);
             // Unlike the old renderer (which skipped windows whose slot
@@ -1377,8 +1384,8 @@ impl VellumGuiApp {
                 .center_base_pane
                 .map(|rect| rect.shrink(1.0))
                 .unwrap_or(pane);
-            let fixed = self.window_size_roles.get(key).copied()
-                == Some(super::dock::SizeRole::Fixed);
+            let fixed =
+                self.window_size_roles.get(key).copied() == Some(super::dock::SizeRole::Fixed);
             let stored = Self::unmap_center_rect(display, base, pane, fixed);
             self.track_main_window_rect(key, stored, base);
         } else {
@@ -1532,7 +1539,10 @@ impl VellumGuiApp {
         } else {
             root_rect
         };
-        if !window_bounds.is_finite() || window_bounds.width() <= 8.0 || window_bounds.height() <= 8.0 {
+        if !window_bounds.is_finite()
+            || window_bounds.width() <= 8.0
+            || window_bounds.height() <= 8.0
+        {
             return actions;
         }
         // The anchor space for out-of-frame commit-on-detach (context-menu
@@ -1543,8 +1553,7 @@ impl VellumGuiApp {
         // Clicks anywhere count as "interacting"; used both for rect
         // tracking (only user actions persist geometry) and for relaxing
         // the per-window size forcing below.
-        let pointer_interacting =
-            ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());
+        let pointer_interacting = ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());
         // Where the current press started, for telling "user is engaging
         // this window" apart from "user clicked a toolbar toggle".
         let press_origin = ctx.input(|i| i.pointer.press_origin());
@@ -1677,9 +1686,9 @@ impl VellumGuiApp {
             if zone == GuiShellZone::Center {
                 tabs.iter()
                     .filter_map(|tab| {
-                        center_displays.get(&tab.id.key).map(|rect| {
-                            (tab.id.key.clone(), self.window_display_title(tab), *rect)
-                        })
+                        center_displays
+                            .get(&tab.id.key)
+                            .map(|rect| (tab.id.key.clone(), self.window_display_title(tab), *rect))
                     })
                     .collect()
             } else {
@@ -1691,9 +1700,7 @@ impl VellumGuiApp {
                             .get(&tab.id.key)
                             .copied()
                             .and_then(Self::rect_from_snapshot)
-                            .map(|rect| {
-                                zone_solved.get(&tab.id.key).copied().unwrap_or(rect)
-                            })
+                            .map(|rect| zone_solved.get(&tab.id.key).copied().unwrap_or(rect))
                             .map(|rect| Self::clamp_main_window_rect(rect, window_bounds))
                             .or_else(|| {
                                 Self::tab_window_rect(window_bounds, layout_bounds, window)
@@ -1702,11 +1709,8 @@ impl VellumGuiApp {
                             .group_for_tab(&tab.id.key)
                             .is_some_and(|group| group.members.len() > 1);
                         if !grouped {
-                            if let Some(cap) =
-                                self.compact_height_cap(ctx, &tab.id.key, window)
-                            {
-                                let capped =
-                                    rect.height().min(cap.max(MIN_DOCKED_WINDOW_HEIGHT));
+                            if let Some(cap) = self.compact_height_cap(ctx, &tab.id.key, window) {
+                                let capped = rect.height().min(cap.max(MIN_DOCKED_WINDOW_HEIGHT));
                                 rect.set_height(capped);
                             }
                         }
@@ -1775,8 +1779,8 @@ impl VellumGuiApp {
                 window_bounds.width().max(min_window_size.x),
                 max_window_height,
             );
-            let fallback_rect =
-                Self::tab_window_rect(window_bounds, layout_bounds, window).unwrap_or_else(|| {
+            let fallback_rect = Self::tab_window_rect(window_bounds, layout_bounds, window)
+                .unwrap_or_else(|| {
                     Rect::from_min_size(
                         Pos2::new(window_bounds.min.x + 8.0, window_bounds.min.y + 8.0),
                         Vec2::new(
@@ -2052,12 +2056,7 @@ impl VellumGuiApp {
                     .map(|bar| self.skin_titlebar_height(&tab.id.key, bar))
                     .unwrap_or(0.0);
                 let edge_show_ornament = skin_titlebar.is_some();
-                self.paint_skin_edges(
-                    ctx,
-                    &inner.response,
-                    edge_top_inset,
-                    edge_show_ornament,
-                );
+                self.paint_skin_edges(ctx, &inner.response, edge_top_inset, edge_show_ornament);
                 if let Some(titlebar) = &skin_titlebar {
                     self.paint_skin_titlebar(
                         ctx,
@@ -2380,7 +2379,10 @@ mod tests {
         // Center is structurally Reserve; set_zone_mode on it is a no-op.
         let mut layout = legacy.clone();
         layout.set_zone_mode(GuiShellZone::Center, ZoneDisplayMode::Overlay);
-        assert_eq!(layout.zone_mode(GuiShellZone::Center), ZoneDisplayMode::Reserve);
+        assert_eq!(
+            layout.zone_mode(GuiShellZone::Center),
+            ZoneDisplayMode::Reserve
+        );
 
         // A chosen mode survives the serde round trip.
         layout.set_zone_mode(GuiShellZone::LeftSidebar, ZoneDisplayMode::Overlay);
@@ -2390,7 +2392,10 @@ mod tests {
             reloaded.zone_mode(GuiShellZone::LeftSidebar),
             ZoneDisplayMode::Overlay
         );
-        assert_eq!(reloaded.zone_mode(GuiShellZone::RightSidebar), ZoneDisplayMode::Reserve);
+        assert_eq!(
+            reloaded.zone_mode(GuiShellZone::RightSidebar),
+            ZoneDisplayMode::Reserve
+        );
     }
 
     #[test]
@@ -2429,14 +2434,23 @@ mod tests {
         };
         // A window far too narrow to hold two 300px sidebars.
         layout.sanitize();
-        assert_eq!(layout.left_sidebar_width, 300.0, "stored width must not shrink");
+        assert_eq!(
+            layout.left_sidebar_width, 300.0,
+            "stored width must not shrink"
+        );
         assert_eq!(layout.right_sidebar_width, 300.0);
 
         // The display-only squeeze still narrows the RENDERED widths on a
         // narrow window, without touching the stored values.
         let (l, r) = squeezed_sidebar_widths(700.0, 220.0, 300.0, 300.0);
-        assert!(l < 300.0 && r < 300.0, "display squeeze should shrink render widths: {l},{r}");
-        assert_eq!(layout.left_sidebar_width, 300.0, "stored width still intact");
+        assert!(
+            l < 300.0 && r < 300.0,
+            "display squeeze should shrink render widths: {l},{r}"
+        );
+        assert_eq!(
+            layout.left_sidebar_width, 300.0,
+            "stored width still intact"
+        );
     }
 
     #[test]
@@ -2501,8 +2515,16 @@ mod tests {
     #[test]
     fn missing_pointer_is_not_a_drag() {
         // No press origin or no pointer position → not a drag (pin holds).
-        assert!(!super::press_became_drag(None, Some(egui::pos2(1.0, 1.0)), false));
-        assert!(!super::press_became_drag(Some(egui::pos2(1.0, 1.0)), None, false));
+        assert!(!super::press_became_drag(
+            None,
+            Some(egui::pos2(1.0, 1.0)),
+            false
+        ));
+        assert!(!super::press_became_drag(
+            Some(egui::pos2(1.0, 1.0)),
+            None,
+            false
+        ));
     }
 
     #[test]
@@ -2511,16 +2533,22 @@ mod tests {
         let b = egui::Id::new("b");
         let c = egui::Id::new("c");
         let popup = egui::Id::new("some_popup"); // a middle layer that isn't a window
-        // Stack back-to-front: a (bottom), b, c (top), plus an unrelated popup.
+                                                 // Stack back-to-front: a (bottom), b, c (top), plus an unrelated popup.
         let ordered = vec![a, b, c, popup];
         let center: std::collections::HashSet<egui::Id> = [a, b, c].into_iter().collect();
 
         // Send the top window (c) to back: a and b are raised, in that order,
         // so their a-below-b relationship survives and c lands beneath both.
-        assert_eq!(super::send_to_back_raise_order(&ordered, c, &center), vec![a, b]);
+        assert_eq!(
+            super::send_to_back_raise_order(&ordered, c, &center),
+            vec![a, b]
+        );
         // Send the bottom window (a) to back: b then c raised; the popup is
         // not a Center window, so it is never raised.
-        assert_eq!(super::send_to_back_raise_order(&ordered, a, &center), vec![b, c]);
+        assert_eq!(
+            super::send_to_back_raise_order(&ordered, a, &center),
+            vec![b, c]
+        );
         // A target that isn't in the set (e.g. no overlap) still just raises
         // the others; nothing panics.
         assert_eq!(
@@ -2652,9 +2680,15 @@ mod tests {
     fn press_engages_window_uses_12px_ring() {
         let r = rect(100.0, 100.0, 200.0, 150.0);
         // Just outside the frame but inside the 12px ring: engaged.
-        assert!(super::press_engages_window(Some(egui::pos2(94.0, 175.0)), r));
+        assert!(super::press_engages_window(
+            Some(egui::pos2(94.0, 175.0)),
+            r
+        ));
         // Well outside the ring: not engaged.
-        assert!(!super::press_engages_window(Some(egui::pos2(80.0, 175.0)), r));
+        assert!(!super::press_engages_window(
+            Some(egui::pos2(80.0, 175.0)),
+            r
+        ));
         // No press at all: not engaged.
         assert!(!super::press_engages_window(None, r));
     }
@@ -2688,7 +2722,12 @@ mod tests {
             false
         ));
         // Engaged but stationary -> keep the pin.
-        assert!(!super::should_relax_size_pin(true, Some(origin), Some(origin), false));
+        assert!(!super::should_relax_size_pin(
+            true,
+            Some(origin),
+            Some(origin),
+            false
+        ));
         // Not engaged -> never relax, even mid-drag.
         assert!(!super::should_relax_size_pin(
             false,
@@ -2697,7 +2736,12 @@ mod tests {
             false
         ));
         // Latched-and-drag-seen forces the drag verdict even without motion.
-        assert!(super::should_relax_size_pin(true, Some(origin), Some(origin), true));
+        assert!(super::should_relax_size_pin(
+            true,
+            Some(origin),
+            Some(origin),
+            true
+        ));
     }
 
     #[test]
@@ -2731,7 +2775,15 @@ mod tests {
         ));
         // Press outside the window entirely -> no claim.
         assert!(!super::should_claim_latch(
-            true, false, false, Some(egui::pos2(400.0, 400.0)), r, false, true, false, false,
+            true,
+            false,
+            false,
+            Some(egui::pos2(400.0, 400.0)),
+            r,
+            false,
+            true,
+            false,
+            false,
         ));
     }
 

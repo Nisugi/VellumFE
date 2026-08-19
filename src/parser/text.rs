@@ -84,11 +84,7 @@ impl XmlParser {
         // surfaced on the span — and keep the mirrored `current_link_data` in
         // sync so the span below clones the up-to-date text.
         if self.link_depth > 0 {
-            if let Some(link_data) = self
-                .link_stack
-                .iter_mut()
-                .find(|d| !d.exist_id.is_empty())
-            {
+            if let Some(link_data) = self.link_stack.iter_mut().find(|d| !d.exist_id.is_empty()) {
                 link_data.text.push_str(&content);
             }
             if let Some(ref mut mirror) = self.current_link_data {
@@ -176,7 +172,11 @@ impl XmlParser {
     }
 
     /// Flush text buffer and check for event patterns
-    pub(super) fn flush_text_with_events(&mut self, text: String, elements: &mut Vec<ParsedElement>) {
+    pub(super) fn flush_text_with_events(
+        &mut self,
+        text: String,
+        elements: &mut Vec<ParsedElement>,
+    ) {
         if text.is_empty() {
             return;
         }
@@ -361,5 +361,4 @@ impl XmlParser {
         }
         attrs
     }
-
 }

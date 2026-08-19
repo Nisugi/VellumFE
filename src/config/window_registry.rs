@@ -167,16 +167,12 @@ impl Config {
         }
     }
 
-    pub fn save_window_registry(
-        character: Option<&str>,
-        registry: &WindowRegistry,
-    ) -> Result<()> {
+    pub fn save_window_registry(character: Option<&str>, registry: &WindowRegistry) -> Result<()> {
         let path = Self::window_registry_path(character)?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let contents =
-            toml::to_string_pretty(registry).context("serialize window registry")?;
+        let contents = toml::to_string_pretty(registry).context("serialize window registry")?;
         write_atomic(&path, contents).context("write window_registry.toml")
     }
 }
@@ -245,10 +241,9 @@ mod tests {
         assert_eq!(back, registry);
 
         // A future build's kind (popup/container) parses fine here.
-        let future: WindowRegistry = toml::from_str(
-            "[[bindings]]\nkind = \"popup\"\nid = \"bank\"\ntitle = \"Bank\"\n",
-        )
-        .unwrap();
+        let future: WindowRegistry =
+            toml::from_str("[[bindings]]\nkind = \"popup\"\nid = \"bank\"\ntitle = \"Bank\"\n")
+                .unwrap();
         assert_eq!(future.bindings[0].kind, "popup");
     }
 }

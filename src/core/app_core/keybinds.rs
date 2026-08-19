@@ -128,8 +128,10 @@ impl AppCore {
             KeyBindAction::Macro(macro_action) => {
                 // Strip any trailing \r or \n from macro text (legacy from wrayth-style macros)
                 // These control characters corrupt the StyledLine and cause rendering artifacts
-                let clean_text =
-                    macro_action.macro_text.trim_end_matches(&['\r', '\n'][..]).to_string();
+                let clean_text = macro_action
+                    .macro_text
+                    .trim_end_matches(&['\r', '\n'][..])
+                    .to_string();
 
                 // <target_id>/<target_noun> resolve against the interact
                 // focus; a targetless placeholder macro is dropped rather
@@ -190,7 +192,9 @@ impl AppCore {
             // Window actions
             KeyAction::SwitchCurrentWindow => {
                 // Handled in input_handlers.rs for smart Tab completion
-                tracing::debug!("SwitchCurrentWindow reached keybinds.rs - should be handled in input_handlers");
+                tracing::debug!(
+                    "SwitchCurrentWindow reached keybinds.rs - should be handled in input_handlers"
+                );
             }
             KeyAction::ScrollCurrentWindowUpOne => {
                 tracing::debug!("KeyAction::ScrollCurrentWindowUpOne triggered");
@@ -284,7 +288,9 @@ impl AppCore {
             | KeyAction::MenuLeft
             | KeyAction::MenuRight
             | KeyAction::MenuCancel => {
-                tracing::debug!("interact/menu nav action is gamepad-context-only; nothing to execute");
+                tracing::debug!(
+                    "interact/menu nav action is gamepad-context-only; nothing to execute"
+                );
             }
 
             // Controller shift modifier / wheel: state is read live by the
@@ -325,7 +331,11 @@ impl AppCore {
             }
             KeyAction::TtsMuteToggle => {
                 self.tts_manager.toggle_mute();
-                let status = if self.tts_manager.is_muted() { "muted" } else { "unmuted" };
+                let status = if self.tts_manager.is_muted() {
+                    "muted"
+                } else {
+                    "unmuted"
+                };
                 self.add_system_message(&format!("TTS {}", status));
             }
             KeyAction::TtsIncreaseRate => {
@@ -427,10 +437,9 @@ impl AppCore {
             }
         };
         match std::fs::write(&path, text) {
-            Ok(()) => self.add_system_message(&format!(
-                "Performance dump written to {}",
-                path.display()
-            )),
+            Ok(()) => {
+                self.add_system_message(&format!("Performance dump written to {}", path.display()))
+            }
             Err(err) => {
                 self.add_system_message(&format!("Failed to write performance dump: {err}"))
             }

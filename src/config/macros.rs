@@ -127,11 +127,11 @@ impl MacrosConfig {
     /// Persist this config as the phone-edited overlay.
     pub fn save_local(&self, character: Option<&str>) -> Result<()> {
         let dir = super::Config::profile_dir(character)?;
-        fs::create_dir_all(&dir)
-            .with_context(|| format!("Failed to create {}", dir.display()))?;
+        fs::create_dir_all(&dir).with_context(|| format!("Failed to create {}", dir.display()))?;
         let path = dir.join("macros-local.toml");
         let text = toml::to_string_pretty(self).context("Failed to serialize macros-local")?;
-        crate::config::write_atomic(&path, text).with_context(|| format!("Failed to write {}", path.display()))
+        crate::config::write_atomic(&path, text)
+            .with_context(|| format!("Failed to write {}", path.display()))
     }
 
     /// Merge the local overlay onto the base: same-named groups gain the
@@ -175,15 +175,13 @@ impl MacrosConfig {
             self.delete_button(original.0, original.1);
         }
         match group {
-            Some(name) => {
-                match self.groups.iter_mut().find(|g| g.name == name) {
-                    Some(existing) => existing.buttons.push(button),
-                    None => self.groups.push(MacroGroup {
-                        name: name.to_string(),
-                        buttons: vec![button],
-                    }),
-                }
-            }
+            Some(name) => match self.groups.iter_mut().find(|g| g.name == name) {
+                Some(existing) => existing.buttons.push(button),
+                None => self.groups.push(MacroGroup {
+                    name: name.to_string(),
+                    buttons: vec![button],
+                }),
+            },
             None => self.floating.push(button),
         }
     }
@@ -361,7 +359,10 @@ mod tests {
             button("Long nap", "sleep"),
             Some((Some("Couch"), "Nap")),
         );
-        assert!(local.groups.iter().all(|g| g.name != "Couch"), "empty group dropped");
+        assert!(
+            local.groups.iter().all(|g| g.name != "Couch"),
+            "empty group dropped"
+        );
         assert_eq!(local.groups[0].name, "Town");
         assert_eq!(local.groups[0].buttons[0].label, "Long nap");
 

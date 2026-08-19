@@ -310,11 +310,12 @@ impl WindowEditor {
                         }
                         FieldRef::TargetsStatusPosition => {
                             // Cycle between "start" and "end"
-                            self.targets_status_position = if self.targets_status_position == "start" {
-                                "end".to_string()
-                            } else {
-                                "start".to_string()
-                            };
+                            self.targets_status_position =
+                                if self.targets_status_position == "start" {
+                                    "end".to_string()
+                                } else {
+                                    "start".to_string()
+                                };
                         }
                         FieldRef::ProgressNumbersOnly => {
                             self.progress_numbers_only = !self.progress_numbers_only;
@@ -578,10 +579,18 @@ impl WindowEditor {
                 }
                 TextReplacementsEditorMode::Form => {
                     editor.form_field = match (editor.form_field, down) {
-                        (TextReplacementsFormField::Pattern, true) => TextReplacementsFormField::Replace,
-                        (TextReplacementsFormField::Replace, true) => TextReplacementsFormField::Pattern,
-                        (TextReplacementsFormField::Pattern, false) => TextReplacementsFormField::Replace,
-                        (TextReplacementsFormField::Replace, false) => TextReplacementsFormField::Pattern,
+                        (TextReplacementsFormField::Pattern, true) => {
+                            TextReplacementsFormField::Replace
+                        }
+                        (TextReplacementsFormField::Replace, true) => {
+                            TextReplacementsFormField::Pattern
+                        }
+                        (TextReplacementsFormField::Pattern, false) => {
+                            TextReplacementsFormField::Replace
+                        }
+                        (TextReplacementsFormField::Replace, false) => {
+                            TextReplacementsFormField::Pattern
+                        }
                     };
                 }
             }
@@ -709,23 +718,20 @@ impl WindowEditor {
                         self.handle_sub_editor_navigation(false);
                         return true;
                     }
-                    KeyCode::Char(' ') => {
-                        match editor.form_field {
-                            TabEditorFormField::Timestamps => {
-                                editor.show_timestamps = !editor.show_timestamps;
-                                return true;
-                            }
-                            TabEditorFormField::IgnoreActivity => {
-                                editor.ignore_activity = !editor.ignore_activity;
-                                return true;
-                            }
-                            _ => {}
+                    KeyCode::Char(' ') => match editor.form_field {
+                        TabEditorFormField::Timestamps => {
+                            editor.show_timestamps = !editor.show_timestamps;
+                            return true;
                         }
-                    }
+                        TabEditorFormField::IgnoreActivity => {
+                            editor.ignore_activity = !editor.ignore_activity;
+                            return true;
+                        }
+                        _ => {}
+                    },
                     _ => {
                         let ct_code = crossterm_bridge::to_crossterm_keycode(key_event.code);
-                        let ct_mods =
-                            crossterm_bridge::to_crossterm_modifiers(key_event.modifiers);
+                        let ct_mods = crossterm_bridge::to_crossterm_modifiers(key_event.modifiers);
                         let key = crossterm::event::KeyEvent::new(ct_code, ct_mods);
                         let ev = textarea_bridge::to_textarea_event(key);
                         match editor.form_field {
@@ -808,8 +814,7 @@ impl WindowEditor {
                     }
                     _ => {
                         let ct_code = crossterm_bridge::to_crossterm_keycode(key_event.code);
-                        let ct_mods =
-                            crossterm_bridge::to_crossterm_modifiers(key_event.modifiers);
+                        let ct_mods = crossterm_bridge::to_crossterm_modifiers(key_event.modifiers);
                         let key = crossterm::event::KeyEvent::new(ct_code, ct_mods);
                         let ev = textarea_bridge::to_textarea_event(key);
                         match editor.form_field {
@@ -950,8 +955,7 @@ impl WindowEditor {
                     }
                     _ => {
                         let ct_code = crossterm_bridge::to_crossterm_keycode(key_event.code);
-                        let ct_mods =
-                            crossterm_bridge::to_crossterm_modifiers(key_event.modifiers);
+                        let ct_mods = crossterm_bridge::to_crossterm_modifiers(key_event.modifiers);
                         let key = crossterm::event::KeyEvent::new(ct_code, ct_mods);
                         let ev = textarea_bridge::to_textarea_event(key);
                         match editor.form_field {
@@ -989,7 +993,12 @@ impl WindowEditor {
                         }
                         return true;
                     }
-                    KeyCode::Char('t') | KeyCode::Char('T') | KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Char(' ') | KeyCode::Enter => {
+                    KeyCode::Char('t')
+                    | KeyCode::Char('T')
+                    | KeyCode::Char('e')
+                    | KeyCode::Char('E')
+                    | KeyCode::Char(' ')
+                    | KeyCode::Enter => {
                         if !editor.toggle_selected() {
                             self.status_message = format!(
                                 "Max {} bars enabled. Disable one first.",
@@ -1059,8 +1068,7 @@ impl WindowEditor {
                     _ => {
                         // Forward keypress to color input textarea
                         let ct_code = crossterm_bridge::to_crossterm_keycode(key_event.code);
-                        let ct_mods =
-                            crossterm_bridge::to_crossterm_modifiers(key_event.modifiers);
+                        let ct_mods = crossterm_bridge::to_crossterm_modifiers(key_event.modifiers);
                         let key = crossterm::event::KeyEvent::new(ct_code, ct_mods);
                         let ev = textarea_bridge::to_textarea_event(key);
                         editor.color_input.input(ev);
@@ -1073,7 +1081,13 @@ impl WindowEditor {
         false
     }
 
-    pub fn handle_mouse(&mut self, mouse_col: u16, mouse_row: u16, mouse_down: bool, area: Rect) -> WindowEditorMouseAction {
+    pub fn handle_mouse(
+        &mut self,
+        mouse_col: u16,
+        mouse_row: u16,
+        mouse_down: bool,
+        area: Rect,
+    ) -> WindowEditorMouseAction {
         if !mouse_down {
             self.dragging = false;
             return WindowEditorMouseAction::None;
@@ -1102,8 +1116,12 @@ impl WindowEditor {
         if self.dragging {
             self.popup_x = mouse_col.saturating_sub(self.drag_offset_x);
             self.popup_y = mouse_row.saturating_sub(self.drag_offset_y);
-            self.popup_x = self.popup_x.min(area.width.saturating_sub(self.popup_width));
-            self.popup_y = self.popup_y.min(area.height.saturating_sub(self.popup_height));
+            self.popup_x = self
+                .popup_x
+                .min(area.width.saturating_sub(self.popup_width));
+            self.popup_y = self
+                .popup_y
+                .min(area.height.saturating_sub(self.popup_height));
             return WindowEditorMouseAction::None; // Don't process field clicks while dragging
         }
 
@@ -1158,11 +1176,13 @@ impl WindowEditor {
         // Check if click is on a tracked field area
         // field_click_areas contains (y, x_start, field_ref)
         // We match by y (exact row) and distinguish side-by-side fields by x
-        let left_column_end = self.popup_x + 37;  // Left column ends at x=37 relative to popup
-        let geom_x2 = self.popup_x + 17;  // Divider for side-by-side geometry fields (Row/Col, etc.)
+        let left_column_end = self.popup_x + 37; // Left column ends at x=37 relative to popup
+        let geom_x2 = self.popup_x + 17; // Divider for side-by-side geometry fields (Row/Col, etc.)
 
         // Find all fields on this row
-        let fields_on_row: Vec<_> = self.field_click_areas.iter()
+        let fields_on_row: Vec<_> = self
+            .field_click_areas
+            .iter()
             .filter(|(y, _, _)| *y == mouse_row)
             .collect();
 
@@ -1229,5 +1249,4 @@ impl WindowEditor {
 
         WindowEditorMouseAction::None
     }
-
 }

@@ -124,7 +124,12 @@ struct EdgeState {
 
 impl Default for EdgeState {
     fn default() -> Self {
-        Self { held: false, false_since: None, last_edge: None, seen: false }
+        Self {
+            held: false,
+            false_since: None,
+            last_edge: None,
+            seen: false,
+        }
     }
 }
 
@@ -189,9 +194,8 @@ impl AlertState {
             return false;
         }
 
-        let cooldown = Duration::from_secs_f32(
-            spec.cooldown.unwrap_or(DEFAULT_COOLDOWN_SECS).max(0.0),
-        );
+        let cooldown =
+            Duration::from_secs_f32(spec.cooldown.unwrap_or(DEFAULT_COOLDOWN_SECS).max(0.0));
         if let Some(last) = self.last_fired.get(&trigger.key) {
             if now.duration_since(*last) < cooldown {
                 return false;
@@ -199,9 +203,8 @@ impl AlertState {
         }
         self.last_fired.insert(trigger.key.clone(), now);
 
-        let duration = Duration::from_secs_f32(
-            spec.duration.unwrap_or(DEFAULT_DURATION_SECS).max(0.1),
-        );
+        let duration =
+            Duration::from_secs_f32(spec.duration.unwrap_or(DEFAULT_DURATION_SECS).max(0.1));
         self.active.push(ActiveAlert {
             key: trigger.key,
             banner: trigger.banner,
@@ -249,13 +252,7 @@ impl AlertState {
     /// - While true, stays silent no matter how many frames pass.
     /// - After clearing, must stay false for `rearm` seconds before the next
     ///   rise counts; a rise before then updates state but does not fire.
-    pub fn observe_condition(
-        &mut self,
-        key: &str,
-        gate: bool,
-        rearm: f32,
-        now: Instant,
-    ) -> bool {
+    pub fn observe_condition(&mut self, key: &str, gate: bool, rearm: f32, now: Instant) -> bool {
         let rearm = Duration::from_secs_f32(rearm.max(0.0));
         let edge = self.edges.entry(key.to_string()).or_default();
 
@@ -336,7 +333,10 @@ mod tests {
     use crate::config::{AlertAnchor, AlertSpec};
 
     fn spec(banner: &str) -> AlertSpec {
-        AlertSpec { banner: Some(banner.to_string()), ..Default::default() }
+        AlertSpec {
+            banner: Some(banner.to_string()),
+            ..Default::default()
+        }
     }
 
     fn trigger(key: &str, spec: AlertSpec) -> AlertTrigger {
@@ -418,7 +418,12 @@ mod tests {
 
         fire("ambiance", -10, t0, &mut state); // oldest AND lowest
         for i in 0..(MAX_CONCURRENT - 1) {
-            fire(&format!("warn{i}"), 5, t0 + Duration::from_millis(i as u64 + 1), &mut state);
+            fire(
+                &format!("warn{i}"),
+                5,
+                t0 + Duration::from_millis(i as u64 + 1),
+                &mut state,
+            );
         }
         assert_eq!(state.active().len(), MAX_CONCURRENT, "board full");
 
@@ -428,8 +433,10 @@ mod tests {
             !state.active().iter().any(|a| a.key == "ambiance"),
             "the ambiance lost its slot"
         );
-        assert!(state.active().iter().any(|a| a.key == "warn0"),
-            "the oldest WARNING survived — eviction is by priority, not age");
+        assert!(
+            state.active().iter().any(|a| a.key == "warn0"),
+            "the oldest WARNING survived — eviction is by priority, not age"
+        );
         assert!(state.active().iter().any(|a| a.key == "stun"));
     }
 
@@ -469,9 +476,15 @@ mod tests {
             let mut s = spec(&format!("a{i}"));
             s.cooldown = Some(0.0);
             s.duration = Some(60.0);
-            state.fire(trigger(&format!("a{i}"), s), t0 + Duration::from_millis(i as u64));
+            state.fire(
+                trigger(&format!("a{i}"), s),
+                t0 + Duration::from_millis(i as u64),
+            );
         }
-        assert!(!state.active().iter().any(|a| a.key == "a0"), "oldest evicted");
+        assert!(
+            !state.active().iter().any(|a| a.key == "a0"),
+            "oldest evicted"
+        );
         assert!(state.active().iter().any(|a| a.key == "a1"));
     }
 
@@ -507,7 +520,10 @@ mod tests {
     fn presentation_less_alert_is_rejected() {
         let mut state = AlertState::new();
         // No banner, no art, no flash: nothing to draw.
-        let inert = AlertSpec { id: Some("inert".into()), ..Default::default() };
+        let inert = AlertSpec {
+            id: Some("inert".into()),
+            ..Default::default()
+        };
         assert!(!state.fire(trigger("inert", inert), Instant::now()));
         assert!(state.is_empty());
     }
@@ -522,7 +538,11 @@ mod tests {
         let alert = &state.active()[0];
 
         assert!(alert.alpha(t0) < 0.1, "starts transparent");
-        assert_eq!(alert.alpha(t0 + Duration::from_secs(2)), 1.0, "holds opaque");
+        assert_eq!(
+            alert.alpha(t0 + Duration::from_secs(2)),
+            1.0,
+            "holds opaque"
+        );
         assert!(
             alert.alpha(t0 + Duration::from_millis(3_950)) < 0.2,
             "fades out at the end"
@@ -548,7 +568,10 @@ mod tests {
         let t0 = Instant::now();
         state.observe_condition("k", false, 0.0, t0); // adopt false
 
-        assert!(state.observe_condition("k", true, 0.0, t0), "rising edge fires");
+        assert!(
+            state.observe_condition("k", true, 0.0, t0),
+            "rising edge fires"
+        );
         // Level-triggered would repaint every frame; edge-triggered must not.
         for i in 1..10 {
             let t = t0 + Duration::from_millis(i * 100);
@@ -656,8 +679,7 @@ mod tests {
         state.observe_condition("keep", false, 0.0, t0);
         state.observe_condition("drop", false, 0.0, t0);
 
-        let live: std::collections::HashSet<String> =
-            ["keep".to_string()].into_iter().collect();
+        let live: std::collections::HashSet<String> = ["keep".to_string()].into_iter().collect();
         state.retain_edges(&live);
 
         // "keep" retains its adopted state, so a rise still fires.

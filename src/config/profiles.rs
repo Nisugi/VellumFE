@@ -250,7 +250,8 @@ impl LauncherStore {
             fs::create_dir_all(parent)?;
         }
         let text = toml::to_string_pretty(self).context("Failed to serialize launcher profiles")?;
-        crate::config::write_atomic(path, text).with_context(|| format!("Failed to write {}", path.display()))
+        crate::config::write_atomic(path, text)
+            .with_context(|| format!("Failed to write {}", path.display()))
     }
 
     pub fn find(&self, name: &str) -> Option<&LauncherProfile> {
@@ -287,9 +288,9 @@ impl LauncherStore {
     /// this account - used to decide whether deleting a profile should also
     /// delete the keyring entry.
     pub fn account_password_in_use(&self, account: &str) -> bool {
-        self.profiles.iter().any(|profile| {
-            profile.password_saved && profile.account.eq_ignore_ascii_case(account)
-        })
+        self.profiles
+            .iter()
+            .any(|profile| profile.password_saved && profile.account.eq_ignore_ascii_case(account))
     }
 }
 
@@ -575,11 +576,7 @@ mod tests {
     fn minimal_toml_gets_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("launcher.toml");
-        std::fs::write(
-            &path,
-            "[[profiles]]\nname = \"Bare\"\nmode = \"lich\"\n",
-        )
-        .unwrap();
+        std::fs::write(&path, "[[profiles]]\nname = \"Bare\"\nmode = \"lich\"\n").unwrap();
 
         let store = LauncherStore::load_from(&path).unwrap();
         let profile = &store.profiles[0];

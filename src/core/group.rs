@@ -421,9 +421,7 @@ pub fn apply_event(
                 (GroupLeader::SelfLed, members.to_vec())
             } else {
                 match members.split_first() {
-                    Some((first, rest)) => {
-                        (GroupLeader::Other(first.clone()), rest.to_vec())
-                    }
+                    Some((first, rest)) => (GroupLeader::Other(first.clone()), rest.to_vec()),
                     None => (GroupLeader::None, Vec::new()),
                 }
             };
@@ -491,10 +489,7 @@ pub fn apply_event(
                 GroupLeader::Other(l) if members.iter().any(|m| m.id == l.id)
             );
             let removed = members.iter().any(|m| state.remove(&m.id));
-            if !removed
-                || released_our_leader
-                || (state.members.is_empty() && state.leads())
-            {
+            if !removed || released_our_leader || (state.members.is_empty() && state.leads()) {
                 state.clear();
             }
         }
@@ -698,10 +693,17 @@ mod tests {
         assert!(state.leads());
         assert_eq!(
             state.members,
-            vec![member("-1", "Bob"), member("-2", "Carol"), member("-3", "Dave")],
+            vec![
+                member("-1", "Bob"),
+                member("-2", "Carol"),
+                member("-3", "Dave")
+            ],
             "Bob and Carol must survive the hold"
         );
-        assert!(state.confirmed, "adding a visible member loses no certainty");
+        assert!(
+            state.confirmed,
+            "adding a visible member loses no certainty"
+        );
     }
 
     /// The leader letting go of OUR hand removes us from their group -- a
@@ -776,7 +778,10 @@ mod tests {
     #[test]
     fn removing_the_leader_we_follow_ends_the_group() {
         let mut g = GroupState::default();
-        g.replace(GroupLeader::Other(member("-1", "Bob")), vec![member("-2", "Carol")]);
+        g.replace(
+            GroupLeader::Other(member("-1", "Bob")),
+            vec![member("-2", "Carol")],
+        );
         assert!(g.is_grouped());
 
         // Bob dies or leaves: we are no longer in his group, and what remains
@@ -801,7 +806,10 @@ mod tests {
     #[test]
     fn everyone_includes_the_leader_we_follow() {
         let mut g = GroupState::default();
-        g.replace(GroupLeader::Other(member("-1", "Bob")), vec![member("-2", "Carol")]);
+        g.replace(
+            GroupLeader::Other(member("-1", "Bob")),
+            vec![member("-2", "Carol")],
+        );
         let names: Vec<&str> = g.everyone().iter().map(|m| m.name.as_str()).collect();
         assert_eq!(names, vec!["Bob", "Carol"]);
 

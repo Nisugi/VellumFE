@@ -49,7 +49,10 @@ pub(super) enum EdgeRef {
     /// Another window's edge, same zone. In the schema from day one for
     /// forward compatibility; resolution lands in P-A2 (until then it
     /// degrades to the free edge).
-    Sibling { key: TabKey, side: AxisSide },
+    Sibling {
+        key: TabKey,
+        side: AxisSide,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -65,7 +68,10 @@ pub(super) struct EdgeAnchor {
 
 impl EdgeAnchor {
     pub(super) fn pane(side: AxisSide) -> Self {
-        Self { target: EdgeRef::Pane(side), offset: 0.0 }
+        Self {
+            target: EdgeRef::Pane(side),
+            offset: 0.0,
+        }
     }
 }
 
@@ -266,8 +272,11 @@ pub(super) fn solve_zone_rects(
 ) -> HashMap<TabKey, Rect> {
     use std::collections::VecDeque;
 
-    let index_of: HashMap<&TabKey, usize> =
-        windows.iter().enumerate().map(|(i, w)| (&w.key, i)).collect();
+    let index_of: HashMap<&TabKey, usize> = windows
+        .iter()
+        .enumerate()
+        .map(|(i, w)| (&w.key, i))
+        .collect();
     let effective = |key: &TabKey| -> Option<&WindowAnchors> {
         if skip == Some(key) {
             return None;
@@ -300,28 +309,32 @@ pub(super) fn solve_zone_rects(
         let w = &windows[i];
         let rect = match effective(&w.key) {
             Some(a) => {
-                let x = solve_axis_with(&a.x, w.free.min.x, w.free.max.x, w.min_size.x, |t| {
-                    match t {
-                        EdgeRef::Sibling { key, side } => {
-                            resolved.get(key).map(|r| match side {
-                                AxisSide::Min => r.min.x,
-                                AxisSide::Max => r.max.x,
-                            })
-                        }
+                let x = solve_axis_with(
+                    &a.x,
+                    w.free.min.x,
+                    w.free.max.x,
+                    w.min_size.x,
+                    |t| match t {
+                        EdgeRef::Sibling { key, side } => resolved.get(key).map(|r| match side {
+                            AxisSide::Min => r.min.x,
+                            AxisSide::Max => r.max.x,
+                        }),
                         _ => pane_target(t, pane.min.x, pane.max.x),
-                    }
-                });
-                let y = solve_axis_with(&a.y, w.free.min.y, w.free.max.y, w.min_size.y, |t| {
-                    match t {
-                        EdgeRef::Sibling { key, side } => {
-                            resolved.get(key).map(|r| match side {
-                                AxisSide::Min => r.min.y,
-                                AxisSide::Max => r.max.y,
-                            })
-                        }
+                    },
+                );
+                let y = solve_axis_with(
+                    &a.y,
+                    w.free.min.y,
+                    w.free.max.y,
+                    w.min_size.y,
+                    |t| match t {
+                        EdgeRef::Sibling { key, side } => resolved.get(key).map(|r| match side {
+                            AxisSide::Min => r.min.y,
+                            AxisSide::Max => r.max.y,
+                        }),
                         _ => pane_target(t, pane.min.y, pane.max.y),
-                    }
-                });
+                    },
+                );
                 Rect::from_min_max(Pos2::new(x.0, y.0), Pos2::new(x.1, y.1))
             }
             None => w.free,
@@ -380,7 +393,10 @@ pub(super) fn promote_axis(
     gesture: AxisGesture,
     engaged: Option<(SnapEdgeKind, EdgeRef)>,
 ) -> AxisAnchoring {
-    let anchor = |target: EdgeRef| EdgeAnchor { target, offset: 0.0 };
+    let anchor = |target: EdgeRef| EdgeAnchor {
+        target,
+        offset: 0.0,
+    };
     match gesture {
         AxisGesture::Idle => current.clone(),
         AxisGesture::Translate => match engaged {
@@ -463,7 +479,11 @@ impl VellumGuiApp {
                     Some((edge, target))
                 })
         };
-        let current = self.window_anchors.get(tab_key).cloned().unwrap_or_default();
+        let current = self
+            .window_anchors
+            .get(tab_key)
+            .cloned()
+            .unwrap_or_default();
         let promoted = WindowAnchors {
             x: promote_axis(&current.x, gesture_x, engaged(true)),
             y: promote_axis(&current.y, gesture_y, engaged(false)),
@@ -640,10 +660,16 @@ impl VellumGuiApp {
                 }
                 let (lo, hi) = sibling_edges(other_rect);
                 if (value - lo).abs() <= EPS {
-                    return Some(EdgeRef::Sibling { key: other.clone(), side: AxisSide::Min });
+                    return Some(EdgeRef::Sibling {
+                        key: other.clone(),
+                        side: AxisSide::Min,
+                    });
                 }
                 if (value - hi).abs() <= EPS {
-                    return Some(EdgeRef::Sibling { key: other.clone(), side: AxisSide::Max });
+                    return Some(EdgeRef::Sibling {
+                        key: other.clone(),
+                        side: AxisSide::Max,
+                    });
                 }
             }
             None
@@ -654,24 +680,38 @@ impl VellumGuiApp {
                     pane_hi: f32,
                     edges: &dyn Fn(&Rect) -> (f32, f32)|
          -> AxisAnchoring {
-            let anchor = |t: EdgeRef| EdgeAnchor { target: t, offset: 0.0 };
+            let anchor = |t: EdgeRef| EdgeAnchor {
+                target: t,
+                offset: 0.0,
+            };
             match (
                 infer_edge(lo_val, pane_lo, pane_hi, edges),
                 infer_edge(hi_val, pane_lo, pane_hi, edges),
             ) {
-                (Some(lo), Some(hi)) => AxisAnchoring::Both { lo: anchor(lo), hi: anchor(hi) },
+                (Some(lo), Some(hi)) => AxisAnchoring::Both {
+                    lo: anchor(lo),
+                    hi: anchor(hi),
+                },
                 (Some(lo), None) => AxisAnchoring::Lo(anchor(lo)),
                 (None, Some(hi)) => AxisAnchoring::Hi(anchor(hi)),
                 (None, None) => AxisAnchoring::Free,
             }
         };
         let anchors = WindowAnchors {
-            x: axis(rect.min.x, rect.max.x, pane.min.x, pane.max.x, &|r: &Rect| {
-                (r.min.x, r.max.x)
-            }),
-            y: axis(rect.min.y, rect.max.y, pane.min.y, pane.max.y, &|r: &Rect| {
-                (r.min.y, r.max.y)
-            }),
+            x: axis(
+                rect.min.x,
+                rect.max.x,
+                pane.min.x,
+                pane.max.x,
+                &|r: &Rect| (r.min.x, r.max.x),
+            ),
+            y: axis(
+                rect.min.y,
+                rect.max.y,
+                pane.min.y,
+                pane.max.y,
+                &|r: &Rect| (r.min.y, r.max.y),
+            ),
         };
         if anchors.is_free() {
             self.window_anchors.remove(key);
@@ -729,13 +769,19 @@ impl VellumGuiApp {
             for (key, lo, hi) in siblings {
                 if (value - lo).abs() <= EPS {
                     return Some((
-                        EdgeRef::Sibling { key: key.clone(), side: AxisSide::Min },
+                        EdgeRef::Sibling {
+                            key: key.clone(),
+                            side: AxisSide::Min,
+                        },
                         key.short_id(),
                     ));
                 }
                 if (value - hi).abs() <= EPS {
                     return Some((
-                        EdgeRef::Sibling { key: key.clone(), side: AxisSide::Max },
+                        EdgeRef::Sibling {
+                            key: key.clone(),
+                            side: AxisSide::Max,
+                        },
                         key.short_id(),
                     ));
                 }
@@ -781,15 +827,19 @@ impl VellumGuiApp {
                         }
                         _ => true,
                     };
-                    let lo = infer_edge(lo_val, pane_lo, pane_hi, siblings)
-                        .filter(|(t, _)| ok(t));
-                    let hi = infer_edge(hi_val, pane_lo, pane_hi, siblings)
-                        .filter(|(t, _)| ok(t));
-                    let anchor = |t: EdgeRef| EdgeAnchor { target: t, offset: 0.0 };
+                    let lo = infer_edge(lo_val, pane_lo, pane_hi, siblings).filter(|(t, _)| ok(t));
+                    let hi = infer_edge(hi_val, pane_lo, pane_hi, siblings).filter(|(t, _)| ok(t));
+                    let anchor = |t: EdgeRef| EdgeAnchor {
+                        target: t,
+                        offset: 0.0,
+                    };
                     match (lo, hi) {
                         (Some((lo_t, lo_d)), Some((hi_t, hi_d))) => {
                             labels.push(format!("{}→{}, {}→{}", names[0], lo_d, names[1], hi_d));
-                            Some(AxisAnchoring::Both { lo: anchor(lo_t), hi: anchor(hi_t) })
+                            Some(AxisAnchoring::Both {
+                                lo: anchor(lo_t),
+                                hi: anchor(hi_t),
+                            })
                         }
                         (Some((lo_t, lo_d)), None) => {
                             labels.push(format!("{}→{}", names[0], lo_d));
@@ -841,9 +891,8 @@ impl VellumGuiApp {
             }
         }
         if report.is_empty() {
-            self.app_core.add_system_message(
-                "anchorinfer: no free flush edges found — nothing anchored.",
-            );
+            self.app_core
+                .add_system_message("anchorinfer: no free flush edges found — nothing anchored.");
         } else {
             self.app_core.add_system_message(&format!(
                 "anchorinfer: anchored {} window(s): {}. Drag a window off its snap (or right-click → Release Anchors) to undo.",
@@ -859,9 +908,7 @@ impl VellumGuiApp {
     /// deep against its own pane anchors — is written into the store so
     /// nothing teleports; the surviving anchors on other targets are kept.
     pub(super) fn prune_sibling_refs_to(&mut self, gone: &TabKey) {
-        let refers = |anchor: &EdgeAnchor| {
-            matches!(&anchor.target, EdgeRef::Sibling { key, .. } if key == gone)
-        };
+        let refers = |anchor: &EdgeAnchor| matches!(&anchor.target, EdgeRef::Sibling { key, .. } if key == gone);
         let strip_axis = |axis: &AxisAnchoring| -> AxisAnchoring {
             match axis {
                 AxisAnchoring::Lo(a) | AxisAnchoring::Hi(a) | AxisAnchoring::Center(a)
@@ -957,8 +1004,7 @@ impl VellumGuiApp {
                 };
                 let x = solve_axis_with(&anchors.x, free.min.x, free.max.x, min.x, resolve_x);
                 let y = solve_axis_with(&anchors.y, free.min.y, free.max.y, min.y, resolve_y);
-                let resolved =
-                    Rect::from_min_max(Pos2::new(x.0, y.0), Pos2::new(x.1, y.1));
+                let resolved = Rect::from_min_max(Pos2::new(x.0, y.0), Pos2::new(x.1, y.1));
                 self.main_window_rects
                     .insert(dep.clone(), Self::rect_to_snapshot(resolved));
             }
@@ -1021,8 +1067,7 @@ mod tests {
         };
         let free = rect(800.0, 300.0, 1000.0, 500.0);
         for pane_right in [900.0, 1000.0, 1400.0] {
-            let out =
-                solve_window_rect(&anchors, free, rect(0.0, 0.0, pane_right, 800.0), MIN);
+            let out = solve_window_rect(&anchors, free, rect(0.0, 0.0, pane_right, 800.0), MIN);
             assert_eq!(out.max.x, pane_right);
             assert_eq!(out.width(), 200.0, "extent stays the free-rect extent");
         }
@@ -1043,13 +1088,20 @@ mod tests {
         assert_eq!((out.min.x, out.max.x), (200.0, 900.0));
         // Pane narrower than min width: lo holds, hi yields outward.
         let out = solve_window_rect(&anchors, free, rect(200.0, 0.0, 280.0, 800.0), MIN);
-        assert_eq!((out.min.x, out.max.x), (200.0, 320.0), "hi yields at min size");
+        assert_eq!(
+            (out.min.x, out.max.x),
+            (200.0, 320.0),
+            "hi yields at min size"
+        );
     }
 
     #[test]
     fn center_anchor_recenters_after_pane_resize() {
         let anchors = WindowAnchors {
-            x: AxisAnchoring::Center(EdgeAnchor { target: EdgeRef::PaneCenter, offset: 0.0 }),
+            x: AxisAnchoring::Center(EdgeAnchor {
+                target: EdgeRef::PaneCenter,
+                offset: 0.0,
+            }),
             y: AxisAnchoring::Free,
         };
         let free = rect(400.0, 0.0, 600.0, 100.0);
@@ -1065,7 +1117,10 @@ mod tests {
         // the anchor is KEPT (hide/show round-trips will re-attach).
         let anchors = WindowAnchors {
             x: AxisAnchoring::Lo(EdgeAnchor {
-                target: EdgeRef::Sibling { key: TabKey::Vitals, side: AxisSide::Max },
+                target: EdgeRef::Sibling {
+                    key: TabKey::Vitals,
+                    side: AxisSide::Max,
+                },
                 offset: 0.0,
             }),
             y: AxisAnchoring::Free,
@@ -1097,7 +1152,10 @@ mod tests {
         );
         assert_eq!(
             out,
-            AxisAnchoring::Center(EdgeAnchor { target: EdgeRef::PaneCenter, offset: 0.0 })
+            AxisAnchoring::Center(EdgeAnchor {
+                target: EdgeRef::PaneCenter,
+                offset: 0.0
+            })
         );
     }
 
@@ -1165,7 +1223,11 @@ mod tests {
     }
 
     fn input(id: &str, free: Rect) -> ZoneSolveInput {
-        ZoneSolveInput { key: key(id), free, min_size: MIN }
+        ZoneSolveInput {
+            key: key(id),
+            free,
+            min_size: MIN,
+        }
     }
 
     fn sib_anchor(id: &str, side: AxisSide) -> EdgeAnchor {
@@ -1253,8 +1315,16 @@ mod tests {
             input("dock", rect(700.0, 0.0, 900.0, 100.0)),
         ];
         let out = solve_zone_rects(&windows, &anchors, pane, None);
-        assert_eq!(out[&key("a")], rect(10.0, 0.0, 210.0, 100.0), "cycle → free");
-        assert_eq!(out[&key("b")], rect(300.0, 0.0, 500.0, 100.0), "cycle → free");
+        assert_eq!(
+            out[&key("a")],
+            rect(10.0, 0.0, 210.0, 100.0),
+            "cycle → free"
+        );
+        assert_eq!(
+            out[&key("b")],
+            rect(300.0, 0.0, 500.0, 100.0),
+            "cycle → free"
+        );
         assert_eq!(out[&key("dock")].max.x, 1000.0, "bystander still docks");
     }
 
@@ -1371,11 +1441,17 @@ mod tests {
             x: AxisAnchoring::Both {
                 lo: EdgeAnchor::pane(AxisSide::Min),
                 hi: EdgeAnchor {
-                    target: EdgeRef::Sibling { key: TabKey::Vitals, side: AxisSide::Min },
+                    target: EdgeRef::Sibling {
+                        key: TabKey::Vitals,
+                        side: AxisSide::Min,
+                    },
                     offset: -4.0,
                 },
             },
-            y: AxisAnchoring::Center(EdgeAnchor { target: EdgeRef::PaneCenter, offset: 0.0 }),
+            y: AxisAnchoring::Center(EdgeAnchor {
+                target: EdgeRef::PaneCenter,
+                offset: 0.0,
+            }),
         };
         let json = serde_json::to_string(&anchors).unwrap();
         let back: WindowAnchors = serde_json::from_str(&json).unwrap();

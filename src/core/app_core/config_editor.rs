@@ -92,9 +92,7 @@ pub(crate) fn settings_catalog_json(config: &Config) -> serde_json::Value {
 /// registry setter treats empty text as "unset"). Only sensitive
 /// OptionalText keys may be cleared over the wire — everything else ships
 /// its real value to the phone and is edited normally.
-pub(crate) fn sensitive_clear_value(
-    def: &registry::SettingDef,
-) -> Result<SettingValue, String> {
+pub(crate) fn sensitive_clear_value(def: &registry::SettingDef) -> Result<SettingValue, String> {
     if !def.sensitive || !matches!(def.kind, SettingKind::OptionalText) {
         return Err(format!("Setting '{}' cannot be cleared", def.key));
     }
@@ -312,7 +310,9 @@ impl AppCore {
     // dedicated launcher key without editing TOML. The private key lands in
     // the secure store; only the public authorized_keys line crosses the wire.
 
-    fn launcher_ssh_settings_json(cfg: &crate::launcher::config::LauncherConfig) -> serde_json::Value {
+    fn launcher_ssh_settings_json(
+        cfg: &crate::launcher::config::LauncherConfig,
+    ) -> serde_json::Value {
         serde_json::json!({
             "user": cfg.ssh.user,
             "host": cfg.ssh.host,
@@ -385,9 +385,8 @@ impl AppCore {
             }
         } else if cfg.ssh.key_saved {
             // Surface the existing public line so the client can keep showing it.
-            public_key =
-                crate::launcher::config::load_private_key(DEFAULT_KEY_ID)
-                    .and_then(|pem| crate::launcher::ssh::public_line_from_private(&pem).ok());
+            public_key = crate::launcher::config::load_private_key(DEFAULT_KEY_ID)
+                .and_then(|pem| crate::launcher::ssh::public_line_from_private(&pem).ok());
         }
 
         let saved = if error.is_none() {
@@ -428,8 +427,7 @@ impl AppCore {
         if !path.exists() {
             return Ok(Default::default());
         }
-        let content =
-            std::fs::read_to_string(path).map_err(|e| format!("Read failed: {e}"))?;
+        let content = std::fs::read_to_string(path).map_err(|e| format!("Read failed: {e}"))?;
         toml::from_str(&content).map_err(|e| format!("Existing file is invalid TOML: {e}"))
     }
 
@@ -440,8 +438,7 @@ impl AppCore {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let content =
-            toml::to_string_pretty(map).map_err(|e| format!("Serialize failed: {e}"))?;
+        let content = toml::to_string_pretty(map).map_err(|e| format!("Serialize failed: {e}"))?;
         crate::config::write_atomic(path, content).map_err(|e| format!("Write failed: {e}"))
     }
 
@@ -488,12 +485,7 @@ impl AppCore {
         }
     }
 
-    pub fn handle_remote_highlights_get(
-        &mut self,
-        client_id: u64,
-        request_id: u64,
-        scope: String,
-    ) {
+    pub fn handle_remote_highlights_get(&mut self, client_id: u64, request_id: u64, scope: String) {
         let result = self
             .highlights_scope_path(&scope)
             .and_then(|path| Self::load_highlights_map(&path));
@@ -605,8 +597,8 @@ impl AppCore {
         colors: serde_json::Value,
     ) {
         let result = (|| {
-            let config: crate::config::ColorConfig = serde_json::from_value(colors)
-                .map_err(|e| format!("Invalid color config: {e}"))?;
+            let config: crate::config::ColorConfig =
+                serde_json::from_value(colors).map_err(|e| format!("Invalid color config: {e}"))?;
             let path = self.colors_scope_path(&scope)?;
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -650,7 +642,15 @@ impl AppCore {
         let slices_json = serde_json::to_value(&slices).unwrap_or(serde_json::Value::Null);
         let catalog = crate::config::touch_wheel_action_catalog();
         if let Some(remote) = self.message_processor.remote.as_mut() {
-            remote.push_touch_wheel(client_id, request_id, scope, slices_json, catalog, None, false);
+            remote.push_touch_wheel(
+                client_id,
+                request_id,
+                scope,
+                slices_json,
+                catalog,
+                None,
+                false,
+            );
         }
     }
 
@@ -665,8 +665,8 @@ impl AppCore {
         slices: serde_json::Value,
     ) {
         let result = (|| -> Result<(), String> {
-            let parsed: Vec<crate::config::WheelSlice> = serde_json::from_value(slices)
-                .map_err(|e| format!("Invalid touch wheel: {e}"))?;
+            let parsed: Vec<crate::config::WheelSlice> =
+                serde_json::from_value(slices).map_err(|e| format!("Invalid touch wheel: {e}"))?;
             let is_global = scope == "global";
             let character = self.config.character.as_deref();
             crate::config::Config::save_touch_wheel(&parsed, is_global, character)
@@ -797,9 +797,7 @@ impl AppCore {
             .ui_state
             .windows
             .iter()
-            .filter(|(_, window)| {
-                matches!(window.content, crate::data::WindowContent::Text(_))
-            })
+            .filter(|(_, window)| matches!(window.content, crate::data::WindowContent::Text(_)))
             .map(|(name, _)| name.clone())
             .collect();
         window_names.sort_by_key(|name| name.to_ascii_lowercase());
@@ -809,7 +807,11 @@ impl AppCore {
             &layout_streams,
             &seen,
             &window_names,
-            &|stream| self.message_processor.get_stream_subscribers(stream).to_vec(),
+            &|stream| {
+                self.message_processor
+                    .get_stream_subscribers(stream)
+                    .to_vec()
+            },
         );
         if let Some(remote) = self.message_processor.remote.as_mut() {
             remote.push_streams(client_id, request_id, data, None, None, false);
@@ -879,7 +881,8 @@ impl AppCore {
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                crate::config::write_atomic(&path, &content).map_err(|e| format!("Write failed: {e}"))
+                crate::config::write_atomic(&path, &content)
+                    .map_err(|e| format!("Write failed: {e}"))
             });
         let (saved, error) = match result {
             Ok(()) => (true, None),
@@ -912,7 +915,14 @@ mod tests {
         assert_eq!(entries.len(), registry::registry().len());
         for (entry, def) in entries.iter().zip(registry::registry()) {
             assert_eq!(entry["key"], def.key, "catalog order matches registry");
-            for field in ["label", "category", "description", "kind", "scope", "sensitive"] {
+            for field in [
+                "label",
+                "category",
+                "description",
+                "kind",
+                "scope",
+                "sensitive",
+            ] {
                 assert!(
                     !entry[field].is_null(),
                     "{} entry is missing '{}'",
@@ -920,7 +930,11 @@ mod tests {
                     field
                 );
             }
-            assert!(entry["kind"]["type"].is_string(), "{} kind has a type", def.key);
+            assert!(
+                entry["kind"]["type"].is_string(),
+                "{} kind has a type",
+                def.key
+            );
             assert!(
                 entry.get("value").is_some(),
                 "{} entry is missing 'value'",
@@ -928,10 +942,7 @@ mod tests {
             );
         }
         // Exactly once: no duplicate keys.
-        let mut keys: Vec<&str> = entries
-            .iter()
-            .map(|e| e["key"].as_str().unwrap())
-            .collect();
+        let mut keys: Vec<&str> = entries.iter().map(|e| e["key"].as_str().unwrap()).collect();
         keys.dedup();
         assert_eq!(keys.len(), entries.len(), "no duplicate catalog keys");
     }
@@ -983,7 +994,9 @@ mod tests {
         use serde_json::json;
         let int_kind = SettingKind::Int { min: 0, max: 10 };
         let float_kind = SettingKind::Float { min: 0.0, max: 1.0 };
-        let enum_kind = SettingKind::Enum { options: &["a", "b"] };
+        let enum_kind = SettingKind::Enum {
+            options: &["a", "b"],
+        };
 
         assert_eq!(
             setting_value_from_json(&SettingKind::Bool, &json!(true)),
@@ -1038,13 +1051,19 @@ mod tests {
         let routes: BTreeMap<String, StreamRoute> = [
             ("speech".to_string(), StreamRoute::Discard),
             ("ooc".to_string(), StreamRoute::Main),
-            ("bounty".to_string(), StreamRoute::Window("bounty_win".to_string())),
+            (
+                "bounty".to_string(),
+                StreamRoute::Window("bounty_win".to_string()),
+            ),
         ]
         .into_iter()
         .collect();
         let layout_streams = vec!["thoughts".to_string(), "logons".to_string()];
         let seen = vec![
-            ("atmospherics".to_string(), Some("Ambient scenery".to_string())),
+            (
+                "atmospherics".to_string(),
+                Some("Ambient scenery".to_string()),
+            ),
             // Case-duplicate of a layout stream: must not create a second
             // row, but its friendly label still attaches.
             ("Thoughts".to_string(), Some("Friends".to_string())),
@@ -1073,7 +1092,14 @@ mod tests {
         let ids: Vec<&str> = rows.iter().map(|r| r["id"].as_str().unwrap()).collect();
         assert_eq!(
             ids,
-            vec!["atmospherics", "bounty", "logons", "ooc", "speech", "thoughts"],
+            vec![
+                "atmospherics",
+                "bounty",
+                "logons",
+                "ooc",
+                "speech",
+                "thoughts"
+            ],
             "union is deduped and sorted"
         );
         let row = |id: &str| rows.iter().find(|r| r["id"] == id).unwrap();
@@ -1103,12 +1129,16 @@ mod tests {
     /// entry (orphan policy) still ships.
     #[test]
     fn streams_catalog_subscription_beats_route() {
-        let routes: BTreeMap<String, StreamRoute> =
-            [("bounty".to_string(), StreamRoute::Discard)].into_iter().collect();
-        let subscribers_of =
-            |stream: &str| -> Vec<String> {
-                if stream == "bounty" { vec!["bounty_win".to_string()] } else { Vec::new() }
-            };
+        let routes: BTreeMap<String, StreamRoute> = [("bounty".to_string(), StreamRoute::Discard)]
+            .into_iter()
+            .collect();
+        let subscribers_of = |stream: &str| -> Vec<String> {
+            if stream == "bounty" {
+                vec!["bounty_win".to_string()]
+            } else {
+                Vec::new()
+            }
+        };
         let data = streams_catalog_json(&routes, "main", &[], &[], &[], &subscribers_of);
         let row = &data["streams"][0];
         assert_eq!(row["id"], "bounty");
@@ -1121,7 +1151,10 @@ mod tests {
     /// StreamRoute parser rejecting malformed ones.
     #[test]
     fn stream_target_parsing() {
-        assert_eq!(parse_stream_target("discard"), Ok(Some(StreamRoute::Discard)));
+        assert_eq!(
+            parse_stream_target("discard"),
+            Ok(Some(StreamRoute::Discard))
+        );
         assert_eq!(parse_stream_target("main"), Ok(Some(StreamRoute::Main)));
         assert_eq!(
             parse_stream_target("window:bounty_win"),
@@ -1129,7 +1162,10 @@ mod tests {
         );
         assert_eq!(parse_stream_target("clear"), Ok(None));
         assert!(parse_stream_target("window:").is_err(), "empty window name");
-        assert!(parse_stream_target("Main").is_err(), "targets are lowercase wire values");
+        assert!(
+            parse_stream_target("Main").is_err(),
+            "targets are lowercase wire values"
+        );
         assert!(parse_stream_target("junk").is_err());
     }
 

@@ -76,18 +76,19 @@ impl VellumGuiApp {
                     let origin = canvas_rect.min;
                     for control in &controls {
                         let (x, y, w, h) = control.rect;
-                        let rect = egui::Rect::from_min_size(
-                            origin + egui::vec2(x, y),
-                            egui::vec2(w, h),
-                        );
+                        let rect =
+                            egui::Rect::from_min_size(origin + egui::vec2(x, y), egui::vec2(w, h));
                         match control.kind {
                             crate::data::ui_state::PositionedControlKind::Button(index) => {
                                 let Some(button) = dialog.buttons.get(index) else {
                                     continue;
                                 };
                                 let clicked = if button.is_radio {
-                                    ui.put(rect, egui::RadioButton::new(button.selected, &button.label))
-                                        .clicked()
+                                    ui.put(
+                                        rect,
+                                        egui::RadioButton::new(button.selected, &button.label),
+                                    )
+                                    .clicked()
                                 } else {
                                     ui.put(rect, egui::Button::new(&button.label).small())
                                         .clicked()
@@ -100,12 +101,9 @@ impl VellumGuiApp {
                                 let Some(dropdown) = dialog.dropdowns.get(index) else {
                                     continue;
                                 };
-                                if let Some(value) = Self::dropdown_combo(
-                                    ui,
-                                    rect,
-                                    &dialog.id,
-                                    dropdown,
-                                ) {
+                                if let Some(value) =
+                                    Self::dropdown_combo(ui, rect, &dialog.id, dropdown)
+                                {
                                     dropdown_change = Some((index, value));
                                 }
                             }
@@ -171,9 +169,7 @@ impl VellumGuiApp {
                                 let range = spin.min..=spin.max.max(spin.min);
                                 ui.put(
                                     rect,
-                                    egui::DragValue::new(&mut spin.value)
-                                        .range(range)
-                                        .speed(25),
+                                    egui::DragValue::new(&mut spin.value).range(range).speed(25),
                                 );
                             }
                             crate::data::ui_state::PositionedControlKind::Skin(_) => {

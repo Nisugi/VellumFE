@@ -88,8 +88,23 @@ pub fn keyboard_dead_action_reason(action: &KeyBindAction) -> Option<String> {
 /// `frontend` import (see `tests/architecture.rs`). Buttons not listed sort
 /// after all listed ones, alphabetically, so an unknown name never panics.
 pub const CONTROLLER_BUTTON_ORDER: [&str; 17] = [
-    "south", "east", "north", "west", "dpad_up", "dpad_down", "dpad_left", "dpad_right", "l1",
-    "r1", "l2", "r2", "l3", "r3", "select", "start", "guide",
+    "south",
+    "east",
+    "north",
+    "west",
+    "dpad_up",
+    "dpad_down",
+    "dpad_left",
+    "dpad_right",
+    "l1",
+    "r1",
+    "l2",
+    "r2",
+    "l3",
+    "r3",
+    "select",
+    "start",
+    "guide",
 ];
 
 fn controller_button_rank(name: &str) -> usize {
@@ -390,73 +405,397 @@ impl KeyAction {
     /// `from_str` and listed in `EXEMPT_ACTIONS`).
     pub const ACTIONS: &'static [ActionDef] = &[
         // ---- Command input ----
-        ActionDef { name: "send_command", action: KeyAction::SendCommand, label: "Send Command", category: "Command", scope: ActionScope::Keyboard },
-        ActionDef { name: "cursor_left", action: KeyAction::CursorLeft, label: "Cursor Left", category: "Cursor", scope: ActionScope::Keyboard },
-        ActionDef { name: "cursor_right", action: KeyAction::CursorRight, label: "Cursor Right", category: "Cursor", scope: ActionScope::Keyboard },
-        ActionDef { name: "cursor_word_left", action: KeyAction::CursorWordLeft, label: "Cursor Word Left", category: "Cursor", scope: ActionScope::Keyboard },
-        ActionDef { name: "cursor_word_right", action: KeyAction::CursorWordRight, label: "Cursor Word Right", category: "Cursor", scope: ActionScope::Keyboard },
-        ActionDef { name: "cursor_home", action: KeyAction::CursorHome, label: "Cursor Home", category: "Cursor", scope: ActionScope::Keyboard },
-        ActionDef { name: "cursor_end", action: KeyAction::CursorEnd, label: "Cursor End", category: "Cursor", scope: ActionScope::Keyboard },
-        ActionDef { name: "cursor_backspace", action: KeyAction::CursorBackspace, label: "Backspace", category: "Cursor", scope: ActionScope::Keyboard },
-        ActionDef { name: "cursor_delete", action: KeyAction::CursorDelete, label: "Delete", category: "Cursor", scope: ActionScope::Keyboard },
-        ActionDef { name: "cursor_delete_word", action: KeyAction::CursorDeleteWord, label: "Delete Word", category: "Cursor", scope: ActionScope::Keyboard },
-        ActionDef { name: "cursor_clear_line", action: KeyAction::CursorClearLine, label: "Clear Line", category: "Cursor", scope: ActionScope::Keyboard },
+        ActionDef {
+            name: "send_command",
+            action: KeyAction::SendCommand,
+            label: "Send Command",
+            category: "Command",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "cursor_left",
+            action: KeyAction::CursorLeft,
+            label: "Cursor Left",
+            category: "Cursor",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "cursor_right",
+            action: KeyAction::CursorRight,
+            label: "Cursor Right",
+            category: "Cursor",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "cursor_word_left",
+            action: KeyAction::CursorWordLeft,
+            label: "Cursor Word Left",
+            category: "Cursor",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "cursor_word_right",
+            action: KeyAction::CursorWordRight,
+            label: "Cursor Word Right",
+            category: "Cursor",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "cursor_home",
+            action: KeyAction::CursorHome,
+            label: "Cursor Home",
+            category: "Cursor",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "cursor_end",
+            action: KeyAction::CursorEnd,
+            label: "Cursor End",
+            category: "Cursor",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "cursor_backspace",
+            action: KeyAction::CursorBackspace,
+            label: "Backspace",
+            category: "Cursor",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "cursor_delete",
+            action: KeyAction::CursorDelete,
+            label: "Delete",
+            category: "Cursor",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "cursor_delete_word",
+            action: KeyAction::CursorDeleteWord,
+            label: "Delete Word",
+            category: "Cursor",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "cursor_clear_line",
+            action: KeyAction::CursorClearLine,
+            label: "Clear Line",
+            category: "Cursor",
+            scope: ActionScope::Keyboard,
+        },
         // ---- History ----
-        ActionDef { name: "previous_command", action: KeyAction::PreviousCommand, label: "Previous Command", category: "History", scope: ActionScope::Keyboard },
-        ActionDef { name: "next_command", action: KeyAction::NextCommand, label: "Next Command", category: "History", scope: ActionScope::Keyboard },
-        ActionDef { name: "send_last_command", action: KeyAction::SendLastCommand, label: "Send Last Command", category: "History", scope: ActionScope::Keyboard },
-        ActionDef { name: "send_second_last_command", action: KeyAction::SendSecondLastCommand, label: "Send Second-Last Command", category: "History", scope: ActionScope::Keyboard },
+        ActionDef {
+            name: "previous_command",
+            action: KeyAction::PreviousCommand,
+            label: "Previous Command",
+            category: "History",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "next_command",
+            action: KeyAction::NextCommand,
+            label: "Next Command",
+            category: "History",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "send_last_command",
+            action: KeyAction::SendLastCommand,
+            label: "Send Last Command",
+            category: "History",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "send_second_last_command",
+            action: KeyAction::SendSecondLastCommand,
+            label: "Send Second-Last Command",
+            category: "History",
+            scope: ActionScope::Keyboard,
+        },
         // ---- Windows / scrolling ----
-        ActionDef { name: "switch_current_window", action: KeyAction::SwitchCurrentWindow, label: "Switch Current Window", category: "Window", scope: ActionScope::Keyboard },
-        ActionDef { name: "scroll_current_window_up_one", action: KeyAction::ScrollCurrentWindowUpOne, label: "Scroll Up One", category: "Scroll", scope: ActionScope::Controller },
-        ActionDef { name: "scroll_current_window_down_one", action: KeyAction::ScrollCurrentWindowDownOne, label: "Scroll Down One", category: "Scroll", scope: ActionScope::Controller },
-        ActionDef { name: "scroll_current_window_up_page", action: KeyAction::ScrollCurrentWindowUpPage, label: "Scroll Up Page", category: "Scroll", scope: ActionScope::Controller },
-        ActionDef { name: "scroll_current_window_down_page", action: KeyAction::ScrollCurrentWindowDownPage, label: "Scroll Down Page", category: "Scroll", scope: ActionScope::Controller },
-        ActionDef { name: "scroll_current_window_home", action: KeyAction::ScrollCurrentWindowHome, label: "Scroll To Top", category: "Scroll", scope: ActionScope::Controller },
-        ActionDef { name: "scroll_current_window_end", action: KeyAction::ScrollCurrentWindowEnd, label: "Scroll To Bottom", category: "Scroll", scope: ActionScope::Controller },
+        ActionDef {
+            name: "switch_current_window",
+            action: KeyAction::SwitchCurrentWindow,
+            label: "Switch Current Window",
+            category: "Window",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "scroll_current_window_up_one",
+            action: KeyAction::ScrollCurrentWindowUpOne,
+            label: "Scroll Up One",
+            category: "Scroll",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "scroll_current_window_down_one",
+            action: KeyAction::ScrollCurrentWindowDownOne,
+            label: "Scroll Down One",
+            category: "Scroll",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "scroll_current_window_up_page",
+            action: KeyAction::ScrollCurrentWindowUpPage,
+            label: "Scroll Up Page",
+            category: "Scroll",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "scroll_current_window_down_page",
+            action: KeyAction::ScrollCurrentWindowDownPage,
+            label: "Scroll Down Page",
+            category: "Scroll",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "scroll_current_window_home",
+            action: KeyAction::ScrollCurrentWindowHome,
+            label: "Scroll To Top",
+            category: "Scroll",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "scroll_current_window_end",
+            action: KeyAction::ScrollCurrentWindowEnd,
+            label: "Scroll To Bottom",
+            category: "Scroll",
+            scope: ActionScope::Controller,
+        },
         // ---- Search ----
-        ActionDef { name: "start_search", action: KeyAction::StartSearch, label: "Start Search", category: "Search", scope: ActionScope::Keyboard },
-        ActionDef { name: "next_search_match", action: KeyAction::NextSearchMatch, label: "Next Match", category: "Search", scope: ActionScope::Keyboard },
-        ActionDef { name: "prev_search_match", action: KeyAction::PrevSearchMatch, label: "Previous Match", category: "Search", scope: ActionScope::Keyboard },
-        ActionDef { name: "clear_search", action: KeyAction::ClearSearch, label: "Clear Search", category: "Search", scope: ActionScope::Keyboard },
+        ActionDef {
+            name: "start_search",
+            action: KeyAction::StartSearch,
+            label: "Start Search",
+            category: "Search",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "next_search_match",
+            action: KeyAction::NextSearchMatch,
+            label: "Next Match",
+            category: "Search",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "prev_search_match",
+            action: KeyAction::PrevSearchMatch,
+            label: "Previous Match",
+            category: "Search",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "clear_search",
+            action: KeyAction::ClearSearch,
+            label: "Clear Search",
+            category: "Search",
+            scope: ActionScope::Keyboard,
+        },
         // ---- Tabs ----
-        ActionDef { name: "next_tab", action: KeyAction::NextTab, label: "Next Tab", category: "Tabs", scope: ActionScope::Keyboard },
-        ActionDef { name: "prev_tab", action: KeyAction::PrevTab, label: "Previous Tab", category: "Tabs", scope: ActionScope::Keyboard },
-        ActionDef { name: "next_unread_tab", action: KeyAction::NextUnreadTab, label: "Next Unread Tab", category: "Tabs", scope: ActionScope::Keyboard },
+        ActionDef {
+            name: "next_tab",
+            action: KeyAction::NextTab,
+            label: "Next Tab",
+            category: "Tabs",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "prev_tab",
+            action: KeyAction::PrevTab,
+            label: "Previous Tab",
+            category: "Tabs",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "next_unread_tab",
+            action: KeyAction::NextUnreadTab,
+            label: "Next Unread Tab",
+            category: "Tabs",
+            scope: ActionScope::Keyboard,
+        },
         // ---- Clipboard ----
-        ActionDef { name: "copy", action: KeyAction::Copy, label: "Copy", category: "Clipboard", scope: ActionScope::Keyboard },
-        ActionDef { name: "paste", action: KeyAction::Paste, label: "Paste", category: "Clipboard", scope: ActionScope::Keyboard },
-        ActionDef { name: "select_all", action: KeyAction::SelectAll, label: "Select All", category: "Clipboard", scope: ActionScope::Keyboard },
+        ActionDef {
+            name: "copy",
+            action: KeyAction::Copy,
+            label: "Copy",
+            category: "Clipboard",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "paste",
+            action: KeyAction::Paste,
+            label: "Paste",
+            category: "Clipboard",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "select_all",
+            action: KeyAction::SelectAll,
+            label: "Select All",
+            category: "Clipboard",
+            scope: ActionScope::Keyboard,
+        },
         // ---- System toggles ----
-        ActionDef { name: "toggle_performance_stats", action: KeyAction::TogglePerformanceStats, label: "Toggle Performance Stats", category: "System", scope: ActionScope::Controller },
-        ActionDef { name: "toggle_sounds", action: KeyAction::ToggleSounds, label: "Toggle Sounds", category: "System", scope: ActionScope::Controller },
+        ActionDef {
+            name: "toggle_performance_stats",
+            action: KeyAction::TogglePerformanceStats,
+            label: "Toggle Performance Stats",
+            category: "System",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "toggle_sounds",
+            action: KeyAction::ToggleSounds,
+            label: "Toggle Sounds",
+            category: "System",
+            scope: ActionScope::Controller,
+        },
         // ---- Travel ----
-        ActionDef { name: "stop_travel", action: KeyAction::StopTravel, label: "Stop Travel", category: "Travel", scope: ActionScope::Controller },
+        ActionDef {
+            name: "stop_travel",
+            action: KeyAction::StopTravel,
+            label: "Stop Travel",
+            category: "Travel",
+            scope: ActionScope::Controller,
+        },
         // ---- Interact / menu navigation (controller-friendly) ----
-        ActionDef { name: "interact_mode", action: KeyAction::InteractMode, label: "Toggle Interact Mode", category: "Interact", scope: ActionScope::Controller },
-        ActionDef { name: "interact_select", action: KeyAction::InteractSelect, label: "Interact Select", category: "Interact", scope: ActionScope::Controller },
-        ActionDef { name: "menu_up", action: KeyAction::MenuUp, label: "Menu Up", category: "Menu", scope: ActionScope::Controller },
-        ActionDef { name: "menu_down", action: KeyAction::MenuDown, label: "Menu Down", category: "Menu", scope: ActionScope::Controller },
-        ActionDef { name: "menu_left", action: KeyAction::MenuLeft, label: "Menu Left", category: "Menu", scope: ActionScope::Controller },
-        ActionDef { name: "menu_right", action: KeyAction::MenuRight, label: "Menu Right", category: "Menu", scope: ActionScope::Controller },
-        ActionDef { name: "menu_cancel", action: KeyAction::MenuCancel, label: "Menu Cancel", category: "Menu", scope: ActionScope::Controller },
+        ActionDef {
+            name: "interact_mode",
+            action: KeyAction::InteractMode,
+            label: "Toggle Interact Mode",
+            category: "Interact",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "interact_select",
+            action: KeyAction::InteractSelect,
+            label: "Interact Select",
+            category: "Interact",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "menu_up",
+            action: KeyAction::MenuUp,
+            label: "Menu Up",
+            category: "Menu",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "menu_down",
+            action: KeyAction::MenuDown,
+            label: "Menu Down",
+            category: "Menu",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "menu_left",
+            action: KeyAction::MenuLeft,
+            label: "Menu Left",
+            category: "Menu",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "menu_right",
+            action: KeyAction::MenuRight,
+            label: "Menu Right",
+            category: "Menu",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "menu_cancel",
+            action: KeyAction::MenuCancel,
+            label: "Menu Cancel",
+            category: "Menu",
+            scope: ActionScope::Controller,
+        },
         // ---- Controller layers ----
         // controller_wheel is configured per-wheel in the Wheels tab, so it is
         // intentionally NOT offered in the generic action dropdown (see
         // controller_action_names); it still parses via from_str's prefix arm.
-        ActionDef { name: "controller_shift", action: KeyAction::ControllerShift, label: "Controller Shift Layer", category: "Controller", scope: ActionScope::Controller },
-        ActionDef { name: "controller_modifier", action: KeyAction::ControllerModifier, label: "Controller Modifier", category: "Controller", scope: ActionScope::Controller },
-        ActionDef { name: "controller_overlay", action: KeyAction::ControllerOverlay, label: "Toggle Binding Overlay", category: "Controller", scope: ActionScope::Controller },
+        ActionDef {
+            name: "controller_shift",
+            action: KeyAction::ControllerShift,
+            label: "Controller Shift Layer",
+            category: "Controller",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "controller_modifier",
+            action: KeyAction::ControllerModifier,
+            label: "Controller Modifier",
+            category: "Controller",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "controller_overlay",
+            action: KeyAction::ControllerOverlay,
+            label: "Toggle Binding Overlay",
+            category: "Controller",
+            scope: ActionScope::Controller,
+        },
         // ---- TTS / accessibility ----
-        ActionDef { name: "tts_next", action: KeyAction::TtsNext, label: "TTS: Next Message", category: "Speech", scope: ActionScope::Controller },
-        ActionDef { name: "tts_previous", action: KeyAction::TtsPrevious, label: "TTS: Previous Message", category: "Speech", scope: ActionScope::Controller },
-        ActionDef { name: "tts_next_unread", action: KeyAction::TtsNextUnread, label: "TTS: Next Unread", category: "Speech", scope: ActionScope::Controller },
-        ActionDef { name: "tts_stop", action: KeyAction::TtsStop, label: "TTS: Stop", category: "Speech", scope: ActionScope::Controller },
-        ActionDef { name: "tts_mute_toggle", action: KeyAction::TtsMuteToggle, label: "TTS: Mute Toggle", category: "Speech", scope: ActionScope::Controller },
-        ActionDef { name: "tts_increase_rate", action: KeyAction::TtsIncreaseRate, label: "TTS: Increase Rate", category: "Speech", scope: ActionScope::Controller },
-        ActionDef { name: "tts_decrease_rate", action: KeyAction::TtsDecreaseRate, label: "TTS: Decrease Rate", category: "Speech", scope: ActionScope::Controller },
-        ActionDef { name: "tts_increase_volume", action: KeyAction::TtsIncreaseVolume, label: "TTS: Increase Volume", category: "Speech", scope: ActionScope::Controller },
-        ActionDef { name: "tts_decrease_volume", action: KeyAction::TtsDecreaseVolume, label: "TTS: Decrease Volume", category: "Speech", scope: ActionScope::Controller },
+        ActionDef {
+            name: "tts_next",
+            action: KeyAction::TtsNext,
+            label: "TTS: Next Message",
+            category: "Speech",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "tts_previous",
+            action: KeyAction::TtsPrevious,
+            label: "TTS: Previous Message",
+            category: "Speech",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "tts_next_unread",
+            action: KeyAction::TtsNextUnread,
+            label: "TTS: Next Unread",
+            category: "Speech",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "tts_stop",
+            action: KeyAction::TtsStop,
+            label: "TTS: Stop",
+            category: "Speech",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "tts_mute_toggle",
+            action: KeyAction::TtsMuteToggle,
+            label: "TTS: Mute Toggle",
+            category: "Speech",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "tts_increase_rate",
+            action: KeyAction::TtsIncreaseRate,
+            label: "TTS: Increase Rate",
+            category: "Speech",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "tts_decrease_rate",
+            action: KeyAction::TtsDecreaseRate,
+            label: "TTS: Decrease Rate",
+            category: "Speech",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "tts_increase_volume",
+            action: KeyAction::TtsIncreaseVolume,
+            label: "TTS: Increase Volume",
+            category: "Speech",
+            scope: ActionScope::Controller,
+        },
+        ActionDef {
+            name: "tts_decrease_volume",
+            action: KeyAction::TtsDecreaseVolume,
+            label: "TTS: Decrease Volume",
+            category: "Speech",
+            scope: ActionScope::Controller,
+        },
     ];
 
     /// Names offered by the TUI keybind form's action dropdown — every
@@ -609,7 +948,11 @@ pub enum WheelSpanIssue {
     /// Explicit spans (each floored at the minimum) sum past 360°.
     SumOver { wheel: String, sum_deg: f32 },
     /// A slice's span resolves below the minimum and will be hard to hit.
-    TooNarrow { wheel: String, label: String, span_deg: f32 },
+    TooNarrow {
+        wheel: String,
+        label: String,
+        span_deg: f32,
+    },
     /// No span-less slice to absorb the remainder, and the explicit spans
     /// don't already fill 360° — the ring gets scaled to close.
     DoesNotClose { wheel: String, sum_deg: f32 },
@@ -665,7 +1008,10 @@ fn validate_ring(
         let free_count = explicit.iter().filter(|s| s.is_none()).count();
 
         if explicit_sum > 360.0 + 1e-3 {
-            issues.push(WheelSpanIssue::SumOver { wheel: wheel.to_string(), sum_deg: explicit_sum });
+            issues.push(WheelSpanIssue::SumOver {
+                wheel: wheel.to_string(),
+                sum_deg: explicit_sum,
+            });
         } else if free_count == 0 && (explicit_sum - 360.0).abs() > 0.5 {
             issues.push(WheelSpanIssue::DoesNotClose {
                 wheel: wheel.to_string(),
@@ -761,8 +1107,10 @@ impl RumbleConfig {
     /// rows). Single source shared by the TUI and GUI highlight forms so the
     /// two can't offer different sets.
     pub fn pattern_names(&self) -> Vec<String> {
-        let mut names: Vec<String> =
-            Self::BUILTIN_PATTERNS.iter().map(|s| s.to_string()).collect();
+        let mut names: Vec<String> = Self::BUILTIN_PATTERNS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         names.extend(self.patterns.iter().map(|p| p.name.clone()));
         names
     }
@@ -1134,38 +1482,168 @@ impl MenuKeybinds {
     /// Both editors iterate this so neither hardcodes a parallel field list.
     pub const FIELDS: &'static [MenuKeybindField] = &[
         // Navigation
-        MenuKeybindField { label: "Navigate Up", group: "Navigation", get: |m| &m.navigate_up, set: |m, v| m.navigate_up = v },
-        MenuKeybindField { label: "Navigate Down", group: "Navigation", get: |m| &m.navigate_down, set: |m, v| m.navigate_down = v },
-        MenuKeybindField { label: "Navigate Left", group: "Navigation", get: |m| &m.navigate_left, set: |m, v| m.navigate_left = v },
-        MenuKeybindField { label: "Navigate Right", group: "Navigation", get: |m| &m.navigate_right, set: |m, v| m.navigate_right = v },
-        MenuKeybindField { label: "Page Up", group: "Navigation", get: |m| &m.page_up, set: |m, v| m.page_up = v },
-        MenuKeybindField { label: "Page Down", group: "Navigation", get: |m| &m.page_down, set: |m, v| m.page_down = v },
-        MenuKeybindField { label: "Home", group: "Navigation", get: |m| &m.home, set: |m, v| m.home = v },
-        MenuKeybindField { label: "End", group: "Navigation", get: |m| &m.end, set: |m, v| m.end = v },
+        MenuKeybindField {
+            label: "Navigate Up",
+            group: "Navigation",
+            get: |m| &m.navigate_up,
+            set: |m, v| m.navigate_up = v,
+        },
+        MenuKeybindField {
+            label: "Navigate Down",
+            group: "Navigation",
+            get: |m| &m.navigate_down,
+            set: |m, v| m.navigate_down = v,
+        },
+        MenuKeybindField {
+            label: "Navigate Left",
+            group: "Navigation",
+            get: |m| &m.navigate_left,
+            set: |m, v| m.navigate_left = v,
+        },
+        MenuKeybindField {
+            label: "Navigate Right",
+            group: "Navigation",
+            get: |m| &m.navigate_right,
+            set: |m, v| m.navigate_right = v,
+        },
+        MenuKeybindField {
+            label: "Page Up",
+            group: "Navigation",
+            get: |m| &m.page_up,
+            set: |m, v| m.page_up = v,
+        },
+        MenuKeybindField {
+            label: "Page Down",
+            group: "Navigation",
+            get: |m| &m.page_down,
+            set: |m, v| m.page_down = v,
+        },
+        MenuKeybindField {
+            label: "Home",
+            group: "Navigation",
+            get: |m| &m.home,
+            set: |m, v| m.home = v,
+        },
+        MenuKeybindField {
+            label: "End",
+            group: "Navigation",
+            get: |m| &m.end,
+            set: |m, v| m.end = v,
+        },
         // Field navigation
-        MenuKeybindField { label: "Next Field", group: "Field Navigation", get: |m| &m.next_field, set: |m, v| m.next_field = v },
-        MenuKeybindField { label: "Previous Field", group: "Field Navigation", get: |m| &m.previous_field, set: |m, v| m.previous_field = v },
+        MenuKeybindField {
+            label: "Next Field",
+            group: "Field Navigation",
+            get: |m| &m.next_field,
+            set: |m, v| m.next_field = v,
+        },
+        MenuKeybindField {
+            label: "Previous Field",
+            group: "Field Navigation",
+            get: |m| &m.previous_field,
+            set: |m, v| m.previous_field = v,
+        },
         // Actions
-        MenuKeybindField { label: "Select", group: "Actions", get: |m| &m.select, set: |m, v| m.select = v },
-        MenuKeybindField { label: "Cancel", group: "Actions", get: |m| &m.cancel, set: |m, v| m.cancel = v },
-        MenuKeybindField { label: "Save", group: "Actions", get: |m| &m.save, set: |m, v| m.save = v },
-        MenuKeybindField { label: "Delete", group: "Actions", get: |m| &m.delete, set: |m, v| m.delete = v },
+        MenuKeybindField {
+            label: "Select",
+            group: "Actions",
+            get: |m| &m.select,
+            set: |m, v| m.select = v,
+        },
+        MenuKeybindField {
+            label: "Cancel",
+            group: "Actions",
+            get: |m| &m.cancel,
+            set: |m, v| m.cancel = v,
+        },
+        MenuKeybindField {
+            label: "Save",
+            group: "Actions",
+            get: |m| &m.save,
+            set: |m, v| m.save = v,
+        },
+        MenuKeybindField {
+            label: "Delete",
+            group: "Actions",
+            get: |m| &m.delete,
+            set: |m, v| m.delete = v,
+        },
         // Clipboard
-        MenuKeybindField { label: "Select All", group: "Clipboard", get: |m| &m.select_all, set: |m, v| m.select_all = v },
-        MenuKeybindField { label: "Copy", group: "Clipboard", get: |m| &m.copy, set: |m, v| m.copy = v },
-        MenuKeybindField { label: "Cut", group: "Clipboard", get: |m| &m.cut, set: |m, v| m.cut = v },
-        MenuKeybindField { label: "Paste", group: "Clipboard", get: |m| &m.paste, set: |m, v| m.paste = v },
+        MenuKeybindField {
+            label: "Select All",
+            group: "Clipboard",
+            get: |m| &m.select_all,
+            set: |m, v| m.select_all = v,
+        },
+        MenuKeybindField {
+            label: "Copy",
+            group: "Clipboard",
+            get: |m| &m.copy,
+            set: |m, v| m.copy = v,
+        },
+        MenuKeybindField {
+            label: "Cut",
+            group: "Clipboard",
+            get: |m| &m.cut,
+            set: |m, v| m.cut = v,
+        },
+        MenuKeybindField {
+            label: "Paste",
+            group: "Clipboard",
+            get: |m| &m.paste,
+            set: |m, v| m.paste = v,
+        },
         // Toggles / cycling
-        MenuKeybindField { label: "Toggle", group: "Toggles", get: |m| &m.toggle, set: |m, v| m.toggle = v },
-        MenuKeybindField { label: "Toggle Filter", group: "Toggles", get: |m| &m.toggle_filter, set: |m, v| m.toggle_filter = v },
-        MenuKeybindField { label: "Cycle Forward", group: "Toggles", get: |m| &m.cycle_forward, set: |m, v| m.cycle_forward = v },
-        MenuKeybindField { label: "Cycle Backward", group: "Toggles", get: |m| &m.cycle_backward, set: |m, v| m.cycle_backward = v },
+        MenuKeybindField {
+            label: "Toggle",
+            group: "Toggles",
+            get: |m| &m.toggle,
+            set: |m, v| m.toggle = v,
+        },
+        MenuKeybindField {
+            label: "Toggle Filter",
+            group: "Toggles",
+            get: |m| &m.toggle_filter,
+            set: |m, v| m.toggle_filter = v,
+        },
+        MenuKeybindField {
+            label: "Cycle Forward",
+            group: "Toggles",
+            get: |m| &m.cycle_forward,
+            set: |m, v| m.cycle_forward = v,
+        },
+        MenuKeybindField {
+            label: "Cycle Backward",
+            group: "Toggles",
+            get: |m| &m.cycle_backward,
+            set: |m, v| m.cycle_backward = v,
+        },
         // Reordering
-        MenuKeybindField { label: "Move Up", group: "Reordering", get: |m| &m.move_up, set: |m, v| m.move_up = v },
-        MenuKeybindField { label: "Move Down", group: "Reordering", get: |m| &m.move_down, set: |m, v| m.move_down = v },
+        MenuKeybindField {
+            label: "Move Up",
+            group: "Reordering",
+            get: |m| &m.move_up,
+            set: |m, v| m.move_up = v,
+        },
+        MenuKeybindField {
+            label: "Move Down",
+            group: "Reordering",
+            get: |m| &m.move_down,
+            set: |m, v| m.move_down = v,
+        },
         // List management
-        MenuKeybindField { label: "Add", group: "List Management", get: |m| &m.add, set: |m, v| m.add = v },
-        MenuKeybindField { label: "Edit", group: "List Management", get: |m| &m.edit, set: |m, v| m.edit = v },
+        MenuKeybindField {
+            label: "Add",
+            group: "List Management",
+            get: |m| &m.add,
+            set: |m, v| m.add = v,
+        },
+        MenuKeybindField {
+            label: "Edit",
+            group: "List Management",
+            get: |m| &m.edit,
+            set: |m, v| m.edit = v,
+        },
     ];
 }
 
@@ -1660,7 +2138,10 @@ impl Config {
     /// Resolve which controller.toml a save targets: the global file, or a
     /// character's override file. The single scope→path decision shared by
     /// every controller saver.
-    fn controller_save_path(is_global: bool, character: Option<&str>) -> Result<std::path::PathBuf> {
+    fn controller_save_path(
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<std::path::PathBuf> {
         if is_global {
             Self::common_controller_path()
         } else {
@@ -1787,7 +2268,10 @@ impl Config {
             toml_value.get("controller_wheel")?.clone().try_into().ok()
         };
         // Last layer that defines the ring wins (character over global).
-        Ok(last_controller_value(&Self::controller_layers(character), slices_from).unwrap_or_default())
+        Ok(
+            last_controller_value(&Self::controller_layers(character), slices_from)
+                .unwrap_or_default(),
+        )
     }
 
     /// Load the phone's touch wheel from `[touch_wheel]` (character over
@@ -1796,9 +2280,17 @@ impl Config {
     pub fn load_touch_wheel(character: Option<&str>) -> Result<Vec<WheelSlice>> {
         let slices_from = |contents: &str| -> Option<Vec<WheelSlice>> {
             let toml_value: toml::Value = toml::from_str(contents).ok()?;
-            toml_value.get("touch_wheel")?.get("slices")?.clone().try_into().ok()
+            toml_value
+                .get("touch_wheel")?
+                .get("slices")?
+                .clone()
+                .try_into()
+                .ok()
         };
-        Ok(last_controller_value(&Self::controller_layers(character), slices_from).unwrap_or_default())
+        Ok(
+            last_controller_value(&Self::controller_layers(character), slices_from)
+                .unwrap_or_default(),
+        )
     }
 
     /// Replace the touch wheel's slice list in the controller config
@@ -1836,7 +2328,10 @@ impl Config {
                 .try_into()
                 .ok()
         };
-        Ok(last_controller_value(&Self::controller_layers(character), list_from).unwrap_or_default())
+        Ok(
+            last_controller_value(&Self::controller_layers(character), list_from)
+                .unwrap_or_default(),
+        )
     }
 
     /// Replace the overlay legend's curated entry list.
@@ -1865,7 +2360,10 @@ impl Config {
             let toml_value: toml::Value = toml::from_str(contents).ok()?;
             toml_value.get("controller_rumble")?.clone().try_into().ok()
         };
-        Ok(last_controller_value(&Self::controller_layers(character), section_from).unwrap_or_default())
+        Ok(
+            last_controller_value(&Self::controller_layers(character), section_from)
+                .unwrap_or_default(),
+        )
     }
 
     /// Replace the `[controller_rumble]` section.
@@ -1889,7 +2387,10 @@ impl Config {
             let toml_value: toml::Value = toml::from_str(contents).ok()?;
             toml_value.get("controller_tuning")?.clone().try_into().ok()
         };
-        Ok(last_controller_value(&Self::controller_layers(character), section_from).unwrap_or_default())
+        Ok(
+            last_controller_value(&Self::controller_layers(character), section_from)
+                .unwrap_or_default(),
+        )
     }
 
     /// Replace the `[controller_tuning]` section.
@@ -2177,7 +2678,9 @@ impl Config {
     /// through to global. Keys are canonical bind keys — a bare button
     /// (`south`) or a composite modifier combo (`l2+dpad_down`). Falls back
     /// to the shipped defaults when neither layer has the section.
-    pub fn load_controller_binds(character: Option<&str>) -> Result<HashMap<String, KeyBindAction>> {
+    pub fn load_controller_binds(
+        character: Option<&str>,
+    ) -> Result<HashMap<String, KeyBindAction>> {
         Ok(merge_controller_bind_layers(
             "controller",
             &Self::controller_layers(character),
@@ -2938,10 +3441,7 @@ pub(crate) fn migrate_controller_shift_text(text: &str) -> Option<String> {
     }
 
     // Stamp the marker and drop the legacy table.
-    base.insert(
-        CONTROLLER_MIGRATED_MARKER,
-        toml_edit::value(true),
-    );
+    base.insert(CONTROLLER_MIGRATED_MARKER, toml_edit::value(true));
     doc.remove("controller_shift");
 
     Some(doc.to_string())
@@ -2957,7 +3457,10 @@ pub(crate) fn migrate_controller_shift_text(text: &str) -> Option<String> {
 /// layers (the character override) win per key, unset keys fall through to
 /// the base. A layer that doesn't parse or lacks the table contributes
 /// nothing. Used for `[controller]` / `[controller_shift]` binds.
-fn merge_controller_bind_layers(section: &str, layers: &[String]) -> HashMap<String, KeyBindAction> {
+fn merge_controller_bind_layers(
+    section: &str,
+    layers: &[String],
+) -> HashMap<String, KeyBindAction> {
     let mut merged: HashMap<String, KeyBindAction> = HashMap::new();
     for text in layers {
         let binds: HashMap<String, KeyBindAction> = toml::from_str::<toml::Value>(text)
@@ -3006,10 +3509,7 @@ where
 /// section replaces the global one wholesale (the value is one indivisible
 /// unit — a ring array, an overlay list, a tuning/rumble struct). Returns
 /// None only when no layer defines it (loaders then use the type default).
-fn last_controller_value<T>(
-    layers: &[String],
-    extract: impl Fn(&str) -> Option<T>,
-) -> Option<T> {
+fn last_controller_value<T>(layers: &[String], extract: impl Fn(&str) -> Option<T>) -> Option<T> {
     layers.iter().rev().find_map(|text| extract(text))
 }
 
@@ -3031,23 +3531,18 @@ mod tests {
         assert!(reserved_combo_conflict("ctrl+c", &other).is_some());
         assert!(reserved_combo_conflict("Ctrl+V", &makro).is_some());
         // ctrl+x has no matching action in the vocabulary — always refused.
-        assert!(reserved_combo_conflict(
-            "ctrl+x",
-            &KeyBindAction::Action("copy".to_string())
-        )
-        .is_some());
+        assert!(
+            reserved_combo_conflict("ctrl+x", &KeyBindAction::Action("copy".to_string())).is_some()
+        );
 
         // The natural clipboard action on its own combo is fine.
-        assert!(reserved_combo_conflict(
-            "ctrl+c",
-            &KeyBindAction::Action("copy".to_string())
-        )
-        .is_none());
-        assert!(reserved_combo_conflict(
-            "ctrl+v",
-            &KeyBindAction::Action("paste".to_string())
-        )
-        .is_none());
+        assert!(
+            reserved_combo_conflict("ctrl+c", &KeyBindAction::Action("copy".to_string())).is_none()
+        );
+        assert!(
+            reserved_combo_conflict("ctrl+v", &KeyBindAction::Action("paste".to_string()))
+                .is_none()
+        );
         // Everything else is untouched.
         assert!(reserved_combo_conflict("ctrl+q", &other).is_none());
         assert!(reserved_combo_conflict("f5", &makro).is_none());
@@ -3084,7 +3579,11 @@ mod tests {
     /// a FIELDS entry means the editors can't reach it — this catches that.
     #[test]
     fn menu_keybind_fields_cover_all_26_and_round_trip() {
-        assert_eq!(MenuKeybinds::FIELDS.len(), 26, "expected 26 menu keybind fields");
+        assert_eq!(
+            MenuKeybinds::FIELDS.len(),
+            26,
+            "expected 26 menu keybind fields"
+        );
 
         // Every field's setter writes what its getter reads back.
         let mut menu = MenuKeybinds::default();
@@ -3104,8 +3603,10 @@ mod tests {
         for (i, field) in MenuKeybinds::FIELDS.iter().enumerate() {
             (field.set)(&mut fresh, format!("K{i}"));
         }
-        let values: std::collections::HashSet<&str> =
-            MenuKeybinds::FIELDS.iter().map(|f| (f.get)(&fresh)).collect();
+        let values: std::collections::HashSet<&str> = MenuKeybinds::FIELDS
+            .iter()
+            .map(|f| (f.get)(&fresh))
+            .collect();
         assert_eq!(values.len(), 26, "some FIELDS entries alias the same field");
     }
 
@@ -3159,7 +3660,10 @@ mod tests {
         let merged = merge_controller_bind_layers("controller", &[global, character]);
 
         assert_eq!(merged.get("south").unwrap().display_value(), "search"); // overridden
-        assert_eq!(merged.get("start").unwrap().display_value(), "interact_mode"); // inherited
+        assert_eq!(
+            merged.get("start").unwrap().display_value(),
+            "interact_mode"
+        ); // inherited
         assert_eq!(merged.get("north").unwrap().display_value(), "n\r"); // added
         assert_eq!(merged.len(), 3);
     }
@@ -3327,15 +3831,31 @@ command = \"fire\"
     fn interact_and_menu_nav_actions_map_correctly() {
         // Configurable interact/menu nav actions must map to their exact
         // variants (a from_str typo would silently break menu control).
-        assert_eq!(KeyAction::from_str("interact_select"), Some(KeyAction::InteractSelect));
+        assert_eq!(
+            KeyAction::from_str("interact_select"),
+            Some(KeyAction::InteractSelect)
+        );
         assert_eq!(KeyAction::from_str("menu_up"), Some(KeyAction::MenuUp));
         assert_eq!(KeyAction::from_str("menu_down"), Some(KeyAction::MenuDown));
         assert_eq!(KeyAction::from_str("menu_left"), Some(KeyAction::MenuLeft));
-        assert_eq!(KeyAction::from_str("menu_right"), Some(KeyAction::MenuRight));
-        assert_eq!(KeyAction::from_str("menu_cancel"), Some(KeyAction::MenuCancel));
+        assert_eq!(
+            KeyAction::from_str("menu_right"),
+            Some(KeyAction::MenuRight)
+        );
+        assert_eq!(
+            KeyAction::from_str("menu_cancel"),
+            Some(KeyAction::MenuCancel)
+        );
         // And they're all offered in the controller editor dropdown.
         let controller: Vec<&str> = KeyAction::controller_action_names().collect();
-        for n in ["interact_select","menu_up","menu_down","menu_left","menu_right","menu_cancel"] {
+        for n in [
+            "interact_select",
+            "menu_up",
+            "menu_down",
+            "menu_left",
+            "menu_right",
+            "menu_cancel",
+        ] {
             assert!(controller.contains(&n), "{n} missing from dropdown list");
         }
     }
@@ -3361,7 +3881,11 @@ command = \"fire\"
         // action silently shadow another in every dropdown).
         let mut seen = std::collections::HashSet::new();
         for def in KeyAction::ACTIONS {
-            assert!(seen.insert(def.name), "duplicate action name '{}'", def.name);
+            assert!(
+                seen.insert(def.name),
+                "duplicate action name '{}'",
+                def.name
+            );
         }
 
         // (c) Every exempt name still parses (the non-table escape hatches must
@@ -3377,7 +3901,10 @@ command = \"fire\"
             );
         }
         // The wheel prefix form resolves via the exempt path, not a table row.
-        assert_eq!(KeyAction::from_str("controller_wheel:portals"), Some(KeyAction::ControllerWheel));
+        assert_eq!(
+            KeyAction::from_str("controller_wheel:portals"),
+            Some(KeyAction::ControllerWheel)
+        );
 
         // (d) The two generated dropdown sets are exactly the table's slices,
         // in table order — the TUI form and controller editor cannot offer a
@@ -3408,12 +3935,24 @@ command = \"fire\"
             label: "stance".into(),
             command: String::new(),
             slices: vec![
-                WheelSlice { label: "offensive".into(), command: "stance offensive".into(), ..Default::default() },
-                WheelSlice { label: "defensive".into(), command: "stance defensive".into(), ..Default::default() },
+                WheelSlice {
+                    label: "offensive".into(),
+                    command: "stance offensive".into(),
+                    ..Default::default()
+                },
+                WheelSlice {
+                    label: "defensive".into(),
+                    command: "stance defensive".into(),
+                    ..Default::default()
+                },
             ],
             ..Default::default()
         };
-        let leaf = |l: &str| WheelSlice { label: l.into(), command: l.into(), ..Default::default() };
+        let leaf = |l: &str| WheelSlice {
+            label: l.into(),
+            command: l.into(),
+            ..Default::default()
+        };
         let wheel = vec![leaf("look"), stance, leaf("exp"), leaf("health")];
 
         // Serialize the way the writer does, re-parse, and confirm the
@@ -3426,7 +3965,11 @@ command = \"fire\"
         let serialized = doc.to_string();
         let reparsed: Vec<WheelSlice> = {
             let doc: toml::Value = toml::from_str(&serialized).expect("valid TOML");
-            doc.get("controller_wheel").expect("wheel array").clone().try_into().expect("parse slices")
+            doc.get("controller_wheel")
+                .expect("wheel array")
+                .clone()
+                .try_into()
+                .expect("parse slices")
         };
         assert_eq!(reparsed.len(), 4, "top-level slice count preserved");
         assert_eq!(reparsed[0].label, "look");
@@ -3453,7 +3996,12 @@ command = \"fire\"
         assert!(validate_wheel_spans("w", &[sp("a", None), sp("b", None)]).is_empty());
 
         // One 120 + three free @ 80 each: fine.
-        let ok = vec![sp("a", Some(120.0)), sp("b", None), sp("c", None), sp("d", None)];
+        let ok = vec![
+            sp("a", Some(120.0)),
+            sp("b", None),
+            sp("c", None),
+            sp("d", None),
+        ];
         assert!(validate_wheel_spans("w", &ok).is_empty());
 
         // Explicit spans sum over 360 (200 + 200): SumOver.
@@ -3512,10 +4060,10 @@ command = \"fire\"
             ..Default::default()
         };
         let nested = validate_wheel_spans("w", &[folder]);
-        assert!(!nested
-            .iter()
-            .any(|i| matches!(i, WheelSpanIssue::BackAtTopLevel { .. }
-                | WheelSpanIssue::MultipleBack { .. })));
+        assert!(!nested.iter().any(|i| matches!(
+            i,
+            WheelSpanIssue::BackAtTopLevel { .. } | WheelSpanIssue::MultipleBack { .. }
+        )));
 
         // Two Backs in one ring: MultipleBack.
         let folder2 = WheelSlice {
@@ -3535,8 +4083,18 @@ command = \"fire\"
             label: "stance".into(),
             command: String::new(),
             slices: vec![
-                WheelSlice { label: "def".into(), command: "d".into(), span: Some(200.0), ..Default::default() },
-                WheelSlice { label: "off".into(), command: "o".into(), span: Some(200.0), ..Default::default() },
+                WheelSlice {
+                    label: "def".into(),
+                    command: "d".into(),
+                    span: Some(200.0),
+                    ..Default::default()
+                },
+                WheelSlice {
+                    label: "off".into(),
+                    command: "o".into(),
+                    span: Some(200.0),
+                    ..Default::default()
+                },
             ],
             ..Default::default()
         };
@@ -3568,7 +4126,11 @@ command = \"fire\"
                 span: Some(60.0),
                 ..Default::default()
             },
-            WheelSlice { label: "hide".into(), command: "hide".into(), ..Default::default() },
+            WheelSlice {
+                label: "hide".into(),
+                command: "hide".into(),
+                ..Default::default()
+            },
         ];
         let mut doc = toml_edit::DocumentMut::new();
         doc.insert(
@@ -3576,22 +4138,44 @@ command = \"fire\"
             toml_edit::Item::Value(Config::wheel_slices_to_inline(&wheel)),
         );
         let serialized = doc.to_string();
-        assert!(serialized.contains("span = 120.0"), "explicit span written: {serialized}");
-        assert!(serialized.contains("inner = 20"), "explicit inner written: {serialized}");
-        assert!(serialized.contains("back = true"), "back flag written: {serialized}");
+        assert!(
+            serialized.contains("span = 120.0"),
+            "explicit span written: {serialized}"
+        );
+        assert!(
+            serialized.contains("inner = 20"),
+            "explicit inner written: {serialized}"
+        );
+        assert!(
+            serialized.contains("back = true"),
+            "back flag written: {serialized}"
+        );
         // The span-less slice's inline table must not mention either key.
         let hide_entry = serialized
             .split("label = \"hide\"")
             .nth(1)
             .expect("hide slice present");
         let hide_entry = hide_entry.split('}').next().unwrap();
-        assert!(!hide_entry.contains("span"), "no span on unset slice: {hide_entry}");
-        assert!(!hide_entry.contains("inner"), "no inner on unset slice: {hide_entry}");
-        assert!(!hide_entry.contains("back"), "no back on a normal slice: {hide_entry}");
+        assert!(
+            !hide_entry.contains("span"),
+            "no span on unset slice: {hide_entry}"
+        );
+        assert!(
+            !hide_entry.contains("inner"),
+            "no inner on unset slice: {hide_entry}"
+        );
+        assert!(
+            !hide_entry.contains("back"),
+            "no back on a normal slice: {hide_entry}"
+        );
 
         let reparsed: Vec<WheelSlice> = {
             let doc: toml::Value = toml::from_str(&serialized).expect("valid TOML");
-            doc.get("controller_wheel").unwrap().clone().try_into().expect("parse slices")
+            doc.get("controller_wheel")
+                .unwrap()
+                .clone()
+                .try_into()
+                .expect("parse slices")
         };
         assert_eq!(reparsed, wheel, "wheel round-trips exactly");
 
@@ -3600,7 +4184,11 @@ command = \"fire\"
             let doc: toml::Value =
                 toml::from_str("controller_wheel = [{ label = \"look\", command = \"look\" }]")
                     .unwrap();
-            doc.get("controller_wheel").unwrap().clone().try_into().expect("legacy parses")
+            doc.get("controller_wheel")
+                .unwrap()
+                .clone()
+                .try_into()
+                .expect("legacy parses")
         };
         assert_eq!((legacy[0].span, legacy[0].inner), (None, None));
     }
@@ -3622,13 +4210,21 @@ command = \"fire\"
                 fire_type: Some("none".into()),
                 ..Default::default()
             },
-            WheelSlice { label: "look".into(), command: "look".into(), ..Default::default() },
+            WheelSlice {
+                label: "look".into(),
+                command: "look".into(),
+                ..Default::default()
+            },
         ];
         let inline = Config::wheel_slices_to_inline(&wheel);
         let toml_str = format!("controller_wheel = {inline}");
         let doc: toml::Value = toml::from_str(&toml_str).unwrap();
-        let back: Vec<WheelSlice> =
-            doc.get("controller_wheel").unwrap().clone().try_into().unwrap();
+        let back: Vec<WheelSlice> = doc
+            .get("controller_wheel")
+            .unwrap()
+            .clone()
+            .try_into()
+            .unwrap();
         assert_eq!(back[0].fire_type.as_deref(), Some("edge"));
         assert!(back[1].is_none_type());
         assert_eq!(back[2].fire_type, None, "untyped stays untyped");
@@ -3640,7 +4236,11 @@ command = \"fire\"
                 "controller_wheel = [{ label = \"x\", command = \"stab\", fire_type = \"none\" }]",
             )
             .unwrap();
-            doc.get("controller_wheel").unwrap().clone().try_into().unwrap()
+            doc.get("controller_wheel")
+                .unwrap()
+                .clone()
+                .try_into()
+                .unwrap()
         };
         assert!(legacy[0].is_none_type());
     }
@@ -3650,7 +4250,11 @@ command = \"fire\"
         // start serializes when set, is absent when unset, and — the prune
         // trap — a meta with ONLY start must survive save (the predicate
         // that drops empty metas must count it).
-        let meta = WheelMeta { button: None, stick: None, start: Some(-30.0) };
+        let meta = WheelMeta {
+            button: None,
+            stick: None,
+            start: Some(-30.0),
+        };
         let serialized = toml::to_string(&meta).unwrap();
         assert!(serialized.contains("start = -30.0"), "{serialized}");
         assert!(!serialized.contains("button"), "{serialized}");
@@ -3658,7 +4262,11 @@ command = \"fire\"
         assert_eq!(back.start, Some(-30.0));
 
         // Unset start emits nothing (old files stay byte-identical).
-        let plain = WheelMeta { button: Some("l3".into()), stick: None, start: None };
+        let plain = WheelMeta {
+            button: Some("l3".into()),
+            stick: None,
+            start: None,
+        };
         assert!(!toml::to_string(&plain).unwrap().contains("start"));
 
         // Legacy metas (no start key) load with None.
@@ -3683,20 +4291,39 @@ command = \"fire\"
         let existing = "[controller_shift]\ndpad_up = \"x\"\n\n[controller_shift.south]\nmacro_text = \"stand\\r\"\n";
         let mut doc: toml_edit::DocumentMut = existing.parse().unwrap();
         let stance = WheelSlice {
-            label: "stance".into(), command: String::new(),
+            label: "stance".into(),
+            command: String::new(),
             slices: vec![
-                WheelSlice { label: "offensive".into(), command: "stance offensive".into(), ..Default::default() },
-                WheelSlice { label: "defensive".into(), command: "stance defensive".into(), ..Default::default() },
+                WheelSlice {
+                    label: "offensive".into(),
+                    command: "stance offensive".into(),
+                    ..Default::default()
+                },
+                WheelSlice {
+                    label: "defensive".into(),
+                    command: "stance defensive".into(),
+                    ..Default::default()
+                },
             ],
             ..Default::default()
         };
         let wheel = vec![
-            WheelSlice { label: "look".into(), command: "look".into(), ..Default::default() },
+            WheelSlice {
+                label: "look".into(),
+                command: "look".into(),
+                ..Default::default()
+            },
             stance,
-            WheelSlice { label: "exp".into(), command: "exp".into(), ..Default::default() },
+            WheelSlice {
+                label: "exp".into(),
+                command: "exp".into(),
+                ..Default::default()
+            },
         ];
         Config::set_root_value_before_tables(
-            &mut doc, "controller_wheel", Config::wheel_slices_to_inline(&wheel),
+            &mut doc,
+            "controller_wheel",
+            Config::wheel_slices_to_inline(&wheel),
         );
         let out = doc.to_string();
 
@@ -3719,7 +4346,10 @@ command = \"fire\"
         assert_eq!(slices[2].slices.len(), 0, "exp stays a leaf");
         // The trailing section survived intact.
         assert_eq!(
-            v.get("controller_shift").and_then(|s| s.get("south")).and_then(|s| s.get("macro_text")).and_then(|m| m.as_str()),
+            v.get("controller_shift")
+                .and_then(|s| s.get("south"))
+                .and_then(|s| s.get("macro_text"))
+                .and_then(|m| m.as_str()),
             Some("stand\r")
         );
     }
@@ -3729,17 +4359,30 @@ command = \"fire\"
         // A client-action slice keeps its `client` field through TOML; a
         // plain command slice emits no `client` key (skip_serializing_if).
         let slices = vec![
-            WheelSlice { label: "Room".into(), client: Some("open:room".into()), ..Default::default() },
-            WheelSlice { label: "Look".into(), command: "look".into(), ..Default::default() },
+            WheelSlice {
+                label: "Room".into(),
+                client: Some("open:room".into()),
+                ..Default::default()
+            },
+            WheelSlice {
+                label: "Look".into(),
+                command: "look".into(),
+                ..Default::default()
+            },
         ];
         // Serialize the way save_touch_wheel does — a Value array under a key
         // (a bare top-level array of tables isn't valid TOML).
         let value = toml::Value::try_from(&slices).unwrap();
         let toml_str = toml::to_string(&toml::toml! { slices = (value) }).unwrap();
-        assert!(toml_str.contains("client = \"open:room\""), "client action must serialize: {toml_str}");
+        assert!(
+            toml_str.contains("client = \"open:room\""),
+            "client action must serialize: {toml_str}"
+        );
         // Round-trip back and confirm the command slice carries no client key.
         #[derive(serde::Deserialize)]
-        struct Wrap { slices: Vec<WheelSlice> }
+        struct Wrap {
+            slices: Vec<WheelSlice>,
+        }
         let back: Wrap = toml::from_str(&toml_str).unwrap();
         assert_eq!(back.slices[0].client.as_deref(), Some("open:room"));
         assert_eq!(back.slices[1].client, None);
@@ -3756,7 +4399,9 @@ command = \"fire\"
         assert_eq!(actions.len(), TOUCH_WHEEL_CLIENT_ACTIONS.len());
         for (action, label) in TOUCH_WHEEL_CLIENT_ACTIONS {
             assert!(
-                actions.iter().any(|a| a["action"] == *action && a["label"] == *label),
+                actions
+                    .iter()
+                    .any(|a| a["action"] == *action && a["label"] == *label),
                 "catalog missing {action}"
             );
         }
@@ -3834,7 +4479,9 @@ stick = "right"
         }
         // Out-of-order input re-canonicalizes on parse.
         assert_eq!(
-            ControllerBindKey::parse("l2+r1+dpad_down").unwrap().canonical(),
+            ControllerBindKey::parse("l2+r1+dpad_down")
+                .unwrap()
+                .canonical(),
             "r1+l2+dpad_down"
         );
         assert!(ControllerBindKey::parse("").is_none());
@@ -3860,10 +4507,16 @@ dpad_up = \"scroll_current_window_up_page\"
         let controller = v.get("controller").unwrap();
 
         // The declaring button flips to controller_modifier.
-        assert_eq!(controller.get("l2").and_then(|x| x.as_str()), Some("controller_modifier"));
+        assert_eq!(
+            controller.get("l2").and_then(|x| x.as_str()),
+            Some("controller_modifier")
+        );
         // Shift entries become composite keys under [controller].
         assert_eq!(
-            controller.get("l2+south").and_then(|x| x.get("macro_text")).and_then(|m| m.as_str()),
+            controller
+                .get("l2+south")
+                .and_then(|x| x.get("macro_text"))
+                .and_then(|m| m.as_str()),
             Some("stand\r")
         );
         assert_eq!(
@@ -3874,7 +4527,9 @@ dpad_up = \"scroll_current_window_up_page\"
         assert!(controller.get("south").is_some());
         assert!(v.get("controller_shift").is_none());
         assert_eq!(
-            controller.get(CONTROLLER_MIGRATED_MARKER).and_then(|x| x.as_bool()),
+            controller
+                .get(CONTROLLER_MIGRATED_MARKER)
+                .and_then(|x| x.as_bool()),
             Some(true)
         );
     }
@@ -3904,7 +4559,10 @@ south = { macro_text = \"stand\\r\" }
         let migrated = migrate_controller_shift_text(legacy).expect("migration runs");
         let v: toml::Value = toml::from_str(&migrated).unwrap();
         let controller = v.get("controller").unwrap();
-        assert_eq!(controller.get("l2").and_then(|x| x.as_str()), Some("controller_modifier"));
+        assert_eq!(
+            controller.get("l2").and_then(|x| x.as_str()),
+            Some("controller_modifier")
+        );
         assert!(controller.get("l2+south").is_some());
     }
 
@@ -3927,9 +4585,7 @@ south = { macro_text = \"stand\\r\" }
     #[test]
     fn migrate_noop_without_shift_table() {
         // A modern config (no [controller_shift]) is left alone.
-        assert!(
-            migrate_controller_shift_text("[controller]\nsouth = \"x\"\n").is_none()
-        );
+        assert!(migrate_controller_shift_text("[controller]\nsouth = \"x\"\n").is_none());
     }
 
     #[test]
@@ -3941,10 +4597,16 @@ south = { macro_text = \"stand\\r\" }
             binds.get("l2").map(|a| a.display_value()),
             Some("controller_modifier".to_string())
         );
-        assert!(binds.contains_key("l2+south"), "default has an l2+south chord");
+        assert!(
+            binds.contains_key("l2+south"),
+            "default has an l2+south chord"
+        );
         assert!(binds.contains_key("l2+dpad_up"));
         let v: toml::Value = toml::from_str(DEFAULT_CONTROLLER).unwrap();
-        assert!(v.get("controller_shift").is_none(), "default has no legacy shift table");
+        assert!(
+            v.get("controller_shift").is_none(),
+            "default has no legacy shift table"
+        );
     }
 
     #[test]
@@ -3966,14 +4628,23 @@ south = { macro_text = \"stand\\r\" }
         // Holding l1+r1 hits the 2-mod key; holding only l1 hits the 1-mod key.
         let held_both = ControllerBindKey::new("south", ["r1".into(), "l1".into()]).canonical();
         let held_one = ControllerBindKey::new("south", ["l1".into()]).canonical();
-        assert_eq!(binds.get(&held_both).map(|a| a.display_value()), Some("long".into()));
-        assert_eq!(binds.get(&held_one).map(|a| a.display_value()), Some("short".into()));
+        assert_eq!(
+            binds.get(&held_both).map(|a| a.display_value()),
+            Some("long".into())
+        );
+        assert_eq!(
+            binds.get(&held_one).map(|a| a.display_value()),
+            Some("short".into())
+        );
 
         // Exact-match only: holding a modifier with no matching binding does
         // NOT fall back to the bare button.
         binds.insert("south".into(), KeyBindAction::Action("bare".into()));
         let held_r1_only = ControllerBindKey::new("south", ["r1".into()]).canonical();
-        assert!(binds.get(&held_r1_only).is_none(), "no fall-through to bare");
+        assert!(
+            binds.get(&held_r1_only).is_none(),
+            "no fall-through to bare"
+        );
     }
 
     #[test]
@@ -4141,7 +4812,10 @@ south = { macro_text = \"stand\\r\" }
             parse_key_string("num_decimal").unwrap().0,
             KeyCode::KeypadPeriod
         );
-        assert_eq!(parse_key_string("num_enter").unwrap().0, KeyCode::KeypadEnter);
+        assert_eq!(
+            parse_key_string("num_enter").unwrap().0,
+            KeyCode::KeypadEnter
+        );
     }
 
     /// Modified legacy spellings must parse too: the modifier prefix is stripped
@@ -4153,8 +4827,7 @@ south = { macro_text = \"stand\\r\" }
         assert_eq!(code, KeyCode::KeypadPlus);
         assert!(mods.ctrl && !mods.alt && !mods.shift);
 
-        let (code, mods) =
-            parse_key_string("alt+shift+num_.").expect("alt+shift+num_. must parse");
+        let (code, mods) = parse_key_string("alt+shift+num_.").expect("alt+shift+num_. must parse");
         assert_eq!(code, KeyCode::KeypadPeriod);
         assert!(mods.alt && mods.shift && !mods.ctrl);
 
@@ -4247,8 +4920,8 @@ south = { macro_text = \"stand\\r\" }
                 ("ctrl+alt+shift+", true, true, true),
             ] {
                 let key_str = format!("{prefix}{name}");
-                let (code, mods) = parse_key_string(&key_str)
-                    .unwrap_or_else(|| panic!("{key_str} should parse"));
+                let (code, mods) =
+                    parse_key_string(&key_str).unwrap_or_else(|| panic!("{key_str} should parse"));
                 assert_eq!(code, expected_code, "{key_str} resolved the wrong key");
                 assert_eq!(mods.ctrl, ctrl, "{key_str} ctrl");
                 assert_eq!(mods.alt, alt, "{key_str} alt");
@@ -4792,5 +5465,3 @@ south = { macro_text = \"stand\\r\" }
         assert_eq!(action, cloned);
     }
 }
-
-

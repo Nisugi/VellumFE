@@ -3,6 +3,7 @@
 //! This module implements the Frontend trait for terminal rendering.
 
 mod active_effects;
+mod alert_overlay;
 mod betrayer;
 pub mod color_form;
 pub mod color_palette_browser;
@@ -11,6 +12,7 @@ mod command_input;
 mod command_line;
 mod compass;
 mod container_window;
+mod containers_window;
 mod countdown;
 pub mod crossterm_bridge;
 mod dashboard;
@@ -36,13 +38,13 @@ pub mod keybind_form;
 mod list_widget;
 pub mod menu_actions;
 pub mod menu_builders;
+pub mod menu_keybind_editor;
 mod minivitals;
+mod missing_spells;
+pub mod pack_editor;
 mod perception;
 mod performance_stats;
-mod containers_window;
-mod missing_spells;
 mod players;
-mod alert_overlay;
 mod popup_menu;
 mod progress_bar;
 mod quickbar;
@@ -52,14 +54,12 @@ mod room_window_ops;
 mod runtime;
 mod scrollable_container;
 mod search;
-pub mod pack_editor;
 pub mod settings_editor;
 mod spacer;
-pub mod menu_keybind_editor;
-pub mod status_abbrev_editor;
 pub mod spell_color_browser;
 pub mod spell_color_form;
 mod spells_window;
+pub mod status_abbrev_editor;
 mod sync;
 mod tabbed_text_window;
 mod targets;
@@ -258,8 +258,7 @@ impl TuiFrontend {
         // records already carry keypad identity) keep today's input path
         // untouched. Pushed after EnterAlternateScreen so the flags live on
         // the alternate screen's stack and die with it even on a crash.
-        let kitty_keyboard =
-            crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+        let kitty_keyboard = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
         if kitty_keyboard {
             use crossterm::event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
             execute!(

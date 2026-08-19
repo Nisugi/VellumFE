@@ -27,8 +27,8 @@ pub use cache::{rooms_content_hash, CacheOutcome, LayoutCache};
 pub use classifier::Classification;
 pub use overrides::{EdgeAction, EdgeOverride, LocationOverrides, MapOverrides, SheetChoice};
 pub use packer::PackInfo;
-pub use scene::{build_scene, MapScene, SceneEdgeKind, Sheet};
 pub use positioner::{Cell, Group, PackMethod, Violation};
+pub use scene::{build_scene, MapScene, SceneEdgeKind, Sheet};
 
 /// A generated layout: every component with internal positions and sheet
 /// offsets, plus the interior/outdoor split and packing debug info.
@@ -102,8 +102,7 @@ fn generate_layout_impl(
     }
 
     let pack_info = packer::pack_groups(&mut groups, &outdoor, &lookup, &dirs);
-    let clusters =
-        classifier::interior_clusters(&groups, &classification.interior_groups, &lookup);
+    let clusters = classifier::interior_clusters(&groups, &classification.interior_groups, &lookup);
 
     // Try-inline pass: an interior building that seats cleanly beside its
     // doorway — short connectors, no crossings, free ground — joins the
