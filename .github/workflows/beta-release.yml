@@ -17,8 +17,36 @@ on:
         type: boolean
 
 jobs:
+  # Cargo.toml is what the binary self-reports (clap reads CARGO_PKG_VERSION),
+  # so a tag pushed without bumping it ships a release that lies about its
+  # version (betas 38-40 all reported 37). Fail fast instead.
+  version-check:
+    name: Tag matches Cargo.toml
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Verify versions agree
+        shell: bash
+        run: |
+          REF="${{ inputs.tag || github.ref_name }}"
+          # Non-version refs (branch dispatch) skip the check, matching the
+          # tolerant version-derivation steps later in this workflow.
+          if [[ ! "$REF" =~ ^v[0-9] ]]; then
+            echo "ref '$REF' is not a version tag; skipping"
+            exit 0
+          fi
+          TAG_VERSION="${REF#v}"
+          CARGO_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "tag=$TAG_VERSION cargo=$CARGO_VERSION"
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::Tag $REF does not match Cargo.toml version $CARGO_VERSION — bump Cargo.toml before tagging."
+            exit 1
+          fi
+
   build:
     name: Build (${{ matrix.os }})
+    needs: version-check
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -186,6 +214,7 @@ jobs:
 
   android:
     name: Build (Android arm64)
+    needs: version-check
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -243,6 +272,7 @@ jobs:
 
   ios:
     name: Build (iOS, TestFlight upload)
+    needs: version-check
     # Pinned: App Store Connect requires the iOS 26 SDK (Xcode 26+), but
     # macos-latest is mid-migration and can still hand out macOS 15
     # machines whose default Xcode is 16.4 (iOS 18.5 SDK).
@@ -356,6 +386,7 @@ jobs:
 
   macos-arm:
     name: Build (macOS arm64)
+    needs: version-check
     runs-on: macos-latest
     steps:
       - name: Check out repository
@@ -388,6 +419,7 @@ jobs:
 
   macos-intel:
     name: Build (macOS x86_64)
+    needs: version-check
     runs-on: macos-15-intel
     steps:
       - name: Check out repository
