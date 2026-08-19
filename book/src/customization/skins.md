@@ -334,6 +334,35 @@ tables inside `[[injury_doll.variants]]`. The phone client follows along
 automatically — the host resolves which variant and which suppressed
 parts are active and pushes them to the phone, which just switches art.
 
+### Named doll sets (optional)
+
+Standalone doll sets bound **by name from a window** rather than by
+condition — so two injury doll windows can render different art from the
+same wound data (say a detailed anatomical doll for reference plus a
+compact silhouette in a sidebar). Each set has the same shape as a
+variant's `skin` table: base, anchors, dot styling, per-part overlays,
+and `hidden_when` rules.
+
+```toml
+[injury_doll.sets.silhouette]
+base = "doll/silhouette.png"
+[injury_doll.sets.silhouette.anchors]
+head = [0.5, 0.08]
+[injury_doll.sets.silhouette.leftArm]
+healthy = "doll/silhouette_arm_ok.png"
+```
+
+Bind a window to a set from its right-click menu (**Appearance → Doll
+set**), which writes `doll_set = "silhouette"` onto that window's
+layout.toml entry. A bound window's art is **pinned**: condition
+variants don't swap it (its own `hidden_when` rules still apply), and
+the global *Doll image* pool override doesn't touch it either — the
+override replaces only the default doll. Windows without a binding keep
+the current behavior exactly. The picker also accepts a **variant's**
+name, which pins that variant's art regardless of its condition. A
+binding the active skin doesn't name falls back to the default doll
+until the set exists again.
+
 ## Notes
 
 - Absolute image paths are allowed on purpose, so a skin can point at art

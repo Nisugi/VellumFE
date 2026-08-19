@@ -90,6 +90,10 @@ pub struct SkinWidgetArt {
     /// wholesale (full replace). Empty when a doll override is active
     /// (pool dolls carry no variants).
     doll_variants: Vec<LoadedDollVariant>,
+    /// Named standalone doll sets (`[injury_doll.sets.<name>]`), bound by
+    /// name from a window's `doll_set`. Loaded even while a doll override
+    /// is active — the override replaces only the default doll.
+    doll_sets: HashMap<String, LoadedDollSet>,
     /// Hotbar icon sprite sheets keyed by lowercased sheet name.
     sheets: HashMap<String, SheetArt>,
     /// Nine-slice art for interactive dialog-panel controls, keyed by
@@ -147,6 +151,13 @@ pub struct ResolvedUiPalette {
 struct LoadedDollVariant {
     name: String,
     when: crate::config::Condition,
+    set: LoadedDollSet,
+}
+
+/// One fully loaded doll set's art and metadata — the shape shared by
+/// condition variants and named standalone sets.
+#[derive(Debug, Default)]
+struct LoadedDollSet {
     base: Option<SkinTexture>,
     base_gray: Option<SkinTexture>,
     parts: HashMap<String, HashMap<u8, SkinTexture>>,
@@ -154,6 +165,20 @@ struct LoadedDollVariant {
     anchors: HashMap<String, egui::Vec2>,
     hidden_when: HashMap<String, crate::config::Condition>,
     dots: ResolvedDotStyle,
+}
+
+impl LoadedDollSet {
+    fn view(&self) -> DollSetView<'_> {
+        DollSetView {
+            base: self.base,
+            base_gray: self.base_gray,
+            parts: &self.parts,
+            parts_gray: &self.parts_gray,
+            anchors: &self.anchors,
+            hidden_when: &self.hidden_when,
+            dots: self.dots,
+        }
+    }
 }
 
 /// Borrowed view of one doll set — the default `[injury_doll]` art or an
@@ -202,9 +227,7 @@ impl DollSetView<'_> {
         self.anchors
             .get(&key)
             .copied()
-            .or_else(|| {
-                skins::default_doll_anchor(&key).map(|[x, y]| egui::vec2(x, y))
-            })
+            .or_else(|| skins::default_doll_anchor(&key).map(|[x, y]| egui::vec2(x, y)))
             .unwrap_or_else(|| egui::vec2(0.5, 0.5))
     }
 
@@ -278,10 +301,7 @@ impl SkinWidgetArt {
                 let (texture, uv) = self.sheet_cell(sheet, *cell, false)?;
                 Some(ResolvedIcon {
                     texture: texture.texture,
-                    size: egui::vec2(
-                        texture.size.x * uv.width(),
-                        texture.size.y * uv.height(),
-                    ),
+                    size: egui::vec2(texture.size.x * uv.width(), texture.size.y * uv.height()),
                     uv,
                 })
             }
@@ -309,14 +329,10 @@ impl SkinWidgetArt {
                     uv: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 }),
             crate::data::IconRef::SheetCell { sheet, cell } => {
-                let (texture, uv) =
-                    self.sheet_cell(&sheet.to_ascii_lowercase(), *cell, false)?;
+                let (texture, uv) = self.sheet_cell(&sheet.to_ascii_lowercase(), *cell, false)?;
                 Some(ResolvedIcon {
                     texture: texture.texture,
-                    size: egui::vec2(
-                        texture.size.x * uv.width(),
-                        texture.size.y * uv.height(),
-                    ),
+                    size: egui::vec2(texture.size.x * uv.width(), texture.size.y * uv.height()),
                     uv,
                 })
             }
@@ -395,10 +411,7 @@ impl SkinWidgetArt {
                 let (texture, uv) = self.sheet_cell(sheet, *cell, true)?;
                 Some(ResolvedIcon {
                     texture: texture.texture,
-                    size: egui::vec2(
-                        texture.size.x * uv.width(),
-                        texture.size.y * uv.height(),
-                    ),
+                    size: egui::vec2(texture.size.x * uv.width(), texture.size.y * uv.height()),
                     uv,
                 })
             }
@@ -420,9 +433,7 @@ impl SkinWidgetArt {
         self.doll_anchors
             .get(&key)
             .copied()
-            .or_else(|| {
-                skins::default_doll_anchor(&key).map(|[x, y]| egui::vec2(x, y))
-            })
+            .or_else(|| skins::default_doll_anchor(&key).map(|[x, y]| egui::vec2(x, y)))
             .unwrap_or(egui::vec2(0.5, 0.5))
     }
 
@@ -432,15 +443,7 @@ impl SkinWidgetArt {
     /// player's doll) simply pass `None`.
     pub fn doll_set(&self, variant: Option<usize>) -> DollSetView<'_> {
         match variant.and_then(|index| self.doll_variants.get(index)) {
-            Some(v) => DollSetView {
-                base: v.base,
-                base_gray: v.base_gray,
-                parts: &v.parts,
-                parts_gray: &v.parts_gray,
-                anchors: &v.anchors,
-                hidden_when: &v.hidden_when,
-                dots: v.dots,
-            },
+            Some(v) => v.set.view(),
             None => DollSetView {
                 base: self.doll_base,
                 base_gray: self.doll_base_gray,
@@ -463,11 +466,44 @@ impl SkinWidgetArt {
         now_server: i64,
         gameobj: Option<&crate::core::gameobj_data::GameObjData>,
     ) -> Option<usize> {
-        self.doll_variants
+        self.doll_variants.iter().position(|variant| {
+            crate::core::conditions::eval_condition(&variant.when, gs, now_server, gameobj)
+        })
+    }
+
+    /// View of a NAMED doll set (a window's `doll_set` binding): a
+    /// `[injury_doll.sets.<name>]` entry first, else a condition variant
+    /// of that name (pinned — its condition is ignored). Case-insensitive.
+    /// None when the skin defines neither (callers fall back to the
+    /// default resolution so a stale binding degrades gracefully).
+    pub fn doll_set_named(&self, name: &str) -> Option<DollSetView<'_>> {
+        self.doll_sets
             .iter()
-            .position(|variant| {
-                crate::core::conditions::eval_condition(&variant.when, gs, now_server, gameobj)
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, set)| set.view())
+            .or_else(|| {
+                self.doll_variants
+                    .iter()
+                    .find(|v| v.name.eq_ignore_ascii_case(name))
+                    .map(|v| v.set.view())
             })
+    }
+
+    /// Names a window's `doll_set` binding can resolve: the named sets
+    /// (sorted) followed by the condition variants (declaration order),
+    /// deduped case-insensitively. For the per-window picker.
+    pub fn doll_set_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.doll_sets.keys().cloned().collect();
+        names.sort_by_cached_key(|name| name.to_ascii_lowercase());
+        for variant in &self.doll_variants {
+            if !names
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(&variant.name))
+            {
+                names.push(variant.name.clone());
+            }
+        }
+        names
     }
 
     /// Names of the loaded doll variants, in declaration order (for
@@ -486,6 +522,7 @@ impl SkinWidgetArt {
             && self.doll_base.is_none()
             && self.doll_parts.is_empty()
             && self.doll_variants.is_empty()
+            && self.doll_sets.is_empty()
             && self.sheets.is_empty()
             && self.pool_icons.is_empty()
     }
@@ -528,10 +565,7 @@ impl SkinWidgetArt {
         let idx = cell - 1;
         let (col, row) = (idx % cols, idx / cols);
         let uv = egui::Rect::from_min_max(
-            egui::pos2(
-                col as f32 * cell_px / size.x,
-                row as f32 * cell_px / size.y,
-            ),
+            egui::pos2(col as f32 * cell_px / size.x, row as f32 * cell_px / size.y),
             egui::pos2(
                 (col + 1) as f32 * cell_px / size.x,
                 (row + 1) as f32 * cell_px / size.y,
@@ -814,11 +848,7 @@ impl SkinState {
             .filter_map(|v| v.skin.base.clone())
             .filter(|p| !p.contains('{'));
         let overlay_paths: Vec<String> = variant_bases
-            .chain(cache
-            .card
-            .overlays
-            .iter()
-            .flat_map(|o| {
+            .chain(cache.card.overlays.iter().flat_map(|o| {
                 if o.image.contains("{severity}") {
                     (1..=3)
                         .map(|s| o.image.replace("{severity}", &s.to_string()))
@@ -941,7 +971,6 @@ impl SkinState {
             self.applied = false;
         }
     }
-
 
     /// Declare which pool frames window overrides reference (any case).
     /// Call before `apply_if_changed`; a changed set triggers a reload so
@@ -1070,8 +1099,7 @@ impl SkinState {
         // Hand-widget icon-state images (pre-declared pool loads).
         for path in &self.needed_pool_icons {
             if let Some(texture) = tex(path) {
-                art.pool_icons
-                    .insert(path.to_ascii_lowercase(), texture);
+                art.pool_icons.insert(path.to_ascii_lowercase(), texture);
             }
         }
         for (name, spec) in &self.manifest.sheets {
@@ -1219,8 +1247,7 @@ impl SkinState {
                 art.doll_anchors.clear();
                 art.doll_hidden_when.clear();
                 let abs = skins::resolve_image_path(&self.root, path);
-                match crate::config::pool::read_sidecar::<crate::config::pool::DollSidecar>(&abs)
-                {
+                match crate::config::pool::read_sidecar::<crate::config::pool::DollSidecar>(&abs) {
                     Some(sidecar) => {
                         for (part, anchor) in &sidecar.anchors {
                             art.doll_anchors.insert(
@@ -1297,6 +1324,60 @@ impl SkinState {
             }
         }
 
+        // Load one complete replacement doll set (a variant's skin or a
+        // named `[injury_doll.sets.*]` entry) into lookup form.
+        let load_doll_set = |label: &str, skin: &skins::DollSet| -> LoadedDollSet {
+            let mut loaded = LoadedDollSet {
+                base: skin.base.as_ref().and_then(tex),
+                dots: ResolvedDotStyle::from_spec(&skin.dots),
+                ..Default::default()
+            };
+            for (part, anchor) in &skin.anchors {
+                loaded.anchors.insert(
+                    part.to_ascii_lowercase(),
+                    egui::vec2(anchor[0].clamp(0.0, 1.0), anchor[1].clamp(0.0, 1.0)),
+                );
+            }
+            for (part, spec) in &skin.parts {
+                if let Some(condition) = &spec.hidden_when {
+                    loaded
+                        .hidden_when
+                        .insert(part.to_ascii_lowercase(), condition.clone());
+                }
+                for (key, path) in &spec.overlays {
+                    let Some(level) = skins::severity_level_from_key(key) else {
+                        tracing::warn!(
+                            "Skin injury_doll set '{}', part {}: unknown severity key '{}' (expected healthy/injury1-3/scar1-3)",
+                            label,
+                            part,
+                            key
+                        );
+                        continue;
+                    };
+                    if let Some(texture) = tex(path) {
+                        loaded
+                            .parts
+                            .entry(part.to_ascii_lowercase())
+                            .or_default()
+                            .insert(level, texture);
+                    }
+                    if self.gray_doll {
+                        if let Some(texture) = tex(&format!("{path}#gray")) {
+                            loaded
+                                .parts_gray
+                                .entry(part.to_ascii_lowercase())
+                                .or_default()
+                                .insert(level, texture);
+                        }
+                    }
+                }
+            }
+            if self.gray_doll {
+                loaded.base_gray = skin.base.as_ref().and_then(|p| tex(&format!("{p}#gray")));
+            }
+            loaded
+        };
+
         // Conditional doll variants: each is a complete replacement set,
         // loaded up front so activation at render time is just a lookup
         // swap. A doll override (pool picker) replaces the skin's doll
@@ -1304,66 +1385,20 @@ impl SkinState {
         // this empty.
         if self.doll_override.is_none() {
             for variant in &self.manifest.injury_doll.variants {
-                let mut loaded = LoadedDollVariant {
+                art.doll_variants.push(LoadedDollVariant {
                     name: variant.name.clone(),
                     when: variant.when.clone(),
-                    base: variant.skin.base.as_ref().and_then(tex),
-                    base_gray: None,
-                    parts: HashMap::new(),
-                    parts_gray: HashMap::new(),
-                    anchors: HashMap::new(),
-                    hidden_when: HashMap::new(),
-                    dots: ResolvedDotStyle::from_spec(&variant.skin.dots),
-                };
-                for (part, anchor) in &variant.skin.anchors {
-                    loaded.anchors.insert(
-                        part.to_ascii_lowercase(),
-                        egui::vec2(anchor[0].clamp(0.0, 1.0), anchor[1].clamp(0.0, 1.0)),
-                    );
-                }
-                for (part, spec) in &variant.skin.parts {
-                    if let Some(condition) = &spec.hidden_when {
-                        loaded
-                            .hidden_when
-                            .insert(part.to_ascii_lowercase(), condition.clone());
-                    }
-                    for (key, path) in &spec.overlays {
-                        let Some(level) = skins::severity_level_from_key(key) else {
-                            tracing::warn!(
-                                "Skin injury_doll variant '{}', part {}: unknown severity key '{}' (expected healthy/injury1-3/scar1-3)",
-                                variant.name,
-                                part,
-                                key
-                            );
-                            continue;
-                        };
-                        if let Some(texture) = tex(path) {
-                            loaded
-                                .parts
-                                .entry(part.to_ascii_lowercase())
-                                .or_default()
-                                .insert(level, texture);
-                        }
-                        if self.gray_doll {
-                            if let Some(texture) = tex(&format!("{path}#gray")) {
-                                loaded
-                                    .parts_gray
-                                    .entry(part.to_ascii_lowercase())
-                                    .or_default()
-                                    .insert(level, texture);
-                            }
-                        }
-                    }
-                }
-                if self.gray_doll {
-                    loaded.base_gray = variant
-                        .skin
-                        .base
-                        .as_ref()
-                        .and_then(|p| tex(&format!("{p}#gray")));
-                }
-                art.doll_variants.push(loaded);
+                    set: load_doll_set(&variant.name, &variant.skin),
+                });
             }
+        }
+
+        // Named standalone sets load even under a doll override: the
+        // override replaces only the DEFAULT doll, and windows bound to a
+        // named set keep the art they asked for.
+        for (name, skin) in &self.manifest.injury_doll.sets {
+            art.doll_sets
+                .insert(name.clone(), load_doll_set(name, skin));
         }
 
         art.ui_palette = self.build_ui_palette();
@@ -1408,7 +1443,10 @@ impl SkinState {
         // Derived defaults (fall back to tasteful dark values when a sample
         // is missing so the palette is always complete).
         let dark = egui::Color32::from_rgb(0x14, 0x16, 0x1b);
-        let win = bg_sample.filter(|s| s.has_content).map(|s| s.dominant).unwrap_or(dark);
+        let win = bg_sample
+            .filter(|s| s.has_content)
+            .map(|s| s.dominant)
+            .unwrap_or(dark);
         let panel = darken(win, 0.15);
         let btn = button_sample
             .filter(|s| s.has_content)
@@ -1462,8 +1500,18 @@ impl SkinState {
                     .chain(window.border.as_ref().map(|border| border.image.clone()))
             })
             .collect();
-        images.extend(self.manifest.frames.values().map(|frame| frame.image.clone()));
-        images.extend(self.manifest.controls.values().map(|ctrl| ctrl.image.clone()));
+        images.extend(
+            self.manifest
+                .frames
+                .values()
+                .map(|frame| frame.image.clone()),
+        );
+        images.extend(
+            self.manifest
+                .controls
+                .values()
+                .map(|ctrl| ctrl.image.clone()),
+        );
         // Edge-overlay strip + ornament images.
         for edge in self.manifest.edges.values() {
             images.extend(edge.strip.clone());
@@ -1501,6 +1549,14 @@ impl SkinState {
                 variant
                     .skin
                     .parts
+                    .values()
+                    .flat_map(|spec| spec.overlays.values().cloned()),
+            );
+        }
+        for set in self.manifest.injury_doll.sets.values() {
+            images.extend(set.base.iter().cloned());
+            images.extend(
+                set.parts
                     .values()
                     .flat_map(|spec| spec.overlays.values().cloned()),
             );
@@ -1567,6 +1623,16 @@ impl SkinState {
                         );
                     }
                 }
+            }
+            // Named sets stay live under a doll override, so their gray
+            // twins build regardless of the branch above.
+            for set in self.manifest.injury_doll.sets.values() {
+                gray_paths.extend(set.base.iter().cloned());
+                gray_paths.extend(
+                    set.parts
+                        .values()
+                        .flat_map(|spec| spec.overlays.values().cloned()),
+                );
             }
         }
         for path in gray_paths {
@@ -1636,9 +1702,11 @@ impl SkinState {
     /// manifest's "default" entry (independently of the background, so a
     /// window can override one without losing the other).
     pub fn border_for(&self, window_name: &str) -> Option<ResolvedBorder> {
-        self.resolve_border(skins::window_field(&self.manifest, window_name, |window| {
-            window.border.as_ref()
-        })?)
+        self.resolve_border(skins::window_field(
+            &self.manifest,
+            window_name,
+            |window| window.border.as_ref(),
+        )?)
     }
 
     /// Border resolution honoring a per-window user override: "none" kills
@@ -1819,11 +1887,7 @@ fn load_texture(
 /// alpha bbox: head = top-centre, feet = bottom-centre. Calibration for the
 /// common case comes free from the art itself; only mouth/saddle need a
 /// human (manifest anchors win when authored).
-fn load_creature_art(
-    ctx: &egui::Context,
-    path: &Path,
-    skin_name: &str,
-) -> Option<CreatureArt> {
+fn load_creature_art(ctx: &egui::Context, path: &Path, skin_name: &str) -> Option<CreatureArt> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(err) => {
@@ -1975,11 +2039,7 @@ fn sample_image_colors(root: &Path, image_path: &str) -> Option<SampledColors> {
         .max_by_key(|(count, ..)| *count)
         .map(|(count, r, g, b)| {
             let c = *count as u64;
-            egui::Color32::from_rgb(
-                (r / c) as u8,
-                (g / c) as u8,
-                (b / c) as u8,
-            )
+            egui::Color32::from_rgb((r / c) as u8, (g / c) as u8, (b / c) as u8)
         })
         .unwrap_or(egui::Color32::DARK_GRAY);
     // Edge ring average (border color for nine-slice frames): the outermost
@@ -2025,14 +2085,24 @@ fn load_texture_impl(
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(err) => {
-            tracing::warn!("Skin '{}': cannot read {}: {}", skin_name, path.display(), err);
+            tracing::warn!(
+                "Skin '{}': cannot read {}: {}",
+                skin_name,
+                path.display(),
+                err
+            );
             return None;
         }
     };
     let decoded = match image::load_from_memory(&bytes) {
         Ok(decoded) => decoded,
         Err(err) => {
-            tracing::warn!("Skin '{}': cannot decode {}: {}", skin_name, path.display(), err);
+            tracing::warn!(
+                "Skin '{}': cannot decode {}: {}",
+                skin_name,
+                path.display(),
+                err
+            );
             return None;
         }
     };
@@ -2041,8 +2111,7 @@ fn load_texture_impl(
         // barbar's gs variant: luminance recolor, alpha preserved.
         for px in rgba.pixels_mut() {
             let [r, g, b, a] = px.0;
-            let luma =
-                (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32).round() as u8;
+            let luma = (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32).round() as u8;
             px.0 = [luma, luma, luma, a];
         }
     }
@@ -2203,8 +2272,7 @@ pub fn paint_severity_dot(
 /// Black or white, whichever contrasts more against `fill` (for the wound
 /// numeral painted on the solid dot).
 fn contrast_color(fill: egui::Color32) -> egui::Color32 {
-    let luminance =
-        0.299 * fill.r() as f32 + 0.587 * fill.g() as f32 + 0.114 * fill.b() as f32;
+    let luminance = 0.299 * fill.r() as f32 + 0.587 * fill.g() as f32 + 0.114 * fill.b() as f32;
     if luminance > 140.0 {
         egui::Color32::BLACK
     } else {
@@ -2272,16 +2340,12 @@ pub fn calibration_toml_for(
                         .and_then(|n| n.as_str())
                         .is_some_and(|n| n == name)
                 })
-                .ok_or_else(|| {
-                    anyhow::anyhow!("skin.toml has no doll variant named '{}'", name)
-                })?;
+                .ok_or_else(|| anyhow::anyhow!("skin.toml has no doll variant named '{}'", name))?;
             entry
                 .entry("skin")
                 .or_insert(Item::Table(Table::new()))
                 .as_table_mut()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("variant '{}' skin is not a table", name)
-                })?
+                .ok_or_else(|| anyhow::anyhow!("variant '{}' skin is not a table", name))?
         }
     };
 
@@ -2376,17 +2440,21 @@ pub fn register_sheet(
     let manifest_path = root.join("skin.toml");
     let contents = std::fs::read_to_string(&manifest_path)
         .map_err(|err| anyhow::anyhow!("cannot read {}: {}", manifest_path.display(), err))?;
-    register_sheet_impl(&root, &manifest_path, &contents, "icons", sheet_name, source, cell)
+    register_sheet_impl(
+        &root,
+        &manifest_path,
+        &contents,
+        "icons",
+        sheet_name,
+        source,
+        cell,
+    )
 }
 
 /// Register a hotbar icon sprite sheet into the shared store
 /// (`global/images/icons/`), where every skin — and a skinless setup —
 /// can use it. Creates the store and its icons.toml on first use.
-pub fn register_sheet_shared(
-    sheet_name: &str,
-    source: &Path,
-    cell: u32,
-) -> anyhow::Result<()> {
+pub fn register_sheet_shared(sheet_name: &str, source: &Path, cell: u32) -> anyhow::Result<()> {
     let root = crate::config::Config::global_icons_dir()?;
     std::fs::create_dir_all(&root)
         .map_err(|err| anyhow::anyhow!("cannot create {}: {}", root.display(), err))?;
@@ -2409,7 +2477,15 @@ pub fn register_sheet_shared(
         }
     };
     // Images sit beside icons.toml, so no subdirectory prefix.
-    register_sheet_impl(&root, &manifest_path, &contents, "", sheet_name, source, cell)
+    register_sheet_impl(
+        &root,
+        &manifest_path,
+        &contents,
+        "",
+        sheet_name,
+        source,
+        cell,
+    )
 }
 
 fn register_sheet_impl(
@@ -2547,7 +2623,12 @@ pub fn paint_edge_overlay(
         }
     }
     if let Some(ornament) = edge.ornament {
-        painter.image(ornament.texture, layout.ornament, full_uv, egui::Color32::WHITE);
+        painter.image(
+            ornament.texture,
+            layout.ornament,
+            full_uv,
+            egui::Color32::WHITE,
+        );
     }
 }
 
@@ -2662,8 +2743,7 @@ pub fn paint_nine_slice(
     sides: [bool; 4],
 ) {
     let full_alpha = egui::Color32::WHITE;
-    for (dest, uv) in nine_slice_patches(border.tex_size, border.slice, border.scale, rect, sides)
-    {
+    for (dest, uv) in nine_slice_patches(border.tex_size, border.slice, border.scale, rect, sides) {
         painter.image(border.texture, dest, uv, full_alpha);
     }
 }
@@ -2737,8 +2817,18 @@ fn nine_slice_patches_impl(
     // Column/row boundaries in destination space and UV space.
     let dx = [rect.min.x, rect.min.x + dl, rect.max.x - dr, rect.max.x];
     let dy = [rect.min.y, rect.min.y + dt, rect.max.y - db, rect.max.y];
-    let ux = [0.0, (left / tex.x).min(1.0), 1.0 - (right / tex.x).min(1.0), 1.0];
-    let uy = [0.0, (top / tex.y).min(1.0), 1.0 - (bottom / tex.y).min(1.0), 1.0];
+    let ux = [
+        0.0,
+        (left / tex.x).min(1.0),
+        1.0 - (right / tex.x).min(1.0),
+        1.0,
+    ];
+    let uy = [
+        0.0,
+        (top / tex.y).min(1.0),
+        1.0 - (bottom / tex.y).min(1.0),
+        1.0,
+    ];
 
     let mut patches = Vec::with_capacity(9);
     for row in 0..3 {
@@ -2754,8 +2844,7 @@ fn nine_slice_patches_impl(
                 egui::pos2(ux[col], uy[row]),
                 egui::pos2(ux[col + 1], uy[row + 1]),
             );
-            if dest.width() > 0.0 && dest.height() > 0.0 && uv.width() > 0.0 && uv.height() > 0.0
-            {
+            if dest.width() > 0.0 && dest.height() > 0.0 && uv.width() > 0.0 && uv.height() > 0.0 {
                 patches.push((dest, uv));
             }
         }
@@ -2950,14 +3039,25 @@ mod tests {
     #[test]
     fn nine_slice_patches_cover_border_not_center() {
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 80.0));
-        let patches =
-            nine_slice_patches(egui::vec2(32.0, 32.0), [8.0, 8.0, 8.0, 8.0], 1.0, rect, [true; 4]);
+        let patches = nine_slice_patches(
+            egui::vec2(32.0, 32.0),
+            [8.0, 8.0, 8.0, 8.0],
+            1.0,
+            rect,
+            [true; 4],
+        );
         assert_eq!(patches.len(), 8);
 
         // Top-left corner: fixed 8x8 at the origin, UV = top-left quarter.
         let (dest, uv) = patches[0];
-        assert_eq!(dest, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(8.0, 8.0)));
-        assert_eq!(uv, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(0.25, 0.25)));
+        assert_eq!(
+            dest,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(8.0, 8.0))
+        );
+        assert_eq!(
+            uv,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(0.25, 0.25))
+        );
 
         // No patch covers the center point.
         let center = rect.center();
@@ -2986,8 +3086,14 @@ mod tests {
             .expect("center patch present");
         // Center dest spans between the border insets; UV is the sprite's
         // own middle region.
-        assert_eq!(*dest, egui::Rect::from_min_max(egui::pos2(8.0, 8.0), egui::pos2(92.0, 72.0)));
-        assert_eq!(*uv, egui::Rect::from_min_max(egui::pos2(0.25, 0.25), egui::pos2(0.75, 0.75)));
+        assert_eq!(
+            *dest,
+            egui::Rect::from_min_max(egui::pos2(8.0, 8.0), egui::pos2(92.0, 72.0))
+        );
+        assert_eq!(
+            *uv,
+            egui::Rect::from_min_max(egui::pos2(0.25, 0.25), egui::pos2(0.75, 0.75))
+        );
     }
 
     #[test]
@@ -2995,8 +3101,13 @@ mod tests {
         // 8px insets at scale 1 into a 10px-tall rect: top+bottom shrink to
         // 5px each instead of overlapping.
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 10.0));
-        let patches =
-            nine_slice_patches(egui::vec2(32.0, 32.0), [8.0, 8.0, 8.0, 8.0], 1.0, rect, [true; 4]);
+        let patches = nine_slice_patches(
+            egui::vec2(32.0, 32.0),
+            [8.0, 8.0, 8.0, 8.0],
+            1.0,
+            rect,
+            [true; 4],
+        );
         let max_bottom_of_top_row = patches
             .iter()
             .filter(|(dest, _)| dest.min.y == 0.0)
@@ -3018,7 +3129,9 @@ mod tests {
         );
         // Top edge + both top corners gone.
         assert_eq!(patches.len(), 5);
-        assert!(patches.iter().all(|(dest, _)| dest.min.y == 0.0 || dest.min.y >= 72.0));
+        assert!(patches
+            .iter()
+            .all(|(dest, _)| dest.min.y == 0.0 || dest.min.y >= 72.0));
         // The left rail now runs from the very top of the window.
         let left_rail = patches
             .iter()
@@ -3026,20 +3139,17 @@ mod tests {
             .expect("left rail present");
         assert_eq!(left_rail.0.height(), 72.0);
         // All sides hidden = nothing drawn.
-        assert!(nine_slice_patches(
-            egui::vec2(32.0, 32.0),
-            [8.0; 4],
-            1.0,
-            rect,
-            [false; 4]
-        )
-        .is_empty());
+        assert!(
+            nine_slice_patches(egui::vec2(32.0, 32.0), [8.0; 4], 1.0, rect, [false; 4]).is_empty()
+        );
     }
 
     #[test]
     fn nine_slice_patches_empty_on_degenerate_input() {
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 80.0));
-        assert!(nine_slice_patches(egui::vec2(0.0, 32.0), [8.0; 4], 1.0, rect, [true; 4]).is_empty());
+        assert!(
+            nine_slice_patches(egui::vec2(0.0, 32.0), [8.0; 4], 1.0, rect, [true; 4]).is_empty()
+        );
         let empty_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(0.0, 0.0));
         assert!(
             nine_slice_patches(egui::vec2(32.0, 32.0), [8.0; 4], 1.0, empty_rect, [true; 4])
@@ -3145,13 +3255,10 @@ base = "doll/dead.png"
         assert!(updated.contains("# Hand-written skin."));
 
         // Unknown variant name errors instead of writing somewhere else.
-        assert!(calibration_toml_for(
-            original,
-            Some("missing"),
-            &anchors,
-            &DollDotSpec::default()
-        )
-        .is_err());
+        assert!(
+            calibration_toml_for(original, Some("missing"), &anchors, &DollDotSpec::default())
+                .is_err()
+        );
     }
 
     #[test]
@@ -3165,8 +3272,7 @@ path = "icons/old.png"
 cell = 32
 "##;
         // New sheet appends; existing content survives byte-for-byte.
-        let updated =
-            sheet_registration_toml(original, "rogue", "icons/rogue.png", 64).unwrap();
+        let updated = sheet_registration_toml(original, "rogue", "icons/rogue.png", 64).unwrap();
         assert!(updated.contains("# My hand-written skin."));
         assert!(updated.contains(r#"name = "Test" # keep me"#));
         assert!(updated.contains(r#"path = "icons/old.png""#));
@@ -3176,8 +3282,7 @@ cell = 32
         assert_eq!(manifest.sheets["old"].cell, 32);
 
         // Re-registering the same name replaces its entry.
-        let updated =
-            sheet_registration_toml(&updated, "rogue", "icons/rogue2.png", 48).unwrap();
+        let updated = sheet_registration_toml(&updated, "rogue", "icons/rogue2.png", 48).unwrap();
         let manifest: SkinManifest = toml::from_str(&updated).unwrap();
         assert_eq!(manifest.sheets["rogue"].path, "icons/rogue2.png");
         assert_eq!(manifest.sheets["rogue"].cell, 48);
@@ -3236,8 +3341,7 @@ cell = 32
     #[test]
     fn sheet_registration_toml_creates_section_when_absent() {
         let original = "[meta]\nname = \"Bare\"\n";
-        let updated =
-            sheet_registration_toml(original, "combat", "icons/combat.png", 64).unwrap();
+        let updated = sheet_registration_toml(original, "combat", "icons/combat.png", 64).unwrap();
         let manifest: SkinManifest = toml::from_str(&updated).unwrap();
         assert_eq!(manifest.sheets["combat"].path, "icons/combat.png");
         // No stray bare [sheets] header for the implicit parent.
@@ -3249,13 +3353,48 @@ cell = 32
         let original = "[meta]\nname = \"Bare\"\n";
         let mut anchors = HashMap::new();
         anchors.insert("chest".to_string(), [0.5, 0.3]);
-        let updated =
-            calibration_toml(original, &anchors, &DollDotSpec::default()).unwrap();
+        let updated = calibration_toml(original, &anchors, &DollDotSpec::default()).unwrap();
         let manifest: SkinManifest = toml::from_str(&updated).unwrap();
         assert_eq!(manifest.meta.name, "Bare");
         assert_eq!(manifest.injury_doll.anchors["chest"], [0.5, 0.3]);
         // No spurious [injury_doll] header for the implicit parent table.
         assert!(!updated.contains("[injury_doll]\n"));
+    }
+
+    #[test]
+    fn doll_set_named_resolves_sets_then_variants_case_insensitively() {
+        let texture = SkinTexture {
+            texture: egui::TextureId::default(),
+            size: egui::vec2(8.0, 8.0),
+        };
+        let mut art = SkinWidgetArt::default();
+        art.doll_sets.insert(
+            "Silhouette".to_string(),
+            LoadedDollSet {
+                base: Some(texture),
+                ..Default::default()
+            },
+        );
+        art.doll_variants.push(LoadedDollVariant {
+            name: "downed".to_string(),
+            when: crate::config::Condition::Injury {
+                area: "leftLeg".to_string(),
+                cmp: crate::config::Cmp::Ge,
+                level: 3,
+            },
+            set: LoadedDollSet::default(),
+        });
+        // Named set resolves case-insensitively.
+        assert!(art.doll_set_named("silhouette").is_some());
+        assert!(art.doll_set_named("SILHOUETTE").unwrap().base.is_some());
+        // A variant name resolves too (pinned, condition ignored).
+        assert!(art.doll_set_named("Downed").is_some());
+        // Unknown names miss so callers fall back to the default doll.
+        assert!(art.doll_set_named("nope").is_none());
+        // The picker offers sets then variants.
+        assert_eq!(art.doll_set_names(), vec!["Silhouette", "downed"]);
+        // Named sets alone keep the widget-art bundle alive.
+        assert!(!art.is_empty());
     }
 
     #[test]
@@ -3272,13 +3411,10 @@ cell = 32
         let empty_variant = |name: &str, when: crate::config::Condition| LoadedDollVariant {
             name: name.to_string(),
             when,
-            base: Some(texture),
-            base_gray: None,
-            parts: HashMap::new(),
-            parts_gray: HashMap::new(),
-            anchors: HashMap::new(),
-            hidden_when: HashMap::new(),
-            dots: ResolvedDotStyle::default(),
+            set: LoadedDollSet {
+                base: Some(texture),
+                ..Default::default()
+            },
         };
 
         let mut art = SkinWidgetArt::default();

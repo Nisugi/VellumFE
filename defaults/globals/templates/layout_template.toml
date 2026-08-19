@@ -753,6 +753,11 @@
 # scar1_color = "#999999"           # Level 4 scar
 # scar2_color = "#777777"           # Level 5 scar
 # scar3_color = "#555555"           # Level 6 scar
+#
+# # Bind this window to a named doll set from the active skin
+# # ([injury_doll.sets.<name>] in skin.toml) so two doll windows can show
+# # different art from the same wound data. Omit for the default doll.
+# doll_set = "silhouette"
 
 
 # ============================================================

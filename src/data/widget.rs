@@ -858,7 +858,10 @@ mod tests {
     fn inline_image_width_clamp_scales_height_too() {
         // 10:1 art at 4 rows would be 800pt wide in an 800pt window.
         let (w, h) = img(4.0).fitted_size((640.0, 64.0), 20.0, 800.0, 400.0, 8.0);
-        assert!(w <= 800.0 * (1.0 - INLINE_IMAGE_MIN_TEXT_FRACTION) + 0.01, "w={w}");
+        assert!(
+            w <= 800.0 * (1.0 - INLINE_IMAGE_MIN_TEXT_FRACTION) + 0.01,
+            "w={w}"
+        );
         assert!(h < 80.0, "height must shrink with width, got {h}");
         // Aspect preserved through the clamp.
         assert!((w / h - 10.0).abs() < 0.01, "aspect drifted: {w}x{h}");
@@ -881,14 +884,26 @@ mod tests {
 
     #[test]
     fn effect_category_maps_to_its_window() {
-        assert_eq!(ActiveEffectsContent::window_name_for_category("Buffs"), Some("buffs"));
-        assert_eq!(ActiveEffectsContent::window_name_for_category("Debuffs"), Some("debuffs"));
-        assert_eq!(ActiveEffectsContent::window_name_for_category("Cooldowns"), Some("cooldowns"));
+        assert_eq!(
+            ActiveEffectsContent::window_name_for_category("Buffs"),
+            Some("buffs")
+        );
+        assert_eq!(
+            ActiveEffectsContent::window_name_for_category("Debuffs"),
+            Some("debuffs")
+        );
+        assert_eq!(
+            ActiveEffectsContent::window_name_for_category("Cooldowns"),
+            Some("cooldowns")
+        );
         assert_eq!(
             ActiveEffectsContent::window_name_for_category("ActiveSpells"),
             Some("active_spells")
         );
-        assert_eq!(ActiveEffectsContent::window_name_for_category("Nonsense"), None);
+        assert_eq!(
+            ActiveEffectsContent::window_name_for_category("Nonsense"),
+            None
+        );
     }
 
     // ==================== Serde Round-Trip Tests ====================

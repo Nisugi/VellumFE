@@ -122,6 +122,25 @@ art to place its dot. Click **Save to skin**.
 prone painting the instant you're knocked down — with every wound dot landing in the right
 place on the new pose, because you calibrated that set separately.
 
+### Two doll windows with different art
+
+One wound feed, two looks: keep a detailed anatomical doll open for reference and a compact
+stylized one in a sidebar. In your active skin's `skin.toml`, add a **named set** — the same
+shape as a variant's `skin` table, but selected by name instead of by condition:
+
+```toml
+[injury_doll.sets.silhouette]
+base = "doll/silhouette.png"
+```
+
+Add a second injury doll window, then right-click it ▸ **Appearance** ▸ **Doll set** ▸
+**silhouette**. The binding is saved on that window in layout.toml, so it works wherever you
+put the window.
+
+**You'll see:** both windows tracking the same injuries, each on its own art. A bound window
+is pinned to its set — pose variants and the pool *Doll image* override only affect unbound
+windows.
+
 ### Dots that read at a glance instead of a squint
 
 Open **Calibrate doll…** on the default set. The bottom rows style the generated dots: a

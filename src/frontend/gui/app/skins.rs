@@ -534,7 +534,6 @@ impl VellumGuiApp {
                 caption_color,
             );
         }
-
     }
 
     /// Paint the skin's nine-slice border over a rendered window, on the

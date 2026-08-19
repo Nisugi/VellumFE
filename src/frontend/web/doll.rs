@@ -254,8 +254,9 @@ fn active_doll() -> Option<(InjuryDollSkin, PathBuf)> {
             base: Some(image),
             anchors: sidecar.anchors,
             dots: sidecar.dots,
-            // Pool dolls carry no overlay art and no variants.
+            // Pool dolls carry no overlay art, variants, or named sets.
             variants: Default::default(),
+            sets: Default::default(),
             parts: Default::default(),
         };
         return Some((doll, root));

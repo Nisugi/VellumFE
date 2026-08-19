@@ -443,6 +443,7 @@ impl WindowDef {
                     scar1_color: None,
                     scar2_color: None,
                     scar3_color: None,
+                    doll_set: None,
                 },
             },
             "indicator" => WindowDef::Indicator {
@@ -842,7 +843,8 @@ mod blank_tests {
             // silent fallback to Text.
             let round_tripped = WidgetType::from_str(def.widget_type());
             assert_eq!(
-                round_tripped, expected,
+                round_tripped,
+                expected,
                 "type '{type_str}' persisted as '{}' which parses to {:?}, not {:?}",
                 def.widget_type(),
                 round_tripped,
@@ -922,8 +924,8 @@ mod blank_tests {
         // JSON path (GUI pack export → import). `Layout` has no `PartialEq`, so
         // compare the deserialized `windows` (WindowDef: PartialEq) directly.
         let json = serde_json::to_string_pretty(&layout).expect("serialize layout to JSON");
-        let from_json: crate::config::Layout =
-            serde_json::from_str(&json).expect("GUI layout JSON must round-trip (no duplicate key)");
+        let from_json: crate::config::Layout = serde_json::from_str(&json)
+            .expect("GUI layout JSON must round-trip (no duplicate key)");
         assert_eq!(
             from_json.windows, windows,
             "JSON round-trip must preserve the windows"

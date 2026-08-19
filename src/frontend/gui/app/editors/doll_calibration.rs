@@ -106,7 +106,10 @@ impl VellumGuiApp {
                 .map(|(stem, _)| stem.to_owned())
                 .unwrap_or(pool_path.clone());
             (
-                CalibrationTarget::Pool { image_abs: abs, label },
+                CalibrationTarget::Pool {
+                    image_abs: abs,
+                    label,
+                },
                 sidecar.anchors,
                 sidecar.dots,
             )

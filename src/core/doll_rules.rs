@@ -48,9 +48,7 @@ impl DollRules {
         let hidden_of = |parts: &std::collections::HashMap<String, skins::DollPartSpec>| {
             let mut hidden: Vec<(String, Condition)> = parts
                 .iter()
-                .filter_map(|(part, spec)| {
-                    Some((canonical(part)?, spec.hidden_when.clone()?))
-                })
+                .filter_map(|(part, spec)| Some((canonical(part)?, spec.hidden_when.clone()?)))
                 .collect();
             hidden.sort_by(|a, b| a.0.cmp(&b.0));
             hidden
@@ -120,10 +118,7 @@ impl DollRulesCache {
             })
             .map(|(part, _)| part.clone())
             .collect();
-        (
-            active.map(|index| rules.variants[index].0.clone()),
-            hidden,
-        )
+        (active.map(|index| rules.variants[index].0.clone()), hidden)
     }
 
     fn rules(&mut self, active_skin: Option<&str>, doll_image: Option<&str>) -> &DollRules {
@@ -170,11 +165,7 @@ impl DollRulesCache {
                 });
             }
         }
-        &self
-            .cached
-            .as_ref()
-            .expect("cache populated above")
-            .rules
+        &self.cached.as_ref().expect("cache populated above").rules
     }
 }
 
@@ -272,8 +263,7 @@ mod tests {
     fn pool_doll_override_yields_empty_rules() {
         let mut cache = DollRulesCache::default();
         let gs = GameState::new();
-        let (variant, hidden) =
-            cache.resolve(Some("test"), Some("dolls/gnome.png"), &gs, 0, None);
+        let (variant, hidden) = cache.resolve(Some("test"), Some("dolls/gnome.png"), &gs, 0, None);
         assert_eq!(variant, None);
         assert!(hidden.is_empty());
     }

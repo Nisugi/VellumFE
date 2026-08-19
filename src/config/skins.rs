@@ -165,6 +165,17 @@ pub struct InjuryDollSkin {
     /// so `[[injury_doll.variants]]` never parses as a body part.
     #[serde(default)]
     pub variants: Vec<DollVariant>,
+    /// Named standalone doll sets (`[injury_doll.sets.<name>]`), each a
+    /// complete doll like a variant's skin but selected by NAME from a
+    /// window's `doll_set` binding instead of by condition — so two doll
+    /// windows can render different art from the same wound data. A bound
+    /// window ignores `variants` (its art is pinned); per-part
+    /// `hidden_when` inside the set still applies.
+    ///
+    /// Declared as a named field (not part of the flattened part tables)
+    /// so `[injury_doll.sets.*]` never parses as a body part.
+    #[serde(default)]
+    pub sets: HashMap<String, DollSet>,
     /// part -> its overlay art and options.
     #[serde(flatten)]
     pub parts: HashMap<String, DollPartSpec>,
@@ -790,16 +801,13 @@ pub fn named_frame<'a>(manifest: &'a SkinManifest, name: &str) -> Option<&'a Bor
     if name.eq_ignore_ascii_case(NO_FRAME) {
         return None;
     }
-    manifest
-        .frames
-        .get(name)
-        .or_else(|| {
-            manifest
-                .frames
-                .iter()
-                .find(|(key, _)| key.eq_ignore_ascii_case(name))
-                .map(|(_, spec)| spec)
-        })
+    manifest.frames.get(name).or_else(|| {
+        manifest
+            .frames
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, spec)| spec)
+    })
 }
 
 /// Reserved frame-override value meaning "draw no skin frame".
@@ -967,6 +975,19 @@ description = ""
 # head = [0.2, 0.7]
 # [injury_doll.variants.skin.leftArm]
 # healthy = "doll/downed_arm_ok.png"
+#
+# Named STANDALONE doll sets, bound by name from a window: an injury doll
+# window with doll_set = "<name>" in layout.toml renders this set instead
+# of the default [injury_doll] art — so a detailed doll and a compact
+# silhouette can show the same wounds side by side. Same shape as a
+# variant's skin (base, anchors, dots, per-part overlays, hidden_when); a
+# bound window ignores condition variants.
+# [injury_doll.sets.silhouette]
+# base = "doll/silhouette.png"
+# [injury_doll.sets.silhouette.anchors]
+# head = [0.5, 0.08]
+# [injury_doll.sets.silhouette.leftArm]
+# healthy = "doll/silhouette_arm_ok.png"
 
 # ---- Creature cards (creaturefield widget) --------------------------------
 # One shared template for EVERY creature. The base image resolves per
@@ -1234,14 +1255,17 @@ mod tests {
         let text = harmony_skin_manifest(
             "dusk", "triadic", "#bf616a", "#333a44", "#20252c", "#4a525e", "#bf616a", 4.0,
         );
-        assert!(text.contains(HARMONY_SKIN_MARKER), "overwrite marker present");
+        assert!(
+            text.contains(HARMONY_SKIN_MARKER),
+            "overwrite marker present"
+        );
         let parsed = manifest(&text);
         assert_eq!(parsed.meta.name, "dusk");
         let bg = window_background(&parsed, "anything").expect("default background");
         assert_eq!(bg.image, "panel.png");
         assert_eq!(bg.fit, BackgroundFit::Stretch);
-        let border = window_field(&parsed, "anything", |w| w.border.as_ref())
-            .expect("default border");
+        let border =
+            window_field(&parsed, "anything", |w| w.border.as_ref()).expect("default border");
         assert_eq!(border.image, "frame.png");
         assert_eq!(border.slice, [4.0, 4.0, 4.0, 4.0]);
         // Both frames land in the assignable pool.
@@ -1269,7 +1293,10 @@ mod tests {
             "#,
         );
         assert_eq!(manifest.frames.len(), 2);
-        assert_eq!(named_frame(&manifest, "ornate").unwrap().image, "borders/ornate.png");
+        assert_eq!(
+            named_frame(&manifest, "ornate").unwrap().image,
+            "borders/ornate.png"
+        );
         assert_eq!(named_frame(&manifest, "Ornate").unwrap().scale, 0.5);
         assert_eq!(named_frame(&manifest, "plain").unwrap().scale, 1.0);
         assert!(named_frame(&manifest, "missing").is_none());
@@ -1334,8 +1361,14 @@ mod tests {
             image = "main.png"
             "#,
         );
-        assert_eq!(window_background(&manifest, "main").unwrap().image, "main.png");
-        assert_eq!(window_background(&manifest, "Main").unwrap().image, "main.png");
+        assert_eq!(
+            window_background(&manifest, "main").unwrap().image,
+            "main.png"
+        );
+        assert_eq!(
+            window_background(&manifest, "Main").unwrap().image,
+            "main.png"
+        );
         assert_eq!(
             window_background(&manifest, "thoughts").unwrap().image,
             "default.png"
@@ -1406,8 +1439,14 @@ mod tests {
         assert_eq!(manifest.compass.directions["n"], "compass/n.png");
         assert_eq!(manifest.compass.directions["up"], "compass/up.png");
         assert_eq!(manifest.injury_doll.base.as_deref(), Some("doll/base.png"));
-        assert_eq!(manifest.injury_doll.parts["head"].overlays["injury1"], "doll/head_i1.png");
-        assert_eq!(manifest.injury_doll.parts["head"].overlays["scar3"], "doll/head_s3.png");
+        assert_eq!(
+            manifest.injury_doll.parts["head"].overlays["injury1"],
+            "doll/head_i1.png"
+        );
+        assert_eq!(
+            manifest.injury_doll.parts["head"].overlays["scar3"],
+            "doll/head_s3.png"
+        );
     }
 
     #[test]
@@ -1580,6 +1619,37 @@ mod tests {
         // A part without the field parses as before.
         let plain = &manifest.injury_doll.parts.get("head");
         assert!(plain.is_none() || plain.unwrap().hidden_when.is_none());
+    }
+
+    #[test]
+    fn named_sets_parse_as_sets_not_as_a_body_part() {
+        let manifest = manifest(
+            r#"
+            [injury_doll]
+            base = "doll/standing.png"
+
+            [injury_doll.head]
+            injury1 = "doll/head_i1.png"
+
+            [injury_doll.sets.silhouette]
+            base = "doll/silhouette.png"
+            [injury_doll.sets.silhouette.anchors]
+            head = [0.5, 0.08]
+            [injury_doll.sets.silhouette.leftArm]
+            healthy = "doll/silhouette_arm_ok.png"
+            "#,
+        );
+        let doll = &manifest.injury_doll;
+        // The named field claimed the key: no body part called "sets".
+        assert!(!doll.parts.contains_key("sets"));
+        assert_eq!(doll.parts["head"].overlays["injury1"], "doll/head_i1.png");
+        let set = &doll.sets["silhouette"];
+        assert_eq!(set.base.as_deref(), Some("doll/silhouette.png"));
+        assert_eq!(set.anchors["head"], [0.5, 0.08]);
+        assert_eq!(
+            set.parts["leftArm"].overlays["healthy"],
+            "doll/silhouette_arm_ok.png"
+        );
     }
 
     #[test]

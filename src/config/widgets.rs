@@ -201,7 +201,9 @@ impl WindowBase {
 
     /// Rows available for the widget's interior content
     pub fn content_rows(&self) -> u16 {
-        self.rows.get().saturating_sub(self.horizontal_border_units())
+        self.rows
+            .get()
+            .saturating_sub(self.horizontal_border_units())
     }
 
     /// Columns available for the widget's interior content
@@ -427,11 +429,7 @@ pub struct CommandInputWidgetData {
     // which produced a duplicate-key parse error on GUI-layout round-trip).
     // `alias` keeps old configs readable; `skip_serializing_if` guarantees no
     // collision even if a value is set.
-    #[serde(
-        default,
-        alias = "text_color",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, alias = "text_color", skip_serializing_if = "Option::is_none")]
     pub input_text_color: Option<String>,
     #[serde(default)]
     pub completion_color: Option<String>,
@@ -617,6 +615,13 @@ pub struct InjuryDollWidgetData {
     pub scar2_color: Option<String>, // Level 5: scar 2 (default: #777777)
     #[serde(default)]
     pub scar3_color: Option<String>, // Level 6: scar 3 (default: #555555)
+    /// Named doll set this window renders (`[injury_doll.sets.<name>]` in
+    /// the active skin, falling back to a variant of that name). None =
+    /// the default doll (with condition variants). Lets two doll windows
+    /// show different art from the same wound data. GUI art binding; the
+    /// TUI's vector doll ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doll_set: Option<String>,
 }
 
 impl InjuryDollWidgetData {
@@ -657,7 +662,7 @@ pub struct IndicatorWidgetData {
     #[serde(default)]
     pub default_status: Option<String>, // legacy
     #[serde(default)]
-    pub default_color: Option<String>,  // legacy
+    pub default_color: Option<String>, // legacy
 }
 
 /// Resolved dashboard layout, parsed from the config `layout` string. Shared
@@ -1141,8 +1146,6 @@ impl Default for MultiAccountWidgetData {
     }
 }
 
-
-
 /// One row of a multi-account card, as a real type.
 ///
 /// Rows used to be bare strings matched in SIX parallel tables across three
@@ -1395,8 +1398,8 @@ impl MultiAccountWidgetData {
             // it. This is the data-level guard: a config asking vitals to
             // join the RT strip self-heals to its own line instead of
             // rendering crushed.
-            let joinable = self.row_merged(row)
-                && lines.last().is_some_and(|line| row.may_join(line));
+            let joinable =
+                self.row_merged(row) && lines.last().is_some_and(|line| row.may_join(line));
             if joinable {
                 lines.last_mut().expect("non-empty").push(row);
             } else {
@@ -1431,8 +1434,8 @@ impl MultiAccountWidgetData {
 /// Text replacement rule for perception widget
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextReplacement {
-    pub pattern: String,   // Pattern to find (regex if metacharacters detected)
-    pub replace: String,   // Replacement text (empty string to remove)
+    pub pattern: String, // Pattern to find (regex if metacharacters detected)
+    pub replace: String, // Replacement text (empty string to remove)
 }
 
 /// Pre-compiled text replacement for runtime use.
@@ -1502,11 +1505,17 @@ impl CompiledTextReplacement {
 /// Compile a slice of TextReplacements into CompiledTextReplacements.
 /// Call this once at config load or when replacements change.
 pub fn compile_text_replacements(replacements: &[TextReplacement]) -> Vec<CompiledTextReplacement> {
-    replacements.iter().map(CompiledTextReplacement::compile).collect()
+    replacements
+        .iter()
+        .map(CompiledTextReplacement::compile)
+        .collect()
 }
 
 /// Apply pre-compiled text replacements (efficient - no regex compilation).
-pub fn apply_compiled_text_replacements(text: &str, replacements: &[CompiledTextReplacement]) -> String {
+pub fn apply_compiled_text_replacements(
+    text: &str,
+    replacements: &[CompiledTextReplacement],
+) -> String {
     let mut result = text.to_string();
     for replacement in replacements {
         result = replacement.apply(&result);
@@ -1518,10 +1527,10 @@ pub fn apply_compiled_text_replacements(text: &str, replacements: &[CompiledText
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SortDirection {
     #[serde(rename = "ascending")]
-    Ascending,   // Lowest weight first (Fading → Roisaen → Other → Indefinite → OM → Percentage)
+    Ascending, // Lowest weight first (Fading → Roisaen → Other → Indefinite → OM → Percentage)
 
     #[serde(rename = "descending")]
-    Descending,  // Highest weight first (Percentage → OM → Indefinite → Other → Roisaen → Fading)
+    Descending, // Highest weight first (Percentage → OM → Indefinite → Other → Roisaen → Fading)
 }
 
 impl Default for SortDirection {
@@ -1542,19 +1551,19 @@ fn default_perception_buffer_size() -> usize {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PerceptionWidgetData {
     #[serde(default = "default_perception_stream")]
-    pub stream: String,              // Stream ID to receive perception data from
+    pub stream: String, // Stream ID to receive perception data from
 
     #[serde(default = "default_perception_buffer_size")]
-    pub buffer_size: usize,          // Maximum number of perception entries to keep
+    pub buffer_size: usize, // Maximum number of perception entries to keep
 
     #[serde(default)]
-    pub sort_direction: SortDirection,  // Ascending or descending sort by weight
+    pub sort_direction: SortDirection, // Ascending or descending sort by weight
 
     #[serde(default)]
-    pub text_replacements: Vec<TextReplacement>,  // User-defined find/replace rules
+    pub text_replacements: Vec<TextReplacement>, // User-defined find/replace rules
 
     #[serde(default)]
-    pub use_short_spell_names: bool,  // Use abbreviated spell names (Profanity-style)
+    pub use_short_spell_names: bool, // Use abbreviated spell names (Profanity-style)
 }
 
 /// DragonRealms experience widget data
@@ -1639,7 +1648,10 @@ pub struct MiniVitalsWidgetData {
     /// Order of bars to display. Valid values: "health", "mana", "stamina", "spirit"
     /// Default: ["health", "mana", "stamina", "spirit"]
     /// Example: ["health", "stamina", "mana", "spirit"] puts stamina before mana
-    #[serde(default = "default_minivitals_bar_order", skip_serializing_if = "is_default_bar_order")]
+    #[serde(
+        default = "default_minivitals_bar_order",
+        skip_serializing_if = "is_default_bar_order"
+    )]
     pub bar_order: Vec<String>,
     /// Health bar color (default: red)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1718,8 +1730,7 @@ mod tests {
 
     #[test]
     fn minivitals_depleted_color_round_trips_and_none_is_omitted() {
-        let data: MiniVitalsWidgetData =
-            toml::from_str("depleted_color = \"#202020\"").unwrap();
+        let data: MiniVitalsWidgetData = toml::from_str("depleted_color = \"#202020\"").unwrap();
         assert_eq!(data.depleted_color.as_deref(), Some("#202020"));
 
         let serialized = toml::to_string(&MiniVitalsWidgetData::default()).unwrap();
@@ -1733,8 +1744,14 @@ mod dashboard_layout_tests {
 
     #[test]
     fn parses_named_layouts() {
-        assert_eq!(DashboardLayout::from_str("horizontal"), DashboardLayout::Horizontal);
-        assert_eq!(DashboardLayout::from_str("VERTICAL"), DashboardLayout::Vertical);
+        assert_eq!(
+            DashboardLayout::from_str("horizontal"),
+            DashboardLayout::Horizontal
+        );
+        assert_eq!(
+            DashboardLayout::from_str("VERTICAL"),
+            DashboardLayout::Vertical
+        );
         assert_eq!(DashboardLayout::from_str("Flow"), DashboardLayout::Flow);
     }
 
@@ -1748,9 +1765,18 @@ mod dashboard_layout_tests {
 
     #[test]
     fn unrecognized_and_bad_grid_fall_back_to_horizontal() {
-        assert_eq!(DashboardLayout::from_str("nonsense"), DashboardLayout::Horizontal);
-        assert_eq!(DashboardLayout::from_str("grid:0x3"), DashboardLayout::Horizontal);
-        assert_eq!(DashboardLayout::from_str("grid:2"), DashboardLayout::Horizontal);
+        assert_eq!(
+            DashboardLayout::from_str("nonsense"),
+            DashboardLayout::Horizontal
+        );
+        assert_eq!(
+            DashboardLayout::from_str("grid:0x3"),
+            DashboardLayout::Horizontal
+        );
+        assert_eq!(
+            DashboardLayout::from_str("grid:2"),
+            DashboardLayout::Horizontal
+        );
     }
 
     #[test]
@@ -1791,22 +1817,37 @@ mod visibility_tests {
     #[test]
     fn legacy_visible_bool_still_loads() {
         // Existing layout.toml files carry `visible = true|false`.
-        assert_eq!(parse_base("visible = true").visibility, WindowVisibility::Shown);
-        assert_eq!(parse_base("visible = false").visibility, WindowVisibility::Hidden);
+        assert_eq!(
+            parse_base("visible = true").visibility,
+            WindowVisibility::Shown
+        );
+        assert_eq!(
+            parse_base("visible = false").visibility,
+            WindowVisibility::Hidden
+        );
         // Absent → default Shown.
         assert_eq!(parse_base("").visibility, WindowVisibility::Shown);
     }
 
     #[test]
     fn new_visibility_string_loads_and_roundtrips() {
-        assert_eq!(parse_base("visibility = \"hidden\"").visibility, WindowVisibility::Hidden);
-        assert_eq!(parse_base("visibility = \"shown\"").visibility, WindowVisibility::Shown);
+        assert_eq!(
+            parse_base("visibility = \"hidden\"").visibility,
+            WindowVisibility::Hidden
+        );
+        assert_eq!(
+            parse_base("visibility = \"shown\"").visibility,
+            WindowVisibility::Shown
+        );
         // Round-trip through TOML preserves it.
         let mut base = parse_base("");
         base.visibility = WindowVisibility::Hidden;
         let s = toml::to_string(&base).unwrap();
         assert!(s.contains("visibility = \"hidden\""), "serialized: {s}");
-        assert_eq!(toml::from_str::<WindowBase>(&s).unwrap().visibility, WindowVisibility::Hidden);
+        assert_eq!(
+            toml::from_str::<WindowBase>(&s).unwrap().visibility,
+            WindowVisibility::Hidden
+        );
     }
 
     #[test]
@@ -1827,7 +1868,10 @@ mod visibility_tests {
     #[test]
     fn binding_roundtrips_and_is_omitted_when_none() {
         let base = parse_base("binding = { kind = \"dialog\", id = \"expr\" }");
-        assert_eq!(base.binding, Some(WindowBinding::Dialog("expr".to_string())));
+        assert_eq!(
+            base.binding,
+            Some(WindowBinding::Dialog("expr".to_string()))
+        );
         assert_eq!(base.binding.as_ref().unwrap().id(), "expr");
         // None binding is skip-serialized (keeps layout.toml clean).
         let none = parse_base("");
@@ -1855,7 +1899,11 @@ mod multiaccount_row_tests {
         data.row_order = vec!["injuries".to_string(), "vitals".to_string()];
         let rows: Vec<R> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
         assert_eq!(&rows[..2], &[R::Injuries, R::Vitals]);
-        assert_eq!(rows.len(), R::ALL.len(), "every row still present: {rows:?}");
+        assert_eq!(
+            rows.len(),
+            R::ALL.len(),
+            "every row still present: {rows:?}"
+        );
     }
 
     #[test]
@@ -1903,7 +1951,11 @@ mod multiaccount_row_tests {
 
         data.move_row(R::Injuries, false);
         let last: Vec<R> = data.ordered_rows().into_iter().map(|(r, _)| r).collect();
-        assert_eq!(last[last.len() - 1], R::Injuries, "already last, stays last");
+        assert_eq!(
+            last[last.len() - 1],
+            R::Injuries,
+            "already last, stays last"
+        );
     }
 
     #[test]
@@ -1933,7 +1985,10 @@ mod multiaccount_row_tests {
         let mut data = MultiAccountWidgetData::default();
         data.set_row_merged(R::Status, true);
         data.row_order = vec!["status".to_string()];
-        assert!(!data.row_merged(R::Status), "first row cannot render merged");
+        assert!(
+            !data.row_merged(R::Status),
+            "first row cannot render merged"
+        );
         assert!(
             data.row_merge_flag(R::Status),
             "the stored flag survives being first"
@@ -1997,7 +2052,11 @@ mod multiaccount_row_tests {
         let col0: Vec<R> = data.row_lines(0).into_iter().flatten().collect();
         let col1: Vec<R> = data.row_lines(1).into_iter().flatten().collect();
         assert!(!col0.contains(&R::Injuries) && !col0.contains(&R::Vitals));
-        assert_eq!(col1, vec![R::Vitals, R::Injuries], "column order follows row_order");
+        assert_eq!(
+            col1,
+            vec![R::Vitals, R::Injuries],
+            "column order follows row_order"
+        );
 
         // Line sharing chains only within a column: rt+status stay paired
         // in column 0 regardless of what moved to column 1.

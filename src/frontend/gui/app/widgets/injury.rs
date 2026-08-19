@@ -12,8 +12,7 @@ impl VellumGuiApp {
     /// other-player injuries popup).
     pub(super) fn default_injury_palette() -> [Color32; 7] {
         std::array::from_fn(|i| {
-            parse_hex_color(crate::config::DEFAULT_INJURY_PALETTE[i])
-                .unwrap_or(Color32::GRAY)
+            parse_hex_color(crate::config::DEFAULT_INJURY_PALETTE[i]).unwrap_or(Color32::GRAY)
         })
     }
 
@@ -64,9 +63,14 @@ impl VellumGuiApp {
     /// Another player's doll must pass `None` and an empty set to
     /// `render_injury_doll` instead — these conditions read self state,
     /// so your prone flag must never swap or hide someone else's doll.
+    /// `named_set` is the window's `doll_set` binding: when it resolves to
+    /// a named set, that set's art is pinned (condition variants are
+    /// skipped) and its own `hidden_when` conditions evaluate instead. An
+    /// unresolvable name falls back to the default resolution.
     pub(super) fn resolve_doll_render(
         app_core: &AppCore,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+        named_set: Option<&str>,
     ) -> (Option<usize>, std::collections::HashSet<String>) {
         let Some(art) = skin_art else {
             return (None, Default::default());
@@ -74,6 +78,10 @@ impl VellumGuiApp {
         let now_server =
             chrono::Utc::now().timestamp() + app_core.message_processor.server_time_offset;
         let gameobj = app_core.gameobj_data_cached();
+        if let Some(set) = named_set.and_then(|name| art.doll_set_named(name)) {
+            let hidden = set.hidden_parts(&app_core.game_state, now_server, gameobj);
+            return (None, hidden);
+        }
         let variant = art.resolve_doll_variant(&app_core.game_state, now_server, gameobj);
         let hidden = art
             .doll_set(variant)
@@ -92,15 +100,20 @@ impl VellumGuiApp {
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
         doll_variant: Option<usize>,
         doll_hidden: &std::collections::HashSet<String>,
+        named_set: Option<&str>,
         grayscale: bool,
         palette: &[Color32; 7],
     ) {
-        // Sprite mode: the active doll set's base body (default
-        // `[injury_doll]`, or a condition-matched variant's set), then per
-        // part either a hand-drawn state overlay (authored on the base's
-        // canvas so it stacks in place) or a generated dot at the part's
-        // calibrated anchor point.
-        let set = skin_art.map(|art| art.doll_set(doll_variant));
+        // Sprite mode: the active doll set's base body (the window's bound
+        // named set, a condition-matched variant's set, or the default
+        // `[injury_doll]`), then per part either a hand-drawn state
+        // overlay (authored on the base's canvas so it stacks in place) or
+        // a generated dot at the part's calibrated anchor point.
+        let set = skin_art.map(|art| {
+            named_set
+                .and_then(|name| art.doll_set_named(name))
+                .unwrap_or_else(|| art.doll_set(doll_variant))
+        });
         if let Some(set) = set.filter(|set| set.base.is_some()) {
             let base = set.base.unwrap();
             // Grayscale twins exist only while the checkbox demands them;
@@ -170,14 +183,10 @@ impl VellumGuiApp {
                 } else if level > 0 {
                     // Artless part: the generated severity dot, as always.
                     let anchor = set.anchor(part);
-                    let center = dest.min
-                        + Vec2::new(anchor.x * dest.width(), anchor.y * dest.height());
+                    let center =
+                        dest.min + Vec2::new(anchor.x * dest.width(), anchor.y * dest.height());
                     crate::frontend::gui::skin::paint_severity_dot(
-                        &painter,
-                        center,
-                        dot_radius,
-                        level,
-                        &set.dots,
+                        &painter, center, dot_radius, level, &set.dots,
                     );
                 }
                 if level > 0 {
@@ -201,30 +210,145 @@ impl VellumGuiApp {
         // of the doll rect; radii and line widths are fractions of its
         // height. Head must precede eyes so the eyes paint on top.
         enum PartShape {
-            Circle { c: (f32, f32), r: f32 },
-            Block { min: (f32, f32), max: (f32, f32) },
-            Line { a: (f32, f32), b: (f32, f32), w: f32 },
-            Letter { c: (f32, f32), letter: &'static str },
+            Circle {
+                c: (f32, f32),
+                r: f32,
+            },
+            Block {
+                min: (f32, f32),
+                max: (f32, f32),
+            },
+            Line {
+                a: (f32, f32),
+                b: (f32, f32),
+                w: f32,
+            },
+            Letter {
+                c: (f32, f32),
+                letter: &'static str,
+            },
         }
         use PartShape::*;
         // Back and nervous system have no spot on a front silhouette; like
         // Wrayth's paperdoll they render as "B" and "N" letters in the
         // bottom corners, colored by severity.
         const PARTS: &[(&str, &str, PartShape)] = &[
-            ("head", "head", Circle { c: (0.50, 0.105), r: 0.085 }),
-            ("leftEye", "left eye", Circle { c: (0.465, 0.09), r: 0.018 }),
-            ("rightEye", "right eye", Circle { c: (0.535, 0.09), r: 0.018 }),
-            ("neck", "neck", Block { min: (0.465, 0.19), max: (0.535, 0.235) }),
-            ("chest", "chest", Block { min: (0.38, 0.235), max: (0.62, 0.41) }),
-            ("abdomen", "abdomen", Block { min: (0.395, 0.41), max: (0.605, 0.525) }),
-            ("leftArm", "left arm", Line { a: (0.365, 0.26), b: (0.265, 0.47), w: 0.045 }),
-            ("rightArm", "right arm", Line { a: (0.635, 0.26), b: (0.735, 0.47), w: 0.045 }),
-            ("leftHand", "left hand", Circle { c: (0.25, 0.515), r: 0.033 }),
-            ("rightHand", "right hand", Circle { c: (0.75, 0.515), r: 0.033 }),
-            ("leftLeg", "left leg", Line { a: (0.44, 0.53), b: (0.41, 0.90), w: 0.055 }),
-            ("rightLeg", "right leg", Line { a: (0.56, 0.53), b: (0.59, 0.90), w: 0.055 }),
-            ("back", "back", Letter { c: (0.12, 0.93), letter: "B" }),
-            ("nsys", "nervous system", Letter { c: (0.88, 0.93), letter: "N" }),
+            (
+                "head",
+                "head",
+                Circle {
+                    c: (0.50, 0.105),
+                    r: 0.085,
+                },
+            ),
+            (
+                "leftEye",
+                "left eye",
+                Circle {
+                    c: (0.465, 0.09),
+                    r: 0.018,
+                },
+            ),
+            (
+                "rightEye",
+                "right eye",
+                Circle {
+                    c: (0.535, 0.09),
+                    r: 0.018,
+                },
+            ),
+            (
+                "neck",
+                "neck",
+                Block {
+                    min: (0.465, 0.19),
+                    max: (0.535, 0.235),
+                },
+            ),
+            (
+                "chest",
+                "chest",
+                Block {
+                    min: (0.38, 0.235),
+                    max: (0.62, 0.41),
+                },
+            ),
+            (
+                "abdomen",
+                "abdomen",
+                Block {
+                    min: (0.395, 0.41),
+                    max: (0.605, 0.525),
+                },
+            ),
+            (
+                "leftArm",
+                "left arm",
+                Line {
+                    a: (0.365, 0.26),
+                    b: (0.265, 0.47),
+                    w: 0.045,
+                },
+            ),
+            (
+                "rightArm",
+                "right arm",
+                Line {
+                    a: (0.635, 0.26),
+                    b: (0.735, 0.47),
+                    w: 0.045,
+                },
+            ),
+            (
+                "leftHand",
+                "left hand",
+                Circle {
+                    c: (0.25, 0.515),
+                    r: 0.033,
+                },
+            ),
+            (
+                "rightHand",
+                "right hand",
+                Circle {
+                    c: (0.75, 0.515),
+                    r: 0.033,
+                },
+            ),
+            (
+                "leftLeg",
+                "left leg",
+                Line {
+                    a: (0.44, 0.53),
+                    b: (0.41, 0.90),
+                    w: 0.055,
+                },
+            ),
+            (
+                "rightLeg",
+                "right leg",
+                Line {
+                    a: (0.56, 0.53),
+                    b: (0.59, 0.90),
+                    w: 0.055,
+                },
+            ),
+            (
+                "back",
+                "back",
+                Letter {
+                    c: (0.12, 0.93),
+                    letter: "B",
+                },
+            ),
+            (
+                "nsys",
+                "nervous system",
+                Letter {
+                    c: (0.88, 0.93),
+                    letter: "N",
+                },
+            ),
         ];
 
         // Fit an aspect-stable doll rect into the available space, centered
@@ -258,7 +382,13 @@ impl VellumGuiApp {
                 }
                 Block { min, max } => {
                     let shape_rect = Rect::from_min_max(at(min.0, min.1), at(max.0, max.1));
-                    painter.rect(shape_rect, scale * 0.02, fill, outline, egui::StrokeKind::Middle);
+                    painter.rect(
+                        shape_rect,
+                        scale * 0.02,
+                        fill,
+                        outline,
+                        egui::StrokeKind::Middle,
+                    );
                     shape_rect
                 }
                 Line { a, b, w } => {
@@ -284,7 +414,11 @@ impl VellumGuiApp {
                 ui.id().with(("injury_doll", key)),
                 egui::Sense::hover(),
             )
-            .on_hover_text(format!("{}: {}", display, Self::injury_severity_text(level)));
+            .on_hover_text(format!(
+                "{}: {}",
+                display,
+                Self::injury_severity_text(level)
+            ));
         }
     }
 
@@ -311,6 +445,7 @@ impl VellumGuiApp {
                         self.skin_state.widget_art().as_deref(),
                         None,
                         &Default::default(),
+                        None,
                         self.ui_settings.doll_grayscale,
                         &Self::default_injury_palette(),
                     );
@@ -417,5 +552,4 @@ impl VellumGuiApp {
             ui.label(RichText::new(text).color(color).strong());
         });
     }
-
 }
