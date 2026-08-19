@@ -1149,7 +1149,13 @@ fn characterize_statusinfo_fields_written_by_parser() {
     assert!(s.dead() && s.standing() && s.kneeling() && s.sitting() && s.prone());
 
     // Clearing round-trips too.
-    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "STUNNED", false);
+    feed_indicator(
+        &mut processor,
+        &mut game_state,
+        &mut ui_state,
+        "STUNNED",
+        false,
+    );
     assert!(!game_state.status.stunned());
 }
 
@@ -1163,13 +1169,25 @@ fn joined_indicator_reaches_gamestate() {
     let mut game_state = GameState::new();
     let mut ui_state = dash_ui();
 
-    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "JOINED", true);
+    feed_indicator(
+        &mut processor,
+        &mut game_state,
+        &mut ui_state,
+        "JOINED",
+        true,
+    );
     assert!(game_state.status.joined());
 
     // And it still reaches the dashboard widget path.
     assert!(dashboard_ids(&ui_state).contains(&"JOINED".to_string()));
 
-    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "JOINED", false);
+    feed_indicator(
+        &mut processor,
+        &mut game_state,
+        &mut ui_state,
+        "JOINED",
+        false,
+    );
     assert!(!game_state.status.joined());
 }
 
@@ -1295,10 +1313,22 @@ fn characterize_indicator_write_is_case_insensitive() {
     let mut game_state = GameState::new();
     let mut ui_state = dash_ui();
 
-    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "stunned", true);
+    feed_indicator(
+        &mut processor,
+        &mut game_state,
+        &mut ui_state,
+        "stunned",
+        true,
+    );
     assert!(game_state.status.stunned(), "lowercase id must write");
 
-    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "STUNNED", false);
+    feed_indicator(
+        &mut processor,
+        &mut game_state,
+        &mut ui_state,
+        "STUNNED",
+        false,
+    );
     assert!(!game_state.status.stunned(), "uppercase id must write too");
 }
 
@@ -3113,7 +3143,9 @@ fn room_component_image_appears_once_and_keeps_text() {
         &mut room_dirty,
     );
 
-    let buffer = room_components.get("room desc").expect("component buffered");
+    let buffer = room_components
+        .get("room desc")
+        .expect("component buffered");
     let images: usize = buffer
         .iter()
         .flat_map(|line| line.iter())
@@ -3191,7 +3223,10 @@ fn resource_picture_sets_and_clears_story_picture() {
     // PREVIOUS room's value — that is what makes the clearing meaningful.
     let mut game_state = crate::core::state::GameState::new();
 
-    let mut send = |processor: &mut MessageProcessor, gs: &mut crate::core::state::GameState, id: u32, ui: &mut UiState| {
+    let mut send = |processor: &mut MessageProcessor,
+                    gs: &mut crate::core::state::GameState,
+                    id: u32,
+                    ui: &mut UiState| {
         processor.process_element(
             &crate::parser::ParsedElement::RoomPicture { id },
             gs,
@@ -3306,7 +3341,9 @@ fn enter_room(
     let mut dirty = false;
     process_one(
         processor,
-        &crate::parser::ParsedElement::RoomId { id: uid.to_string() },
+        &crate::parser::ParsedElement::RoomId {
+            id: uid.to_string(),
+        },
         ui_state,
     );
     processor.handle_component(
@@ -3342,7 +3379,8 @@ fn mapped_room_gets_its_art_injected() {
 /// a session and never again.
 #[test]
 fn art_injects_on_every_room_not_just_the_first() {
-    let (mut processor, _art_guard) = processor_with_room_art(true, "pier", &[7118245, 7118250], true);
+    let (mut processor, _art_guard) =
+        processor_with_room_art(true, "pier", &[7118245, 7118250], true);
     let mut ui = UiState::new();
     assert_eq!(
         enter_room(&mut processor, "7118245", &mut ui).as_deref(),
@@ -3360,7 +3398,9 @@ fn art_injects_on_every_room_not_just_the_first() {
 /// with it. (A typo'd night variant otherwise blanked the room every night.)
 #[test]
 fn missing_variant_art_falls_back_to_the_base_image() {
-    use crate::config::room_images::{RoomImageDef, RoomImageIndex, RoomImageVariant, RoomImagesConfig};
+    use crate::config::room_images::{
+        RoomImageDef, RoomImageIndex, RoomImageVariant, RoomImagesConfig,
+    };
     use crate::core::custom_emoji::{CustomEmoji, CustomEmojiRegistry, EmojiFormat};
 
     let _guard = crate::core::inline_image::TEST_LOCK
@@ -3448,7 +3488,9 @@ fn script_sprite_is_not_overwritten_by_room_art() {
     let mut ui = UiState::new();
     process_one(
         &mut processor,
-        &crate::parser::ParsedElement::RoomId { id: "7118245".into() },
+        &crate::parser::ParsedElement::RoomId {
+            id: "7118245".into(),
+        },
         &mut ui,
     );
 
@@ -3489,7 +3531,9 @@ fn room_art_reaches_game_state_for_remote_clients() {
 
     process_one(
         &mut processor,
-        &crate::parser::ParsedElement::RoomId { id: "7118245".into() },
+        &crate::parser::ParsedElement::RoomId {
+            id: "7118245".into(),
+        },
         &mut ui,
     );
     // The game sends sprite BEFORE room desc in the room block.
@@ -3543,14 +3587,30 @@ fn room_art_survives_an_empty_description() {
     let mut game_state = crate::core::state::GameState::new();
     process_one(
         &mut processor,
-        &crate::parser::ParsedElement::RoomId { id: "7118245".into() },
+        &crate::parser::ParsedElement::RoomId {
+            id: "7118245".into(),
+        },
         &mut ui,
     );
     let mut components = std::collections::HashMap::new();
     let mut current = None;
     let mut dirty = false;
-    processor.handle_component("sprite", "", &mut game_state, &mut components, &mut current, &mut dirty);
-    processor.handle_component("room desc", "", &mut game_state, &mut components, &mut current, &mut dirty);
+    processor.handle_component(
+        "sprite",
+        "",
+        &mut game_state,
+        &mut components,
+        &mut current,
+        &mut dirty,
+    );
+    processor.handle_component(
+        "room desc",
+        "",
+        &mut game_state,
+        &mut components,
+        &mut current,
+        &mut dirty,
+    );
 
     assert!(
         game_state
@@ -3572,14 +3632,56 @@ fn mirrored_art_clears_on_an_unmapped_room() {
     let mut current = None;
     let mut dirty = false;
 
-    process_one(&mut processor, &crate::parser::ParsedElement::RoomId { id: "7118245".into() }, &mut ui);
-    processor.handle_component("sprite", "", &mut game_state, &mut components, &mut current, &mut dirty);
-    processor.handle_component("room desc", "First room.", &mut game_state, &mut components, &mut current, &mut dirty);
-    assert!(game_state.room_description[0].segments[0].inline_image.is_some());
+    process_one(
+        &mut processor,
+        &crate::parser::ParsedElement::RoomId {
+            id: "7118245".into(),
+        },
+        &mut ui,
+    );
+    processor.handle_component(
+        "sprite",
+        "",
+        &mut game_state,
+        &mut components,
+        &mut current,
+        &mut dirty,
+    );
+    processor.handle_component(
+        "room desc",
+        "First room.",
+        &mut game_state,
+        &mut components,
+        &mut current,
+        &mut dirty,
+    );
+    assert!(game_state.room_description[0].segments[0]
+        .inline_image
+        .is_some());
 
-    process_one(&mut processor, &crate::parser::ParsedElement::RoomId { id: "9999999".into() }, &mut ui);
-    processor.handle_component("sprite", "", &mut game_state, &mut components, &mut current, &mut dirty);
-    processor.handle_component("room desc", "Second room.", &mut game_state, &mut components, &mut current, &mut dirty);
+    process_one(
+        &mut processor,
+        &crate::parser::ParsedElement::RoomId {
+            id: "9999999".into(),
+        },
+        &mut ui,
+    );
+    processor.handle_component(
+        "sprite",
+        "",
+        &mut game_state,
+        &mut components,
+        &mut current,
+        &mut dirty,
+    );
+    processor.handle_component(
+        "room desc",
+        "Second room.",
+        &mut game_state,
+        &mut components,
+        &mut current,
+        &mut dirty,
+    );
     assert!(
         !game_state.room_description[0]
             .segments
@@ -3681,4 +3783,517 @@ fn resource_picture_emits_a_floating_story_segment() {
     assert_eq!(image.align, crate::data::FloatAlign::Left, "floats left");
 
     crate::core::inline_image::set_for_test(CustomEmojiRegistry::default());
+}
+
+// ===========================================
+// Prompt display after fallback-to-main streams (arena spectate)
+// ===========================================
+
+/// Stream text that falls back into the MAIN window (no subscriber window
+/// exists) counts as main text, so the following unchanged prompt still
+/// renders — Wrayth parity for spectate/familiar feeds shown in main.
+#[test]
+fn fallback_to_main_stream_text_keeps_prompts() {
+    let mut processor = create_test_processor();
+    let mut ui_state = UiState::new();
+    ui_state
+        .windows
+        .insert("main".to_string(), make_text_window("main", &["main"]));
+    processor.update_text_stream_subscribers(&ui_state);
+
+    // Persistent game state so last_prompt carries across prompts (the skip
+    // logic only fires when the prompt text is UNCHANGED).
+    let mut game_state = crate::core::state::GameState::new();
+    let mut room_components = std::collections::HashMap::new();
+    let mut current_room_component = None;
+    let mut room_window_dirty = false;
+    let mut drive = |processor: &mut MessageProcessor,
+                     ui_state: &mut UiState,
+                     game_state: &mut crate::core::state::GameState,
+                     element: &crate::parser::ParsedElement| {
+        processor.process_element(
+            element,
+            game_state,
+            ui_state,
+            &mut room_components,
+            &mut current_room_component,
+            &mut room_window_dirty,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+    };
+
+    use crate::parser::ParsedElement as E;
+    let round = |processor: &mut MessageProcessor,
+                 ui_state: &mut UiState,
+                 game_state: &mut crate::core::state::GameState,
+                 drive: &mut dyn FnMut(
+        &mut MessageProcessor,
+        &mut UiState,
+        &mut crate::core::state::GameState,
+        &E,
+    ),
+                 text: &str| {
+        drive(
+            processor,
+            ui_state,
+            game_state,
+            &E::StreamPush {
+                id: "watching".to_string(),
+            },
+        );
+        drive(
+            processor,
+            ui_state,
+            game_state,
+            &E::Text {
+                content: text.to_string(),
+                stream: String::new(),
+                fg_color: None,
+                bg_color: None,
+                bold: false,
+                mono: false,
+                span_type: crate::parser::SpanType::Normal,
+                link_data: None,
+            },
+        );
+        drive(processor, ui_state, game_state, &E::StreamPop);
+        drive(
+            processor,
+            ui_state,
+            game_state,
+            &E::Prompt {
+                time: "1786988768".to_string(),
+                text: ">".to_string(),
+            },
+        );
+    };
+
+    let mut drive_ref = |p: &mut MessageProcessor,
+                         u: &mut UiState,
+                         g: &mut crate::core::state::GameState,
+                         e: &E| drive(p, u, g, e);
+    round(
+        &mut processor,
+        &mut ui_state,
+        &mut game_state,
+        &mut drive_ref,
+        "Round 1 carnage!",
+    );
+    round(
+        &mut processor,
+        &mut ui_state,
+        &mut game_state,
+        &mut drive_ref,
+        "Round 2 carnage!",
+    );
+
+    let lines = text_lines(&ui_state, "main");
+    let prompt_lines = lines
+        .iter()
+        .filter(|l| {
+            l.segments
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>()
+                == ">"
+        })
+        .count();
+    assert_eq!(
+        prompt_lines,
+        2,
+        "both prompts must render after fallback-to-main spectate text; lines: {:?}",
+        lines
+            .iter()
+            .map(|l| l
+                .segments
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Same as fallback_to_main_stream_text_keeps_prompts, but the main view is
+/// a TAB in a tabbed text window (no window literally named "main") — the
+/// layout that shipped the first version of this fix broken. Delivery goes
+/// through the last-resort main-stream-subscriber path and must still count
+/// as main text.
+#[test]
+fn fallback_to_tabbed_main_keeps_prompts() {
+    let mut processor = create_test_processor();
+    let mut ui_state = UiState::new();
+    let mut story = crate::data::window::WindowState::new_text("story", 100);
+    story.content = WindowContent::TabbedText(crate::data::TabbedTextContent::new(
+        vec![(
+            "Main".to_string(),
+            vec!["main".to_string()],
+            false,
+            false,
+            crate::config::TimestampPosition::End,
+        )],
+        100,
+    ));
+    ui_state.windows.insert("story".to_string(), story);
+    processor.update_text_stream_subscribers(&ui_state);
+
+    let mut game_state = crate::core::state::GameState::new();
+    let mut room_components = std::collections::HashMap::new();
+    let mut current_room_component = None;
+    let mut room_window_dirty = false;
+
+    use crate::parser::ParsedElement as E;
+    let elements = [
+        E::StreamPush {
+            id: "watching".to_string(),
+        },
+        E::Text {
+            content: "Round 1 carnage!".to_string(),
+            stream: String::new(),
+            fg_color: None,
+            bg_color: None,
+            bold: false,
+            mono: false,
+            span_type: crate::parser::SpanType::Normal,
+            link_data: None,
+        },
+        E::StreamPop,
+        E::Prompt {
+            time: "1786988768".to_string(),
+            text: ">".to_string(),
+        },
+        E::StreamPush {
+            id: "watching".to_string(),
+        },
+        E::Text {
+            content: "Round 2 carnage!".to_string(),
+            stream: String::new(),
+            fg_color: None,
+            bg_color: None,
+            bold: false,
+            mono: false,
+            span_type: crate::parser::SpanType::Normal,
+            link_data: None,
+        },
+        E::StreamPop,
+        E::Prompt {
+            time: "1786988769".to_string(),
+            text: ">".to_string(),
+        },
+    ];
+    for e in &elements {
+        processor.process_element(
+            e,
+            &mut game_state,
+            &mut ui_state,
+            &mut room_components,
+            &mut current_room_component,
+            &mut room_window_dirty,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+    }
+
+    let window = ui_state.windows.get("story").expect("story window");
+    let WindowContent::TabbedText(tabbed) = &window.content else {
+        panic!("not tabbed");
+    };
+    let texts: Vec<String> = tabbed.tabs[0]
+        .content
+        .lines
+        .iter()
+        .map(|l| l.segments.iter().map(|s| s.text.as_str()).collect())
+        .collect();
+    let prompts = texts.iter().filter(|t| t.as_str() == ">").count();
+    assert_eq!(
+        prompts, 2,
+        "both prompts must render into the main tab; lines: {:?}",
+        texts
+    );
+}
+
+/// End-to-end: verbatim loot-stream lines from a 2026-01-24 Lich session
+/// log, fed through the real parser, with the owner's live layout shape —
+/// a hidden standalone "loot" text window AND a tabbed chat window whose
+/// Loot tab subscribes the stream. BOTH must receive the lines (delivery
+/// is per-subscriber, not first-match).
+#[test]
+fn loot_stream_reaches_tabbed_loot_tab_and_standalone_window() {
+    let mut parser =
+        crate::parser::XmlParser::with_presets(vec![], std::collections::HashMap::new());
+    let mut processor = create_test_processor();
+    let mut ui_state = UiState::new();
+
+    let mut standalone = crate::data::window::WindowState::new_text("loot", 100);
+    if let WindowContent::Text(content) = &mut standalone.content {
+        content.streams = vec!["custom".to_string(), "loot".to_string()];
+    }
+    standalone.visible = false; // owner's layout hides it
+    ui_state.windows.insert("loot".to_string(), standalone);
+
+    let mut chat = crate::data::window::WindowState::new_text("chat", 100);
+    chat.content = WindowContent::TabbedText(crate::data::TabbedTextContent::new(
+        vec![
+            (
+                "Thoughts".to_string(),
+                vec!["thoughts".to_string()],
+                false,
+                false,
+                crate::config::TimestampPosition::End,
+            ),
+            (
+                "Loot".to_string(),
+                vec!["loot".to_string()],
+                false,
+                false,
+                crate::config::TimestampPosition::End,
+            ),
+        ],
+        100,
+    ));
+    ui_state.windows.insert("chat".to_string(), chat);
+    processor.update_text_stream_subscribers(&ui_state);
+
+    let mut game_state = crate::core::state::GameState::new();
+    let mut room_components = std::collections::HashMap::new();
+    let mut current_room_component = None;
+    let mut room_window_dirty = false;
+
+    // Verbatim shape from the Lich log (bigshot.log.20260124 00:06:06).
+    let log_lines = [
+        r#"<pushStream id='loot'/>You search the area and find:"#,
+        r#"(stowed in a <a exist="363871243" noun="longcoat">silver-threaded aquamarine byssus longcoat</a>)"#,
+        r#"a <a exist="364964388" noun="pearl">tiny black pearl</a>"#,
+        r#"<popStream/><prompt time="1786990406">&gt;</prompt>"#,
+    ];
+    for line in log_lines {
+        for element in parser.parse_line(line) {
+            processor.process_element(
+                &element,
+                &mut game_state,
+                &mut ui_state,
+                &mut room_components,
+                &mut current_room_component,
+                &mut room_window_dirty,
+                &mut None,
+                &mut None,
+                &mut None,
+                None,
+            );
+        }
+    }
+
+    let tab_texts: Vec<String> = {
+        let window = ui_state.windows.get("chat").expect("chat window");
+        let WindowContent::TabbedText(tabbed) = &window.content else {
+            panic!("not tabbed");
+        };
+        tabbed.tabs[1]
+            .content
+            .lines
+            .iter()
+            .map(|l| l.segments.iter().map(|s| s.text.as_str()).collect())
+            .collect()
+    };
+    assert!(
+        tab_texts
+            .iter()
+            .any(|t| t.contains("You search the area and find:")),
+        "loot lines must reach the tabbed Loot tab; tab lines: {tab_texts:?}"
+    );
+    assert!(
+        tab_texts.iter().any(|t| t.contains("tiny black pearl")),
+        "all loot lines must reach the tab; tab lines: {tab_texts:?}"
+    );
+
+    // Fragment glue may join the search results into fewer lines, so assert
+    // on content, not line count.
+    let standalone_texts: Vec<String> = {
+        let window = ui_state.windows.get("loot").expect("loot window");
+        let WindowContent::Text(content) = &window.content else {
+            panic!("not text");
+        };
+        content
+            .lines
+            .iter()
+            .map(|l| l.segments.iter().map(|s| s.text.as_str()).collect())
+            .collect()
+    };
+    assert!(
+        standalone_texts.iter().any(|t| t.contains("tiny black pearl")),
+        "the standalone loot window must also receive the lines; lines: {standalone_texts:?}"
+    );
+}
+
+/// End-to-end: verbatim lines from the 2026-08-17 13:13 spectate log, fed
+/// through the real parser into the processor with a tabbed-main layout.
+/// The fragment glue joins the announcer sentence and the trailing prompt
+/// renders.
+#[test]
+fn spectate_log_lines_render_whole_with_prompts() {
+    let mut parser =
+        crate::parser::XmlParser::with_presets(vec![], std::collections::HashMap::new());
+    let mut processor = create_test_processor();
+    let mut ui_state = UiState::new();
+    let mut story = crate::data::window::WindowState::new_text("story", 100);
+    story.content = WindowContent::TabbedText(crate::data::TabbedTextContent::new(
+        vec![(
+            "Main".to_string(),
+            vec!["main".to_string()],
+            false,
+            false,
+            crate::config::TimestampPosition::End,
+        )],
+        100,
+    ));
+    ui_state.windows.insert("story".to_string(), story);
+    processor.update_text_stream_subscribers(&ui_state);
+
+    let mut game_state = crate::core::state::GameState::new();
+    let mut room_components = std::collections::HashMap::new();
+    let mut current_room_component = None;
+    let mut room_window_dirty = false;
+
+    // Verbatim from the log (two prompts so the second is "unchanged").
+    let log_lines = [
+        r#"<prompt time="1786990405">&gt;</prompt>"#,
+        r#"<pushStream id="familiar" ifClosedStyle="watching"/>An announcer shouts, "Round 4, send in<popStream/><pushStream id="familiar" ifClosedStyle="watching"/> another one!"  <popStream/><pushStream id="familiar" ifClosedStyle="watching"/>An iron portcullis is raised and<popStream/><pushStream id="familiar" ifClosedStyle="watching"/> <pushBold/>a <a exist="242449785" noun="ranger">grey-skinned gnoll ranger</a><popBold/> enters the arena!"#,
+        r#"<popStream/><prompt time="1786990406">&gt;</prompt>"#,
+    ];
+    for line in log_lines {
+        for element in parser.parse_line(line) {
+            processor.process_element(
+                &element,
+                &mut game_state,
+                &mut ui_state,
+                &mut room_components,
+                &mut current_room_component,
+                &mut room_window_dirty,
+                &mut None,
+                &mut None,
+                &mut None,
+                None,
+            );
+        }
+    }
+
+    let window = ui_state.windows.get("story").expect("story window");
+    let WindowContent::TabbedText(tabbed) = &window.content else {
+        panic!("not tabbed");
+    };
+    let texts: Vec<String> = tabbed.tabs[0]
+        .content
+        .lines
+        .iter()
+        .map(|l| l.segments.iter().map(|s| s.text.as_str()).collect())
+        .collect();
+
+    // The announcer sentence is glued back into one line.
+    assert!(
+        texts.iter().any(|t| t.contains(
+            "An announcer shouts, \"Round 4, send in another one!\"  An iron portcullis is raised and a grey-skinned gnoll ranger enters the arena!"
+        )),
+        "expected the glued announcer line; lines: {:?}",
+        texts
+    );
+    // The prompt AFTER the spectate text renders even though unchanged.
+    assert_eq!(
+        texts.last().map(|s| s.as_str()),
+        Some(">"),
+        "trailing prompt must render; lines: {:?}",
+        texts
+    );
+}
+
+/// With a familiar window present, each prompt after familiar-stream text
+/// echoes into the familiar window as a round separator (arena spectate),
+/// independent of the main window's prompt dedupe. Owner request 2026-08-17.
+#[test]
+fn prompts_echo_into_familiar_window_after_familiar_text() {
+    let mut processor = create_test_processor();
+    let mut ui_state = UiState::new();
+    ui_state
+        .windows
+        .insert("main".to_string(), make_text_window("main", &["main"]));
+    ui_state.windows.insert(
+        "familiar".to_string(),
+        make_text_window("familiar", &["familiar"]),
+    );
+    processor.update_text_stream_subscribers(&ui_state);
+
+    let mut game_state = crate::core::state::GameState::new();
+    let mut room_components = std::collections::HashMap::new();
+    let mut current_room_component = None;
+    let mut room_window_dirty = false;
+
+    use crate::parser::ParsedElement as E;
+    let make_text = |t: &str| E::Text {
+        content: t.to_string(),
+        stream: String::new(),
+        fg_color: None,
+        bg_color: None,
+        bold: false,
+        mono: false,
+        span_type: crate::parser::SpanType::Normal,
+        link_data: None,
+    };
+    let elements = [
+        E::StreamPush {
+            id: "familiar".to_string(),
+        },
+        make_text("Round 1 carnage!"),
+        E::StreamPop,
+        E::Prompt {
+            time: "1".to_string(),
+            text: ">".to_string(),
+        },
+        E::StreamPush {
+            id: "familiar".to_string(),
+        },
+        make_text("Round 2 carnage!"),
+        E::StreamPop,
+        E::Prompt {
+            time: "2".to_string(),
+            text: ">".to_string(),
+        },
+        // A prompt with NO familiar text since the last one: no echo.
+        E::Prompt {
+            time: "3".to_string(),
+            text: ">".to_string(),
+        },
+    ];
+    for e in &elements {
+        processor.process_element(
+            e,
+            &mut game_state,
+            &mut ui_state,
+            &mut room_components,
+            &mut current_room_component,
+            &mut room_window_dirty,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+    }
+
+    let fam: Vec<String> = text_lines(&ui_state, "familiar")
+        .iter()
+        .map(|l| l.segments.iter().map(|s| s.text.as_str()).collect())
+        .collect();
+    let prompts = fam.iter().filter(|t| t.as_str() == ">").count();
+    assert_eq!(
+        prompts, 2,
+        "one echoed prompt per familiar-active round, none for idle prompts; familiar lines: {:?}",
+        fam
+    );
+    // Order: text, prompt, text, prompt.
+    assert_eq!(fam[0], "Round 1 carnage!");
+    assert_eq!(fam[1], ">");
+    assert_eq!(fam[2], "Round 2 carnage!");
+    assert_eq!(fam[3], ">");
 }

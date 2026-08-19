@@ -449,6 +449,35 @@ fn test_command_input_owned_actions_stay_with_the_widget() {
 }
 
 #[test]
+fn test_scroll_actions_resolve_to_macro_dispatch() {
+    // Keyboard scroll binds (PageUp/PageDown defaults) must reach
+    // execute_macro_keybind, whose try_gui_scroll_action applies them to the
+    // GUI scroll model — before this they were filtered out entirely.
+    for name in [
+        "scroll_current_window_up_page",
+        "scroll_current_window_down_page",
+        "scroll_current_window_up_one",
+        "scroll_current_window_down_one",
+        "scroll_current_window_home",
+        "scroll_current_window_end",
+    ] {
+        let key_event = KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE);
+        let mut keybind_map = HashMap::new();
+        keybind_map.insert(key_event, KeyBindAction::Action(name.to_string()));
+        let target = VellumGuiApp::resolve_global_dispatch_target(
+            key_event,
+            &keybind_map,
+            &AppKeybinds::default(),
+            false,
+        );
+        assert!(
+            matches!(target, Some(GlobalDispatchTarget::Macro(_))),
+            "scroll action '{name}' should resolve to Macro dispatch, got {target:?}"
+        );
+    }
+}
+
+#[test]
 fn test_frontend_keycode_to_egui_round_trips_common_keys() {
     use crate::data::input::KeyCode;
     assert_eq!(
@@ -1333,7 +1362,10 @@ fn search_targets_list_every_searchable_window_and_name_tabs() {
     );
     // The ACTIVE tab is the target, addressed by its scroll id, and labeled
     // by the tab's own name so the dropdown reads "tabs ▸ thoughts".
-    assert!(ids.contains(&"tabs::tab1"), "active tab is a target: {ids:?}");
+    assert!(
+        ids.contains(&"tabs::tab1"),
+        "active tab is a target: {ids:?}"
+    );
     let label = targets
         .iter()
         .find(|(_, id)| id == "tabs::tab1")
@@ -1392,10 +1424,10 @@ fn match_cursor_survives_lines_scrolling_off_a_full_buffer() {
         });
     };
     if let WindowContent::Text(content) = &mut window.content {
-        push(content, "a troll appears");   // index 0
-        push(content, "filler one");        // index 1
-        push(content, "another troll");     // index 2
-        push(content, "filler two");        // index 3
+        push(content, "a troll appears"); // index 0
+        push(content, "filler one"); // index 1
+        push(content, "another troll"); // index 2
+        push(content, "filler two"); // index 3
     }
     core.ui_state.windows.insert("main".into(), window);
 
@@ -1407,8 +1439,11 @@ fn match_cursor_survives_lines_scrolling_off_a_full_buffer() {
     assert_eq!(VellumGuiApp::line_index_of(content, cursor), Some(2));
 
     // One new line arrives: the buffer is full, so everything shifts down.
-    if let Some(WindowContent::Text(content)) =
-        core.ui_state.windows.get_mut("main").map(|w| &mut w.content)
+    if let Some(WindowContent::Text(content)) = core
+        .ui_state
+        .windows
+        .get_mut("main")
+        .map(|w| &mut w.content)
     {
         push(content, "a new line");
     }
@@ -1424,8 +1459,11 @@ fn match_cursor_survives_lines_scrolling_off_a_full_buffer() {
 
     // Once the cursor's own line scrolls away, it resolves to None so the
     // caller restarts cleanly instead of pointing at a stranger's line.
-    if let Some(WindowContent::Text(content)) =
-        core.ui_state.windows.get_mut("main").map(|w| &mut w.content)
+    if let Some(WindowContent::Text(content)) = core
+        .ui_state
+        .windows
+        .get_mut("main")
+        .map(|w| &mut w.content)
     {
         push(content, "x");
         push(content, "y");

@@ -93,6 +93,21 @@ impl VellumGuiApp {
                 continue;
             }
 
+            // A key the user bound to a command-input action belongs to the
+            // input widget while it has focus — the widget consumes it before
+            // its TextEdit runs. Skip global dispatch entirely so an [app]
+            // shortcut sharing the key (close_window defaults to Esc, the
+            // usual cursor_clear_line binding) cannot shadow the explicit
+            // binding. With the input unfocused the shortcut applies as usual.
+            if ctx.memory(|memory| {
+                memory.focused() == Some(egui::Id::new(super::COMMAND_INPUT_EDIT_ID))
+            }) && matches!(
+                self.app_core.keybind_map.get(&key_press.key_event),
+                Some(KeyBindAction::Action(name)) if Self::is_command_input_owned_action(name)
+            ) {
+                continue;
+            }
+
             let target = Self::resolve_global_dispatch_target(
                 key_press.key_event,
                 &self.app_core.keybind_map,
@@ -100,6 +115,16 @@ impl VellumGuiApp {
                 suppress_macro_dispatch,
             );
             let Some(target) = target else {
+                // Diagnostic: a bound key that resolves to no GUI target is
+                // either widget-owned (fine) or a dispatch gap (a bug like
+                // the scroll actions had) — name it in the log either way.
+                if let Some(binding) = self.app_core.keybind_map.get(&key_press.key_event) {
+                    tracing::debug!(
+                        "keybind {:?} -> {:?} resolved to no global GUI dispatch target",
+                        key_press.key_event,
+                        binding
+                    );
+                }
                 continue;
             };
 
@@ -297,11 +322,16 @@ impl VellumGuiApp {
                 //    switch) → run in the GUI via try_gui_command_action so a
                 //    REBOUND key reaches them (the command-input widget still
                 //    consumes the default Enter/↑/↓ before this path);
+                //  - scroll actions → run through execute_macro_keybind, whose
+                //    try_gui_scroll_action applies them to the GUI scroll model
+                //    (this is also the controller path, so keyboard and pad
+                //    binds share one implementation);
                 //  - everything else stays widget-local (cursor/clipboard are
-                //    egui-native; scroll/menu are controller-only).
+                //    egui-native).
                 Some(binding @ KeyBindAction::Action(name)) => {
                     if crate::config::KeyAction::from_str(name)
                         .is_some_and(Self::is_core_global_action)
+                        || Self::is_gui_scroll_action(name)
                     {
                         return Some(GlobalDispatchTarget::Macro(binding.clone()));
                     }
@@ -339,6 +369,48 @@ impl VellumGuiApp {
                 | "start_search"
                 | "next_search_match"
                 | "prev_search_match"
+        )
+    }
+
+    /// Action keybinds owned by the command-input widget (which consumes
+    /// their bound keys itself, before its TextEdit runs — see
+    /// `CommandInputKeys`). While the input has focus these must never be
+    /// dispatched or shadowed globally.
+    pub(super) fn is_command_input_owned_action(name: &str) -> bool {
+        matches!(
+            name,
+            "send_command"
+                | "previous_command"
+                | "next_command"
+                | "cursor_left"
+                | "cursor_right"
+                | "cursor_word_left"
+                | "cursor_word_right"
+                | "cursor_home"
+                | "cursor_end"
+                | "cursor_backspace"
+                | "cursor_delete"
+                | "cursor_delete_word"
+                | "cursor_clear_line"
+                | "select_all"
+                | "copy"
+                | "paste"
+        )
+    }
+
+    /// Scroll actions applied to the GUI's own scroll model — must match the
+    /// names `try_gui_scroll_action` handles, so a hit here is guaranteed to
+    /// be consumed there and never fall through to the core scroll code
+    /// (which only the TUI renders).
+    pub(super) fn is_gui_scroll_action(name: &str) -> bool {
+        matches!(
+            name,
+            "scroll_current_window_up_page"
+                | "scroll_current_window_down_page"
+                | "scroll_current_window_up_one"
+                | "scroll_current_window_down_one"
+                | "scroll_current_window_home"
+                | "scroll_current_window_end"
         )
     }
 
@@ -423,16 +495,54 @@ impl VellumGuiApp {
     /// GUI's own scroll model — the core implementations move
     /// `content.scroll_offset`, which only the TUI renders. v1 targets the
     /// "main" story window. Returns true when the action was a scroll.
-    pub(super) fn try_gui_scroll_action(&mut self, action: &KeyBindAction, ctx: &egui::Context) -> bool {
+    pub(super) fn try_gui_scroll_action(
+        &mut self,
+        action: &KeyBindAction,
+        ctx: &egui::Context,
+    ) -> bool {
         let KeyBindAction::Action(name) = action else {
             return false;
         };
-        // Scroll the CORE-focused window (same one switch_current_window
-        // cycles and search steps through) — not a hardcoded "main". Only
-        // text windows register scroll state; others make this a no-op,
-        // matching the TUI.
+        // Which window to scroll, in order of how visible the choice is to
+        // the user (core focus has NO indicator in the GUI and Tab moves it
+        // silently, so it must never win over what the user can see):
+        //  1. the text window under the pointer (stashed fresh each pass);
+        //  2. the core-focused window, if it is actually visible;
+        //  3. "main".
+        let hovered: Option<String> = ctx
+            .data_mut(|d| d.get_temp::<(u64, String)>(egui::Id::new("text_scroll_hovered")))
+            .filter(|(pass, _)| pass + 1 >= ctx.cumulative_pass_nr())
+            .map(|(_, id)| id);
         let focused = self.app_core.get_focused_window_name();
-        let scroll_id: &str = if focused.is_empty() { "main" } else { &focused };
+        let focused_visible = self
+            .app_core
+            .ui_state
+            .windows
+            .get(&focused)
+            .is_some_and(|window| window.visible);
+        let target: String = hovered.unwrap_or(if focused_visible && !focused.is_empty() {
+            focused
+        } else {
+            "main".to_string()
+        });
+        // A window NAME is not always a SCROLL id: tabbed windows render
+        // each tab under "{name}::tab{N}" (independent scroll state per
+        // tab), so a tabbed target resolves to its active tab's pane. The
+        // hovered stash already carries a real scroll id and passes through
+        // unchanged (it never names a tabbed window bare).
+        let scroll_id: String = match self
+            .app_core
+            .ui_state
+            .windows
+            .get(&target)
+            .map(|window| &window.content)
+        {
+            Some(crate::data::WindowContent::TabbedText(tabbed)) => {
+                format!("{}::tab{}", target, tabbed.active_tab_index)
+            }
+            _ => target,
+        };
+        let scroll_id: &str = &scroll_id;
         let view_h: f32 = ctx
             .data_mut(|d| d.get_temp(egui::Id::new(("text_scroll_view_h", scroll_id))))
             .unwrap_or(400.0);
@@ -449,9 +559,7 @@ impl VellumGuiApp {
         // Diagnostic (scroll-to-top hunt): every programmatic scroll names
         // its action so a runaway producer shows in vellum-fe.log.
         tracing::info!("scrollreq action={name} window={scroll_id} req={request:?}");
-        ctx.data_mut(|d| {
-            d.insert_temp(egui::Id::new(("text_scroll_pending", scroll_id)), request)
-        });
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new(("text_scroll_pending", scroll_id)), request));
         ctx.request_repaint();
         true
     }
@@ -562,9 +670,7 @@ impl VellumGuiApp {
                 WindowContent::Text(_)
                 | WindowContent::Inventory(_)
                 | WindowContent::Reserve(_)
-                | WindowContent::Spells(_) => {
-                    Some((window.name.clone(), window.name.clone()))
-                }
+                | WindowContent::Spells(_) => Some((window.name.clone(), window.name.clone())),
                 WindowContent::TabbedText(tabbed) => {
                     let tab = tabbed.tabs.get(tabbed.active_tab_index)?;
                     // Name the tab, not just the window: "thoughts" is what
@@ -654,9 +760,7 @@ impl VellumGuiApp {
             .values()
             .find(|window| window.name == window_name)?;
         let content = match (&window.content, tab_index) {
-            (WindowContent::TabbedText(tabbed), Some(index)) => {
-                &tabbed.tabs.get(index)?.content
-            }
+            (WindowContent::TabbedText(tabbed), Some(index)) => &tabbed.tabs.get(index)?.content,
             (
                 WindowContent::Text(content)
                 | WindowContent::Inventory(content)
@@ -740,10 +844,7 @@ impl VellumGuiApp {
                 // or may sit between matches; land on the nearest one in the
                 // direction of travel rather than snapping to the start.
                 if forward {
-                    matches
-                        .iter()
-                        .position(|&m| m > current)
-                        .unwrap_or(0)
+                    matches.iter().position(|&m| m > current).unwrap_or(0)
                 } else {
                     matches
                         .iter()
@@ -1041,5 +1142,4 @@ impl VellumGuiApp {
         };
         Some(code)
     }
-
 }

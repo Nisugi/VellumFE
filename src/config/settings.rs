@@ -93,7 +93,6 @@ pub struct ConnectionConfig {
 
     // --- Direct Connection (all optional) ---
     // Credentials can be stored here or passed via CLI. CLI arguments override these values.
-
     /// Account name for direct connection
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
@@ -144,6 +143,15 @@ pub struct UiConfig {
     /// phone/web client has no OS window and is unaffected.
     #[serde(default = "default_true")]
     pub keep_open_on_quit: bool,
+    /// Show a "jump to newest" button on the split-scrollback divider (GUI).
+    /// Clicking it scrolls the history pane back to the tail, which re-arms
+    /// follow and merges the panes.
+    #[serde(default = "default_true")]
+    pub split_jump_button: bool,
+    /// Where the jump-to-newest button sits on the divider: "left",
+    /// "center", or "right".
+    #[serde(default = "default_split_jump_button_position")]
+    pub split_jump_button_position: String,
     /// Inline (fish-style) history suggestions in the command input: the
     /// newest matching history entry ghosts after the cursor, Tab accepts it
     /// (after dot-command completion settles). Off hides the ghost and
@@ -289,6 +297,8 @@ impl Default for UiConfig {
             command_echo: default_command_echo(),
             effect_countdown: true,
             keep_open_on_quit: true,
+            split_jump_button: true,
+            split_jump_button_position: default_split_jump_button_position(),
             history_suggestions: true,
             emoji_shortcodes: true,
             color_emoji: true,
@@ -862,7 +872,9 @@ impl SorterRule {
     /// True when this rule matches the item. Empty matchers are wildcards.
     pub fn matches(&self, name: &str, noun: &str) -> bool {
         let name_ok = self.name_match.is_empty()
-            || name.to_lowercase().contains(&self.name_match.to_lowercase());
+            || name
+                .to_lowercase()
+                .contains(&self.name_match.to_lowercase());
         let noun_ok = self.noun.is_empty() || noun.eq_ignore_ascii_case(&self.noun);
         name_ok && noun_ok
     }
@@ -923,6 +935,10 @@ pub struct WebConfig {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_split_jump_button_position() -> String {
+    "right".to_string()
 }
 
 impl WebConfig {
@@ -1121,6 +1137,15 @@ pub struct MapConfig {
     /// pinned tags). Edited from the map explorer's Markers picker.
     #[serde(default = "default_pinned_tags")]
     pub pinned_tags: Vec<String>,
+    /// Fill color for rooms where the creature selected in the map
+    /// explorer spawns. One color for every creature — the highlight marks
+    /// "these rooms", it does not identify which creature.
+    #[serde(default = "default_creature_highlight")]
+    pub creature_highlight: String,
+}
+
+fn default_creature_highlight() -> String {
+    "#c2414d".to_string()
 }
 
 fn default_pinned_tags() -> Vec<String> {
@@ -1137,6 +1162,7 @@ impl Default for MapConfig {
             mapdb_repo: default_mapdb_repo(),
             mapping_mode: false,
             pinned_tags: default_pinned_tags(),
+            creature_highlight: default_creature_highlight(),
         }
     }
 }
@@ -1181,10 +1207,7 @@ mod tests {
             multiaccount: false,
             ..Default::default()
         };
-        assert!(
-            !web.should_serve(),
-            "opting out of both must cost nothing"
-        );
+        assert!(!web.should_serve(), "opting out of both must cost nothing");
     }
 
     /// Enabling the multi-account widget must never expose a session to the
@@ -1217,8 +1240,8 @@ mod tests {
     /// than defaulting to false and leaving the widget dead.
     #[test]
     fn an_older_config_without_the_field_gets_multiaccount_on() {
-        let web: WebConfig = toml::from_str("enabled = false\nport = 8040\n")
-            .expect("parse legacy web section");
+        let web: WebConfig =
+            toml::from_str("enabled = false\nport = 8040\n").expect("parse legacy web section");
         assert!(web.multiaccount);
         assert!(web.should_serve());
     }
@@ -1232,7 +1255,10 @@ mod tests {
             (StreamRoute::Main, "main"),
             (StreamRoute::Window("bounty".to_string()), "window:bounty"),
             // Window names keep their exact case and inner punctuation.
-            (StreamRoute::Window("My Window".to_string()), "window:My Window"),
+            (
+                StreamRoute::Window("My Window".to_string()),
+                "window:My Window",
+            ),
         ];
         for (route, text) in cases {
             assert_eq!(route.to_string(), text);
@@ -1247,7 +1273,15 @@ mod tests {
 
     #[test]
     fn stream_route_rejects_unknown_strings() {
-        for bad in ["", "garbage", "Discard", "MAIN", "window:", "windows:foo", "drop"] {
+        for bad in [
+            "",
+            "garbage",
+            "Discard",
+            "MAIN",
+            "window:",
+            "windows:foo",
+            "drop",
+        ] {
             let err = bad.parse::<StreamRoute>().unwrap_err();
             assert!(
                 err.contains("stream route"),
@@ -1277,7 +1311,10 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.routes["speech"], StreamRoute::Discard);
         assert_eq!(cfg.routes["ooc"], StreamRoute::Main);
-        assert_eq!(cfg.routes["bounty"], StreamRoute::Window("bounty".to_string()));
+        assert_eq!(
+            cfg.routes["bounty"],
+            StreamRoute::Window("bounty".to_string())
+        );
 
         // And a bad value fails loudly, not silently.
         let err = toml::from_str::<StreamsConfig>(
@@ -1295,10 +1332,16 @@ mod tests {
     #[test]
     fn migration_converts_drop_list_to_discard_routes() {
         let mut cfg = StreamsConfig::default();
-        assert!(!cfg.drop_unsubscribed.is_empty(), "default drop list feeds migration");
+        assert!(
+            !cfg.drop_unsubscribed.is_empty(),
+            "default drop list feeds migration"
+        );
         let dropped = cfg.drop_unsubscribed.clone();
         cfg.migrate_drop_list_to_routes();
-        assert!(cfg.drop_unsubscribed.is_empty(), "legacy list cleared in memory");
+        assert!(
+            cfg.drop_unsubscribed.is_empty(),
+            "legacy list cleared in memory"
+        );
         for id in dropped {
             assert_eq!(cfg.routes.get(&id), Some(&StreamRoute::Discard), "{}", id);
         }
@@ -1310,15 +1353,19 @@ mod tests {
             drop_unsubscribed: vec!["speech".to_string(), "Bounty".to_string()],
             ..Default::default()
         };
-        cfg.routes
-            .insert("speech".to_string(), StreamRoute::Main);
-        cfg.routes
-            .insert("bounty".to_string(), StreamRoute::Window("bounty".to_string()));
+        cfg.routes.insert("speech".to_string(), StreamRoute::Main);
+        cfg.routes.insert(
+            "bounty".to_string(),
+            StreamRoute::Window("bounty".to_string()),
+        );
         cfg.migrate_drop_list_to_routes();
         assert!(cfg.drop_unsubscribed.is_empty());
         // Existing route wins over the drop-list entry, case-insensitively.
         assert_eq!(cfg.routes["speech"], StreamRoute::Main);
-        assert_eq!(cfg.routes["bounty"], StreamRoute::Window("bounty".to_string()));
+        assert_eq!(
+            cfg.routes["bounty"],
+            StreamRoute::Window("bounty".to_string())
+        );
         assert!(!cfg.routes.contains_key("Bounty"));
     }
 

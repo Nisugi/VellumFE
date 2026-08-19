@@ -68,6 +68,7 @@ pub(super) enum CommandEditOp {
     SelectAll,
     Copy,
     Paste,
+    ClearLine,
 }
 
 impl VellumGuiApp {
@@ -222,8 +223,7 @@ impl VellumGuiApp {
                     // Per-tab scroll id: each tab keeps its own scroll
                     // position and height cache (tabs have independent
                     // buffers and generations).
-                    let scroll_id =
-                        format!("{}::tab{}", tab.window_name, tabbed.active_tab_index);
+                    let scroll_id = format!("{}::tab{}", tab.window_name, tabbed.active_tab_index);
                     if let Some(link) = Self::render_text_content_auto_split(
                         ui,
                         &active.content,
@@ -283,9 +283,7 @@ impl VellumGuiApp {
                 Self::render_webui_content(ui, content);
                 None
             }
-            WindowContent::Targets => {
-                Self::render_targets_content(app_core, ui, &tab.window_name)
-            }
+            WindowContent::Targets => Self::render_targets_content(app_core, ui, &tab.window_name),
             WindowContent::CreatureField => {
                 Self::render_creature_field_content(app_core, ui, &tab.window_name, &settings)
             }
@@ -338,26 +336,30 @@ impl VellumGuiApp {
                 // Resolve the palette from this doll's config (per-level
                 // injury*_color/scar*_color overrides), matching the TUI —
                 // the GUI used to ignore these and hardcode the palette.
-                let palette = app_core
+                let doll_config = app_core
                     .layout
                     .windows
                     .iter()
                     .find(|def| def.name() == window.name)
                     .and_then(|def| match def {
-                        crate::config::WindowDef::InjuryDoll { data, .. } => {
-                            Some(Self::resolved_injury_palette(data))
-                        }
+                        crate::config::WindowDef::InjuryDoll { data, .. } => Some(data),
                         _ => None,
-                    })
+                    });
+                let palette = doll_config
+                    .map(Self::resolved_injury_palette)
                     .unwrap_or_else(Self::default_injury_palette);
+                // The window's named-set binding (doll_set in layout.toml):
+                // pins this window to `[injury_doll.sets.<name>]` art.
+                let named_set = doll_config.and_then(|data| data.doll_set.as_deref());
                 let (doll_variant, doll_hidden) =
-                    Self::resolve_doll_render(app_core, settings.skin_art.as_deref());
+                    Self::resolve_doll_render(app_core, settings.skin_art.as_deref(), named_set);
                 Self::render_injury_doll(
                     ui,
                     &doll.injuries,
                     settings.skin_art.as_deref(),
                     doll_variant,
                     &doll_hidden,
+                    named_set,
                     settings.doll_grayscale,
                     &palette,
                 );
@@ -551,8 +553,7 @@ impl RowHeightCache {
     /// Total vertical space row `i` occupies: its text height plus any
     /// reserved float overhang. The ONE way to ask "how tall is this row".
     pub(super) fn stride(&self, i: usize) -> f32 {
-        self.heights.get(i).copied().unwrap_or(0.0)
-            + self.extra.get(i).copied().unwrap_or(0.0)
+        self.heights.get(i).copied().unwrap_or(0.0) + self.extra.get(i).copied().unwrap_or(0.0)
     }
 
     /// Sum of strides over a range, the shape every offset computation needs

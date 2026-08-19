@@ -74,7 +74,14 @@ impl VellumGuiApp {
         search_match: bool,
         font_id: &egui::FontId,
     ) -> RichText {
-        Self::styled_rich_text(&segment.text, segment, visuals, is_link, search_match, font_id)
+        Self::styled_rich_text(
+            &segment.text,
+            segment,
+            visuals,
+            is_link,
+            search_match,
+            font_id,
+        )
     }
 
     /// Build rich text with a segment's styling for an arbitrary slice of its
@@ -142,7 +149,11 @@ impl VellumGuiApp {
     /// `from`. `needle_lower` must already be ASCII-lowercased. Byte indices
     /// returned are always char boundaries: a valid UTF-8 needle can never
     /// match starting on a continuation byte.
-    pub(in crate::frontend::gui::app) fn find_ascii_ci(haystack: &str, needle_lower: &str, from: usize) -> Option<usize> {
+    pub(in crate::frontend::gui::app) fn find_ascii_ci(
+        haystack: &str,
+        needle_lower: &str,
+        from: usize,
+    ) -> Option<usize> {
         let h = haystack.as_bytes();
         let n = needle_lower.as_bytes();
         if n.is_empty() {
@@ -340,8 +351,7 @@ impl VellumGuiApp {
             } else {
                 egui::Stroke::NONE
             };
-            let selectable =
-                selectable.unwrap_or_else(|| ui.style().interaction.selectable_labels);
+            let selectable = selectable.unwrap_or_else(|| ui.style().interaction.selectable_labels);
             if selectable {
                 egui::text_selection::LabelSelectionState::label_text_selection(
                     ui,
@@ -758,7 +768,10 @@ impl VellumGuiApp {
             // here or copy/selection char offsets misalign. A non-paintable one
             // keeps its `:name:` text.
             if segment.custom_emoji.is_some()
-                && super::custom_emoji_render::is_paintable(ctx, segment.custom_emoji.as_ref().unwrap())
+                && super::custom_emoji_render::is_paintable(
+                    ctx,
+                    segment.custom_emoji.as_ref().unwrap(),
+                )
             {
                 out.push_str(&Self::emoji_placeholder(ctx, font_id));
             } else {
@@ -786,7 +799,10 @@ impl VellumGuiApp {
         Self::buffer_selection(ctx).is_some_and(|sel| sel.anchor != sel.head)
     }
 
-    pub(super) fn store_buffer_selection(ctx: &egui::Context, selection: Option<GuiBufferSelection>) {
+    pub(super) fn store_buffer_selection(
+        ctx: &egui::Context,
+        selection: Option<GuiBufferSelection>,
+    ) {
         ctx.data_mut(|data| match selection {
             Some(selection) => {
                 data.insert_temp(Self::buffer_selection_data_id(), selection);
@@ -825,7 +841,11 @@ impl VellumGuiApp {
             Self::resolve_line_uid(base_uid, len, selection.head.0),
             selection.head.1,
         );
-        if a <= h { (a, h) } else { (h, a) }
+        if a <= h {
+            (a, h)
+        } else {
+            (h, a)
+        }
     }
 
     /// Slice a line's text by char offsets (`None` = line start/end).
@@ -855,8 +875,7 @@ impl VellumGuiApp {
         if len == 0 {
             return String::new();
         }
-        let ((l0, c0), (l1, c1)) =
-            Self::ordered_selection_endpoints(selection, base_uid, len);
+        let ((l0, c0), (l1, c1)) = Self::ordered_selection_endpoints(selection, base_uid, len);
         let mut out = String::new();
         for index in l0..=l1 {
             let Some(line) = content.lines.get(index) else {
@@ -949,7 +968,9 @@ impl VellumGuiApp {
                 .galley(pos, galley.clone(), over_fill);
         }
         if right.width() > 0.0 {
-            painter.with_clip_rect(right).galley(pos, galley, over_trough);
+            painter
+                .with_clip_rect(right)
+                .galley(pos, galley, over_trough);
         }
     }
 
@@ -966,12 +987,13 @@ impl VellumGuiApp {
     ) -> f32 {
         // Same job builder as rendering, so measured heights match rendered
         // heights exactly (timestamps included).
-        let built =
-            Self::build_line_job(ctx, line, visuals, None, font_id, inset, timestamps);
+        let built = Self::build_line_job(ctx, line, visuals, None, font_id, inset, timestamps);
         let min_height = built.min_height;
         if built.job.is_empty() {
             // Blank line: renders as one empty text row.
-            return ctx.fonts_mut(|fonts| fonts.row_height(font_id)).max(min_height);
+            return ctx
+                .fonts_mut(|fonts| fonts.row_height(font_id))
+                .max(min_height);
         }
         ctx.fonts_mut(|fonts| fonts.layout_job(built.job))
             .size()
@@ -1019,8 +1041,7 @@ impl VellumGuiApp {
             let Some(line) = content.lines.get(start + i) else {
                 break;
             };
-            let Some(image) = line.segments.iter().find_map(|s| s.inline_image.as_ref())
-            else {
+            let Some(image) = line.segments.iter().find_map(|s| s.inline_image.as_ref()) else {
                 i += 1;
                 continue;
             };
@@ -1047,9 +1068,7 @@ impl VellumGuiApp {
             let has_follower = content
                 .lines
                 .get(start + i + 1)
-                .is_some_and(|next| {
-                    !next.segments.iter().any(|s| s.inline_image.is_some())
-                });
+                .is_some_and(|next| !next.segments.iter().any(|s| s.inline_image.is_some()));
             let mut attempt = image.rows.clamp(2.0, crate::data::INLINE_IMAGE_MAX_ROWS);
             let refit = |rows: f32| {
                 image.fitted_size(
@@ -1187,9 +1206,8 @@ impl VellumGuiApp {
                 if span > 0 && covered.segments.iter().any(|s| s.inline_image.is_some()) {
                     break;
                 }
-                let h = Self::measure_line_height(
-                    ctx, covered, visuals, inset, font_id, timestamps,
-                );
+                let h =
+                    Self::measure_line_height(ctx, covered, visuals, inset, font_id, timestamps);
                 if span > 0 && used + h > img_h {
                     break; // would straddle the image's bottom edge
                 }
@@ -1247,7 +1265,9 @@ impl VellumGuiApp {
         float_epoch: u64,
         view_height: f32,
     ) {
-        let timestamps = content.show_timestamps.then_some(content.timestamp_position);
+        let timestamps = content
+            .show_timestamps
+            .then_some(content.timestamp_position);
         // `float_epoch` rides the same "rebuild everything" test as width and
         // font: a float's height depends on the window's own row count and on
         // art that may resolve asynchronously, neither of which changes
@@ -1277,8 +1297,7 @@ impl VellumGuiApp {
         // full pass while the tail float is open; it closes once text has
         // consumed the picture's height, so this costs at most a few rebuilds
         // per image.
-        let open_tail_float =
-            delta > 0 && cache.extra.last().is_some_and(|extra| *extra > 0.0);
+        let open_tail_float = delta > 0 && cache.extra.last().is_some_and(|extra| *extra > 0.0);
         let incremental = !width_changed
             && !appended_float
             && !open_tail_float
@@ -1389,16 +1408,12 @@ impl VellumGuiApp {
         let align = content_align.map(ContentAlign::from_str);
         let h_align: u8 = match align {
             Some(ContentAlign::Top | ContentAlign::Center | ContentAlign::Bottom) => 1,
-            Some(
-                ContentAlign::TopRight | ContentAlign::Right | ContentAlign::BottomRight,
-            ) => 2,
+            Some(ContentAlign::TopRight | ContentAlign::Right | ContentAlign::BottomRight) => 2,
             _ => 0,
         };
         let v_align: u8 = match align {
             Some(ContentAlign::Left | ContentAlign::Center | ContentAlign::Right) => 1,
-            Some(
-                ContentAlign::BottomLeft | ContentAlign::Bottom | ContentAlign::BottomRight,
-            ) => 2,
+            Some(ContentAlign::BottomLeft | ContentAlign::Bottom | ContentAlign::BottomRight) => 2,
             _ => 0,
         };
         // Cheap Arc clone; deep-cloning Visuals per window per frame is not.
@@ -1425,10 +1440,11 @@ impl VellumGuiApp {
         let outer_spacing_y = ui.spacing().item_spacing.y;
         let area_id_key = egui::Id::new(("text_scroll_area_id", scroll_id));
         let cache_handle = outer_ctx.data_mut(|data| {
-            data.get_temp_mut_or_insert_with::<std::sync::Arc<
-                std::sync::Mutex<RowHeightCache>,
-            >>(cache_id, Default::default)
-                .clone()
+            data.get_temp_mut_or_insert_with::<std::sync::Arc<std::sync::Mutex<RowHeightCache>>>(
+                cache_id,
+                Default::default,
+            )
+            .clone()
         });
         {
             let cache = cache_handle.lock().expect("row height cache poisoned");
@@ -1445,11 +1461,9 @@ impl VellumGuiApp {
                     .min(cache.heights.len());
                 if drop_front > 0 {
                     let dropped_px: f32 = cache.stride_sum(0..drop_front, outer_spacing_y);
-                    let area_id =
-                        outer_ctx.data_mut(|data| data.get_temp::<egui::Id>(area_id_key));
+                    let area_id = outer_ctx.data_mut(|data| data.get_temp::<egui::Id>(area_id_key));
                     if let Some(area_id) = area_id {
-                        if let Some(mut state) =
-                            egui::scroll_area::State::load(&outer_ctx, area_id)
+                        if let Some(mut state) = egui::scroll_area::State::load(&outer_ctx, area_id)
                         {
                             state.offset.y = (state.offset.y - dropped_px).max(0.0);
                             state.store(&outer_ctx, area_id);
@@ -1462,11 +1476,21 @@ impl VellumGuiApp {
         // Viewport height for keyboard/controller paging (see
         // try_gui_scroll_action) — refreshed every frame.
         outer_ctx.data_mut(|data| {
-            data.insert_temp(
-                egui::Id::new(("text_scroll_view_h", scroll_id)),
-                max_height,
-            );
+            data.insert_temp(egui::Id::new(("text_scroll_view_h", scroll_id)), max_height);
         });
+
+        // Hovered text window, for keyboard scroll targeting: the window
+        // under the pointer wins over the (invisible in the GUI) core focus.
+        // Stamped with the pass number so a stale value is ignored once the
+        // pointer leaves every text window. The live split pane reports its
+        // BASE id — scrolling always drives the history pane.
+        if ui.rect_contains_pointer(ui.available_rect_before_wrap()) {
+            let hovered = scroll_id.trim_end_matches("~live").to_string();
+            let pass = outer_ctx.cumulative_pass_nr();
+            outer_ctx.data_mut(|data| {
+                data.insert_temp(egui::Id::new("text_scroll_hovered"), (pass, hovered));
+            });
+        }
 
         // Float geometry epoch: bumped whenever anything that changes a
         // float's size changes. Float heights depend on the window's own row
@@ -1569,11 +1593,9 @@ impl VellumGuiApp {
         let user_scrolled = wheel_scrolled
             || (pointer_over_window
                 && ui.input(|input| {
-                    input
-                        .raw
-                        .events
-                        .iter()
-                        .any(|event| matches!(event, egui::Event::PointerButton { pressed: true, .. }))
+                    input.raw.events.iter().any(|event| {
+                        matches!(event, egui::Event::PointerButton { pressed: true, .. })
+                    })
                 }));
         // User input owns the window the moment it arrives. Setting the flag
         // is idempotent, so a producer repeating every frame can no longer
@@ -1740,18 +1762,17 @@ impl VellumGuiApp {
                     f32::INFINITY
                 };
                 let spacing_y = ui.spacing().item_spacing.y;
-                let timestamps = content.show_timestamps.then_some(content.timestamp_position);
-                let base_uid = content
-                    .generation
-                    .wrapping_sub(content.lines.len() as u64);
+                let timestamps = content
+                    .show_timestamps
+                    .then_some(content.timestamp_position);
+                let base_uid = content.generation.wrapping_sub(content.lines.len() as u64);
                 // Vertical alignment pad, from last frame's height cache (it
                 // settles within a frame). Applied before content_top is read
                 // so all selection/viewport math stays consistent.
                 if v_align != 0 {
                     let cache = cache_handle.lock().expect("row height cache poisoned");
                     if cache.heights.len() == rendered_count {
-                        let total: f32 =
-                            cache.stride_sum(0..cache.heights.len(), spacing_y);
+                        let total: f32 = cache.stride_sum(0..cache.heights.len(), spacing_y);
                         let free = max_height - total;
                         if free > 0.0 {
                             ui.add_space(if v_align == 1 { free / 2.0 } else { free });
@@ -1796,8 +1817,8 @@ impl VellumGuiApp {
 
                 // Pressing outside this window, or Escape, drops our selection.
                 if owns_selection {
-                    let pressed_outside = any_pressed
-                        && !press_pos.is_some_and(|pos| clip.contains(pos));
+                    let pressed_outside =
+                        any_pressed && !press_pos.is_some_and(|pos| clip.contains(pos));
                     if pressed_outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                         selection = None;
                         Self::store_buffer_selection(&ctx, None);
@@ -1846,7 +1867,11 @@ impl VellumGuiApp {
                             let drag_inset = cache.inset(slot, wrap_width);
                             let drag_h_offset = if h_align != 0 && drag_inset.width.is_finite() {
                                 let free = (drag_inset.width - galley.size().x).max(0.0);
-                                if h_align == 1 { free / 2.0 } else { free }
+                                if h_align == 1 {
+                                    free / 2.0
+                                } else {
+                                    free
+                                }
                             } else {
                                 0.0
                             };
@@ -2019,8 +2044,7 @@ impl VellumGuiApp {
                     // image" bug. The collapse case's y_offset rides inside
                     // extra, so it is covered by the same allocation.
                     let alloc_h = height + cache.extra.get(slot).copied().unwrap_or(0.0);
-                    let (rect, response) =
-                        ui.allocate_exact_size(Vec2::new(width, alloc_h), sense);
+                    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, alloc_h), sense);
                     let h_offset = match h_align {
                         1 => ((rect.width() - galley_size.x) / 2.0).max(0.0),
                         2 => (rect.width() - galley_size.x).max(0.0),
@@ -2091,8 +2115,7 @@ impl VellumGuiApp {
                         cache.heights[slot] = height;
                     }
 
-                    let char_at =
-                        |pos: Pos2| galley.cursor_from_pos(pos - galley_pos).index.0;
+                    let char_at = |pos: Pos2| galley.cursor_from_pos(pos - galley_pos).index.0;
                     let link_at = |pos: Pos2| {
                         let c = char_at(pos);
                         links
@@ -2205,10 +2228,7 @@ impl VellumGuiApp {
                                 clicked_link = Some(GuiLinkClick {
                                     link_data: LinkData {
                                         exist_id: Self::LINK_DROP_SENTINEL.to_string(),
-                                        noun: format!(
-                                            "{}|{}",
-                                            dragged.exist_id, target.exist_id
-                                        ),
+                                        noun: format!("{}|{}", dragged.exist_id, target.exist_id),
                                         text: String::new(),
                                         coord: None,
                                     },
@@ -2362,9 +2382,7 @@ impl VellumGuiApp {
         const DIVIDER_H: f32 = 9.0;
         let ctx = ui.ctx().clone();
         let following: bool = ctx
-            .data_mut(|data| {
-                data.get_temp(egui::Id::new(("text_scroll_follow", scroll_id)))
-            })
+            .data_mut(|data| data.get_temp(egui::Id::new(("text_scroll_follow", scroll_id))))
             .unwrap_or(true);
         let row_h = ctx.fonts_mut(|fonts| fonts.row_height(font_id)).max(1.0);
         let avail = ui.available_size();
@@ -2430,8 +2448,8 @@ impl VellumGuiApp {
 
         // Divider: a slim draggable bar. Dragging rebalances the panes; the
         // fraction persists per window.
-        let (divider_rect, divider_resp) = ui
-            .allocate_exact_size(Vec2::new(avail.x, DIVIDER_H), egui::Sense::drag());
+        let (divider_rect, divider_resp) =
+            ui.allocate_exact_size(Vec2::new(avail.x, DIVIDER_H), egui::Sense::drag());
         if divider_resp.hovered() || divider_resp.dragged() {
             ctx.set_cursor_icon(egui::CursorIcon::ResizeVertical);
         }
@@ -2456,14 +2474,78 @@ impl VellumGuiApp {
             ],
             egui::Stroke::new(1.0, line_color),
         );
-        // Grip dots in the middle so the bar reads as draggable.
+        // Jump-to-newest button (ui.split_jump_button): a small pill on the
+        // divider at the configured end (ui.split_jump_button_position).
+        // Clicking scrolls the history pane back to the tail, which re-arms
+        // follow and merges the panes. Drawn after the divider so it wins the
+        // pointer over the drag handle beneath it.
+        let jump_enabled: bool = ctx
+            .data_mut(|data| data.get_temp(egui::Id::new("split_jump_button")))
+            .unwrap_or(true);
+        // 0 = left, 1 = center, 2 = right.
+        let jump_pos: u8 = ctx
+            .data_mut(|data| data.get_temp(egui::Id::new("split_jump_button_pos")))
+            .unwrap_or(2);
+
+        // Grip dots in the middle so the bar reads as draggable — skipped
+        // when the button sits there (it reads as the handle itself).
         let cx = divider_rect.center().x;
-        for offset in [-8.0f32, 0.0, 8.0] {
-            ui.painter().circle_filled(
-                egui::pos2(cx + offset, center_y),
-                1.5,
-                line_color,
+        if !(jump_enabled && jump_pos == 1) {
+            for offset in [-8.0f32, 0.0, 8.0] {
+                ui.painter()
+                    .circle_filled(egui::pos2(cx + offset, center_y), 1.5, line_color);
+            }
+        }
+
+        if jump_enabled {
+            let btn_size = Vec2::new(30.0, 15.0);
+            let btn_cx = match jump_pos {
+                0 => divider_rect.left() + 12.0 + btn_size.x / 2.0,
+                1 => cx,
+                _ => divider_rect.right() - 12.0 - btn_size.x / 2.0,
+            };
+            let btn_rect =
+                egui::Rect::from_center_size(egui::pos2(btn_cx, center_y), btn_size);
+            let btn_resp = ui.interact(
+                btn_rect,
+                egui::Id::new(("split_jump_btn", scroll_id)),
+                egui::Sense::click(),
             );
+            let (fill, glyph_color) = if btn_resp.hovered() {
+                (
+                    visuals.widgets.hovered.bg_fill,
+                    visuals.widgets.hovered.fg_stroke.color,
+                )
+            } else {
+                (
+                    visuals.widgets.inactive.bg_fill,
+                    visuals.widgets.noninteractive.fg_stroke.color,
+                )
+            };
+            ui.painter().rect_filled(btn_rect, 7.0, fill);
+            ui.painter()
+                .rect_stroke(btn_rect, 7.0, egui::Stroke::new(1.0, line_color), egui::StrokeKind::Inside);
+            ui.painter().text(
+                btn_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "▼",
+                egui::FontId::proportional(10.0),
+                glyph_color,
+            );
+            if btn_resp.hovered() {
+                ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            let btn_resp = btn_resp.on_hover_text("Jump to newest");
+            if btn_resp.clicked() {
+                // Same pending channel keyboard paging uses: kind 2 = end.
+                ctx.data_mut(|data| {
+                    data.insert_temp(
+                        egui::Id::new(("text_scroll_pending", scroll_id)),
+                        (2u8, 0.0f32),
+                    );
+                });
+                ctx.request_repaint();
+            }
         }
 
         // Live pane: same buffer under a derived id, permanently pinned to
@@ -2503,5 +2585,4 @@ impl VellumGuiApp {
 
         clicked_link
     }
-
 }

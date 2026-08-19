@@ -1,18 +1,17 @@
 use super::persistence::{
-    list_named_layouts, load_layout, load_named_layout, migrate_legacy_named_layouts,
-    save_layout, save_named_layout, FontRef, GuiLayoutFileV1, GuiUiSettings, MainViewportState,
-    TabGroup, TabSettings, TabSettingsEntry, ViewportState, ZoneSeparatorStyle,
+    list_named_layouts, load_layout, load_named_layout, migrate_legacy_named_layouts, save_layout,
+    save_named_layout, FontRef, GuiLayoutFileV1, GuiUiSettings, MainViewportState, TabGroup,
+    TabSettings, TabSettingsEntry, ViewportState, ZoneSeparatorStyle,
 };
-use crate::config::is_valid_layout_name;
 use super::skin;
 use super::{TabId, TabKey};
 use crate::cmdlist::CmdList;
+use crate::config::is_valid_layout_name;
 use crate::config::{AppKeybinds, Config, KeyBindAction, TargetListConfig};
 use crate::core::AppCore;
 use crate::data::{
     InputMode, LinkData, PopupMenu, PopupMenuItem, StyledLine, TabbedTextContent, TextContent,
-    TextSegment,
-    WidgetType, WindowContent, WindowState,
+    TextSegment, WidgetType, WindowContent, WindowState,
 };
 use crate::network::{LichConnection, RawLogger, ServerMessage};
 use anyhow::{anyhow, Context, Result};
@@ -23,33 +22,33 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+mod alert_overlay;
 mod borders;
 mod color_emoji;
 mod command_input;
-mod global_input;
-mod launch;
-mod layout_persistence;
-mod server_pump;
-mod webui_bridge;
-mod alert_overlay;
 mod custom_emoji_render;
 mod detached;
-mod map_explorer;
 mod dialogs;
 mod dock;
 mod editors;
 #[cfg(feature = "gamepad")]
 mod gamepad;
+mod global_input;
 mod interact;
+mod launch;
+mod layout_persistence;
+mod map_explorer;
 mod menus;
 mod render_settings;
 mod room_sync;
 mod search_bar;
+mod server_pump;
 mod skins;
 mod snap;
-mod tabs;
 mod status_icons;
+mod tabs;
 mod theme;
+mod webui_bridge;
 mod webui_panel;
 mod widgets;
 mod window_config;
@@ -289,7 +288,10 @@ struct GuiKeyPress {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum GuiLinkDispatch {
     NetworkCommand(String),
-    MenuRequest { exist_id: String, noun: String },
+    MenuRequest {
+        exist_id: String,
+        noun: String,
+    },
     /// Web link: open in the default browser (http/https only).
     OpenUrl(String),
 }
@@ -711,7 +713,10 @@ impl VellumGuiApp {
         initial_width: f32,
         initial_height: f32,
     ) -> Result<Self> {
-        let core_layout_size = (initial_width.max(1.0) as u16, initial_height.max(1.0) as u16);
+        let core_layout_size = (
+            initial_width.max(1.0) as u16,
+            initial_height.max(1.0) as u16,
+        );
         app_core.init_windows(core_layout_size.0, core_layout_size.1);
         // This frontend drains disconnect_requested each frame, so keep-open
         // `.quit` works.
@@ -735,8 +740,7 @@ impl VellumGuiApp {
                 .clone()
                 .or_else(|| app_core.config.character.clone())
                 .unwrap_or_else(|| "default".to_string());
-            let (sink, event_rx) =
-                crate::frontend::web::start(&app_core.config.web, session_label);
+            let (sink, event_rx) = crate::frontend::web::start(&app_core.config.web, session_label);
             app_core.enable_remote(sink);
             Some(event_rx)
         } else {
@@ -752,8 +756,7 @@ impl VellumGuiApp {
         // seen by no one). should_serve() is implied by `multiaccount` today,
         // but the predicate states the dependency rather than relying on
         // that implication holding forever.
-        let multiaccount = if app_core.config.web.multiaccount
-            && app_core.config.web.should_serve()
+        let multiaccount = if app_core.config.web.multiaccount && app_core.config.web.should_serve()
         {
             let _guard = runtime.enter();
             match crate::config::Config::load_or_create_web_token() {
@@ -918,17 +921,15 @@ impl VellumGuiApp {
         // TabSettings; those now live on the shared layout defs. Migrate
         // once: marking both stores dirty persists the move on both sides.
         let mut tab_settings = tab_settings;
-        let (migrated_layout, migrated_gui) = Self::migrate_tab_settings_to_layout(
-            &mut tab_settings,
-            &mut app_core.layout,
-            |key| available_tabs.get(key).map(|tab| tab.window_name.clone()),
-        );
+        let (migrated_layout, migrated_gui) =
+            Self::migrate_tab_settings_to_layout(&mut tab_settings, &mut app_core.layout, |key| {
+                available_tabs.get(key).map(|tab| tab.window_name.clone())
+            });
         if migrated_layout {
             app_core.schedule_layout_autosave();
         }
 
-        let command_history =
-            Self::load_command_history(app_core.config.character.as_deref());
+        let command_history = Self::load_command_history(app_core.config.character.as_deref());
 
         // Anchor the restored rects to the canvas they were saved against:
         // the OS window is restored toward the saved viewport size, but a
@@ -1195,9 +1196,6 @@ impl VellumGuiApp {
         }
     }
 
-
-
-
     /// Give the server-message forwarder a context so incoming game text
     /// wakes the event loop immediately.
     fn set_repaint_context(&self, ctx: egui::Context) {
@@ -1287,11 +1285,13 @@ impl VellumGuiApp {
             // Grouped windows resolve to the member under the pointer
             // (a hand group is one window but two drop targets).
             if self.group_for_tab(&entry.tab_key).is_some() {
-                let member_rects: Option<Vec<(String, Rect)>> = ctx
-                    .data(|data| data.get_temp(Self::group_member_rects_id(&entry.tab_key)));
-                if let Some(member) = member_rects.iter().flatten().find_map(|(name, rect)| {
-                    rect.contains(pointer_pos).then_some(name.as_str())
-                }) {
+                let member_rects: Option<Vec<(String, Rect)>> =
+                    ctx.data(|data| data.get_temp(Self::group_member_rects_id(&entry.tab_key)));
+                if let Some(member) = member_rects
+                    .iter()
+                    .flatten()
+                    .find_map(|(name, rect)| rect.contains(pointer_pos).then_some(name.as_str()))
+                {
                     target = Some(self.drag_drop_target_for_window(member));
                     break;
                 }
@@ -1628,9 +1628,8 @@ impl VellumGuiApp {
             A::SaveLayout(name) => {
                 let name = name.unwrap_or_else(|| "default".to_string());
                 if !is_valid_layout_name(&name) {
-                    self.app_core.add_system_message(
-                        "Layout names use letters, digits, '-' and '_' only.",
-                    );
+                    self.app_core
+                        .add_system_message("Layout names use letters, digits, '-' and '_' only.");
                     return;
                 }
                 let Some(layout) = self.build_layout_snapshot(LayoutSaveMode::Checkpoint) else {
@@ -1674,7 +1673,11 @@ impl VellumGuiApp {
                         self.app_core.add_system_message(&format!(
                             "Loaded GUI layout '{}'{}.",
                             name,
-                            if keep_skin { " (keeping your skin/theme)" } else { "" }
+                            if keep_skin {
+                                " (keeping your skin/theme)"
+                            } else {
+                                ""
+                            }
                         ));
                     }
                     Err(err) => {
@@ -1761,9 +1764,8 @@ impl VellumGuiApp {
             }
             A::SaveSkin(name) => {
                 if !is_valid_layout_name(&name) {
-                    self.app_core.add_system_message(
-                        "Skin names use letters, digits, '-' and '_' only.",
-                    );
+                    self.app_core
+                        .add_system_message("Skin names use letters, digits, '-' and '_' only.");
                     return;
                 }
                 match self.compile_appearance_to_skin(&name) {
@@ -2028,12 +2030,11 @@ impl eframe::App for VellumGuiApp {
                     crate::core::multiaccount::SELF_PORT,
                     crate::core::multiaccount::PeerStatus::from_local(
                         &self.app_core.game_state,
-                        self.app_core
+                        self.app_core.config.connection.character.as_deref().or(self
+                            .app_core
                             .config
-                            .connection
                             .character
-                            .as_deref()
-                            .or(self.app_core.config.character.as_deref()),
+                            .as_deref()),
                         self.app_core
                             .nav_room_id
                             .clone()
@@ -2055,11 +2056,9 @@ impl eframe::App for VellumGuiApp {
                     | crate::data::WindowContent::Inventory(content)
                     | crate::data::WindowContent::Reserve(content)
                     | crate::data::WindowContent::Spells(content) => content.lines.len(),
-                    crate::data::WindowContent::TabbedText(tabbed) => tabbed
-                        .tabs
-                        .iter()
-                        .map(|tab| tab.content.lines.len())
-                        .sum(),
+                    crate::data::WindowContent::TabbedText(tabbed) => {
+                        tabbed.tabs.iter().map(|tab| tab.content.lines.len()).sum()
+                    }
                     _ => 0,
                 })
                 .sum();
@@ -2245,8 +2244,7 @@ impl eframe::App for VellumGuiApp {
                 crate::data::IconRef::Image { path } => Some(path.clone()),
                 _ => None,
             });
-        let needed_pool_icons: Vec<String> =
-            hand_state_images.chain(hotbar_images).collect();
+        let needed_pool_icons: Vec<String> = hand_state_images.chain(hotbar_images).collect();
         self.skin_state.set_needed_pool_icons(needed_pool_icons);
         self.skin_state.set_grayscale(
             self.ui_settings.status_icons.any_gray(),
@@ -2284,7 +2282,14 @@ impl eframe::App for VellumGuiApp {
         // Prime the item classifier while &mut self is available; render
         // paths (hotbar/hand conditions) read the immutable cache.
         let _ = self.app_core.gameobj_data();
+        // Timed as a pseudo-window so render spikes can tell "message
+        // ingestion was slow" apart from "a window painted slow" — the
+        // spike attribution lists this alongside real window costs.
+        let ingest_start = std::time::Instant::now();
         self.pump_server_messages();
+        self.app_core
+            .perf_stats
+            .record_window_render("(ingest)", ingest_start.elapsed());
         // Feed-injected dot-commands (<vellumCmd> from Lich scripts) run
         // through the same dispatch as typed commands.
         for command in self.app_core.take_pending_client_commands() {
@@ -2326,6 +2331,21 @@ impl eframe::App for VellumGuiApp {
         // Resolve command-input keybinds for this frame so the input widget's
         // submit/history/clear-line honor rebinds (single source of truth).
         self.stash_command_input_keys(&ctx);
+        // Static render fns (text widgets) read per-frame settings from temp
+        // data; refresh the split-divider jump-button toggle here.
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("split_jump_button"),
+                self.app_core.config.ui.split_jump_button,
+            );
+            // 0 = left, 1 = center, 2 = right (the default).
+            let pos: u8 = match self.app_core.config.ui.split_jump_button_position.as_str() {
+                "left" => 0,
+                "center" => 1,
+                _ => 2,
+            };
+            data.insert_temp(egui::Id::new("split_jump_button_pos"), pos);
+        });
 
         if self.close_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -2350,8 +2370,7 @@ impl eframe::App for VellumGuiApp {
                     // Flat toolbar: no resting chip background on the zone
                     // toggles / Windows menu, hover highlight only. Scoped to
                     // this row; the dropdown menus keep normal visuals.
-                    ui.visuals_mut().widgets.inactive.weak_bg_fill =
-                        egui::Color32::TRANSPARENT;
+                    ui.visuals_mut().widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
                     ui.heading("VellumFE GUI");
                     ui.separator();
                     // Connected: a plain green status label. Disconnected: the
@@ -2385,119 +2404,119 @@ impl eframe::App for VellumGuiApp {
                                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
                         )
                         .ui(ui, |ui| {
-                        ui.set_min_width(200.0);
-                        let zone_row = |app: &mut Self,
-                                        ui: &mut egui::Ui,
-                                        zone: GuiShellZone,
-                                        shown: bool,
-                                        name: &str| {
-                            ui.horizontal(|ui| {
-                                let label =
-                                    format!("{} {}", if shown { "Hide" } else { "Show" }, name);
-                                if ui
-                                    .add_sized([120.0, 20.0], egui::Button::new(label))
-                                    .clicked()
-                                {
-                                    match zone {
-                                        GuiShellZone::Header => {
-                                            app.shell_layout.header_visible =
-                                                !app.shell_layout.header_visible
-                                        }
-                                        GuiShellZone::Footer => {
-                                            app.shell_layout.footer_visible =
-                                                !app.shell_layout.footer_visible
-                                        }
-                                        GuiShellZone::LeftSidebar => {
-                                            app.shell_layout.left_sidebar_collapsed =
-                                                !app.shell_layout.left_sidebar_collapsed
-                                        }
-                                        GuiShellZone::RightSidebar => {
-                                            app.shell_layout.right_sidebar_collapsed =
-                                                !app.shell_layout.right_sidebar_collapsed
-                                        }
-                                        GuiShellZone::Center => {}
-                                    }
-                                    app.layout_dirty = true;
-                                }
-                                let mut overlay = app.shell_layout.zone_mode(zone)
-                                    == zones::ZoneDisplayMode::Overlay;
-                                if ui
-                                    .checkbox(&mut overlay, "Overlay")
-                                    .on_hover_text(
-                                        "Float this zone over the center like a drawer \
-                                         instead of reserving its own space.",
-                                    )
-                                    .changed()
-                                {
-                                    app.shell_layout.set_zone_mode(
-                                        zone,
-                                        if overlay {
-                                            zones::ZoneDisplayMode::Overlay
-                                        } else {
-                                            zones::ZoneDisplayMode::Reserve
-                                        },
-                                    );
-                                    app.layout_dirty = true;
-                                }
-                            });
-                            // Backdrop opacity, overlay-only: in Reserve mode
-                            // there is nothing behind the zone to reveal, so
-                            // the control would be a no-op knob.
-                            if app.shell_layout.zone_mode(zone)
-                                == zones::ZoneDisplayMode::Overlay
-                            {
+                            ui.set_min_width(200.0);
+                            let zone_row = |app: &mut Self,
+                                            ui: &mut egui::Ui,
+                                            zone: GuiShellZone,
+                                            shown: bool,
+                                            name: &str| {
                                 ui.horizontal(|ui| {
-                                    ui.add_space(8.0);
-                                    let mut opacity = app.shell_layout.zone_opacity(zone);
+                                    let label =
+                                        format!("{} {}", if shown { "Hide" } else { "Show" }, name);
                                     if ui
-                                        .add(
-                                            egui::Slider::new(&mut opacity, 0.0..=1.0)
-                                                .text("Opacity")
-                                                .fixed_decimals(2),
-                                        )
+                                        .add_sized([120.0, 20.0], egui::Button::new(label))
+                                        .clicked()
+                                    {
+                                        match zone {
+                                            GuiShellZone::Header => {
+                                                app.shell_layout.header_visible =
+                                                    !app.shell_layout.header_visible
+                                            }
+                                            GuiShellZone::Footer => {
+                                                app.shell_layout.footer_visible =
+                                                    !app.shell_layout.footer_visible
+                                            }
+                                            GuiShellZone::LeftSidebar => {
+                                                app.shell_layout.left_sidebar_collapsed =
+                                                    !app.shell_layout.left_sidebar_collapsed
+                                            }
+                                            GuiShellZone::RightSidebar => {
+                                                app.shell_layout.right_sidebar_collapsed =
+                                                    !app.shell_layout.right_sidebar_collapsed
+                                            }
+                                            GuiShellZone::Center => {}
+                                        }
+                                        app.layout_dirty = true;
+                                    }
+                                    let mut overlay = app.shell_layout.zone_mode(zone)
+                                        == zones::ZoneDisplayMode::Overlay;
+                                    if ui
+                                        .checkbox(&mut overlay, "Overlay")
                                         .on_hover_text(
-                                            "Backdrop opacity for this drawer. 1.00 is a \
-                                             solid panel; lower values let the center pane \
-                                             show through so the bar reads as a HUD. \
-                                             Clicks are still caught either way.",
+                                            "Float this zone over the center like a drawer \
+                                         instead of reserving its own space.",
                                         )
                                         .changed()
                                     {
-                                        app.shell_layout.set_zone_opacity(zone, opacity);
+                                        app.shell_layout.set_zone_mode(
+                                            zone,
+                                            if overlay {
+                                                zones::ZoneDisplayMode::Overlay
+                                            } else {
+                                                zones::ZoneDisplayMode::Reserve
+                                            },
+                                        );
                                         app.layout_dirty = true;
                                     }
                                 });
-                            }
-                        };
-                        zone_row(
-                            self,
-                            ui,
-                            GuiShellZone::Header,
-                            self.shell_layout.header_visible,
-                            "Header",
-                        );
-                        zone_row(
-                            self,
-                            ui,
-                            GuiShellZone::Footer,
-                            self.shell_layout.footer_visible,
-                            "Footer",
-                        );
-                        zone_row(
-                            self,
-                            ui,
-                            GuiShellZone::LeftSidebar,
-                            !self.shell_layout.left_sidebar_collapsed,
-                            "Left Bar",
-                        );
-                        zone_row(
-                            self,
-                            ui,
-                            GuiShellZone::RightSidebar,
-                            !self.shell_layout.right_sidebar_collapsed,
-                            "Right Bar",
-                        );
-                    });
+                                // Backdrop opacity, overlay-only: in Reserve mode
+                                // there is nothing behind the zone to reveal, so
+                                // the control would be a no-op knob.
+                                if app.shell_layout.zone_mode(zone)
+                                    == zones::ZoneDisplayMode::Overlay
+                                {
+                                    ui.horizontal(|ui| {
+                                        ui.add_space(8.0);
+                                        let mut opacity = app.shell_layout.zone_opacity(zone);
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut opacity, 0.0..=1.0)
+                                                    .text("Opacity")
+                                                    .fixed_decimals(2),
+                                            )
+                                            .on_hover_text(
+                                                "Backdrop opacity for this drawer. 1.00 is a \
+                                             solid panel; lower values let the center pane \
+                                             show through so the bar reads as a HUD. \
+                                             Clicks are still caught either way.",
+                                            )
+                                            .changed()
+                                        {
+                                            app.shell_layout.set_zone_opacity(zone, opacity);
+                                            app.layout_dirty = true;
+                                        }
+                                    });
+                                }
+                            };
+                            zone_row(
+                                self,
+                                ui,
+                                GuiShellZone::Header,
+                                self.shell_layout.header_visible,
+                                "Header",
+                            );
+                            zone_row(
+                                self,
+                                ui,
+                                GuiShellZone::Footer,
+                                self.shell_layout.footer_visible,
+                                "Footer",
+                            );
+                            zone_row(
+                                self,
+                                ui,
+                                GuiShellZone::LeftSidebar,
+                                !self.shell_layout.left_sidebar_collapsed,
+                                "Left Bar",
+                            );
+                            zone_row(
+                                self,
+                                ui,
+                                GuiShellZone::RightSidebar,
+                                !self.shell_layout.right_sidebar_collapsed,
+                                "Right Bar",
+                            );
+                        });
 
                     // "Windows" is the same catalog the floating manager
                     // shows (show/hide + zone + add-window, grouped by
@@ -2617,10 +2636,10 @@ impl eframe::App for VellumGuiApp {
         let separator_style = self.ui_settings.zone_separators;
         // Overlay-mode zones skip their space-claiming egui panel entirely
         // and render as floating drawers inside the central pass below.
-        let header_overlay = self.shell_layout.zone_mode(GuiShellZone::Header)
-            == zones::ZoneDisplayMode::Overlay;
-        let footer_overlay = self.shell_layout.zone_mode(GuiShellZone::Footer)
-            == zones::ZoneDisplayMode::Overlay;
+        let header_overlay =
+            self.shell_layout.zone_mode(GuiShellZone::Header) == zones::ZoneDisplayMode::Overlay;
+        let footer_overlay =
+            self.shell_layout.zone_mode(GuiShellZone::Footer) == zones::ZoneDisplayMode::Overlay;
         if self.shell_layout.header_visible && !header_overlay {
             egui::Panel::top("gui_shell_header")
                 .resizable(false)
@@ -2771,350 +2790,340 @@ impl eframe::App for VellumGuiApp {
                     .outer_margin(egui::Margin::ZERO),
             )
             .show(ui, |ui| {
-            let root = ui.max_rect();
-            if !root.is_finite() || root.width() <= 24.0 || root.height() <= 24.0 {
-                return;
-            }
-
-            self.shell_layout.sanitize();
-            let min_center_width = 220.0;
-            let left_on = !self.shell_layout.left_sidebar_collapsed;
-            let right_on = !self.shell_layout.right_sidebar_collapsed;
-            let left_overlay = self.shell_layout.zone_mode(GuiShellZone::LeftSidebar)
-                == zones::ZoneDisplayMode::Overlay;
-            let right_overlay = self.shell_layout.zone_mode(GuiShellZone::RightSidebar)
-                == zones::ZoneDisplayMode::Overlay;
-            // Display-only squeeze on narrow windows; the persisted widths
-            // stay untouched so the layout springs back when the window
-            // grows again (the old math floored collapsed sidebars back to
-            // life, inverted the center, and baked the squeeze into the
-            // saved layout). Only RESERVED sidebars share space with the
-            // center, so only they enter the squeeze; an overlay drawer
-            // clamps against the root width alone.
-            let (left_reserved_width, right_reserved_width) = zones::squeezed_sidebar_widths(
-                root.width(),
-                min_center_width,
-                if left_on && !left_overlay {
-                    self.shell_layout.left_sidebar_width
-                } else {
-                    0.0
-                },
-                if right_on && !right_overlay {
-                    self.shell_layout.right_sidebar_width
-                } else {
-                    0.0
-                },
-            );
-            let left_width = if left_on && left_overlay {
-                self.shell_layout
-                    .left_sidebar_width
-                    .min((root.width() - 40.0).max(0.0))
-            } else {
-                left_reserved_width
-            };
-            let right_width = if right_on && right_overlay {
-                self.shell_layout
-                    .right_sidebar_width
-                    .min((root.width() - 40.0).max(0.0))
-            } else {
-                right_reserved_width
-            };
-
-            let left_rect = if left_width > 0.0 {
-                Some(Rect::from_min_max(
-                    root.min,
-                    Pos2::new(root.min.x + left_width, root.max.y),
-                ))
-            } else {
-                None
-            };
-            let right_rect = if right_width > 0.0 {
-                Some(Rect::from_min_max(
-                    Pos2::new(root.max.x - right_width, root.min.y),
-                    root.max,
-                ))
-            } else {
-                None
-            };
-            // Overlay drawers float above the center, so they never shrink it.
-            let center_min_x = match left_rect {
-                Some(rect) if !left_overlay => rect.max.x,
-                _ => root.min.x,
-            };
-            let center_max_x = match right_rect {
-                Some(rect) if !right_overlay => rect.min.x,
-                _ => root.max.x,
-            };
-            let center_rect = Rect::from_min_max(
-                Pos2::new(center_min_x, root.min.y),
-                Pos2::new(center_max_x, root.max.y),
-            );
-            // The center BASE pane: where the store's rects live — the
-            // center with no reserved zone open. Root already excludes
-            // reserved header/footer (they are egui panels above this
-            // pass), so expand back by their heights; width is the full
-            // root (sidebars carve from it). The P-A3 resolve maps
-            // base→center_rect per frame; identity when they're equal.
-            let reserved_header_h = if self.shell_layout.header_visible && !header_overlay {
-                self.shell_layout.header_height
-            } else {
-                0.0
-            };
-            let reserved_footer_h = if self.shell_layout.footer_visible && !footer_overlay {
-                self.shell_layout.footer_height
-            } else {
-                0.0
-            };
-            self.center_base_pane = Some(Rect::from_min_max(
-                Pos2::new(root.min.x, root.min.y - reserved_header_h),
-                Pos2::new(root.max.x, root.max.y + reserved_footer_h),
-            ));
-            // Overlay header/footer drawers carve their strips out of the
-            // full root (their reserved twins are egui panels above this
-            // pass and never reach here).
-            let header_drawer_rect = (self.shell_layout.header_visible && header_overlay)
-                .then(|| {
-                    Rect::from_min_max(
-                        root.min,
-                        Pos2::new(
-                            root.max.x,
-                            (root.min.y + self.shell_layout.header_height).min(root.max.y),
-                        ),
-                    )
-                });
-            let footer_drawer_rect = (self.shell_layout.footer_visible && footer_overlay)
-                .then(|| {
-                    Rect::from_min_max(
-                        Pos2::new(
-                            root.min.x,
-                            (root.max.y - self.shell_layout.footer_height).max(root.min.y),
-                        ),
-                        root.max,
-                    )
-                });
-            visible_zone_rects.push((GuiShellZone::Center, center_rect));
-
-            let sidebar_divider_stroke = egui::Stroke::new(
-                1.5,
-                ui.visuals().window_stroke.color,
-            );
-            if separator_style == ZoneSeparatorStyle::Shown {
-                // Overlay drawers draw their own inner-edge divider on the
-                // backdrop layer; a panel-level line would sit underneath.
-                if let (Some(rect), false) = (left_rect, left_overlay) {
-                    ui.painter()
-                        .vline(rect.max.x, root.y_range(), sidebar_divider_stroke);
+                let root = ui.max_rect();
+                if !root.is_finite() || root.width() <= 24.0 || root.height() <= 24.0 {
+                    return;
                 }
-                if let (Some(rect), false) = (right_rect, right_overlay) {
-                    ui.painter()
-                        .vline(rect.min.x, root.y_range(), sidebar_divider_stroke);
-                }
-            }
 
-            zone_actions.merge(self.render_zone_surface(
-                &ctx,
-                &detached_before_frame,
-                GuiShellZone::Center,
-                center_rect,
-                &mut zone_window_rects,
-            ));
-
-            if let Some(rect) = left_rect {
-                visible_zone_rects.push((GuiShellZone::LeftSidebar, rect));
-                if left_overlay {
-                    // Backdrop first so the drawer's windows (registered
-                    // after, same Foreground order) stack above it.
-                    self.render_overlay_backdrop(ui.ctx(), GuiShellZone::LeftSidebar, rect);
-                }
-                let splitter = Rect::from_min_max(
-                    Pos2::new(rect.max.x - 6.0, rect.min.y),
-                    Pos2::new(rect.max.x + 6.0, rect.max.y),
+                self.shell_layout.sanitize();
+                let min_center_width = 220.0;
+                let left_on = !self.shell_layout.left_sidebar_collapsed;
+                let right_on = !self.shell_layout.right_sidebar_collapsed;
+                let left_overlay = self.shell_layout.zone_mode(GuiShellZone::LeftSidebar)
+                    == zones::ZoneDisplayMode::Overlay;
+                let right_overlay = self.shell_layout.zone_mode(GuiShellZone::RightSidebar)
+                    == zones::ZoneDisplayMode::Overlay;
+                // Display-only squeeze on narrow windows; the persisted widths
+                // stay untouched so the layout springs back when the window
+                // grows again (the old math floored collapsed sidebars back to
+                // life, inverted the center, and baked the squeeze into the
+                // saved layout). Only RESERVED sidebars share space with the
+                // center, so only they enter the squeeze; an overlay drawer
+                // clamps against the root width alone.
+                let (left_reserved_width, right_reserved_width) = zones::squeezed_sidebar_widths(
+                    root.width(),
+                    min_center_width,
+                    if left_on && !left_overlay {
+                        self.shell_layout.left_sidebar_width
+                    } else {
+                        0.0
+                    },
+                    if right_on && !right_overlay {
+                        self.shell_layout.right_sidebar_width
+                    } else {
+                        0.0
+                    },
                 );
-                // D5 gutter: an always-on-top strip owned by the zone, so
-                // the grab survives windows parked flush on the boundary
-                // (free-placement sidebars have no per-window width band).
-                let splitter_response =
-                    egui::Area::new(egui::Id::new("gui_left_sidebar_splitter"))
-                        .order(egui::Order::Foreground)
-                        .fixed_pos(splitter.min)
-                        .show(ui.ctx(), |gutter_ui| {
-                            gutter_ui
-                                .allocate_exact_size(
-                                    splitter.size(),
-                                    egui::Sense::click_and_drag(),
-                                )
-                                .1
-                        })
-                        .inner;
-                if left_overlay {
-                    // The gutter's persisted Foreground slot can predate the
-                    // backdrop's; keep it on top so the grab stays reachable.
-                    ui.ctx().move_to_top(egui::LayerId::new(
-                        egui::Order::Foreground,
-                        egui::Id::new("gui_left_sidebar_splitter"),
-                    ));
-                }
-                if splitter_response.hovered() || splitter_response.dragged() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                    if separator_style == ZoneSeparatorStyle::Hover {
+                let left_width = if left_on && left_overlay {
+                    self.shell_layout
+                        .left_sidebar_width
+                        .min((root.width() - 40.0).max(0.0))
+                } else {
+                    left_reserved_width
+                };
+                let right_width = if right_on && right_overlay {
+                    self.shell_layout
+                        .right_sidebar_width
+                        .min((root.width() - 40.0).max(0.0))
+                } else {
+                    right_reserved_width
+                };
+
+                let left_rect = if left_width > 0.0 {
+                    Some(Rect::from_min_max(
+                        root.min,
+                        Pos2::new(root.min.x + left_width, root.max.y),
+                    ))
+                } else {
+                    None
+                };
+                let right_rect = if right_width > 0.0 {
+                    Some(Rect::from_min_max(
+                        Pos2::new(root.max.x - right_width, root.min.y),
+                        root.max,
+                    ))
+                } else {
+                    None
+                };
+                // Overlay drawers float above the center, so they never shrink it.
+                let center_min_x = match left_rect {
+                    Some(rect) if !left_overlay => rect.max.x,
+                    _ => root.min.x,
+                };
+                let center_max_x = match right_rect {
+                    Some(rect) if !right_overlay => rect.min.x,
+                    _ => root.max.x,
+                };
+                let center_rect = Rect::from_min_max(
+                    Pos2::new(center_min_x, root.min.y),
+                    Pos2::new(center_max_x, root.max.y),
+                );
+                // The center BASE pane: where the store's rects live — the
+                // center with no reserved zone open. Root already excludes
+                // reserved header/footer (they are egui panels above this
+                // pass), so expand back by their heights; width is the full
+                // root (sidebars carve from it). The P-A3 resolve maps
+                // base→center_rect per frame; identity when they're equal.
+                let reserved_header_h = if self.shell_layout.header_visible && !header_overlay {
+                    self.shell_layout.header_height
+                } else {
+                    0.0
+                };
+                let reserved_footer_h = if self.shell_layout.footer_visible && !footer_overlay {
+                    self.shell_layout.footer_height
+                } else {
+                    0.0
+                };
+                self.center_base_pane = Some(Rect::from_min_max(
+                    Pos2::new(root.min.x, root.min.y - reserved_header_h),
+                    Pos2::new(root.max.x, root.max.y + reserved_footer_h),
+                ));
+                // Overlay header/footer drawers carve their strips out of the
+                // full root (their reserved twins are egui panels above this
+                // pass and never reach here).
+                let header_drawer_rect =
+                    (self.shell_layout.header_visible && header_overlay).then(|| {
+                        Rect::from_min_max(
+                            root.min,
+                            Pos2::new(
+                                root.max.x,
+                                (root.min.y + self.shell_layout.header_height).min(root.max.y),
+                            ),
+                        )
+                    });
+                let footer_drawer_rect =
+                    (self.shell_layout.footer_visible && footer_overlay).then(|| {
+                        Rect::from_min_max(
+                            Pos2::new(
+                                root.min.x,
+                                (root.max.y - self.shell_layout.footer_height).max(root.min.y),
+                            ),
+                            root.max,
+                        )
+                    });
+                visible_zone_rects.push((GuiShellZone::Center, center_rect));
+
+                let sidebar_divider_stroke =
+                    egui::Stroke::new(1.5, ui.visuals().window_stroke.color);
+                if separator_style == ZoneSeparatorStyle::Shown {
+                    // Overlay drawers draw their own inner-edge divider on the
+                    // backdrop layer; a panel-level line would sit underneath.
+                    if let (Some(rect), false) = (left_rect, left_overlay) {
                         ui.painter()
                             .vline(rect.max.x, root.y_range(), sidebar_divider_stroke);
                     }
-                }
-                if splitter_response.dragged() {
-                    let dx = ui.ctx().input(|i| i.pointer.delta().x);
-                    self.shell_layout.left_sidebar_width =
-                        (self.shell_layout.left_sidebar_width + dx).clamp(220.0, 700.0);
-                    self.layout_dirty = true;
-                }
-                zone_actions.merge(self.render_zone_surface(
-                    &ctx,
-                    &detached_before_frame,
-                    GuiShellZone::LeftSidebar,
-                    rect,
-                    &mut zone_window_rects,
-                ));
-            }
-
-            if let Some(rect) = right_rect {
-                visible_zone_rects.push((GuiShellZone::RightSidebar, rect));
-                if right_overlay {
-                    self.render_overlay_backdrop(ui.ctx(), GuiShellZone::RightSidebar, rect);
-                }
-                let splitter = Rect::from_min_max(
-                    Pos2::new(rect.min.x - 6.0, rect.min.y),
-                    Pos2::new(rect.min.x + 6.0, rect.max.y),
-                );
-                // D5 gutter — see the left-sidebar twin above.
-                let splitter_response =
-                    egui::Area::new(egui::Id::new("gui_right_sidebar_splitter"))
-                        .order(egui::Order::Foreground)
-                        .fixed_pos(splitter.min)
-                        .show(ui.ctx(), |gutter_ui| {
-                            gutter_ui
-                                .allocate_exact_size(
-                                    splitter.size(),
-                                    egui::Sense::click_and_drag(),
-                                )
-                                .1
-                        })
-                        .inner;
-                if right_overlay {
-                    ui.ctx().move_to_top(egui::LayerId::new(
-                        egui::Order::Foreground,
-                        egui::Id::new("gui_right_sidebar_splitter"),
-                    ));
-                }
-                if splitter_response.hovered() || splitter_response.dragged() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                    if separator_style == ZoneSeparatorStyle::Hover {
+                    if let (Some(rect), false) = (right_rect, right_overlay) {
                         ui.painter()
                             .vline(rect.min.x, root.y_range(), sidebar_divider_stroke);
                     }
                 }
-                if splitter_response.dragged() {
-                    let dx = ui.ctx().input(|i| i.pointer.delta().x);
-                    self.shell_layout.right_sidebar_width =
-                        (self.shell_layout.right_sidebar_width - dx).clamp(220.0, 700.0);
-                    self.layout_dirty = true;
-                }
+
                 zone_actions.merge(self.render_zone_surface(
                     &ctx,
                     &detached_before_frame,
-                    GuiShellZone::RightSidebar,
-                    rect,
+                    GuiShellZone::Center,
+                    center_rect,
                     &mut zone_window_rects,
                 ));
-            }
 
-            // Overlay header/footer drawers, last so they (and their
-            // windows) float over the sidebars too. Their resize handles
-            // are Foreground gutter areas like the sidebar splitters —
-            // a plain `ui.interact` handle would sit under the backdrop.
-            let overlay_band =
-                |app: &mut Self,
-                 ui: &mut egui::Ui,
-                 zone: GuiShellZone,
-                 rect: Rect,
-                 visible_zone_rects: &mut Vec<(GuiShellZone, Rect)>,
-                 zone_window_rects: &mut Vec<zones::GuiZoneWindowRect>,
-                 zone_actions: &mut GuiWindowActions| {
-                    visible_zone_rects.push((zone, rect));
-                    app.render_overlay_backdrop(ui.ctx(), zone, rect);
-                    let is_header = zone == GuiShellZone::Header;
-                    let handle = if is_header {
-                        Rect::from_min_max(
-                            Pos2::new(rect.min.x, rect.max.y - 10.0),
-                            rect.max,
-                        )
-                    } else {
-                        Rect::from_min_max(
-                            rect.min,
-                            Pos2::new(rect.max.x, rect.min.y + 10.0),
-                        )
-                    };
-                    let handle_id = egui::Id::new(("gui_overlay_band_handle", zone.label()));
-                    let handle_response = egui::Area::new(handle_id)
-                        .order(egui::Order::Foreground)
-                        .fixed_pos(handle.min)
-                        .show(ui.ctx(), |gutter_ui| {
-                            gutter_ui
-                                .allocate_exact_size(
-                                    handle.size(),
-                                    egui::Sense::click_and_drag(),
-                                )
-                                .1
-                        })
-                        .inner;
-                    ui.ctx().move_to_top(egui::LayerId::new(
-                        egui::Order::Foreground,
-                        handle_id,
-                    ));
-                    if handle_response.hovered() || handle_response.dragged() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                if let Some(rect) = left_rect {
+                    visible_zone_rects.push((GuiShellZone::LeftSidebar, rect));
+                    if left_overlay {
+                        // Backdrop first so the drawer's windows (registered
+                        // after, same Foreground order) stack above it.
+                        self.render_overlay_backdrop(ui.ctx(), GuiShellZone::LeftSidebar, rect);
                     }
-                    if handle_response.dragged() {
-                        let dy = ui.ctx().input(|i| i.pointer.delta().y);
-                        if is_header {
-                            app.shell_layout.header_height =
-                                (app.shell_layout.header_height + dy).clamp(96.0, 360.0);
-                        } else {
-                            app.shell_layout.footer_height =
-                                (app.shell_layout.footer_height - dy).clamp(96.0, 420.0);
+                    let splitter = Rect::from_min_max(
+                        Pos2::new(rect.max.x - 6.0, rect.min.y),
+                        Pos2::new(rect.max.x + 6.0, rect.max.y),
+                    );
+                    // D5 gutter: an always-on-top strip owned by the zone, so
+                    // the grab survives windows parked flush on the boundary
+                    // (free-placement sidebars have no per-window width band).
+                    let splitter_response =
+                        egui::Area::new(egui::Id::new("gui_left_sidebar_splitter"))
+                            .order(egui::Order::Foreground)
+                            .fixed_pos(splitter.min)
+                            .show(ui.ctx(), |gutter_ui| {
+                                gutter_ui
+                                    .allocate_exact_size(
+                                        splitter.size(),
+                                        egui::Sense::click_and_drag(),
+                                    )
+                                    .1
+                            })
+                            .inner;
+                    if left_overlay {
+                        // The gutter's persisted Foreground slot can predate the
+                        // backdrop's; keep it on top so the grab stays reachable.
+                        ui.ctx().move_to_top(egui::LayerId::new(
+                            egui::Order::Foreground,
+                            egui::Id::new("gui_left_sidebar_splitter"),
+                        ));
+                    }
+                    if splitter_response.hovered() || splitter_response.dragged() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                        if separator_style == ZoneSeparatorStyle::Hover {
+                            ui.painter()
+                                .vline(rect.max.x, root.y_range(), sidebar_divider_stroke);
                         }
-                        app.layout_dirty = true;
                     }
-                    zone_actions.merge(app.render_zone_surface(
+                    if splitter_response.dragged() {
+                        let dx = ui.ctx().input(|i| i.pointer.delta().x);
+                        self.shell_layout.left_sidebar_width =
+                            (self.shell_layout.left_sidebar_width + dx).clamp(220.0, 700.0);
+                        self.layout_dirty = true;
+                    }
+                    zone_actions.merge(self.render_zone_surface(
                         &ctx,
                         &detached_before_frame,
-                        zone,
+                        GuiShellZone::LeftSidebar,
                         rect,
-                        zone_window_rects,
+                        &mut zone_window_rects,
                     ));
-                };
-            if let Some(rect) = header_drawer_rect {
-                overlay_band(
-                    self,
-                    ui,
-                    GuiShellZone::Header,
-                    rect,
-                    &mut visible_zone_rects,
-                    &mut zone_window_rects,
-                    &mut zone_actions,
-                );
-            }
-            if let Some(rect) = footer_drawer_rect {
-                overlay_band(
-                    self,
-                    ui,
-                    GuiShellZone::Footer,
-                    rect,
-                    &mut visible_zone_rects,
-                    &mut zone_window_rects,
-                    &mut zone_actions,
-                );
-            }
-        });
+                }
+
+                if let Some(rect) = right_rect {
+                    visible_zone_rects.push((GuiShellZone::RightSidebar, rect));
+                    if right_overlay {
+                        self.render_overlay_backdrop(ui.ctx(), GuiShellZone::RightSidebar, rect);
+                    }
+                    let splitter = Rect::from_min_max(
+                        Pos2::new(rect.min.x - 6.0, rect.min.y),
+                        Pos2::new(rect.min.x + 6.0, rect.max.y),
+                    );
+                    // D5 gutter — see the left-sidebar twin above.
+                    let splitter_response =
+                        egui::Area::new(egui::Id::new("gui_right_sidebar_splitter"))
+                            .order(egui::Order::Foreground)
+                            .fixed_pos(splitter.min)
+                            .show(ui.ctx(), |gutter_ui| {
+                                gutter_ui
+                                    .allocate_exact_size(
+                                        splitter.size(),
+                                        egui::Sense::click_and_drag(),
+                                    )
+                                    .1
+                            })
+                            .inner;
+                    if right_overlay {
+                        ui.ctx().move_to_top(egui::LayerId::new(
+                            egui::Order::Foreground,
+                            egui::Id::new("gui_right_sidebar_splitter"),
+                        ));
+                    }
+                    if splitter_response.hovered() || splitter_response.dragged() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                        if separator_style == ZoneSeparatorStyle::Hover {
+                            ui.painter()
+                                .vline(rect.min.x, root.y_range(), sidebar_divider_stroke);
+                        }
+                    }
+                    if splitter_response.dragged() {
+                        let dx = ui.ctx().input(|i| i.pointer.delta().x);
+                        self.shell_layout.right_sidebar_width =
+                            (self.shell_layout.right_sidebar_width - dx).clamp(220.0, 700.0);
+                        self.layout_dirty = true;
+                    }
+                    zone_actions.merge(self.render_zone_surface(
+                        &ctx,
+                        &detached_before_frame,
+                        GuiShellZone::RightSidebar,
+                        rect,
+                        &mut zone_window_rects,
+                    ));
+                }
+
+                // Overlay header/footer drawers, last so they (and their
+                // windows) float over the sidebars too. Their resize handles
+                // are Foreground gutter areas like the sidebar splitters —
+                // a plain `ui.interact` handle would sit under the backdrop.
+                let overlay_band =
+                    |app: &mut Self,
+                     ui: &mut egui::Ui,
+                     zone: GuiShellZone,
+                     rect: Rect,
+                     visible_zone_rects: &mut Vec<(GuiShellZone, Rect)>,
+                     zone_window_rects: &mut Vec<zones::GuiZoneWindowRect>,
+                     zone_actions: &mut GuiWindowActions| {
+                        visible_zone_rects.push((zone, rect));
+                        app.render_overlay_backdrop(ui.ctx(), zone, rect);
+                        let is_header = zone == GuiShellZone::Header;
+                        let handle = if is_header {
+                            Rect::from_min_max(Pos2::new(rect.min.x, rect.max.y - 10.0), rect.max)
+                        } else {
+                            Rect::from_min_max(rect.min, Pos2::new(rect.max.x, rect.min.y + 10.0))
+                        };
+                        let handle_id = egui::Id::new(("gui_overlay_band_handle", zone.label()));
+                        let handle_response = egui::Area::new(handle_id)
+                            .order(egui::Order::Foreground)
+                            .fixed_pos(handle.min)
+                            .show(ui.ctx(), |gutter_ui| {
+                                gutter_ui
+                                    .allocate_exact_size(
+                                        handle.size(),
+                                        egui::Sense::click_and_drag(),
+                                    )
+                                    .1
+                            })
+                            .inner;
+                        ui.ctx()
+                            .move_to_top(egui::LayerId::new(egui::Order::Foreground, handle_id));
+                        if handle_response.hovered() || handle_response.dragged() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                        }
+                        if handle_response.dragged() {
+                            let dy = ui.ctx().input(|i| i.pointer.delta().y);
+                            if is_header {
+                                app.shell_layout.header_height =
+                                    (app.shell_layout.header_height + dy).clamp(96.0, 360.0);
+                            } else {
+                                app.shell_layout.footer_height =
+                                    (app.shell_layout.footer_height - dy).clamp(96.0, 420.0);
+                            }
+                            app.layout_dirty = true;
+                        }
+                        zone_actions.merge(app.render_zone_surface(
+                            &ctx,
+                            &detached_before_frame,
+                            zone,
+                            rect,
+                            zone_window_rects,
+                        ));
+                    };
+                if let Some(rect) = header_drawer_rect {
+                    overlay_band(
+                        self,
+                        ui,
+                        GuiShellZone::Header,
+                        rect,
+                        &mut visible_zone_rects,
+                        &mut zone_window_rects,
+                        &mut zone_actions,
+                    );
+                }
+                if let Some(rect) = footer_drawer_rect {
+                    overlay_band(
+                        self,
+                        ui,
+                        GuiShellZone::Footer,
+                        rect,
+                        &mut visible_zone_rects,
+                        &mut zone_window_rects,
+                        &mut zone_actions,
+                    );
+                }
+            });
 
         let detached_link_clicks = self.render_detached_viewports(&ctx);
         self.render_map_explorer(&ctx);
@@ -3194,7 +3203,10 @@ impl eframe::App for VellumGuiApp {
             if self.webui_fetches_inflight.contains(&src) {
                 continue;
             }
-            match (self.app_core.webui_endpoint().cloned(), self.app_core.webui_event_sender()) {
+            match (
+                self.app_core.webui_endpoint().cloned(),
+                self.app_core.webui_event_sender(),
+            ) {
                 (Some((host, port, token)), Some(event_tx)) if src.starts_with("/files/") => {
                     self.webui_fetches_inflight.insert(src.clone());
                     crate::webui::fetch_image(
@@ -3212,11 +3224,7 @@ impl eframe::App for VellumGuiApp {
                     } else {
                         "external image URLs are not supported yet".to_string()
                     };
-                    Self::set_webui_image(
-                        &ctx,
-                        src,
-                        webui_panel::WebUiImageState::Failed(reason),
-                    );
+                    Self::set_webui_image(&ctx, src, webui_panel::WebUiImageState::Failed(reason));
                 }
             }
         }

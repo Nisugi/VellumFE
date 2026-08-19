@@ -19,6 +19,19 @@ fn edit(
 }
 
 #[test]
+fn edit_op_clear_line_empties_text_and_resets_cursor() {
+    // Regardless of cursor position or selection, ClearLine wipes the line.
+    assert_eq!(
+        edit("stance defensive", (7, 3), CommandEditOp::ClearLine, false),
+        (String::new(), (0, 0))
+    );
+    assert_eq!(
+        edit("", (0, 0), CommandEditOp::ClearLine, false),
+        (String::new(), (0, 0))
+    );
+}
+
+#[test]
 fn edit_op_cursor_moves_and_shift_extends() {
     // Plain left collapses+moves; shift-left extends (anchor stays).
     assert_eq!(edit("hello", (3, 3), CommandEditOp::Left, false).1, (2, 2));
@@ -441,8 +454,15 @@ fn build_line_job_records_custom_emoji_runs() {
     let font_id = eframe::egui::FontId::monospace(14.0);
     let ctx = eframe::egui::Context::default();
     ctx.begin_pass(eframe::egui::RawInput::default());
-    let built =
-        VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, super::LineInset::full(f32::INFINITY), None);
+    let built = VellumGuiApp::build_line_job(
+        &ctx,
+        &line,
+        &visuals,
+        None,
+        &font_id,
+        super::LineInset::full(f32::INFINITY),
+        None,
+    );
     {
         // egui 0.36 debug-asserts the TexturesDelta is applied before drop.
         let mut output = ctx.end_pass();
@@ -475,13 +495,27 @@ fn build_line_job_records_custom_emoji_runs() {
 
     // At the default size (1.0) the line needs no extra height...
     super::custom_emoji_render::set_geometry(1.0, 0.2);
-    let a =
-        VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, super::LineInset::full(f32::INFINITY), None);
+    let a = VellumGuiApp::build_line_job(
+        &ctx,
+        &line,
+        &visuals,
+        None,
+        &font_id,
+        super::LineInset::full(f32::INFINITY),
+        None,
+    );
     assert_eq!(a.min_height, 0.0);
     // ...but an oversized emoji grows the row so it isn't clipped.
     super::custom_emoji_render::set_geometry(2.0, 0.2);
-    let b =
-        VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, super::LineInset::full(f32::INFINITY), None);
+    let b = VellumGuiApp::build_line_job(
+        &ctx,
+        &line,
+        &visuals,
+        None,
+        &font_id,
+        super::LineInset::full(f32::INFINITY),
+        None,
+    );
     assert!(b.min_height > 0.0, "size>1 must set a taller min_height");
     super::custom_emoji_render::set_geometry(1.0, 0.2); // reset
 
@@ -760,7 +794,10 @@ fn room_title_handles_missing_ids() {
         VellumGuiApp::format_room_title("Cold River".into(), None, None),
         "[Cold River]"
     );
-    assert_eq!(VellumGuiApp::format_room_title(String::new(), None, None), "");
+    assert_eq!(
+        VellumGuiApp::format_room_title(String::new(), None, None),
+        ""
+    );
 }
 
 /// Re-syncing must not nest brackets or repeat the id — the name can arrive
@@ -855,7 +892,10 @@ fn room_name_shares_the_float_line_with_the_art() {
         "art must lead the name line"
     );
     assert!(
-        body[0].segments.iter().any(|s| s.text.contains("Kraken's Fall")),
+        body[0]
+            .segments
+            .iter()
+            .any(|s| s.text.contains("Kraken's Fall")),
         "the name must stay on that line"
     );
     assert!(
@@ -863,7 +903,10 @@ fn room_name_shares_the_float_line_with_the_art() {
         "art must not remain on the description line too"
     );
     assert!(
-        body[1].segments.iter().any(|s| s.text.contains("Blue and red")),
+        body[1]
+            .segments
+            .iter()
+            .any(|s| s.text.contains("Blue and red")),
         "description prose survives the hoist"
     );
 }
@@ -919,7 +962,15 @@ fn update_cache_epoch(
     ctx.begin_pass(eframe::egui::RawInput::default());
     let rendered = content.lines.len();
     VellumGuiApp::update_row_height_cache(
-        cache, &ctx, content, 0, rendered, wrap_width, &visuals, font_id, float_epoch,
+        cache,
+        &ctx,
+        content,
+        0,
+        rendered,
+        wrap_width,
+        &visuals,
+        font_id,
+        float_epoch,
         400.0,
     );
     let mut output = ctx.end_pass();
@@ -982,9 +1033,19 @@ fn cache_rebuilds_when_wrap_width_changes() {
 fn cache_rebuilds_when_font_changes() {
     let mut cache = super::RowHeightCache::default();
     let content = cache_test_content(&["a"], 1);
-    update_cache(&mut cache, &content, 400.0, &eframe::egui::FontId::monospace(10.0));
+    update_cache(
+        &mut cache,
+        &content,
+        400.0,
+        &eframe::egui::FontId::monospace(10.0),
+    );
     let small = cache.heights()[0];
-    update_cache(&mut cache, &content, 400.0, &eframe::egui::FontId::monospace(24.0));
+    update_cache(
+        &mut cache,
+        &content,
+        400.0,
+        &eframe::egui::FontId::monospace(24.0),
+    );
     let large = cache.heights()[0];
     assert!(large > small, "bigger font is taller: {large} vs {small}");
 }
@@ -995,11 +1056,20 @@ fn cache_rebuilds_when_font_changes() {
 fn cache_rebuilds_on_a_large_generation_jump() {
     let font = eframe::egui::FontId::monospace(14.0);
     let mut cache = super::RowHeightCache::default();
-    update_cache(&mut cache, &cache_test_content(&["a", "b"], 2), 400.0, &font);
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b"], 2),
+        400.0,
+        &font,
+    );
     // Generation leaps far beyond the rendered count.
     let jumped = cache_test_content(&["x", "y"], 900);
     update_cache(&mut cache, &jumped, 400.0, &font);
-    assert_eq!(cache.heights().len(), 2, "count still matches after rebuild");
+    assert_eq!(
+        cache.heights().len(),
+        2,
+        "count still matches after rebuild"
+    );
 }
 
 // ==================== Scroll harness ====================
@@ -1068,10 +1138,7 @@ impl ScrollHarness {
     /// A pointer-move into the middle of the window. egui only scrolls the
     /// area under the cursor, so without this the wheel goes nowhere.
     fn hover_center(&self) -> eframe::egui::Event {
-        eframe::egui::Event::PointerMoved(eframe::egui::pos2(
-            self.view.x * 0.5,
-            self.view.y * 0.5,
-        ))
+        eframe::egui::Event::PointerMoved(eframe::egui::pos2(self.view.x * 0.5, self.view.y * 0.5))
     }
 
     /// Run one frame with optional synthetic events.
@@ -1082,7 +1149,6 @@ impl ScrollHarness {
         let scroll_id = self.scroll_id.clone();
         let font_id = self.font_id.clone();
         let mut output = self.ctx.run_ui(input, |ui| {
-
             VellumGuiApp::render_text_content(
                 ui, &content, &scroll_id, None, &font_id, true, None, false,
             );
@@ -1411,15 +1477,30 @@ fn reserved_height_column_stays_parallel() {
     let font = eframe::egui::FontId::monospace(14.0);
     let mut cache = super::RowHeightCache::default();
 
-    update_cache(&mut cache, &cache_test_content(&["a", "b", "c"], 3), 400.0, &font);
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b", "c"], 3),
+        400.0,
+        &font,
+    );
     assert_eq!(cache.extra().len(), cache.heights().len());
 
     // Incremental append.
-    update_cache(&mut cache, &cache_test_content(&["a", "b", "c", "d"], 4), 400.0, &font);
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b", "c", "d"], 4),
+        400.0,
+        &font,
+    );
     assert_eq!(cache.extra().len(), cache.heights().len(), "after append");
 
     // Full rebuild (width change).
-    update_cache(&mut cache, &cache_test_content(&["a", "b", "c", "d"], 4), 120.0, &font);
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b", "c", "d"], 4),
+        120.0,
+        &font,
+    );
     assert_eq!(cache.extra().len(), cache.heights().len(), "after rebuild");
 }
 
@@ -1429,11 +1510,20 @@ fn reserved_height_column_stays_parallel() {
 fn stride_includes_reserved_height() {
     let font = eframe::egui::FontId::monospace(14.0);
     let mut cache = super::RowHeightCache::default();
-    update_cache(&mut cache, &cache_test_content(&["a", "b"], 2), 400.0, &font);
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b"], 2),
+        400.0,
+        &font,
+    );
 
     let bare = cache.stride(0);
     cache.set_extra(0, 40.0);
-    assert_eq!(cache.stride(0), bare + 40.0, "reservation adds to the stride");
+    assert_eq!(
+        cache.stride(0),
+        bare + 40.0,
+        "reservation adds to the stride"
+    );
     assert_eq!(cache.stride(1), cache.heights()[1], "other rows untouched");
 
     // stride_sum is the shape the spacers and anchoring use.
@@ -1452,7 +1542,12 @@ fn stride_includes_reserved_height() {
 fn reserved_height_survives_a_height_writeback() {
     let font = eframe::egui::FontId::monospace(14.0);
     let mut cache = super::RowHeightCache::default();
-    update_cache(&mut cache, &cache_test_content(&["a", "b"], 2), 400.0, &font);
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b"], 2),
+        400.0,
+        &font,
+    );
     cache.set_extra(0, 40.0);
     let with_float = cache.stride(0);
 
@@ -1513,7 +1608,12 @@ fn line_inset_defaults_to_full_width() {
 fn cache_returns_the_inset_a_row_was_measured_with() {
     let font = eframe::egui::FontId::monospace(14.0);
     let mut cache = super::RowHeightCache::default();
-    update_cache(&mut cache, &cache_test_content(&["a", "b"], 2), 400.0, &font);
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b"], 2),
+        400.0,
+        &font,
+    );
 
     let inset = cache.inset(0, 400.0);
     assert_eq!(inset.width, 400.0, "measured at the full width");
@@ -1551,7 +1651,13 @@ fn inset_width_changes_how_a_line_wraps() {
         &ctx,
         &line,
         &visuals,
-        super::LineInset { width: 200.0, x_offset: 800.0, y_offset: 0.0, float_height: 0.0, float_width: 800.0 },
+        super::LineInset {
+            width: 200.0,
+            x_offset: 800.0,
+            y_offset: 0.0,
+            float_height: 0.0,
+            float_width: 800.0,
+        },
         &font_id,
         None,
     );
@@ -1571,14 +1677,37 @@ fn inset_width_changes_how_a_line_wraps() {
 fn inset_column_stays_parallel() {
     let font = eframe::egui::FontId::monospace(14.0);
     let mut cache = super::RowHeightCache::default();
-    update_cache(&mut cache, &cache_test_content(&["a", "b", "c"], 3), 400.0, &font);
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b", "c"], 3),
+        400.0,
+        &font,
+    );
     assert_eq!(cache.heights().len(), 3);
     // Appending keeps them in step.
-    update_cache(&mut cache, &cache_test_content(&["a", "b", "c", "d"], 4), 400.0, &font);
-    assert_eq!(cache.inset(3, 0.0).width, 400.0, "appended row has an inset");
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b", "c", "d"], 4),
+        400.0,
+        &font,
+    );
+    assert_eq!(
+        cache.inset(3, 0.0).width,
+        400.0,
+        "appended row has an inset"
+    );
     // A rebuild re-derives every row's inset.
-    update_cache(&mut cache, &cache_test_content(&["a", "b", "c", "d"], 4), 150.0, &font);
-    assert_eq!(cache.inset(0, 0.0).width, 150.0, "rebuild re-derives insets");
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b", "c", "d"], 4),
+        150.0,
+        &font,
+    );
+    assert_eq!(
+        cache.inset(0, 0.0).width,
+        150.0,
+        "rebuild re-derives insets"
+    );
 }
 
 // ==================== Float spans + virtualization (P2.3) ====================
@@ -1612,7 +1741,12 @@ fn float_origin_lookback_finds_the_painting_row() {
 fn float_origin_lookback_is_identity_without_floats() {
     let font = eframe::egui::FontId::monospace(14.0);
     let mut cache = super::RowHeightCache::default();
-    update_cache(&mut cache, &cache_test_content(&["a", "b", "c"], 3), 400.0, &font);
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b", "c"], 3),
+        400.0,
+        &font,
+    );
     for i in 0..3 {
         assert_eq!(cache.float_origin_at(i), i, "row {i}");
     }
@@ -1624,16 +1758,31 @@ fn float_origin_lookback_is_identity_without_floats() {
 fn span_column_stays_parallel_and_clears_on_rebuild() {
     let font = eframe::egui::FontId::monospace(14.0);
     let mut cache = super::RowHeightCache::default();
-    update_cache(&mut cache, &cache_test_content(&["a", "b", "c"], 3), 400.0, &font);
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b", "c"], 3),
+        400.0,
+        &font,
+    );
     cache.set_span(0, 2);
     assert_eq!(cache.spans().len(), cache.heights().len());
 
     // Append: still parallel, new row has no span.
-    update_cache(&mut cache, &cache_test_content(&["a", "b", "c", "d"], 4), 400.0, &font);
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b", "c", "d"], 4),
+        400.0,
+        &font,
+    );
     assert_eq!(cache.spans().len(), cache.heights().len(), "after append");
 
     // Rebuild (width change): spans reset for re-derivation.
-    update_cache(&mut cache, &cache_test_content(&["a", "b", "c", "d"], 4), 150.0, &font);
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b", "c", "d"], 4),
+        150.0,
+        &font,
+    );
     assert_eq!(cache.spans().len(), cache.heights().len(), "after rebuild");
     assert!(
         cache.spans().iter().all(|s| *s == 0),
@@ -1710,7 +1859,10 @@ fn layout_pass_computes_a_float_for_an_image_line() {
     let mut cache = super::RowHeightCache::default();
     update_cache(&mut cache, &content, 400.0, &font);
 
-    assert!(cache.spans()[0] > 0, "the image line must originate a float");
+    assert!(
+        cache.spans()[0] > 0,
+        "the image line must originate a float"
+    );
     assert!(
         cache.inset(0, 400.0).width < 400.0,
         "text beside the image wraps narrower: {}",
@@ -2295,10 +2447,8 @@ fn wheel_over_live_pane_does_not_scroll_it() {
     assert!(before > 0.0, "live pane starts pinned to the tail");
 
     // Wheel up with the pointer in the BOTTOM section (the live pane).
-    let hover_bottom = eframe::egui::Event::PointerMoved(eframe::egui::pos2(
-        h.view.x * 0.5,
-        h.view.y * 0.9,
-    ));
+    let hover_bottom =
+        eframe::egui::Event::PointerMoved(eframe::egui::pos2(h.view.x * 0.5, h.view.y * 0.9));
     h.frame_split_with(vec![hover_bottom, ScrollHarness::wheel(600.0)]);
     for _ in 0..30 {
         h.frame_split();
@@ -2324,13 +2474,14 @@ fn wheel_over_live_pane_scrolls_the_history_pane() {
     }
     assert!(h.live_pane_rendered());
     let before = h.offset();
-    assert!(before > 0.0, "top pane is scrolled somewhere above the tail");
+    assert!(
+        before > 0.0,
+        "top pane is scrolled somewhere above the tail"
+    );
 
     // Wheel up with the pointer over the live pane.
-    let hover_bottom = eframe::egui::Event::PointerMoved(eframe::egui::pos2(
-        h.view.x * 0.5,
-        h.view.y * 0.9,
-    ));
+    let hover_bottom =
+        eframe::egui::Event::PointerMoved(eframe::egui::pos2(h.view.x * 0.5, h.view.y * 0.9));
     h.frame_split_with(vec![hover_bottom, ScrollHarness::wheel(600.0)]);
     for _ in 0..30 {
         h.frame_split();

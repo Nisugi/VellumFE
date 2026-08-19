@@ -125,12 +125,20 @@ impl VellumGuiApp {
                     if has_selection {
                         remove_chars(text, sel_min, sel_max);
                     }
-                    let insert_at = if has_selection { sel_min } else { p.min(char_len) };
+                    let insert_at = if has_selection {
+                        sel_min
+                    } else {
+                        p.min(char_len)
+                    };
                     let byte = byte_at(text, insert_at);
                     text.insert_str(byte, &clip);
                     let after = insert_at + clip.chars().count();
                     *range = (after, after);
                 }
+            }
+            CommandEditOp::ClearLine => {
+                text.clear();
+                *range = (0, 0);
             }
         }
     }
@@ -212,6 +220,11 @@ impl VellumGuiApp {
                     (CommandEditOp::SelectAll, &stash.select_all),
                     (CommandEditOp::Copy, &stash.copy),
                     (CommandEditOp::Paste, &stash.paste),
+                    // Clear-line must be consumed HERE, before the TextEdit:
+                    // its common binding is Esc, which the TextEdit would
+                    // otherwise handle by surrendering focus — leaving the
+                    // post-render clear check (gated on has_focus) dead.
+                    (CommandEditOp::ClearLine, &stash.clear_line),
                 ] {
                     for (key, mods) in combos {
                         // Shifted variant FIRST: consume_key matches
@@ -238,8 +251,7 @@ impl VellumGuiApp {
                 Self::apply_command_edit_op(ui.ctx(), &mut text, &mut range, *op, *extend);
             }
             if !ops.is_empty() && (range != start || text != seed) {
-                let mut state =
-                    egui::TextEdit::load_state(ui.ctx(), edit_id).unwrap_or_default();
+                let mut state = egui::TextEdit::load_state(ui.ctx(), edit_id).unwrap_or_default();
                 // two() normalizes order; overwrite both ends to keep the
                 // primary/secondary DIRECTION (anchor vs moving end).
                 let mut cursor_range = egui::text::CCursorRange::two(
@@ -267,17 +279,14 @@ impl VellumGuiApp {
             // hover-only on purpose — drags on it fall through to the
             // window body and move it.
             ui.horizontal(|ui| {
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::Vec2::new(12.0, edit_height),
-                    egui::Sense::hover(),
-                );
+                let (rect, _) = ui
+                    .allocate_exact_size(egui::Vec2::new(12.0, edit_height), egui::Sense::hover());
                 if ui.is_rect_visible(rect) {
                     let color = ui.visuals().weak_text_color();
                     let center = rect.center();
                     for row in -1..=1i32 {
                         for col in 0..2i32 {
-                            let pos = center
-                                + egui::vec2(col as f32 * 4.0 - 2.0, row as f32 * 5.0);
+                            let pos = center + egui::vec2(col as f32 * 4.0 - 2.0, row as f32 * 5.0);
                             ui.painter().circle_filled(pos, 1.2, color);
                         }
                     }
@@ -289,6 +298,39 @@ impl VellumGuiApp {
             edit(ui, &mut text)
         };
         let response = &output.response;
+        // egui clears the focused widget on a bare Escape at frame START —
+        // before update() runs — unless the focused widget's event filter
+        // claims the key (TextEdit's does not). That blinds every
+        // focus-gated Esc path in the app: the pre-TextEdit clear-line
+        // consume above AND the global dispatcher's widget-owned-binding
+        // check both see "unfocused" and Esc falls through to close_window.
+        // When Escape is bound to clear-line, widen the filter so focus
+        // survives the press. Registered AFTER the TextEdit so this write —
+        // not the TextEdit's own narrower filter — is the one stored when
+        // the next frame's focus pass reads it.
+        if stash
+            .clear_line
+            .iter()
+            .any(|(key, mods)| *key == egui::Key::Escape && mods.is_none())
+        {
+            ui.memory_mut(|memory| {
+                memory.set_focus_lock_filter(
+                    edit_id,
+                    // EXACTLY the TextEdit's own filter (horizontal AND
+                    // vertical arrows true, tab true via lock_focus) plus
+                    // escape. Narrowing anything here makes egui move focus
+                    // off the input at frame start on that key — dropping
+                    // vertical_arrows broke Up/Down history with a
+                    // disappearing focus border.
+                    egui::EventFilter {
+                        tab: true, // matches lock_focus(true) on the TextEdit
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: true,
+                    },
+                )
+            });
+        }
         // Which keys drive submit/history/clear-line comes from the keybind
         // config (stashed each frame by stash_command_input_keys), so rebinding
         // works; the defaults Enter/↑/↓ are always included there too.
@@ -309,9 +351,9 @@ impl VellumGuiApp {
         }
         // History browsing + clear-line. consume_key keeps these keys from
         // reaching anything else while the input has focus.
-        let cursor_at_end = output.cursor_range.is_some_and(|range| {
-            range.primary.index.0 == end && range.secondary.index.0 == end
-        });
+        let cursor_at_end = output
+            .cursor_range
+            .is_some_and(|range| range.primary.index.0 == end && range.secondary.index.0 == end);
         if response.has_focus() {
             let accept_completion = completion_requested && text == seed && cursor_at_end;
             let up = keys
@@ -322,17 +364,12 @@ impl VellumGuiApp {
                 .history_next
                 .iter()
                 .any(|k| ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, *k)));
-            let clear = keys
-                .clear_line
-                .iter()
-                .any(|(k, m)| ui.input_mut(|i| i.consume_key(*m, *k)));
+            // (clear-line is handled in the pre-TextEdit op block above — it
+            // must beat the TextEdit to Esc, its usual binding.)
             if accept_completion {
                 text.push_str(completion.unwrap_or_default());
                 echo.text = Some(text.clone());
                 echo.completion_accepted = true;
-            } else if clear {
-                text.clear();
-                echo.text = Some(String::new());
             } else if up {
                 echo.history_prev = true;
             } else if down {
@@ -349,9 +386,11 @@ impl VellumGuiApp {
                 );
                 let cursor = output.galley.pos_from_cursor(range.primary);
                 let pos = output.galley_pos + cursor.min.to_vec2();
-                ui.painter()
-                    .with_clip_rect(output.text_clip_rect)
-                    .galley(pos, suffix, ui.visuals().weak_text_color());
+                ui.painter().with_clip_rect(output.text_clip_rect).galley(
+                    pos,
+                    suffix,
+                    ui.visuals().weak_text_color(),
+                );
             }
         }
         if text != seed {
@@ -362,5 +401,4 @@ impl VellumGuiApp {
                 .data_mut(|data| data.insert_temp(CommandInputEcho::id(), echo));
         }
     }
-
 }

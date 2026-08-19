@@ -73,14 +73,22 @@ impl SettingValue {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingKind {
     Bool,
-    Int { min: i64, max: i64 },
-    Float { min: f64, max: f64 },
+    Int {
+        min: i64,
+        max: i64,
+    },
+    Float {
+        min: f64,
+        max: f64,
+    },
     /// Free text. `Text` settings are never empty-as-None.
     Text,
     /// Optional free text; empty input clears the value to None.
     OptionalText,
     /// One of a fixed set of string options.
-    Enum { options: &'static [&'static str] },
+    Enum {
+        options: &'static [&'static str],
+    },
     /// A list of free-text entries.
     List,
 }
@@ -136,19 +144,19 @@ pub struct SettingDef {
 /// key-path prefix. The enforcement test rejects any config leaf that is
 /// neither registered nor under one of these.
 pub const EXEMPT_PREFIXES: &[&str] = &[
-    "event_patterns",             // pattern map; highlights editor territory
-    "menu_keybinds",              // 26-field struct; .menukeybinds editor (TUI menu_keybind_editor + GUI editors/menu_keybinds)
-    "quickbars",                  // quickbar definitions (config template docs)
-    "ui.layout",                  // legacy empty section
-    "target_list.status_abbrev",  // Map (no registry Kind); bespoke editors in both frontends
-    "go2.saved",                  // captured travel targets (.go2 save)
-    "go2.pathcodes",              // captured maze routes, never hand-edited
-    "tts.substitutions",          // pattern/replacement pairs; Accessibility panel
-    "streams.routes",             // per-stream route map; dedicated Streams panel editor later
-    "ui.sorter_enabled",          // legacy home of sorter.enabled; migrated at load
-    "sorter.category_order",      // ordered list; `.sorter edit` editor
-    "sorter.labels",              // rename map; `.sorter edit` editor
-    "sorter.rules",               // structured rules; `.sorter edit` editor
+    "event_patterns",            // pattern map; highlights editor territory
+    "menu_keybinds", // 26-field struct; .menukeybinds editor (TUI menu_keybind_editor + GUI editors/menu_keybinds)
+    "quickbars",     // quickbar definitions (config template docs)
+    "ui.layout",     // legacy empty section
+    "target_list.status_abbrev", // Map (no registry Kind); bespoke editors in both frontends
+    "go2.saved",     // captured travel targets (.go2 save)
+    "go2.pathcodes", // captured maze routes, never hand-edited
+    "tts.substitutions", // pattern/replacement pairs; Accessibility panel
+    "streams.routes", // per-stream route map; dedicated Streams panel editor later
+    "ui.sorter_enabled", // legacy home of sorter.enabled; migrated at load
+    "sorter.category_order", // ordered list; `.sorter edit` editor
+    "sorter.labels", // rename map; `.sorter edit` editor
+    "sorter.rules",  // structured rules; `.sorter edit` editor
 ];
 
 macro_rules! bool_entry {
@@ -395,6 +403,11 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Tick effect bars down every second between server refreshes (off = show the server's ~10s snapshots)", ui.effect_countdown),
         bool_entry!("ui.keep_open_on_quit", "Keep Open On Quit", "UI",
             "After .quit, detach but keep the window open (.quit again or .exit closes it)", ui.keep_open_on_quit),
+        bool_entry!("ui.split_jump_button", "Split Jump Button", "UI",
+            "Show a jump-to-newest button on the split-scrollback divider (GUI)", ui.split_jump_button),
+        enum_entry!("ui.split_jump_button_position", "Split Jump Button Position", "UI",
+            "Where the jump-to-newest button sits on the divider",
+            &["left", "center", "right"], ui.split_jump_button_position),
         bool_entry!("ui.history_suggestions", "History Suggestions", "UI",
             "Ghost the newest matching history entry in the command input; Tab accepts it", ui.history_suggestions),
         bool_entry!("ui.emoji_shortcodes", "Emoji Shortcodes", "UI",
@@ -753,6 +766,8 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Sketch unmapped rooms as ghost overlays", map.mapping_mode),
         list_entry!("map.pinned_tags", "Pinned Map Markers", "Map",
             "Service-tag categories drawn as room markers (bank, inn, ...)", map.pinned_tags),
+        text_entry!("map.creature_highlight", "Creature Highlight", "Map",
+            "Fill color for rooms where the selected creature spawns (hex)", map.creature_highlight),
         // ---- Travel --------------------------------------------------
         bool_entry!("go2.native_map_clicks", "Native Map Clicks", "Travel",
             "Map clicks travel natively instead of sending ;go2", go2.native_map_clicks),
@@ -821,7 +836,11 @@ mod tests {
             SettingValue::Float(current) => {
                 let bumped = match def.kind {
                     SettingKind::Float { min, max } => {
-                        if current + 0.125 <= max { current + 0.125 } else { (min + max) / 3.0 }
+                        if current + 0.125 <= max {
+                            current + 0.125
+                        } else {
+                            (min + max) / 3.0
+                        }
                     }
                     _ => current + 0.125,
                 };
@@ -956,7 +975,9 @@ mod tests {
                 assert!(
                     (a - b).abs() < 1e-5,
                     "{} did not round-trip through set/get ({} vs {})",
-                    def.key, a, b
+                    def.key,
+                    a,
+                    b
                 );
             } else {
                 assert_eq!(

@@ -181,10 +181,7 @@ impl Config {
         if !spell_abbrev_path.exists() {
             fs::write(&spell_abbrev_path, DEFAULT_SPELL_ABBREVS)
                 .context("Failed to write spell_abbrev.toml")?;
-            tracing::info!(
-                "Extracted spell_abbrev.toml to {:?}",
-                spell_abbrev_path
-            );
+            tracing::info!("Extracted spell_abbrev.toml to {:?}", spell_abbrev_path);
         }
 
         // Extract documented templates to global/templates directory
@@ -348,7 +345,12 @@ impl Config {
             match fs::rename(entry.path(), &dest) {
                 Ok(()) => tracing::info!("Migrated {:?} -> {:?}", entry.path(), dest),
                 Err(err) => {
-                    tracing::warn!("Could not migrate {:?} -> {:?}: {}", entry.path(), dest, err)
+                    tracing::warn!(
+                        "Could not migrate {:?} -> {:?}: {}",
+                        entry.path(),
+                        dest,
+                        err
+                    )
                 }
             }
         }
@@ -469,10 +471,14 @@ impl Config {
     pub fn load_character_config_only(character: Option<&str>) -> Result<Option<Self>> {
         let config_path = Self::config_path(character)?;
         if config_path.exists() {
-            let contents = fs::read_to_string(&config_path)
-                .context(format!("Failed to read character config: {:?}", config_path))?;
-            let config: Config = toml::from_str(&contents)
-                .context(format!("Failed to parse character config: {:?}", config_path))?;
+            let contents = fs::read_to_string(&config_path).context(format!(
+                "Failed to read character config: {:?}",
+                config_path
+            ))?;
+            let config: Config = toml::from_str(&contents).context(format!(
+                "Failed to parse character config: {:?}",
+                config_path
+            ))?;
             Ok(Some(config))
         } else {
             Ok(None)
@@ -712,7 +718,11 @@ impl Config {
         let config_path = Self::config_path(character)?;
         let base = Self::load_global_layer()?;
         Self::save_sparse(&config_path, &char_config, &base)?;
-        tracing::info!("Saved setting '{}' to character config: {:?}", key, config_path);
+        tracing::info!(
+            "Saved setting '{}' to character config: {:?}",
+            key,
+            config_path
+        );
         Ok(())
     }
 
@@ -734,7 +744,6 @@ impl Config {
             }
         }
     }
-
 }
 
 impl Default for Config {
@@ -787,25 +796,27 @@ impl Default for Config {
                 timestamp_position: TimestampPosition::default(),
                 command_echo: default_command_echo(),
                 keep_open_on_quit: true,
+                split_jump_button: true,
+                split_jump_button_position: "right".to_string(),
                 history_suggestions: true,
                 betrayer_active_color: default_betrayer_active_color(),
                 focus: FocusConfig::default(),
                 terminal_title: String::new(),
             },
-            highlights: HashMap::new(),     // Loaded from highlights.toml
-            keybinds: HashMap::new(),       // Loaded from keybinds.toml
+            highlights: HashMap::new(), // Loaded from highlights.toml
+            keybinds: HashMap::new(),   // Loaded from keybinds.toml
             controller_binds: HashMap::new(), // Loaded from [controller] of controller.toml
-            controller_wheel: Vec::new(),   // Loaded from [[controller_wheel]]
+            controller_wheel: Vec::new(), // Loaded from [[controller_wheel]]
             controller_wheels: HashMap::new(), // Loaded from [controller_wheels.<name>]
-            touch_wheel: Vec::new(),        // Loaded from [touch_wheel] slices
+            touch_wheel: Vec::new(),    // Loaded from [touch_wheel] slices
 
             controller_wheels_meta: HashMap::new(), // Loaded from [controller_wheels_meta.<name>]
-            controller_overlay: Vec::new(), // Loaded from [controller_overlay]
+            controller_overlay: Vec::new(),         // Loaded from [controller_overlay]
             controller_rumble: RumbleConfig::default(),
             controller_tuning: TuningConfig::default(),
             hotbars: HotbarsConfig::default(), // Loaded from hotbars.toml
             app_keybinds: AppKeybinds::default(), // Loaded from [app] section of keybinds.toml
-            colors: ColorConfig::default(), // Loaded from colors.toml
+            colors: ColorConfig::default(),    // Loaded from colors.toml
             sound: SoundConfig::default(),
             tts: TtsConfig::default(),
             target_list: TargetListConfig::default(),
@@ -990,8 +1001,16 @@ command = \"look\"
         // Controller doc got every controller table.
         assert!(controller.contains("[controller]"), "{}", controller);
         assert!(controller.contains("[controller_tuning]"), "{}", controller);
-        assert!(controller.contains("[[controller_wheel]]"), "{}", controller);
-        assert!(controller.contains("start = \"interact_mode\""), "{}", controller);
+        assert!(
+            controller.contains("[[controller_wheel]]"),
+            "{}",
+            controller
+        );
+        assert!(
+            controller.contains("start = \"interact_mode\""),
+            "{}",
+            controller
+        );
         // And the keyboard tables were left out of it.
         assert!(!controller.contains("[user]"), "{}", controller);
         assert!(!controller.contains("[app]"), "{}", controller);
