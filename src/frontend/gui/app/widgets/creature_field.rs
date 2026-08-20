@@ -389,6 +389,12 @@ impl VellumGuiApp {
                     now_ms,
                     &|name| gs.creature_effect_severity(&creature.id, name),
                 );
+                // Per-part wound art from the extended feed (bridge-fed
+                // `injuries` attr): the skin's part tables key the same
+                // R1-R3 ranks as the player doll.
+                if let Some(f) = flags {
+                    Self::paint_wound_overlays(painter, cache, resolved, art, dest, &f.injuries);
+                }
             }
         } else {
             // ---- placeholder standee -----------------------------------
@@ -421,6 +427,9 @@ impl VellumGuiApp {
                     egui::StrokeKind::Outside,
                 );
             }
+            if let Some(f) = flags {
+                Self::paint_placeholder_wounds(painter, body, &f.injuries);
+            }
         }
         if dead {
             let m = body.width() * 0.24;
@@ -441,6 +450,47 @@ impl VellumGuiApp {
             );
         }
 
+        // HP bar under the card, when the extended feed reports health
+        // (bridge-fed). Estimated maxes render dimmed.
+        let mut label_y = card.bottom() + 2.0;
+        if let Some((hp, max)) = flags.and_then(|f| Some((f.health?, f.max_health?))) {
+            if max > 0 && !dead {
+                let frac = (hp as f32 / max as f32).clamp(0.0, 1.0);
+                let bar = egui::Rect::from_min_max(
+                    egui::pos2(card.left(), card.bottom() + 1.0),
+                    egui::pos2(card.right(), card.bottom() + 4.0),
+                );
+                let fill_color = if frac > 0.6 {
+                    Color32::from_rgb(0x4c, 0xaf, 0x50)
+                } else if frac > 0.3 {
+                    Color32::from_rgb(0xd4, 0xa0, 0x17)
+                } else {
+                    Color32::from_rgb(0xd2, 0x4b, 0x3c)
+                };
+                let alpha = if flags.is_some_and(|f| f.hp_estimated) {
+                    140
+                } else {
+                    230
+                };
+                painter.rect_filled(bar, 1.5, Color32::from_black_alpha(120));
+                let fill = egui::Rect::from_min_max(
+                    bar.min,
+                    egui::pos2(bar.left() + bar.width() * frac, bar.bottom()),
+                );
+                painter.rect_filled(
+                    fill,
+                    1.5,
+                    Color32::from_rgba_unmultiplied(
+                        fill_color.r(),
+                        fill_color.g(),
+                        fill_color.b(),
+                        alpha,
+                    ),
+                );
+                label_y = bar.bottom() + 2.0;
+            }
+        }
+
         // Noun label at the feet.
         let label_color = if dark {
             Color32::from_white_alpha(150)
@@ -448,7 +498,7 @@ impl VellumGuiApp {
             Color32::from_black_alpha(150)
         };
         painter.text(
-            egui::pos2(card.center().x, card.bottom() + 2.0),
+            egui::pos2(card.center().x, label_y),
             egui::Align2::CENTER_TOP,
             noun,
             egui::FontId::proportional((11.0 * map.scale.max(0.6)).clamp(9.0, 13.0)),
@@ -665,6 +715,95 @@ impl VellumGuiApp {
             }
         }
         animated
+    }
+
+    /// Per-part wound sprites from the extended feed's injuries list: each
+    /// (part, rank) resolves art through the skin's part tables and draws
+    /// centred on that part's anchor — the creature-card analog of the
+    /// player injury doll's overlay pass. Parts without authored art (or
+    /// without an anchor beyond the fallbacks) simply don't draw.
+    fn paint_wound_overlays(
+        painter: &egui::Painter,
+        cache: &crate::frontend::gui::skin::CreatureArtCache,
+        resolved: &crate::core::creature_cards::ResolvedCard<'_>,
+        art: &crate::frontend::gui::skin::CreatureArt,
+        dest: egui::Rect,
+        injuries: &[(String, u8)],
+    ) {
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        for (part, rank) in injuries {
+            // Anchor precedence: the skin's calibrated point, the art's own
+            // head, then the HUMANOID doll defaults — without that last step
+            // every limb wound collapsed onto the card centre.
+            let frac = resolved
+                .anchor(part)
+                .or(match part.as_str() {
+                    "head" => Some(art.head),
+                    _ => None,
+                })
+                .or_else(|| crate::config::skins::default_doll_anchor(part))
+                .unwrap_or([0.5, 0.5]);
+            let pt = egui::pos2(
+                dest.left() + frac[0] * dest.width(),
+                dest.top() + frac[1] * dest.height(),
+            );
+            // Authored wound art when the skin has it; the procedural
+            // rank marker otherwise, so wounds show on every skin.
+            let texture = resolved
+                .part_overlay(part, *rank)
+                .and_then(|image| cache.overlays.get(image).cloned().flatten());
+            match texture {
+                Some(texture) => {
+                    let ts = texture.size_vec2();
+                    let w = dest.width() * 0.35;
+                    let h = w * ts.y / ts.x.max(1.0);
+                    painter.image(
+                        texture.id(),
+                        egui::Rect::from_center_size(pt, egui::vec2(w, h)),
+                        uv,
+                        Color32::WHITE,
+                    );
+                }
+                None => Self::paint_wound_marker(painter, pt, dest.width(), *rank),
+            }
+        }
+    }
+
+    /// Procedural wound marker: a rank-colored dot with a darker rim,
+    /// CreatureBar-style, for skins (and placeholder standees) without
+    /// authored per-part wound art. R1 yellow, R2 orange, R3 red.
+    fn paint_wound_marker(painter: &egui::Painter, pt: egui::Pos2, card_w: f32, rank: u8) {
+        let color = match rank {
+            1 => Color32::from_rgb(0xe0, 0xc0, 0x30),
+            2 => Color32::from_rgb(0xe0, 0x7a, 0x20),
+            _ => Color32::from_rgb(0xd2, 0x2b, 0x2b),
+        };
+        let r = (card_w * 0.055).clamp(2.5, 6.0);
+        painter.circle_filled(pt, r, color);
+        painter.circle_stroke(pt, r, Stroke::new(1.0, Color32::from_black_alpha(160)));
+    }
+
+    /// Wound markers for the placeholder standee: no skin, no manifest —
+    /// parts place by their built-in default anchors over the body rect.
+    fn paint_placeholder_wounds(
+        painter: &egui::Painter,
+        body: egui::Rect,
+        injuries: &[(String, u8)],
+    ) {
+        for (part, rank) in injuries {
+            // Creature anchors only cover head/mouth/feet/saddle; body-part
+            // wounds fall through to the humanoid doll anchors so limbs,
+            // eyes, neck, chest, and abdomen each get their own spot on the
+            // standee instead of stacking on one centre dot.
+            let frac = crate::config::skins::default_creature_anchor(part)
+                .or_else(|| crate::config::skins::default_doll_anchor(part))
+                .unwrap_or([0.5, 0.5]);
+            let pt = egui::pos2(
+                body.left() + frac[0] * body.width(),
+                body.top() + frac[1] * body.height(),
+            );
+            Self::paint_wound_marker(painter, pt, body.width(), *rank);
+        }
     }
 
     fn paint_target_order(
