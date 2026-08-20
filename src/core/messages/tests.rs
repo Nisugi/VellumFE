@@ -4016,6 +4016,54 @@ fn fallback_to_tabbed_main_keeps_prompts() {
     );
 }
 
+/// Injury updates must reach EVERY injury-doll window — per-window doll
+/// sets mean several dolls render the same wound data; the old singleton
+/// lookup left all but the first stale (owner report 2026-08-20: bound
+/// doll windows never showed wounds).
+#[test]
+fn injury_updates_reach_every_injury_doll_window() {
+    let mut processor = create_test_processor();
+    let mut ui_state = UiState::new();
+    for name in ["doll_a", "doll_b"] {
+        let mut w = crate::data::window::WindowState::new_text(name, 10);
+        w.widget_type = crate::data::WidgetType::InjuryDoll;
+        w.content = WindowContent::InjuryDoll(crate::data::InjuryDollData::new());
+        ui_state.windows.insert(name.to_string(), w);
+    }
+
+    let mut game_state = crate::core::state::GameState::new();
+    let mut room_components = std::collections::HashMap::new();
+    let mut current_room_component = None;
+    let mut room_window_dirty = false;
+    processor.process_element(
+        &crate::parser::ParsedElement::InjuryImage {
+            id: "leftArm".to_string(),
+            name: "Injury2".to_string(),
+        },
+        &mut game_state,
+        &mut ui_state,
+        &mut room_components,
+        &mut current_room_component,
+        &mut room_window_dirty,
+        &mut None,
+        &mut None,
+        &mut None,
+        None,
+    );
+
+    for name in ["doll_a", "doll_b"] {
+        let WindowContent::InjuryDoll(doll) = &ui_state.windows[name].content else {
+            panic!("not a doll");
+        };
+        assert_eq!(
+            doll.injuries.get("leftArm").copied(),
+            Some(2),
+            "window '{name}' must receive the injury update"
+        );
+    }
+    assert_eq!(game_state.injuries.get("leftArm").copied(), Some(2));
+}
+
 /// End-to-end: verbatim loot-stream lines from a 2026-01-24 Lich session
 /// log, fed through the real parser, with the owner's live layout shape —
 /// a hidden standalone "loot" text window AND a tabbed chat window whose

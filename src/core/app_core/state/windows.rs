@@ -394,6 +394,19 @@ impl AppCore {
                 .set_window(window_def.name().to_string(), window);
         }
 
+        // Seed injury dolls with existing wounds — a layout (re)load mid-
+        // session builds fresh windows, and injury updates only arrive on
+        // change.
+        if !self.game_state.injuries.is_empty() {
+            for window in self.ui_state.windows.values_mut() {
+                if let WindowContent::InjuryDoll(ref mut doll) = window.content {
+                    for (part, level) in &self.game_state.injuries {
+                        doll.set_injury(part.clone(), *level);
+                    }
+                }
+            }
+        }
+
         // Set default focused window to "main" if it exists (enables scrolling with PageUp/PageDown)
         if self.ui_state.focused_window.is_none() {
             if self.ui_state.windows.contains_key("main") {
@@ -800,6 +813,19 @@ impl AppCore {
             if let Some(window) = self.ui_state.windows.get_mut(window_def.name()) {
                 if let WindowContent::Spells(ref mut content) = window.content {
                     self.message_processor.populate_spells_window(content);
+                }
+            }
+        }
+
+        // Seed a new injury doll with the wounds the character already has —
+        // updates only arrive on change, so a doll added mid-session would
+        // otherwise stay blank until the next wound.
+        if window_def.widget_type() == "injury_doll" {
+            if let Some(window) = self.ui_state.windows.get_mut(window_def.name()) {
+                if let WindowContent::InjuryDoll(ref mut doll) = window.content {
+                    for (part, level) in &self.game_state.injuries {
+                        doll.set_injury(part.clone(), *level);
+                    }
                 }
             }
         }

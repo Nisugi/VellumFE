@@ -968,15 +968,15 @@ impl MessageProcessor {
                     game_state.injuries.insert(id.clone(), level);
                 }
 
-                // Update injury doll widget if it exists (singleton)
-                if let Some(injury_window) =
-                    ui_state.get_window_by_type_mut(crate::data::WidgetType::InjuryDoll, None)
-                {
-                    if let WindowContent::InjuryDoll(ref mut injury_data) = injury_window.content {
+                // Update EVERY injury doll window — per-window doll sets
+                // mean several dolls can render the same wound data, and the
+                // old singleton lookup left all but the first one stale.
+                for window in ui_state.windows.values_mut() {
+                    if let WindowContent::InjuryDoll(ref mut injury_data) = window.content {
                         injury_data.set_injury(id.clone(), level);
-                        tracing::debug!("Updated injury: {} to level {} ({})", id, level, name);
                     }
                 }
+                tracing::debug!("Updated injury: {} to level {} ({})", id, level, name);
             }
             ParsedElement::InjuryPopupData {
                 popup_id,
