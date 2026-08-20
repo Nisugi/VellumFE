@@ -697,6 +697,14 @@ pub struct CreatureFlags {
     pub health: Option<u32>,
     /// Maximum hit points
     pub max_health: Option<u32>,
+    /// True when the reporter flagged max HP as an estimate (`hpest="1"`,
+    /// no bestiary template behind it) — bars render dimmed.
+    pub hp_estimated: bool,
+    /// Per-part wound ranks from the extended feed's `injuries` attribute
+    /// (`"head:2,rightLeg:3"`). Part names are canonicalized to the doll
+    /// vocabulary at parse; ranks are CritRanks R1-R3 (rank 3 on a limb is
+    /// a severance — same vocabulary, no extra states).
+    pub injuries: Vec<(String, u8)>,
     /// Free-text condition string, appended to the effect list by Saga
     pub condition: Option<String>,
 }
@@ -735,6 +743,37 @@ impl CreatureFlags {
                 }
                 "maxhealth" => {
                     flags.max_health = value.trim().parse().ok();
+                    continue;
+                }
+                "hpest" => {
+                    flags.hp_estimated = value.trim() == "1";
+                    continue;
+                }
+                "injuries" => {
+                    // "head:2,rightLeg:3" — canonicalize parts (feet fold
+                    // into legs, so keep the worse rank on collision),
+                    // clamp ranks to the R1-R3 vocabulary, drop unknowns.
+                    for entry in value.split(',') {
+                        let Some((part, rank)) = entry.trim().split_once(':') else {
+                            continue;
+                        };
+                        let Some(canonical) =
+                            crate::core::creature_cards::canonical_part(part.trim())
+                        else {
+                            continue;
+                        };
+                        let Ok(rank) = rank.trim().parse::<u8>() else {
+                            continue;
+                        };
+                        let rank = rank.min(3);
+                        if rank == 0 {
+                            continue;
+                        }
+                        match flags.injuries.iter_mut().find(|(p, _)| p == canonical) {
+                            Some((_, existing)) => *existing = (*existing).max(rank),
+                            None => flags.injuries.push((canonical.to_string(), rank)),
+                        }
+                    }
                     continue;
                 }
                 "condition" => {

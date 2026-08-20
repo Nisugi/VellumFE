@@ -2802,6 +2802,37 @@ fn test_crtr_status_health_condition_and_open_vocab() {
     );
 }
 
+#[test]
+fn test_crtr_status_injuries_and_hpest() {
+    use crate::core::state::CreatureFlags;
+    let flags = CreatureFlags::from_xml_attrs([
+        ("health", "120"),
+        ("maxhealth", "400"),
+        ("hpest", "1"),
+        // Feed vocabulary: nerves -> nsys, feet fold into legs (keeping
+        // the worse rank), rank>3 clamps, rank 0 and unknown parts drop.
+        (
+            "injuries",
+            "head:2,rightLeg:1,rightFoot:3,nerves:1,chest:9,tail:2,back:0",
+        ),
+    ]);
+    assert!(flags.hp_estimated);
+    assert_eq!(
+        flags.injuries,
+        vec![
+            ("head".to_string(), 2),
+            ("rightLeg".to_string(), 3),
+            ("nsys".to_string(), 1),
+            ("chest".to_string(), 3),
+        ]
+    );
+
+    // No hpest attr = not estimated; garbage injuries parse to empty.
+    let plain = CreatureFlags::from_xml_attrs([("injuries", "nonsense,also:bad:extra,:3,x:")]);
+    assert!(!plain.hp_estimated);
+    assert!(plain.injuries.is_empty());
+}
+
 // ==================== roommeta / mindState exp Parsing ====================
 
 #[test]
