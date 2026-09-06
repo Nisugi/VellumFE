@@ -71,4 +71,7 @@ dependencies {
     // The scanner activity is not a LifecycleOwner on its own, so it hosts a
     // LifecycleRegistry (lifecycle-runtime) to bind CameraX to.
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    // Local JVM unit tests for the pure shell state machines
+    // (SessionStatus / SessionActivityTracker, BootNavState).
+    testImplementation("junit:junit:4.13.2")
 }
