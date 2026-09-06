@@ -86,12 +86,21 @@ fn run_with_options(
                 let _ = shutdown_tx.send(true);
             }
         });
-        runtime::async_run_with_options(config, character, direct, login_key, shutdown_rx, launch)
-            .await
+        runtime::async_run_with_options(
+            config,
+            character,
+            direct,
+            login_key,
+            shutdown_rx,
+            launch,
+            None,
+        )
+        .await
     })
 }
 
-/// Embeddable entry point. The caller owns the runtime and signals shutdown
+/// Embeddable entry points. The caller owns the runtime and signals shutdown
 /// via the watch channel. Mobile shells go through [`embedded`], which wraps
-/// this in a managed thread + runtime.
-pub use runtime::async_run;
+/// `async_run_embedded` in a managed thread + runtime and waits on the
+/// startup reporter for the server's actual endpoint.
+pub use runtime::{async_run, async_run_embedded, StartupReporter};

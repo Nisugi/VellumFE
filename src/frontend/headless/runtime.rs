@@ -1017,6 +1017,14 @@ fn reject_owned_retarget(app_core: &mut AppCore, startup_character: &str) {
     ));
 }
 
+/// Where the embedded startup result is delivered: the actual authenticated
+/// endpoint the web server installed (bound port + the token that listener
+/// authenticates with), or the startup failure. A std (not tokio) sender so
+/// the blocking embedder thread can wait on it with a timeout; sending from
+/// async context is non-blocking.
+pub type StartupReporter =
+    std::sync::mpsc::Sender<std::result::Result<RemoteLaunchEndpoint, String>>;
+
 pub async fn async_run(
     config: crate::config::Config,
     character: Option<String>,
@@ -1031,6 +1039,32 @@ pub async fn async_run(
         login_key,
         shutdown,
         super::HeadlessLaunchOptions::default(),
+        None,
+    )
+    .await
+}
+
+/// Embedded (mobile shell) entry point: identical to [`async_run`] but
+/// reports startup completion — the server's actual endpoint or the failure
+/// that prevented one — exactly once on `startup`. Dropping the sender
+/// without a report (runtime ended first) is itself an observable failure
+/// for the waiting embedder.
+pub async fn async_run_embedded(
+    config: crate::config::Config,
+    character: Option<String>,
+    direct: Option<DirectConnectConfig>,
+    login_key: Option<String>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+    startup: StartupReporter,
+) -> Result<()> {
+    async_run_with_options(
+        config,
+        character,
+        direct,
+        login_key,
+        shutdown,
+        super::HeadlessLaunchOptions::default(),
+        Some(startup),
     )
     .await
 }
@@ -1042,9 +1076,15 @@ pub(super) async fn async_run_with_options(
     login_key: Option<String>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     launch: super::HeadlessLaunchOptions,
+    startup: Option<StartupReporter>,
 ) -> Result<()> {
     // The web frontend is the only interface — it is not optional here.
     config.web.enabled = true;
+
+    // Reported exactly once: endpoint on readiness, message on server
+    // startup failure. Early `?` returns drop it; the embedder treats a
+    // dropped reporter as a failed start (see embedded.rs).
+    let mut startup_reporter = startup;
 
     let mut app_core = AppCore::new(config)?;
     // This runtime drains disconnect_requested (below) into
@@ -1058,10 +1098,16 @@ pub(super) async fn async_run_with_options(
         .clone()
         .or_else(|| app_core.config.connection.character.clone())
         .unwrap_or_else(|| "default".to_string());
-    let (sink, mut remote_rx) = crate::frontend::web::start_with_classic_maps(
+    // Server startup failure surfaces here (bind/token/registry errors).
+    // Success is signalled separately via the launch-endpoint watch channel;
+    // on success this receiver stays pending for the server's lifetime.
+    let (server_failure_tx, server_failure_rx) = tokio::sync::oneshot::channel::<String>();
+    let mut server_failure_rx = Some(server_failure_rx);
+    let (sink, mut remote_rx) = crate::frontend::web::start_with_startup_failure(
         &app_core.config.web,
         session_label,
         app_core.map.classic_maps(),
+        Some(server_failure_tx),
     );
     let mut launch_endpoint_rx = sink.launch_endpoint_receiver();
     app_core.enable_remote(sink);
@@ -1154,6 +1200,45 @@ pub(super) async fn async_run_with_options(
                 if readiness.is_err() {
                     tracing::warn!("Web server readiness channel closed before startup completed");
                     launch_urls_pending = false;
+                    // The failing serve task drops its channel ends before it
+                    // sends the failure reason, so the watch closing can be
+                    // observed first. Give the reason a moment to arrive so
+                    // the embedder sees "pinned port taken", not a generic
+                    // closure message.
+                    let message = match server_failure_rx.take() {
+                        Some(rx) => tokio::time::timeout(Duration::from_secs(2), rx)
+                            .await
+                            .ok()
+                            .and_then(|sent| sent.ok()),
+                        None => None,
+                    };
+                    let message = message.unwrap_or_else(|| {
+                        "web server stopped before publishing its endpoint".to_string()
+                    });
+                    tracing::error!("Web server startup failed: {message}");
+                    if let Some(tx) = startup_reporter.take() {
+                        let _ = tx.send(Err(message));
+                    }
+                }
+            }
+            // Server startup failed (bind conflict on a pinned port, token or
+            // registry setup error). Deliver the reason to a waiting embedder
+            // and stop expecting readiness — the game session continues
+            // without the web server on desktop headless.
+            failure = async {
+                match server_failure_rx.as_mut() {
+                    Some(rx) => rx.await,
+                    None => std::future::pending().await,
+                }
+            }, if launch_urls_pending => {
+                server_failure_rx = None;
+                launch_urls_pending = false;
+                let message = failure.unwrap_or_else(|_| {
+                    "web server exited before startup completed".to_string()
+                });
+                tracing::error!("Web server startup failed: {message}");
+                if let Some(tx) = startup_reporter.take() {
+                    let _ = tx.send(Err(message));
                 }
             }
             _ = shutdown.changed() => {
@@ -1341,6 +1426,14 @@ pub(super) async fn async_run_with_options(
 
         if launch_urls_pending {
             if let Some(endpoint) = launch_endpoint_rx.borrow().clone() {
+                // The server is ready: listener bound, token installed,
+                // registry entry published. This is the startup-success
+                // moment for a waiting embedder — the endpoint carries the
+                // actual bound port (an unpinned instance may have walked)
+                // and the exact token that listener authenticates.
+                if let Some(tx) = startup_reporter.take() {
+                    let _ = tx.send(Ok(endpoint.clone()));
+                }
                 if let Some(client) = launch.web_client {
                     if !open_local_web_client_with(&endpoint, client, crate::platform::open_url) {
                         // Do not include the authenticated URL or opener error:
