@@ -29,9 +29,10 @@ class MainActivity : Activity() {
 
     private lateinit var webView: WebView
 
-    /** Set once the server is up; lets a deep link rebuild the boot URL. */
-    private var bootPort = -1
-    private var bootToken: String? = null
+    /** Boot progress + latest requested destination (UI thread only).
+     * Boot state and navigation are tracked separately so the newest
+     * request always wins, however background boots complete. */
+    private val nav = BootNavState()
 
     /** Fragment tail from a vellum://lich deep link; rides the boot URL so
      * the web client prefills the Lich login tab. (Remote deep links no
@@ -41,10 +42,6 @@ class MainActivity : Activity() {
     /** Remote host the WebView may browse in-app (Remote mode); null while
      * on the embedded core. Everything else non-loopback goes external. */
     private var allowedRemoteHost: String? = null
-
-    /** True once the embedded core is up (local play started). Lets the
-     * picker offer "play on this phone" without restarting the core. */
-    private var coreStarted = false
 
     /** The native character picker, shown at launch when servers are saved. */
     private var picker: RemotePickerView? = null
@@ -122,47 +119,77 @@ class MainActivity : Activity() {
                 if (intent?.data?.getQueryParameter("save") != "0") {
                     RemoteStore.add(this, remoteDeepLink)
                 }
-                startCoreThen { showRemote(remoteDeepLink) }
+                navigate(NavDestination.Remote(remoteDeepLink))
             }
-            else -> bootAndLoad()
+            else -> navigate(NavDestination.Local)
         }
-    }
-
-    /** Boot the core and load local play (used when no servers are saved). */
-    private fun bootAndLoad() {
-        startCoreThen { showLocal() }
     }
 
     /**
-     * Ensure the embedded core is up (idempotent), then run [onReady] on the
-     * UI thread. Reused by local play and by connecting to a remote server
-     * (the core keeps running idle in remote mode). Shows the WebView when
-     * starting the core so a picker view isn't left on screen.
+     * Record a navigation request (UI thread) and act on it. The request is
+     * stored immediately; if the core is ready the destination renders now,
+     * otherwise a single boot thread is (re)used and, on completion, renders
+     * whatever destination is latest at that moment — never the one current
+     * when the boot began.
      */
-    private fun startCoreThen(onReady: () -> Unit) {
-        if (coreStarted && bootPort > 0 && bootToken != null) {
-            runOnUiThread { onReady() }
-            return
+    private fun navigate(dest: NavDestination) {
+        when (val effect = nav.onRequest(dest)) {
+            is BootNavState.Effect.Render -> render(effect.dest)
+            BootNavState.Effect.StartBoot -> {
+                // Show the WebView while booting so a picker view isn't
+                // left on screen; the boot URL loads when the core is up.
+                showWebView()
+                startBootThread()
+            }
+            BootNavState.Effect.None -> {
+                // Coalesced into the boot already in flight (or the
+                // activity is being destroyed); nothing to do now.
+            }
         }
-        runOnUiThread { showWebView() }
+    }
+
+    /** Show a destination now (core ready, or picker which needs none). */
+    private fun render(dest: NavDestination) {
+        when (dest) {
+            is NavDestination.Local -> showLocal()
+            is NavDestination.Remote -> showRemote(dest.target)
+            is NavDestination.Picker -> showPicker()
+        }
+    }
+
+    /**
+     * The single in-flight core boot (idempotent at the Rust layer; the
+     * service's independent start is unaffected). Publishes its result via
+     * [nav] on the UI thread; a destroyed activity has invalidated [nav],
+     * so no late UI work runs.
+     */
+    private fun startBootThread() {
         Thread({
             CryptoKeys.installPasswordKey(this)
             val info = JSONObject(VellumCore.startCore(filesDir.absolutePath))
             if (info.has("error")) {
-                showError("Core failed to start:\n${info.optString("error")}")
+                runOnUiThread {
+                    if (nav.onBootFailure()) {
+                        showError("Core failed to start:\n${info.optString("error")}")
+                    }
+                }
                 return@Thread
             }
             val port = info.getInt("port")
             val token = info.getString("token")
             if (!waitForServer(port)) {
-                showError("The embedded server did not come up on port $port.")
+                runOnUiThread {
+                    if (nav.onBootFailure()) {
+                        showError("The embedded server did not come up on port $port.")
+                    }
+                }
                 return@Thread
             }
             runOnUiThread {
-                bootPort = port
-                bootToken = token
-                coreStarted = true
-                onReady()
+                val effect = nav.onBootSuccess(port, token)
+                if (effect is BootNavState.Effect.Render) {
+                    render(effect.dest)
+                }
             }
         }, "core-boot").start()
     }
@@ -190,12 +217,12 @@ class MainActivity : Activity() {
         return if (entries.isEmpty()) null else "chars=" + entries.joinToString(",")
     }
 
-    /** Reload the local boot URL (embedded login page); no-op while boot
-     * is still in flight — it picks the fragments up. */
+    /** Reload the local boot URL (embedded login page). Only called via
+     * [render] once the core is ready, so port/token are published. */
     private fun showLocal() {
         allowedRemoteHost = null
-        val port = bootPort
-        val token = bootToken
+        val port = nav.port
+        val token = nav.token
         if (port > 0 && token != null) {
             runOnUiThread {
                 showWebView()
@@ -240,8 +267,8 @@ class MainActivity : Activity() {
     /** Show the native character picker (launch, and "Switch character"). */
     private fun showPicker() {
         val view = RemotePickerView(this, object : RemotePickerView.Callbacks {
-            override fun onPlayLocal() = startCoreThen { showLocal() }
-            override fun onConnect(target: RemoteStore.Target) = startCoreThen { showRemote(target) }
+            override fun onPlayLocal() = navigate(NavDestination.Local)
+            override fun onConnect(target: RemoteStore.Target) = navigate(NavDestination.Remote(target))
             override fun onScanQr() = launchScanner()
             override fun onAddManual(target: RemoteStore.Target) {
                 RemoteStore.add(this@MainActivity, target)
@@ -280,7 +307,7 @@ class MainActivity : Activity() {
     /** vellum:// navigations from the page itself (settings actions). */
     private fun handleShellUrl(uri: Uri) {
         when (uri.host) {
-            "local" -> showLocal()
+            "local" -> navigate(NavDestination.Local)
             "remote" -> when (uri.path.orEmpty()) {
                 "", "/" -> {
                     // Pair: vellum://remote?host&port[&token][&name][&save=0].
@@ -288,11 +315,11 @@ class MainActivity : Activity() {
                     if (uri.getQueryParameter("save") != "0") {
                         RemoteStore.add(this, target)
                     }
-                    showRemote(target)
+                    navigate(NavDestination.Remote(target))
                 }
                 // "Switch character" in the web settings sheet → back to the
                 // native picker (which the shell owns).
-                "/picker" -> showPicker()
+                "/picker" -> navigate(NavDestination.Picker)
                 // Switch-character wheel pick: connect to a saved server by
                 // name (the token comes from native storage, never the
                 // page). An unknown or missing name lands on the picker.
@@ -300,9 +327,9 @@ class MainActivity : Activity() {
                     val name = uri.getQueryParameter("name")?.trim().orEmpty()
                     val target = RemoteStore.list(this).find { it.name == name }
                     if (target != null) {
-                        startCoreThen { showRemote(target) }
+                        navigate(NavDestination.Remote(target))
                     } else {
-                        showPicker()
+                        navigate(NavDestination.Picker)
                     }
                 }
             }
@@ -361,13 +388,21 @@ class MainActivity : Activity() {
             if (intent?.data?.getQueryParameter("save") != "0") {
                 RemoteStore.add(this, target)
             }
-            startCoreThen { showRemote(target) }
+            navigate(NavDestination.Remote(target))
             return
         }
         lichFragmentFrom(intent)?.let {
             lichFragment = it
-            startCoreThen { showLocal() }
+            navigate(NavDestination.Local)
         }
+    }
+
+    override fun onDestroy() {
+        // Drop pending UI work from any in-flight boot; late completions
+        // become no-ops. The service-owned core is deliberately untouched —
+        // activity recreation must never tear down a live session.
+        nav.invalidate()
+        super.onDestroy()
     }
 
     private fun waitForServer(port: Int): Boolean {
