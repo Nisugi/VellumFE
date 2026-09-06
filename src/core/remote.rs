@@ -388,6 +388,88 @@ pub struct RemoteSessionInfo {
     pub webui_available: bool,
 }
 
+/// Structured inventory snapshot for remote presentation surfaces.
+///
+/// The wire keeps the manager feed's items flat and parent-linked instead of
+/// recursively nesting them. That preserves feed order and lets a client
+/// handle an orphan or malformed parent cycle without making the payload
+/// itself recursive. The request correlation token is deliberately omitted:
+/// it is internal to [`crate::core::inventory_service::InventoryService`] and
+/// has no meaning once the snapshot has been published.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteInventoryTree {
+    /// Room uid in which the snapshot was taken.
+    pub room: String,
+    pub items: Vec<RemoteInventoryItem>,
+    /// False only for a foreign/manual manager response that was paginated but
+    /// not assembled by the continuation-following inventory service.
+    pub complete: bool,
+    /// Changes on every published snapshot and on container-state enrichment.
+    pub generation: u64,
+}
+
+/// One item in [`RemoteInventoryTree`], retaining every mapped source field
+/// from [`crate::core::state::ManagedInventoryItem`].
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteInventoryItem {
+    pub id: String,
+    pub relation: String,
+    pub parent: String,
+    pub name: String,
+    pub article: String,
+    pub adjective: String,
+    pub noun: String,
+    pub long: Option<String>,
+    pub weight: i32,
+    pub encum: Option<i32>,
+    pub in_max: Option<u32>,
+    pub on_max: Option<u32>,
+    pub in_encum: Option<u32>,
+    pub in_selector: Option<String>,
+    pub locker: bool,
+    pub familyvault: bool,
+    pub flags: Vec<String>,
+}
+
+impl From<&crate::core::state::ManagedInventoryState> for RemoteInventoryTree {
+    fn from(snapshot: &crate::core::state::ManagedInventoryState) -> Self {
+        Self {
+            room: snapshot.room.clone(),
+            items: snapshot
+                .items
+                .iter()
+                .map(RemoteInventoryItem::from)
+                .collect(),
+            complete: snapshot.complete,
+            generation: snapshot.generation,
+        }
+    }
+}
+
+impl From<&crate::core::state::ManagedInventoryItem> for RemoteInventoryItem {
+    fn from(item: &crate::core::state::ManagedInventoryItem) -> Self {
+        Self {
+            id: item.id.clone(),
+            relation: item.relation.clone(),
+            parent: item.parent.clone(),
+            name: item.name.clone(),
+            article: item.article.clone(),
+            adjective: item.adjective.clone(),
+            noun: item.noun.clone(),
+            long: item.long.clone(),
+            weight: item.weight,
+            encum: item.encum,
+            in_max: item.in_max,
+            on_max: item.on_max,
+            in_encum: item.in_encum,
+            in_selector: item.in_selector.clone(),
+            locker: item.locker,
+            familyvault: item.familyvault,
+            flags: item.flags.clone(),
+        }
+    }
+}
+
 /// A state change broadcast to all connected remote clients.
 #[derive(Clone, Debug)]
 pub enum RemoteDelta {
@@ -448,6 +530,12 @@ pub enum RemoteDelta {
     Spells(Vec<crate::data::widget::StyledLine>),
     /// The latest complete inventory stream changed, as styled lines.
     Inventory(Vec<crate::data::widget::StyledLine>),
+    /// Whether any complete inventory stream has been received. Kept
+    /// separate because an authoritative empty snapshot has no line delta.
+    InventoryReceived(bool),
+    /// The structured manager snapshot changed. This is distinct from the
+    /// rendered `Inventory` lines; `None` explicitly clears a stale tree.
+    InventoryTree(Option<RemoteInventoryTree>),
     /// Body-part injuries changed: id -> level (1-3 wounds, 4-6 scars);
     /// cleared parts are absent.
     Injuries(std::collections::HashMap<String, u8>),
@@ -889,6 +977,14 @@ pub struct RemoteStateSnapshot {
     pub spellbook: Vec<crate::data::widget::StyledLine>,
     /// Latest complete inventory stream snapshot, including item links.
     pub inventory: Vec<crate::data::widget::StyledLine>,
+    /// True once `inventory` is authoritative, including when it is empty.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub inventory_received: bool,
+    /// Structured, parent-linked inventory manager snapshot. Optional so a
+    /// server that has never received an explicit manager refresh keeps the
+    /// pre-existing remote wire unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory_tree: Option<RemoteInventoryTree>,
     /// Body-part injuries: id -> level (1-3 wounds, 4-6 scars).
     pub injuries: std::collections::HashMap<String, u8>,
     /// Targetable creatures in the room (tap-to-target list).
@@ -1286,6 +1382,11 @@ impl RemoteStateSnapshot {
                 .collect(),
             spellbook: game_state.spellbook.clone(),
             inventory: game_state.inventory.clone(),
+            inventory_received: game_state.inventory_received,
+            inventory_tree: game_state
+                .managed_inventory
+                .as_ref()
+                .map(RemoteInventoryTree::from),
             objectives: game_state.objectives.clone(),
             injuries: game_state.injuries.clone(),
             targets: {
@@ -2006,6 +2107,16 @@ impl RemoteSink {
                 .delta_tx
                 .send(RemoteDelta::Inventory(snap.inventory.clone()));
         }
+        if snap.inventory_received != self.last.inventory_received {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::InventoryReceived(snap.inventory_received));
+        }
+        if snap.inventory_tree != self.last.inventory_tree {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::InventoryTree(snap.inventory_tree.clone()));
+        }
         if snap.injuries != self.last.injuries {
             let _ = self
                 .delta_tx
@@ -2124,6 +2235,73 @@ mod tests {
             .encumbrance
             .iter()
             .any(|l| l == "Light (17%)"));
+    }
+
+    #[test]
+    fn managed_inventory_projects_exact_fields_without_internal_token() {
+        use crate::core::state::{ManagedInventoryItem, ManagedInventoryState};
+
+        let mut gs = GameState::new();
+        gs.managed_inventory = Some(ManagedInventoryState {
+            token: "im-internal-request".to_string(),
+            room: "2005".to_string(),
+            items: vec![ManagedInventoryItem {
+                id: "bag".to_string(),
+                relation: "worn".to_string(),
+                parent: "player".to_string(),
+                name: "a patchwork backpack".to_string(),
+                article: "a".to_string(),
+                adjective: "patchwork".to_string(),
+                noun: "backpack".to_string(),
+                long: Some("a patchwork backpack bound by vines".to_string()),
+                weight: 5,
+                encum: Some(4),
+                in_max: Some(2005),
+                on_max: Some(101),
+                in_encum: Some(37),
+                in_selector: Some("backpack".to_string()),
+                locker: true,
+                familyvault: false,
+                flags: vec!["closed".to_string(), "locked".to_string()],
+            }],
+            complete: true,
+            generation: 9,
+        });
+
+        let tree = RemoteStateSnapshot::from_game_state(&gs, &[])
+            .inventory_tree
+            .expect("managed inventory projection");
+        assert_eq!(tree.room, "2005");
+        assert!(tree.complete);
+        assert_eq!(tree.generation, 9);
+        assert_eq!(tree.items.len(), 1);
+        let item = &tree.items[0];
+        assert_eq!(item.id, "bag");
+        assert_eq!(item.relation, "worn");
+        assert_eq!(item.parent, "player");
+        assert_eq!(item.name, "a patchwork backpack");
+        assert_eq!(item.article, "a");
+        assert_eq!(item.adjective, "patchwork");
+        assert_eq!(item.noun, "backpack");
+        assert_eq!(
+            item.long.as_deref(),
+            Some("a patchwork backpack bound by vines")
+        );
+        assert_eq!(item.weight, 5);
+        assert_eq!(item.encum, Some(4));
+        assert_eq!(item.in_max, Some(2005));
+        assert_eq!(item.on_max, Some(101));
+        assert_eq!(item.in_encum, Some(37));
+        assert_eq!(item.in_selector.as_deref(), Some("backpack"));
+        assert!(item.locker);
+        assert!(!item.familyvault);
+        assert_eq!(item.flags, ["closed", "locked"]);
+
+        let json = serde_json::to_value(&tree).expect("serialize inventory tree");
+        assert!(
+            json.get("token").is_none(),
+            "request token must remain internal"
+        );
     }
 
     #[test]
@@ -2264,6 +2442,60 @@ mod tests {
 
         // Watch holds the latest state for snapshots.
         assert_eq!(handles.state_rx.borrow().vitals.health, 50);
+    }
+
+    #[test]
+    fn flush_state_sends_inventory_tree_replacement_and_null_clear() {
+        use crate::core::state::{ManagedInventoryItem, ManagedInventoryState};
+
+        let (mut sink, handles, _event_rx) = RemoteSink::new(100);
+        let mut rx = handles.delta_tx.subscribe();
+        let mut gs = GameState::new();
+        gs.managed_inventory = Some(ManagedInventoryState {
+            room: "2005".to_string(),
+            items: vec![ManagedInventoryItem {
+                id: "pouch".to_string(),
+                relation: "in".to_string(),
+                parent: "bag".to_string(),
+                name: "a silk pouch".to_string(),
+                noun: "pouch".to_string(),
+                flags: vec!["closed".to_string()],
+                ..Default::default()
+            }],
+            complete: true,
+            generation: 1,
+            ..Default::default()
+        });
+
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs, &[]));
+        let first = rx.try_recv().expect("inventory tree delta");
+        assert!(matches!(
+            first,
+            RemoteDelta::InventoryTree(Some(ref tree))
+                if tree.generation == 1
+                    && tree.items[0].parent == "bag"
+                    && tree.items[0].flags == ["closed"]
+        ));
+        assert!(rx.try_recv().is_err(), "only the tree changed");
+
+        let managed = gs.managed_inventory.as_mut().unwrap();
+        managed.generation = 2;
+        managed.items[0].flags.clear();
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs, &[]));
+        let replacement = rx.try_recv().expect("replacement tree delta");
+        assert!(matches!(
+            replacement,
+            RemoteDelta::InventoryTree(Some(ref tree))
+                if tree.generation == 2 && tree.items[0].flags.is_empty()
+        ));
+
+        gs.managed_inventory = None;
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs, &[]));
+        assert!(matches!(
+            rx.try_recv().expect("inventory tree clear"),
+            RemoteDelta::InventoryTree(None)
+        ));
+        assert!(handles.state_rx.borrow().inventory_tree.is_none());
     }
 
     #[test]

@@ -83,6 +83,10 @@ pub struct GameState {
     /// Latest complete `inv` stream snapshot. Styled lines retain the game's
     /// authoritative colors and link metadata for every frontend.
     pub inventory: Vec<crate::data::widget::StyledLine>,
+    /// True after at least one complete `inv` push/pop snapshot, including an
+    /// authoritative empty snapshot. This distinguishes "empty" from "not
+    /// received yet" for remote presentations.
+    pub inventory_received: bool,
 
     /// Current left hand item
     pub left_hand: Option<String>,
@@ -2050,6 +2054,7 @@ impl GameState {
             story_picture: None,
             spellbook: Vec::new(),
             spellbook_generation: 0,
+            inventory_received: false,
             room_meta: RoomMetaState::default(),
             managed_inventory: None,
             pulse_count: 0,

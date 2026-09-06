@@ -61,6 +61,9 @@ therefore preserves the most recent layout without putting workspace data in
 request cookies. **Workspace → Restore default** returns to the shipped layout
 without changing game or character settings.
 
+The Injuries module starts by showing current wounds. Its header selector can
+instead show scars, or wounds and scars together.
+
 ### Story, Room, and commands
 
 - **Story** is the chronological game feed. It includes normal game output,
@@ -72,6 +75,17 @@ without changing game or character settings.
 - The command input is attached to the bottom of Story. Press `Enter` or choose
   **Send** to dispatch through Vellum. Links, exits, and item action menus use
   the same command path.
+
+### Nested inventory
+
+Enable **Show Nested** in the Inventory header to request a managed snapshot and
+render carried items as a nested tree. The preference is saved with the character's
+workspace; when it is already enabled, Despana requests a fresh snapshot as the
+character view loads. Turning it off immediately restores the normal flat Inventory
+feed. Every container starts collapsed; expand only the containers whose contents
+you want to inspect. Room-floor trees, malformed parents, duplicate ids, and cycles
+are excluded. Incomplete or depth-limited snapshots are labeled instead
+of implying that every item has been shown.
 
 ## Maps
 

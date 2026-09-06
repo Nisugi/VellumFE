@@ -334,14 +334,27 @@ async function startWebDriver(geckodriver, firefox) {
 }
 
 async function waitForSocket(driver, count = 1) {
-  return waitFor(
-    () => driver.execute(
-      "return window.__desktopTest?.sockets?.length >= arguments[0] && " +
-      "window.__desktopTest.sockets[arguments[0] - 1].readyState === 1;",
-      [count],
-    ),
-    `browser fake WebSocket ${count}`,
-  );
+  try {
+    return await waitFor(
+      () => driver.execute(
+        "return window.__desktopTest?.sockets?.length >= arguments[0] && " +
+        "window.__desktopTest.sockets[arguments[0] - 1].readyState === 1;",
+        [count],
+      ),
+      `browser fake WebSocket ${count}`,
+    );
+  } catch (error) {
+    const diagnostics = await driver.execute(`
+      return {
+        errors: window.__desktopTest?.errors || [],
+        rejections: window.__desktopTest?.rejections || [],
+        readyState: document.readyState,
+      };
+    `).catch(() => null);
+    throw new Error(`${error.message}; diagnostics: ${JSON.stringify(diagnostics)}`, {
+      cause: error,
+    });
+  }
 }
 
 async function replay(driver, fixture, socketIndex = -1) {
@@ -401,8 +414,12 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
   await replay(driver, fixture);
 
   await waitFor(
-    () => driver.execute("return document.querySelector('#connection-status')?.textContent === 'Connected';"),
-    "rendered connected snapshot",
+    () => driver.execute(`
+      return document.querySelector('#connection-status')?.textContent === 'Connected'
+        && document.querySelector('#room-title')?.textContent
+          ?.includes('Duskruin Arena, Sands Approach');
+    `),
+    "rendered connected snapshot and workspace",
   );
   const composition = await driver.execute(`
     return {
@@ -414,6 +431,22 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
       room: document.querySelector('#room-title')?.textContent,
       spell: document.querySelector('#spells-output')?.textContent,
       inventory: document.querySelector('#inventory-output')?.textContent,
+      inventoryShowNested: {
+        tag: document.querySelector('#inventory-show-nested')?.tagName,
+        type: document.querySelector('#inventory-show-nested')?.type,
+        checked: document.querySelector('#inventory-show-nested')?.checked,
+      },
+      inventoryRefresh: {
+        tag: document.querySelector('#inventory-refresh')?.tagName,
+        disabled: document.querySelector('#inventory-refresh')?.disabled,
+        statusHidden: document.querySelector('#inventory-refresh-status')?.hidden,
+      },
+      nestedInventoryRows: document.querySelectorAll(
+        '#inventory-output [data-inventory-item-id]'
+      ).length,
+      injuriesFilter: document.querySelector('#injuries-filter')?.value,
+      injuriesFilterOptions: [...document.querySelectorAll('#injuries-filter option')]
+        .map((option) => option.textContent),
       target: document.querySelector('.target-entry')?.textContent,
       commandParent: document.querySelector('#command-form')?.closest('[data-module]')?.dataset?.module,
       commandMovable: Boolean(document.querySelector('[data-module="command"]')),
@@ -438,6 +471,19 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
   assert.match(composition.room, /Duskruin Arena, Sands Approach - 23780/);
   assert.match(composition.spell, /425 · Elemental Targeting/);
   assert.match(composition.inventory, /polished oak runestaff/);
+  assert.deepEqual(composition.inventoryShowNested, {
+    tag: "INPUT",
+    type: "checkbox",
+    checked: false,
+  });
+  assert.deepEqual(composition.inventoryRefresh, {
+    tag: "BUTTON",
+    disabled: true,
+    statusHidden: true,
+  });
+  assert.equal(composition.nestedInventoryRows, 0);
+  assert.equal(composition.injuriesFilter, "injuries");
+  assert.deepEqual(composition.injuriesFilterOptions, ["Injuries", "Scars", "Both"]);
   assert.match(composition.target, /arena champion/);
   assert.equal(composition.commandParent, "story");
   assert.equal(composition.commandMovable, false);
@@ -449,6 +495,76 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
     'classic mode must not render the local map canvas underneath its image');
   assert.notEqual(composition.classicMapDisplay, 'none',
     'classic mode must render the classic map stage');
+
+  const societyEffects = await driver.execute(`
+    const socket = window.__desktopTest.sockets[0];
+    const effect = (id, text) => ({
+      id,
+      text,
+      value: 100,
+      time: '00:10:00',
+      expires_at: 700,
+      bar_color: null,
+      text_color: null,
+    });
+    socket.receive({
+      v: 1,
+      seq: 3,
+      t: 'effects',
+      d: [
+        {
+          category: 'ActiveSpells',
+          effects: [effect('101', 'Spirit Warding I')],
+          generation: 2,
+        },
+        {
+          category: 'Buffs',
+          effects: [
+            effect('101', 'Duplicate Spirit Warding I'),
+            effect('5006', 'Sign of Warding'),
+            effect('voln-symbol', 'Symbol of Courage'),
+            effect('gos-sigil', 'Sigil of Resolve'),
+          ],
+          generation: 2,
+        },
+      ],
+    });
+    return document.querySelector('#spells-output')?.textContent;
+  `);
+  assert.match(societyEffects, /101 · Spirit Warding I/);
+  assert.doesNotMatch(societyEffects, /Duplicate Spirit Warding I/);
+  assert.equal(societyEffects.match(/101 · /g)?.length, 1);
+  assert.match(societyEffects, /5006 · Sign of Warding/);
+  assert.match(societyEffects, /voln-symbol · Symbol of Courage/);
+  assert.match(societyEffects, /gos-sigil · Sigil of Resolve/);
+
+  const injuryFilters = await driver.execute(`
+    const socket = window.__desktopTest.sockets[0];
+    const filter = document.querySelector('#injuries-filter');
+    const output = document.querySelector('#injuries-output');
+    const entries = () => [...output.querySelectorAll('.injury-entry')]
+      .map((entry) => entry.textContent);
+    socket.receive({
+      v: 1,
+      seq: 3,
+      t: 'injuries',
+      d: { leftArm: 2, rightLeg: 5 },
+    });
+    const injuries = entries();
+    filter.value = 'scars';
+    filter.dispatchEvent(new Event('change', { bubbles: true }));
+    const scars = entries();
+    filter.value = 'both';
+    filter.dispatchEvent(new Event('change', { bubbles: true }));
+    const both = entries();
+    return { injuries, scars, both };
+  `);
+  assert.deepEqual(injuryFilters.injuries, ["Left Arm: wound rank 2"]);
+  assert.deepEqual(injuryFilters.scars, ["Right Leg: scar rank 2"]);
+  assert.deepEqual(injuryFilters.both, [
+    "Left Arm: wound rank 2",
+    "Right Leg: scar rank 2",
+  ]);
   assert.deepEqual(composition.middleBottomGaps, [0, 0, 0],
     'left, center, and right zones must consume the full middle workspace height');
   assert.deepEqual(composition.errors, []);
@@ -888,6 +1004,263 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
   });
   assert.equal(menuDispatch.matchingCommands, 1);
 
+  const nestedInventory = await driver.execute(`
+    const item = (id, relation, parent, name, noun, extra = {}) => ({
+      id,
+      relation,
+      parent,
+      name,
+      article: 'a',
+      adjective: '',
+      noun,
+      long: null,
+      weight: 1,
+      encum: null,
+      in_max: null,
+      on_max: null,
+      in_encum: null,
+      in_selector: null,
+      locker: false,
+      familyvault: false,
+      flags: [],
+      ...extra,
+    });
+    const socket = window.__desktopTest.sockets[0];
+    const checkbox = document.querySelector('#inventory-show-nested');
+    const inventory = document.querySelector('#inventory-output');
+    inventory.closest('[data-module="inventory"]').hidden = false;
+    const flatBefore = inventory.textContent;
+    const beforeRefresh = socket.sent.filter(
+      (frame) => frame.t === 'cmd' && frame.d.text === '.invsync'
+    ).length;
+    checkbox.click();
+    const afterRefresh = socket.sent.filter(
+      (frame) => frame.t === 'cmd' && frame.d.text === '.invsync'
+    ).length;
+    socket.receive({
+      v: 1,
+      seq: 70,
+      t: 'inventory_tree',
+      d: {
+        room: '23780',
+        complete: true,
+        generation: 9,
+        items: [
+          item('robes', 'worn', 'player', 'some black robes', 'robes', { in_max: 2000 }),
+          item('pack', 'worn', 'player', 'a weathered pack', 'pack', { in_max: 2000 }),
+          item('hidden-pouch', 'in', 'pack', 'a small velvet pouch', 'pouch', { in_max: 500 }),
+          item('hidden-gem', 'in', 'hidden-pouch', 'a smoky blue gem', 'gem'),
+          item('visible-ring', 'worn', 'player', 'a visible gold ring', 'ring'),
+          item('covered-ring', 'worn', 'player', 'a covered silver ring', 'ring'),
+          item('tattoo', 'worn', 'player', 'a coiled tattoo', 'tattoo', {
+            in_max: 0,
+            on_max: 0,
+          }),
+          item('staff', 'righthand', 'player', 'a polished oak runestaff', 'runestaff'),
+          item('room-root', 'room', 'room', 'a dusty stone lectern', 'lectern'),
+        ],
+      },
+    });
+    const pack = inventory.querySelector('[data-inventory-item-id="pack"]');
+    const pouch = inventory.querySelector('[data-inventory-item-id="hidden-pouch"]');
+    const gem = inventory.querySelector('[data-inventory-item-id="hidden-gem"]');
+    const visible = (node) => Boolean(
+      node && !node.closest('.inventory-item-children[hidden]')
+    );
+    return {
+      flatBefore,
+      checkboxChecked: checkbox.checked,
+      refreshCommands: afterRefresh - beforeRefresh,
+      refreshButtonDisabled: document.querySelector('#inventory-refresh').disabled,
+      refreshStatus: document.querySelector('#inventory-refresh-status').textContent,
+      packExpanded: pack?.querySelector(':scope > .inventory-item-row > .inventory-disclosure')
+        ?.getAttribute('aria-expanded'),
+      packVisible: visible(pack),
+      pouchVisible: visible(pouch),
+      gemVisible: visible(gem),
+      errors: [...window.__desktopTest.errors],
+      rejections: [...window.__desktopTest.rejections],
+    };
+  `);
+  assert.match(nestedInventory.flatBefore, /polished oak runestaff/);
+  assert.equal(nestedInventory.checkboxChecked, true);
+  assert.equal(nestedInventory.refreshCommands, 1);
+  assert.equal(nestedInventory.refreshButtonDisabled, false);
+  assert.equal(nestedInventory.refreshStatus, "Inventory refreshed.");
+  assert.equal(nestedInventory.packExpanded, "false");
+  assert.equal(nestedInventory.packVisible, true);
+  assert.equal(nestedInventory.pouchVisible, false);
+  assert.equal(nestedInventory.gemVisible, false);
+  assert.deepEqual(nestedInventory.errors, []);
+  assert.deepEqual(nestedInventory.rejections, []);
+
+  const expandedInventory = await driver.execute(`
+    const inventory = document.querySelector('#inventory-output');
+    const pack = inventory.querySelector('[data-inventory-item-id="pack"]');
+    const packButton = pack.querySelector(':scope > .inventory-item-row > .inventory-disclosure');
+    packButton.click();
+    const pouch = inventory.querySelector('[data-inventory-item-id="hidden-pouch"]');
+    const pouchButton = pouch.querySelector(':scope > .inventory-item-row > .inventory-disclosure');
+    const gem = inventory.querySelector('[data-inventory-item-id="hidden-gem"]');
+    const visible = (node) => Boolean(
+      node && !node.closest('.inventory-item-children[hidden]')
+    );
+    const afterPack = {
+      packExpanded: packButton.getAttribute('aria-expanded'),
+      pouchVisible: visible(pouch),
+      pouchExpanded: pouchButton.getAttribute('aria-expanded'),
+      gemVisible: visible(gem),
+    };
+    pouchButton.click();
+    return {
+      afterPack,
+      pouchExpanded: pouchButton.getAttribute('aria-expanded'),
+      gemVisible: visible(gem),
+    };
+  `);
+  assert.deepEqual(expandedInventory.afterPack, {
+    packExpanded: "true",
+    pouchVisible: true,
+    pouchExpanded: "false",
+    gemVisible: false,
+  });
+  assert.equal(expandedInventory.pouchExpanded, "true");
+  assert.equal(expandedInventory.gemVisible, true);
+
+  const inventoryItemTap = await driver.execute(`
+    [...document.querySelectorAll('#inventory-output .game-link')]
+      .find((link) => link.textContent === 'a smoky blue gem')
+      .click();
+    return window.__desktopTest.sockets[0].sent.at(-1);
+  `);
+  assert.deepEqual(inventoryItemTap, {
+    t: "link_tap",
+    d: {
+      request_id: 2,
+      exist_id: "hidden-gem",
+      noun: "gem",
+      text: "a smoky blue gem",
+      coord: null,
+    },
+  });
+
+  const incompleteInventory = await driver.execute(`
+    const socket = window.__desktopTest.sockets[0];
+    const refresh = document.querySelector('#inventory-refresh');
+    const status = document.querySelector('#inventory-refresh-status');
+    const before = socket.sent.filter(
+      (frame) => frame.t === 'cmd' && frame.d.text === '.invsync'
+    ).length;
+    refresh.click();
+    const pending = {
+      disabled: refresh.disabled,
+      status: status.textContent,
+      commands: socket.sent.filter(
+        (frame) => frame.t === 'cmd' && frame.d.text === '.invsync'
+      ).length - before,
+    };
+    socket.receive({
+      v: 1,
+      seq: 76,
+      t: 'inventory_tree',
+      d: {
+        room: '23780',
+        complete: false,
+        generation: 10,
+        items: [{
+          id: 'pack',
+          relation: 'worn',
+          parent: 'player',
+          name: 'a weathered pack',
+          article: 'a',
+          adjective: 'weathered',
+          noun: 'pack',
+          long: null,
+          weight: 1,
+          encum: null,
+          in_max: 2000,
+          on_max: null,
+          in_encum: null,
+          in_selector: null,
+          locker: false,
+          familyvault: false,
+          flags: [],
+        }],
+      },
+    });
+    return {
+      warning: document.querySelector('#inventory-output .inventory-snapshot-warning')?.textContent,
+      pending,
+      completed: {
+        disabled: refresh.disabled,
+        status: status.textContent,
+      },
+    };
+  `);
+  assert.equal(
+    incompleteInventory.warning,
+    "Inventory snapshot is incomplete; some items may be missing",
+  );
+  assert.deepEqual(incompleteInventory.pending, {
+    disabled: true,
+    status: "Refreshing nested inventory…",
+    commands: 1,
+  });
+  assert.deepEqual(incompleteInventory.completed, {
+    disabled: false,
+    status: "Inventory refresh is incomplete. Select Refresh to try again.",
+  });
+
+  const malformedInventory = await driver.execute(`
+    const socket = window.__desktopTest.sockets[0];
+    const refresh = document.querySelector('#inventory-refresh');
+    const status = document.querySelector('#inventory-refresh-status');
+    refresh.click();
+    socket.receive({
+      v: 1,
+      seq: 77,
+      t: 'inventory_tree',
+      d: { room: '23780', complete: true, generation: 'invalid', items: [] },
+    });
+    return {
+      disabled: refresh.disabled,
+      status: status.textContent,
+      state: status.dataset.state,
+    };
+  `);
+  assert.deepEqual(malformedInventory, {
+    disabled: false,
+    status: "Inventory refresh returned invalid data. Select Refresh to try again.",
+    state: "error",
+  });
+
+  const nestingToggle = await driver.execute(`
+    const checkbox = document.querySelector('#inventory-show-nested');
+    const output = document.querySelector('#inventory-output');
+    const socket = window.__desktopTest.sockets[0];
+    const refreshCount = () => socket.sent.filter(
+      (frame) => frame.t === 'cmd' && frame.d.text === '.invsync'
+    ).length;
+    const before = refreshCount();
+    checkbox.click();
+    const flatText = output.textContent;
+    const rowsWhileOff = output.querySelectorAll('[data-inventory-item-id]').length;
+    const afterOff = refreshCount();
+    checkbox.click();
+    return {
+      flatText,
+      rowsWhileOff,
+      refreshesWhileTurningOff: afterOff - before,
+      refreshesWhileTurningBackOn: refreshCount() - afterOff,
+      checked: checkbox.checked,
+    };
+  `);
+  assert.match(nestingToggle.flatText, /polished oak runestaff/);
+  assert.equal(nestingToggle.rowsWhileOff, 0);
+  assert.equal(nestingToggle.refreshesWhileTurningOff, 0);
+  assert.equal(nestingToggle.refreshesWhileTurningBackOn, 1);
+  assert.equal(nestingToggle.checked, true);
+
   const persisted = await driver.execute(`
     document.querySelector('[data-module-menu="familiar"]').click();
     document.querySelector(
@@ -957,15 +1330,23 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
   await replay(driver, fixture);
   await waitFor(
     () => driver.execute(
-      "return document.querySelector('[data-module=\"familiar\"]')?.parentElement?.dataset?.zone === 'left';",
+      `return document.querySelector('[data-module="familiar"]')?.parentElement?.dataset?.zone === 'left'
+        && document.querySelector('#inventory-show-nested')?.checked
+        && window.__desktopTest.sockets[0].sent.filter(
+          (frame) => frame.t === 'cmd' && frame.d.text === '.invsync'
+        ).length === 1;`,
     ),
-    "cross-port workspace restoration",
+    "cross-port workspace and nested Inventory restoration",
   );
   const restored = await driver.execute(`
     return {
       parentZone: document.querySelector('[data-module="familiar"]').parentElement.dataset.zone,
       status: document.querySelector('#workspace-status').textContent,
       mirrored: Boolean(localStorage.getItem('despana.workspace.v1:briar')),
+      showNested: document.querySelector('#inventory-show-nested').checked,
+      inventoryRefreshes: window.__desktopTest.sockets[0].sent.filter(
+        (frame) => frame.t === 'cmd' && frame.d.text === '.invsync'
+      ).length,
       errors: [...window.__desktopTest.errors],
       rejections: [...window.__desktopTest.rejections],
     };
@@ -973,6 +1354,8 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
   assert.equal(restored.parentZone, "left");
   assert.equal(restored.status, "Briar workspace restored");
   assert.equal(restored.mirrored, true);
+  assert.equal(restored.showNested, true);
+  assert.equal(restored.inventoryRefreshes, 1);
   assert.deepEqual(restored.errors, []);
   assert.deepEqual(restored.rejections, []);
 

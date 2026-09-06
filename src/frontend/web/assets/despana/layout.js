@@ -40,6 +40,9 @@ export class WorkspaceLayoutError extends Error {
 export const DEFAULT_DESPANA_LAYOUT = deepFreeze({
   version: LAYOUT_VERSION,
   character: null,
+  preferences: {
+    inventory: { showNested: false },
+  },
   tracks: { ...BUILTIN_TRACKS },
   zones: {
     top: {
@@ -193,6 +196,9 @@ export class WorkspaceLayout {
       case "resize-pair":
         this._resizePair(draft, intent);
         break;
+      case "set-inventory-nesting":
+        this._setInventoryNesting(draft, intent);
+        break;
       default:
         throw new WorkspaceLayoutError(
           "intent-type",
@@ -340,6 +346,16 @@ export class WorkspaceLayout {
     second.weight = pairTotal - nextFirst;
   }
 
+  _setInventoryNesting(draft, intent) {
+    if (typeof intent.enabled !== "boolean") {
+      throw new WorkspaceLayoutError(
+        "inventory-nesting",
+        "Inventory nesting preference must be true or false",
+      );
+    }
+    draft.preferences.inventory.showNested = intent.enabled;
+  }
+
   _knownId(id) {
     if (typeof id !== "string" || !this._known.has(id)) {
       throw new WorkspaceLayoutError("module", `unknown layout module: ${String(id)}`);
@@ -428,6 +444,9 @@ function emptyMutableLayout(character) {
   return {
     version: LAYOUT_VERSION,
     character,
+    preferences: {
+      inventory: { showNested: false },
+    },
     tracks: { ...BUILTIN_TRACKS },
     zones: Object.fromEntries(
       LAYOUT_ZONES.map((zone) => [
@@ -462,6 +481,9 @@ function buildDefault(rawDefaults, known, character) {
   const defaults = isRecord(rawDefaults) ? rawDefaults : {};
   const result = emptyMutableLayout(character);
   const seen = new Set();
+
+  result.preferences.inventory.showNested =
+    defaults.preferences?.inventory?.showNested === true;
 
   for (const zone of TRACK_ZONES) {
     result.tracks[zone] = clampTrack(
@@ -546,6 +568,11 @@ function restoreSaved(savedValue, known, defaults, character) {
   const placements = defaultPlacements(defaults);
   const seen = new Set();
 
+  result.preferences.inventory.showNested =
+    typeof saved.preferences?.inventory?.showNested === "boolean"
+      ? saved.preferences.inventory.showNested
+      : defaults.preferences.inventory.showNested;
+
   for (const zone of TRACK_ZONES) {
     const value = isRecord(saved.tracks) ? saved.tracks[zone] : null;
     result.tracks[zone] = Number.isFinite(value)
@@ -618,6 +645,9 @@ function mutableLayout(layout) {
   return {
     version: LAYOUT_VERSION,
     character: layout.character,
+    preferences: {
+      inventory: { showNested: layout.preferences.inventory.showNested },
+    },
     tracks: { ...layout.tracks },
     zones: Object.fromEntries(
       LAYOUT_ZONES.map((zone) => [
@@ -757,6 +787,9 @@ function normalizeModuleWeights(entries, total = WEIGHT_TOTAL) {
 }
 
 function assertInvariant(layout, known) {
+  if (typeof layout.preferences?.inventory?.showNested !== "boolean") {
+    throw new WorkspaceLayoutError("invariant", "invalid Inventory nesting preference");
+  }
   const seen = new Set();
   for (const zone of LAYOUT_ZONES) {
     const zoneState = layout.zones[zone];

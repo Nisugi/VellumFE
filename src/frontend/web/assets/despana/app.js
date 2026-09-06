@@ -5,6 +5,8 @@ import DesktopSession, {
 } from "./session.js";
 import DesktopInteractionCoordinator from "./interactions.js";
 import { DesktopMapViewport } from "./map.js";
+import { InventoryRefreshTracker } from "./inventory-refresh.js";
+import { projectInventoryItems } from "./inventory-tree.js";
 import { DesktopWorkspace } from "./workspace.js";
 import { createDesktopWorkspaceStore } from "./workspace-persistence.js";
 import {
@@ -37,6 +39,10 @@ const commandInput = document.getElementById("command-input");
 const commandButton = commandForm.querySelector("button[type='submit']");
 const commandStatus = document.getElementById("command-status");
 const sessionExitButton = document.getElementById("session-exit-button");
+const injuriesFilter = document.getElementById("injuries-filter");
+const inventoryShowNested = document.getElementById("inventory-show-nested");
+const inventoryRefreshButton = document.getElementById("inventory-refresh");
+const inventoryRefreshStatus = document.getElementById("inventory-refresh-status");
 const vellumIdle = document.getElementById("vellum-idle");
 const vellumIdleTitle = document.getElementById("vellum-idle-title");
 const vellumIdleMessage = document.getElementById("vellum-idle-message");
@@ -48,13 +54,34 @@ let clockOffsetSeconds = 0;
 let interaction = null;
 let menuAnchor = null;
 let menuTimeout = null;
+const expandedInventoryItems = new Set();
+let showNestedInventory = false;
+let nestedInventoryCharacter = null;
+let nestedInventoryRefreshCharacter = null;
 let currentFontScale = readFontScale(window.localStorage);
 
 if (!root) throw new Error("Vellum Despana root is missing");
 if (!sessionExitButton) throw new Error("Vellum Despana session exit control is missing");
+if (!injuriesFilter) throw new Error("Vellum Despana injury filter is missing");
+if (!inventoryShowNested) throw new Error("Vellum Despana Inventory nesting control is missing");
+if (!inventoryRefreshButton || !inventoryRefreshStatus) {
+  throw new Error("Vellum Despana Inventory refresh controls are missing");
+}
 if (!vellumIdle || !vellumIdleTitle || !vellumIdleMessage) {
   throw new Error("Vellum idle-session handoff is missing");
 }
+const inventoryRefresh = new InventoryRefreshTracker({
+  onChange(state) {
+    inventoryRefreshStatus.hidden = state.kind === "idle";
+    inventoryRefreshStatus.dataset.state = state.kind;
+    inventoryRefreshStatus.textContent = state.message;
+    inventoryRefreshButton.disabled =
+      state.kind === "pending" ||
+      !showNestedInventory ||
+      !latestView ||
+      !isPlayable(latestView);
+  },
+});
 document.documentElement.style.setProperty("--font-scale", `${currentFontScale}%`);
 function renderIdleSurface(view) {
   const visible = shouldShowVellumIdle(view);
@@ -94,6 +121,9 @@ const workspace = new DesktopWorkspace(root, {
   }),
   reportError(error) {
     console.error("Vellum Despana workspace error:", error);
+  },
+  onLayoutChange(snapshot) {
+    adoptInventoryNestingPreference(snapshot);
   },
 });
 const mapController = createMapController(
@@ -208,13 +238,99 @@ function styledSegment(segment) {
   return node;
 }
 
-function styledLine(line) {
+function styledLine(line, seq = null) {
   const node = document.createElement("div");
   node.className = "text-line";
+  if (Number.isSafeInteger(seq)) node.dataset.storySeq = String(seq);
   for (const segment of line?.segments || []) {
     if (segment.text) node.appendChild(styledSegment(segment));
   }
   return node;
+}
+
+function inventoryItemNode(item, depth = 0) {
+  const node = document.createElement("div");
+  node.className = "inventory-tree-item";
+  node.dataset.inventoryItemId = item.id;
+  node.style.setProperty("--inventory-depth", String(depth));
+
+  const row = document.createElement("div");
+  row.className = "inventory-item-row";
+  const children = document.createElement("div");
+  children.className = "inventory-item-children";
+  children.setAttribute("role", "group");
+
+  if (item.container && item.children.length > 0) {
+    const disclosure = document.createElement("button");
+    disclosure.type = "button";
+    disclosure.className = "inventory-disclosure";
+    const setExpanded = (expanded) => {
+      disclosure.setAttribute("aria-expanded", String(expanded));
+      disclosure.textContent = expanded ? "▾" : "▸";
+      children.hidden = !expanded;
+      if (expanded) expandedInventoryItems.add(item.id);
+      else expandedInventoryItems.delete(item.id);
+    };
+    disclosure.setAttribute("aria-label", `Toggle contents of ${item.name}`);
+    disclosure.addEventListener("click", () => {
+      setExpanded(disclosure.getAttribute("aria-expanded") !== "true");
+    });
+    setExpanded(expandedInventoryItems.has(item.id));
+    row.appendChild(disclosure);
+  } else {
+    const spacer = document.createElement("span");
+    spacer.className = "inventory-disclosure-spacer";
+    spacer.setAttribute("aria-hidden", "true");
+    row.appendChild(spacer);
+  }
+
+  row.appendChild(styledSegment({ text: item.name, link_data: item.linkData }));
+  if (item.locked || item.closed) {
+    const status = document.createElement("span");
+    status.className = "inventory-item-status";
+    status.textContent = item.locked ? "locked" : "closed";
+    row.appendChild(status);
+  }
+  node.appendChild(row);
+
+  for (const child of item.children) {
+    children.appendChild(inventoryItemNode(child, depth + 1));
+  }
+  if (item.children.length > 0) node.appendChild(children);
+  return node;
+}
+
+function renderInventory(container, view) {
+  if (!showNestedInventory) {
+    renderStyledLines(container, view?.inventory, "No inventory data received");
+    return;
+  }
+  const projection = projectInventoryItems({ inventoryTree: view?.inventoryTree });
+  if (!projection.available) {
+    renderStyledLines(container, view?.inventory, "No inventory data received");
+    return;
+  }
+  if (projection.roots.length === 0) {
+    empty(
+      container,
+      projection.complete
+        ? "No carried items in the managed inventory snapshot"
+        : "Inventory snapshot is incomplete; no carried items are currently available",
+    );
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  if (!projection.complete || projection.truncated) {
+    const warning = document.createElement("p");
+    warning.className = "inventory-snapshot-warning";
+    warning.textContent = projection.truncated
+      ? "Some nested contents are too deep to display"
+      : "Inventory snapshot is incomplete; some items may be missing";
+    fragment.appendChild(warning);
+  }
+  for (const item of projection.roots) fragment.appendChild(inventoryItemNode(item));
+  container.replaceChildren(fragment);
 }
 
 function activateLink(link, anchor = null) {
@@ -369,26 +485,26 @@ function renderTextStream(container, entries, emptyMessage) {
     return;
   }
 
-  if (reset || container.querySelector(".empty-state")) {
+  if (reset || container.querySelector(":scope > .empty-state")) {
     container.replaceChildren();
     const fragment = document.createDocumentFragment();
     if (state.gapPending) fragment.appendChild(gapMarker());
     for (const entry of rows.slice(-MAX_MOUNTED_LINES)) {
-      fragment.appendChild(styledLine(entry.line));
+      fragment.appendChild(styledLine(entry.line, entry.seq));
     }
     container.appendChild(fragment);
   } else {
     const fragment = document.createDocumentFragment();
     if (state.gapPending) fragment.appendChild(gapMarker());
     for (const entry of rows) {
-      if (entry.seq > state.lastSeq) fragment.appendChild(styledLine(entry.line));
+      if (entry.seq > state.lastSeq) fragment.appendChild(styledLine(entry.line, entry.seq));
     }
     container.appendChild(fragment);
   }
   state.gapPending = false;
 
   while (container.childElementCount > MAX_MOUNTED_LINES) {
-    container.firstElementChild.remove();
+    container.firstElementChild?.remove();
   }
   state.lastSeq = newest;
   if (state.follow) container.scrollTop = container.scrollHeight;
@@ -413,7 +529,11 @@ function registerModules() {
     id: "active-spells",
     slices: ["effects"],
     render(view, { body }) {
-      renderEffects(body, effectCategory(view.effects, "ActiveSpells"), "No active spells");
+      renderEffects(
+        body,
+        effectCategories(view.effects, ["ActiveSpells", "Buffs"]),
+        "No active spells",
+      );
     },
   });
   workspace.register({
@@ -427,7 +547,7 @@ function registerModules() {
     id: "injuries",
     slices: ["injuries", "doll"],
     render(view, { body }) {
-      renderInjuries(body, view.injuries);
+      renderInjuries(body, view.injuries, injuriesFilter.value);
     },
   });
   workspace.register({
@@ -545,9 +665,9 @@ function registerModules() {
   });
   workspace.register({
     id: "inventory",
-    slices: ["inventory"],
+    slices: ["inventory", "inventoryTree"],
     render(view, { body }) {
-      renderStyledLines(body, view.inventory, "No inventory data received");
+      renderInventory(body, view);
     },
   });
 }
@@ -555,6 +675,18 @@ function registerModules() {
 function effectCategory(categories, name) {
   return (Array.isArray(categories) ? categories : [])
     .find((entry) => entry?.category === name)?.effects || [];
+}
+
+function effectCategories(categories, names) {
+  const seenIds = new Set();
+  return names
+    .flatMap((name) => effectCategory(categories, name))
+    .filter((effect) => {
+      if (!effect?.id) return true;
+      if (seenIds.has(effect.id)) return false;
+      seenIds.add(effect.id);
+      return true;
+    });
 }
 
 function displayDuration(effect) {
@@ -605,10 +737,23 @@ function displayKey(key) {
     .replace(/^./, (letter) => letter.toUpperCase());
 }
 
-function renderInjuries(container, injuries) {
-  const entries = Object.entries(injuries || {}).filter(([, level]) => Number(level) > 0);
+function renderInjuries(container, injuries, filter = "injuries") {
+  const entries = Object.entries(injuries || {}).filter(([, rawLevel]) => {
+    const level = Number(rawLevel);
+    if (level <= 0) return false;
+    const scar = level > 3;
+    if (filter === "both") return true;
+    return filter === "scars" ? scar : !scar;
+  });
   if (!entries.length) {
-    empty(container, "No injuries reported");
+    empty(
+      container,
+      filter === "scars"
+        ? "No scars reported"
+        : filter === "both"
+          ? "No injuries or scars reported"
+          : "No injuries reported",
+    );
     return;
   }
   const list = document.createElement("div");
@@ -1550,6 +1695,8 @@ function renderCommandAvailability(view) {
   commandInput.disabled = !ready;
   commandButton.disabled = !ready;
   sessionExitButton.disabled = !ready;
+  inventoryRefreshButton.disabled =
+    !ready || !showNestedInventory || inventoryRefresh.state.kind === "pending";
   if (ready && commandStatus.textContent === "Waiting for connection") {
     commandStatus.textContent = "Connected";
   }
@@ -1584,6 +1731,41 @@ function submitCommand(text, status = null) {
   }
 }
 
+function requestNestedInventorySnapshot({ manual = false } = {}) {
+  if (
+    !showNestedInventory ||
+    !nestedInventoryCharacter ||
+    (!manual && nestedInventoryRefreshCharacter === nestedInventoryCharacter) ||
+    !interaction ||
+    !latestView ||
+    !isPlayable(latestView)
+  ) {
+    return false;
+  }
+  if (!manual) nestedInventoryRefreshCharacter = nestedInventoryCharacter;
+  inventoryRefresh.begin(nestedInventoryCharacter);
+  if (!submitCommand(".invsync", "Refreshing nested inventory")) {
+    inventoryRefresh.fail("Inventory refresh could not be sent. Select Refresh to try again.");
+    return false;
+  }
+  nestedInventoryRefreshCharacter = nestedInventoryCharacter;
+  return true;
+}
+
+function adoptInventoryNestingPreference(snapshot) {
+  const character = snapshot?.character || null;
+  const characterChanged = character !== nestedInventoryCharacter;
+  nestedInventoryCharacter = character;
+  showNestedInventory = snapshot?.preferences?.inventory?.showNested === true;
+  inventoryShowNested.checked = showNestedInventory;
+  if (characterChanged || !showNestedInventory) {
+    nestedInventoryRefreshCharacter = null;
+    inventoryRefresh.reset();
+  }
+  if (latestView) renderInventory(document.getElementById("inventory-output"), latestView);
+  requestNestedInventorySnapshot();
+}
+
 for (const button of document.querySelectorAll("#compass button[data-direction]")) {
   button.addEventListener("click", () => {
     submitCommand(normalizeExit(button.dataset.direction), `Moving ${button.textContent}`);
@@ -1612,6 +1794,23 @@ commandInput.addEventListener("keydown", (event) => {
 const storyOutput = document.getElementById("story-output");
 const storyPause = document.getElementById("story-pause");
 const storyBottom = document.getElementById("story-bottom");
+
+injuriesFilter.addEventListener("change", () => {
+  if (latestView) workspace.render(latestView, ["injuries"]);
+});
+
+inventoryShowNested.addEventListener("change", () => {
+  try {
+    workspace.setInventoryNesting(inventoryShowNested.checked);
+  } catch (error) {
+    inventoryShowNested.checked = showNestedInventory;
+    commandStatus.textContent = error?.message || "Nested Inventory preference was not saved";
+  }
+});
+
+inventoryRefreshButton.addEventListener("click", () => {
+  requestNestedInventorySnapshot({ manual: true });
+});
 
 function setStoryPaused(paused) {
   const state = paneScrollState(storyOutput);
@@ -1694,6 +1893,16 @@ session.subscribe((event) => {
   latestView = view;
   renderIdleSurface(view);
   workspace.setCharacter(view.character || view.session?.character);
+  if (event.type === "state" && event.changed?.includes("inventoryTree")) {
+    inventoryRefresh.receive(
+      view.character || view.session?.character,
+      view.inventoryTree,
+    );
+  }
+  if (!isPlayable(view)) {
+    inventoryRefresh.fail("Connection lost before inventory refresh completed.");
+  }
+  requestNestedInventorySnapshot();
   if (
     event.type === "snapshot" ||
     (event.type === "state" && event.changed?.includes("timers"))
@@ -1707,11 +1916,15 @@ session.subscribe((event) => {
     case "snapshot":
       closeGameMenu();
       mapController.resetRequests();
+      if (event.mode === "full") {
+        expandedInventoryItems.clear();
+      }
       workspace.render(view, null);
       break;
     case "reset":
       closeGameMenu();
       mapController.resetRequests();
+      expandedInventoryItems.clear();
       commandHistory.length = 0;
       commandHistoryIndex = 0;
       commandInput.value = "";
@@ -1798,6 +2011,7 @@ window.addEventListener("pagehide", (event) => {
   workspace.flush();
   window.removeEventListener("storage", adoptVellumPairingToken);
   clearInterval(timerTick);
+  inventoryRefresh.destroy();
   closeGameMenu();
   gameContextMenu.remove();
   mapController.destroy();

@@ -14,6 +14,7 @@
   --text-strong: #f0eee8;
   --muted: #8c969f;
   --quiet: #626c75;
+  --good: #79d08f;
   --danger: #d66f64;
   --health: #a94f4f;
   --mana: #5376b8;
@@ -582,6 +583,25 @@ input:focus-visible {
   color: var(--amber-bright);
 }
 
+.injuries-filter {
+  min-width: 82px;
+  min-height: 24px;
+  margin-left: auto;
+  margin-right: 24px;
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--surface-inset);
+  color: var(--muted);
+  font: 10px/1.2 var(--font-ui);
+}
+
+.injuries-filter:hover,
+.injuries-filter:focus-visible {
+  border-color: var(--amber);
+  color: var(--amber-bright);
+}
+
 .pane-output,
 .room-content {
   min-height: 0;
@@ -668,6 +688,103 @@ input:focus-visible {
   margin: 4px 0;
   color: var(--danger);
   font-style: italic;
+}
+
+.inventory-tree-item {
+  min-width: 0;
+}
+
+.inventory-item-row {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 4px;
+  padding-left: calc(var(--inventory-depth, 0) * 12px);
+}
+
+.inventory-disclosure,
+.inventory-disclosure-spacer {
+  box-sizing: border-box;
+  width: 24px;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.inventory-disclosure {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.inventory-disclosure:hover,
+.inventory-disclosure:focus-visible {
+  color: var(--amber);
+}
+
+.inventory-item-status {
+  color: var(--quiet);
+  font-size: 9px;
+  font-style: italic;
+}
+
+.inventory-snapshot-warning {
+  margin: 2px 0 5px;
+  color: var(--amber);
+  font-size: 9px;
+  font-style: italic;
+}
+
+.inventory-nesting-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.inventory-nesting-toggle input {
+  margin: 0;
+  accent-color: var(--amber);
+}
+
+.inventory-nesting-toggle:hover,
+.inventory-nesting-toggle:focus-within {
+  color: var(--amber-bright);
+}
+
+.inventory-refresh {
+  margin-right: 24px;
+}
+
+.inventory-refresh-status {
+  margin: 0;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.inventory-refresh-status[data-state="incomplete"],
+.inventory-refresh-status[data-state="timed-out"],
+.inventory-refresh-status[data-state="error"] {
+  color: var(--danger);
+}
+
+.inventory-refresh-status[data-state="ready"] {
+  color: var(--good);
+}
+
+.inventory-item-children[hidden] {
+  display: none;
 }
 
 .story-pane {

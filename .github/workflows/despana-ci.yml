@@ -49,6 +49,8 @@ jobs:
           src/frontend/web/assets/despana/layout-storage.test.mjs
           src/frontend/web/assets/despana/interactions.test.mjs
           src/frontend/web/assets/despana/map.test.mjs
+          src/frontend/web/assets/despana/inventory-refresh.test.mjs
+          src/frontend/web/assets/despana/inventory-tree.test.mjs
           src/frontend/web/assets/despana/font-scale.test.mjs
 
   rust-tests:

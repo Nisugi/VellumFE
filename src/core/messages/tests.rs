@@ -1972,6 +1972,10 @@ fn inventory_pop_commits_styled_complete_replacements() {
         game_state.inventory.is_empty(),
         "an empty complete snapshot clears stale inventory"
     );
+    assert!(
+        game_state.inventory_received,
+        "an empty complete snapshot is distinguishable from no snapshot"
+    );
     let WindowContent::Inventory(content) = &ui_state.windows["inventory"].content else {
         panic!("test inventory window changed content type");
     };

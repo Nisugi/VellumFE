@@ -12,8 +12,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::core::remote::{
-    RemoteCharInfo, RemoteDelta, RemoteMacros, RemoteMenuItem, RemoteRoomEntities,
-    RemoteSessionInfo, RemoteStateSnapshot, RemoteTarget, RemoteWheels,
+    RemoteCharInfo, RemoteDelta, RemoteInventoryTree, RemoteMacros, RemoteMenuItem,
+    RemoteRoomEntities, RemoteSessionInfo, RemoteStateSnapshot, RemoteTarget, RemoteWheels,
 };
 use crate::core::state::{StatusInfo, Vitals};
 use crate::data::remote_buffer::RemoteLine;
@@ -132,6 +132,13 @@ struct SnapshotPayload {
     spellbook: Vec<crate::data::widget::StyledLine>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     inventory: Vec<crate::data::widget::StyledLine>,
+    /// Distinguishes a received empty inventory snapshot from startup state.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    inventory_received: bool,
+    /// Structured inventory-manager graph. This is additive to the rendered
+    /// inventory lines and absent until the core has a manager snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    inventory_tree: Option<RemoteInventoryTree>,
     injuries: std::collections::HashMap<String, u8>,
     /// Active doll variant + suppressed parts (host-resolved skin rules).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -169,6 +176,10 @@ fn group_is_empty(group: &crate::core::group::GroupState) -> bool {
 /// clients that do not read it see an unchanged wire.
 fn objectives_is_empty(objectives: &crate::data::ObjectivesContent) -> bool {
     objectives.objectives.is_empty()
+}
+
+fn bool_is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// First message on every connection.
@@ -237,6 +248,8 @@ pub fn snapshot_for(
         objectives: state.objectives.clone(),
         spellbook: state.spellbook.clone(),
         inventory: state.inventory.clone(),
+        inventory_received: state.inventory_received,
+        inventory_tree: state.inventory_tree.clone(),
         injuries: state.injuries.clone(),
         doll_variant: state.doll_variant.clone(),
         doll_hidden: state.doll_hidden.clone(),
@@ -278,6 +291,8 @@ impl SnapshotPayload {
         self.room.description = Vec::new();
         self.spellbook = Vec::new();
         self.inventory = Vec::new();
+        self.inventory_received = false;
+        self.inventory_tree = None;
         self.targets = Vec::new();
         self.entities = Default::default();
         self.portals = Vec::new();
@@ -372,6 +387,10 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
         RemoteDelta::Objectives(objectives) => encode("objectives", last_seq, objectives),
         RemoteDelta::Spells(lines) => encode("spells", last_seq, lines),
         RemoteDelta::Inventory(lines) => encode("inventory", last_seq, lines),
+        RemoteDelta::InventoryReceived(received) => {
+            encode("inventory_received", last_seq, received)
+        }
+        RemoteDelta::InventoryTree(tree) => encode("inventory_tree", last_seq, tree),
         RemoteDelta::Session(info) => encode("session", last_seq, info),
         RemoteDelta::Injuries(injuries) => encode("injuries", last_seq, injuries),
         RemoteDelta::Doll { variant, hidden } => encode(
@@ -1357,6 +1376,42 @@ mod tests {
         v["d"].clone()
     }
 
+    fn inventory_tree() -> RemoteInventoryTree {
+        RemoteInventoryTree {
+            room: "2005".to_string(),
+            items: vec![
+                crate::core::remote::RemoteInventoryItem {
+                    id: "bag".to_string(),
+                    relation: "worn".to_string(),
+                    parent: "player".to_string(),
+                    name: "a patchwork backpack".to_string(),
+                    article: "a".to_string(),
+                    adjective: "patchwork".to_string(),
+                    noun: "backpack".to_string(),
+                    weight: 5,
+                    in_max: Some(2000),
+                    flags: vec!["closed".to_string()],
+                    ..Default::default()
+                },
+                crate::core::remote::RemoteInventoryItem {
+                    id: "pouch".to_string(),
+                    relation: "in".to_string(),
+                    parent: "bag".to_string(),
+                    name: "a silk pouch".to_string(),
+                    article: "a".to_string(),
+                    adjective: "silk".to_string(),
+                    noun: "pouch".to_string(),
+                    weight: 1,
+                    in_max: Some(505),
+                    flags: vec!["closed".to_string(), "locked".to_string()],
+                    ..Default::default()
+                },
+            ],
+            complete: true,
+            generation: 7,
+        }
+    }
+
     /// The mechanical guard behind strip_for_watch: a watch snapshot built
     /// from a FULLY populated state must serialize only allowlisted keys.
     /// Adding a field to SnapshotPayload fails this test until the field is
@@ -1378,6 +1433,8 @@ mod tests {
         }];
         state.spellbook = state.room_description.clone();
         state.inventory = state.room_description.clone();
+        state.inventory_received = true;
+        state.inventory_tree = Some(inventory_tree());
         state.portals = vec!["portal".to_string()];
         state.field = vec![crate::core::remote::RemoteFieldCard {
             id: "123".to_string(),
@@ -1434,6 +1491,11 @@ mod tests {
         assert!(v["d"].get("text").is_none());
         assert!(v["d"].get("map_scene").is_none());
         assert!(v["d"]["room"].get("description").is_none());
+        assert!(
+            v["d"].get("inventory_tree").is_none(),
+            "structured inventory is bulk and must not ship to watchers"
+        );
+        assert!(v["d"].get("inventory_received").is_none());
     }
 
     #[test]
@@ -1484,7 +1546,15 @@ mod tests {
     /// sends one must get byte-identical output to before this existed.
     #[test]
     fn play_mode_snapshot_still_carries_everything() {
-        let state = RemoteStateSnapshot::default();
+        let default = snap_json(SubscribeMode::Play, &RemoteStateSnapshot::default());
+        assert!(
+            default.get("inventory_tree").is_none(),
+            "the optional extension must not change snapshots without managed inventory"
+        );
+
+        let mut state = RemoteStateSnapshot::default();
+        state.inventory_received = true;
+        state.inventory_tree = Some(inventory_tree());
         let d = snap_json(SubscribeMode::Play, &state);
 
         assert!(d.get("text").is_some(), "scrollback must ship");
@@ -1492,6 +1562,12 @@ mod tests {
         assert!(d.get("targets").is_some());
         assert!(d.get("entities").is_some());
         assert!(d.get("map_state").is_some());
+        assert_eq!(d["inventory_received"], true);
+        assert_eq!(d["inventory_tree"]["room"], "2005");
+        assert_eq!(d["inventory_tree"]["items"][1]["parent"], "bag");
+        assert_eq!(d["inventory_tree"]["items"][1]["in_max"], 505);
+        assert_eq!(d["inventory_tree"]["items"][1]["flags"][1], "locked");
+        assert!(d["inventory_tree"].get("token").is_none());
     }
 
     /// A watcher pays for none of the bulk. This is the whole point of the
@@ -1499,7 +1575,9 @@ mod tests {
     /// sibling character, for a display that renders no text.
     #[test]
     fn watch_mode_snapshot_drops_text_and_map() {
-        let state = RemoteStateSnapshot::default();
+        let mut state = RemoteStateSnapshot::default();
+        state.inventory_received = true;
+        state.inventory_tree = Some(inventory_tree());
         let d = snap_json(SubscribeMode::Watch, &state);
 
         assert!(d.get("text").is_none(), "scrollback must not ship");
@@ -1519,6 +1597,42 @@ mod tests {
         assert!(d.get("injuries").is_some());
         assert!(d.get("rt").is_some());
         assert!(d.get("char_info").is_some());
+        assert!(d.get("inventory_tree").is_none());
+        assert!(d.get("inventory_received").is_none());
+    }
+
+    #[test]
+    fn inventory_tree_delta_serializes_replacement_and_null_clear() {
+        let replacement = serde_json::from_str::<serde_json::Value>(&delta(
+            &RemoteDelta::InventoryTree(Some(inventory_tree())),
+            41,
+        ))
+        .expect("inventory tree replacement json");
+        assert_eq!(replacement["t"], "inventory_tree");
+        assert_eq!(replacement["seq"], 41);
+        assert_eq!(replacement["d"]["generation"], 7);
+        assert_eq!(replacement["d"]["items"][1]["relation"], "in");
+
+        let clear = serde_json::from_str::<serde_json::Value>(&delta(
+            &RemoteDelta::InventoryTree(None),
+            42,
+        ))
+        .expect("inventory tree clear json");
+        assert_eq!(clear["t"], "inventory_tree");
+        assert_eq!(clear["seq"], 42);
+        assert!(clear["d"].is_null());
+    }
+
+    #[test]
+    fn inventory_received_delta_serializes_authoritative_empty_state() {
+        let message = serde_json::from_str::<serde_json::Value>(&delta(
+            &RemoteDelta::InventoryReceived(true),
+            43,
+        ))
+        .expect("inventory received json");
+        assert_eq!(message["t"], "inventory_received");
+        assert_eq!(message["seq"], 43);
+        assert_eq!(message["d"], true);
     }
 
     /// A watcher still wants to know WHERE a character is -- that drives the
@@ -1586,6 +1700,14 @@ mod tests {
         let spells = D::Spells(Vec::new());
         assert!(!watch.wants(&spells));
         assert!(play.wants(&spells));
+
+        let inventory_tree = D::InventoryTree(Some(inventory_tree()));
+        assert!(!watch.wants(&inventory_tree));
+        assert!(play.wants(&inventory_tree));
+
+        let inventory_received = D::InventoryReceived(true);
+        assert!(!watch.wants(&inventory_received));
+        assert!(play.wants(&inventory_received));
     }
 
     #[test]

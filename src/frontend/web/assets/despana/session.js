@@ -28,6 +28,8 @@ const TRACKED_STATE_DELTAS = new Map([
   ["effects", "effects"],
   ["spells", "spellbook"],
   ["inventory", "inventory"],
+  ["inventory_received", "inventoryReceived"],
+  ["inventory_tree", "inventoryTree"],
   ["injuries", "injuries"],
   ["doll", "doll"],
   ["targets", "targets"],
@@ -464,6 +466,72 @@ function normalizeStyledLines(value) {
   }));
 }
 
+function normalizeInventoryTree(value) {
+  if (!isRecord(value)
+      || typeof value.room !== "string"
+      || typeof value.complete !== "boolean"
+      || !Number.isSafeInteger(value.generation)
+      || value.generation < 0
+      || !Array.isArray(value.items)) {
+    return null;
+  }
+
+  const nullableSafeInteger = (field) => field === null || Number.isSafeInteger(field);
+  const nullableNonnegativeInteger = (field) => field === null
+    || (Number.isSafeInteger(field) && field >= 0);
+  const nullableWireString = (field) => field === null || typeof field === "string";
+  const items = [];
+  for (const item of value.items) {
+    if (!isRecord(item)
+        || typeof item.id !== "string"
+        || typeof item.relation !== "string"
+        || typeof item.parent !== "string"
+        || typeof item.name !== "string"
+        || typeof item.article !== "string"
+        || typeof item.adjective !== "string"
+        || typeof item.noun !== "string"
+        || !nullableWireString(item.long)
+        || !Number.isSafeInteger(item.weight)
+        || !nullableSafeInteger(item.encum)
+        || !nullableNonnegativeInteger(item.in_max)
+        || !nullableNonnegativeInteger(item.on_max)
+        || !nullableNonnegativeInteger(item.in_encum)
+        || !nullableWireString(item.in_selector)
+        || typeof item.locker !== "boolean"
+        || typeof item.familyvault !== "boolean"
+        || !Array.isArray(item.flags)
+        || !item.flags.every((flag) => typeof flag === "string")) {
+      return null;
+    }
+    items.push(Object.freeze({
+      id: item.id,
+      relation: item.relation,
+      parent: item.parent,
+      name: item.name,
+      article: item.article,
+      adjective: item.adjective,
+      noun: item.noun,
+      long: item.long,
+      weight: item.weight,
+      encum: item.encum,
+      in_max: item.in_max,
+      on_max: item.on_max,
+      in_encum: item.in_encum,
+      in_selector: item.in_selector,
+      locker: item.locker,
+      familyvault: item.familyvault,
+      flags: Object.freeze([...item.flags]),
+    }));
+  }
+
+  return Object.freeze({
+    room: value.room,
+    complete: value.complete,
+    generation: value.generation,
+    items: Object.freeze(items),
+  });
+}
+
 function normalizeMenu(value) {
   if (!isRecord(value) || !Number.isSafeInteger(value.request_id) || value.request_id < 1) {
     return null;
@@ -500,6 +568,8 @@ function initialSlices() {
     effects: Object.freeze([]),
     spellbook: Object.freeze([]),
     inventory: Object.freeze([]),
+    inventoryReceived: false,
+    inventoryTree: null,
     injuries: Object.freeze({}),
     doll: normalizeDoll(null),
     targets: Object.freeze([]),
@@ -997,6 +1067,8 @@ export class DesktopSession {
       effects: normalizeEffects(payload.effects),
       spellbook: normalizeStyledLines(payload.spellbook),
       inventory: normalizeStyledLines(payload.inventory),
+      inventoryReceived: payload.inventory_received === true,
+      inventoryTree: normalizeInventoryTree(payload.inventory_tree),
       injuries: normalizeInjuries(payload.injuries),
       doll: normalizeDoll({
         variant: payload.doll_variant,
@@ -1046,6 +1118,8 @@ export class DesktopSession {
         "effects",
         "spellbook",
         "inventory",
+        "inventoryReceived",
+        "inventoryTree",
         "injuries",
         "doll",
         "targets",
@@ -1158,6 +1232,12 @@ export class DesktopSession {
         break;
       case "inventory":
         value = normalizeStyledLines(payload);
+        break;
+      case "inventory_received":
+        value = payload === true;
+        break;
+      case "inventory_tree":
+        value = normalizeInventoryTree(payload);
         break;
       case "injuries":
         value = normalizeInjuries(payload);

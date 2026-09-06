@@ -64,12 +64,26 @@ test("default restore is canonical and deeply frozen", () => {
 
   assert.equal(snapshot.version, 1);
   assert.equal(snapshot.character, "aster");
+  assert.equal(snapshot.preferences.inventory.showNested, false);
   assertCanonical(snapshot);
   assert.equal(MODULE_IDS.includes("command"), false);
   assert.ok(Object.isFrozen(snapshot));
   assert.ok(Object.isFrozen(snapshot.zones));
   assert.ok(Object.isFrozen(snapshot.zones.center.modules));
   assert.throws(() => snapshot.zones.center.modules.push({ id: "nope", weight: 1 }));
+});
+
+test("Inventory nesting preference survives serialization and reset", () => {
+  const model = restore();
+
+  model.apply({ type: "set-inventory-nesting", enabled: true });
+  assert.equal(model.snapshot().preferences.inventory.showNested, true);
+
+  const restored = restore(model.serialize());
+  assert.equal(restored.snapshot().preferences.inventory.showNested, true);
+
+  restored.apply({ type: "reset" });
+  assert.equal(restored.snapshot().preferences.inventory.showNested, false);
 });
 
 test("factory workspace matches the proven Calvix starting layout", () => {

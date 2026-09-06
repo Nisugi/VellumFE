@@ -59,6 +59,9 @@ export class DesktopWorkspace {
     this.reportError = typeof options.reportError === "function"
       ? options.reportError
       : () => {};
+    this.onLayoutChange = typeof options.onLayoutChange === "function"
+      ? options.onLayoutChange
+      : () => {};
     this.defaults = options.defaults || DEFAULT_DESPANA_LAYOUT;
     this.modules = new Map();
     this.destroyed = false;
@@ -164,6 +167,19 @@ export class DesktopWorkspace {
   unregister(id) {
     if (this.destroyed) return false;
     return this.modules.delete(id);
+  }
+
+  setInventoryNesting(enabled) {
+    this.#assertActive();
+    if (typeof enabled !== "boolean") {
+      throw new TypeError("Inventory nesting preference must be true or false");
+    }
+    if (this.layout.snapshot().preferences.inventory.showNested === enabled) return false;
+    this.#apply(
+      { type: "set-inventory-nesting", enabled },
+      enabled ? "Nested inventory enabled" : "Nested inventory disabled",
+    );
+    return true;
   }
 
   /** Load one character's layout. Repeated calls for the same identity are no-ops. */
@@ -873,6 +889,11 @@ export class DesktopWorkspace {
       element.scrollTop = top;
     }
     if (!this.workspaceMenu.hidden) this.#renderWorkspaceMenu();
+    try {
+      this.onLayoutChange(snapshot);
+    } catch (error) {
+      this.#surfaceError(error, "Unable to apply workspace preferences");
+    }
   }
 
   #pairSeparator(zone, before, after, flow, current, total) {

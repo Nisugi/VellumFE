@@ -9,6 +9,7 @@ impl MessageProcessor {
         // Every inv push/pop pair is a whole replacement. Mirror the exact
         // styled buffer even when it is empty so remote state cannot retain a
         // stale inventory after the game reports none.
+        game_state.inventory_received = true;
         game_state.inventory = self
             .inventory_buffer
             .iter()

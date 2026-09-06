@@ -93,6 +93,12 @@
           <section class="pane" data-module="injuries" aria-labelledby="injuries-heading">
             <header class="pane-header">
               <h2 id="injuries-heading">Injuries</h2>
+              <label class="visually-hidden" for="injuries-filter">Show injury type</label>
+              <select id="injuries-filter" class="injuries-filter">
+                <option value="injuries" selected>Injuries</option>
+                <option value="scars">Scars</option>
+                <option value="both">Both</option>
+              </select>
             </header>
             <div id="injuries-output" class="pane-output" data-module-body aria-live="polite">
               <p class="empty-state">No data received</p>
@@ -226,7 +232,13 @@
           <section class="pane" data-module="inventory" aria-labelledby="inventory-heading">
             <header class="pane-header">
               <h2 id="inventory-heading">Inventory</h2>
+              <label class="inventory-nesting-toggle">
+                <input id="inventory-show-nested" type="checkbox">
+                <span>Show Nested</span>
+              </label>
+              <button id="inventory-refresh" class="pane-action inventory-refresh" type="button" disabled>Refresh</button>
             </header>
+            <p id="inventory-refresh-status" class="inventory-refresh-status" role="status" aria-live="polite" hidden></p>
             <div id="inventory-output" class="pane-output text-output compact-output" data-module-body aria-live="polite">
               <p class="empty-state">No inventory data received</p>
             </div>

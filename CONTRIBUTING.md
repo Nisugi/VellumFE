@@ -21,13 +21,15 @@ is no npm install step. Run the same focused checks as CI from the repository
 root:
 
 ```bash
-# Session, workspace layout/storage, interactions, map, and font-scale behavior
+# Session, workspace layout/storage, interactions, map, inventory, and font-scale behavior
 node --test \
   src/frontend/web/assets/despana/session.test.mjs \
   src/frontend/web/assets/despana/layout.test.mjs \
   src/frontend/web/assets/despana/layout-storage.test.mjs \
   src/frontend/web/assets/despana/interactions.test.mjs \
   src/frontend/web/assets/despana/map.test.mjs \
+  src/frontend/web/assets/despana/inventory-refresh.test.mjs \
+  src/frontend/web/assets/despana/inventory-tree.test.mjs \
   src/frontend/web/assets/despana/font-scale.test.mjs
 
 # Feature-independent Rust unit and integration tests

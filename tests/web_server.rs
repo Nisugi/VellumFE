@@ -909,6 +909,13 @@ async fn health_and_static_assets_are_served() {
     assert!(despana_session.contains("text/javascript"));
     assert!(despana_session.contains("export class DesktopSession"));
 
+    let despana_inventory_refresh = http_get(addr, "/despana/inventory-refresh.js").await;
+    assert!(despana_inventory_refresh.contains("text/javascript"));
+    assert!(despana_inventory_refresh.contains("export class InventoryRefreshTracker"));
+
+    let despana_inventory_tree = http_get(addr, "/despana/inventory-tree.js").await;
+    assert!(despana_inventory_tree.contains("text/javascript"));
+    assert!(despana_inventory_tree.contains("export function projectInventoryItems"));
     let despana_font_scale = http_get(addr, "/despana/font-scale.js").await;
     assert!(despana_font_scale.contains("text/javascript"));
     assert!(despana_font_scale.contains("export function normalizeFontScale"));
@@ -1585,6 +1592,7 @@ async fn styled_inventory_flows_in_snapshot_and_replacement_delta() {
     };
 
     let mut game_state = vellum_fe::core::GameState::new();
+    game_state.inventory_received = true;
     game_state.inventory = vec![inventory_line(
         "535703780",
         "backpack",
@@ -1594,6 +1602,7 @@ async fn styled_inventory_flows_in_snapshot_and_replacement_delta() {
 
     let (mut client, snapshot) = connect_and_sync(addr, 0).await;
     assert_eq!(snapshot["d"]["inventory"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["d"]["inventory_received"], true);
     assert_eq!(
         snapshot["d"]["inventory"][0]["segments"][0]["link_data"]["exist_id"],
         "535703780"
@@ -1616,6 +1625,132 @@ async fn styled_inventory_flows_in_snapshot_and_replacement_delta() {
     let delta = read_json_timeout(&mut client).await;
     assert_eq!(delta["t"], "inventory");
     assert_eq!(delta["d"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn authoritative_empty_inventory_receipt_flows_without_a_line_delta() {
+    use vellum_fe::core::remote::RemoteStateSnapshot;
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    let mut game_state = GameState::new();
+    sink.flush_state(RemoteStateSnapshot::from_game_state(&game_state, &[]));
+    let (mut client, snapshot) = connect_and_sync(addr, 0).await;
+    assert!(snapshot["d"].get("inventory_received").is_none());
+    assert!(snapshot["d"].get("inventory").is_none());
+
+    game_state.inventory_received = true;
+    sink.flush_state(RemoteStateSnapshot::from_game_state(&game_state, &[]));
+    let delta = read_json_timeout(&mut client).await;
+    assert_eq!(delta["t"], "inventory_received");
+    assert_eq!(delta["d"], true);
+}
+
+#[tokio::test]
+async fn inventory_tree_flows_in_snapshot_replacement_and_null_clear() {
+    use vellum_fe::core::remote::RemoteStateSnapshot;
+    use vellum_fe::core::state::{ManagedInventoryItem, ManagedInventoryState};
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    let mut game_state = GameState::new();
+    game_state.managed_inventory = Some(ManagedInventoryState {
+        token: "im-private-token".to_string(),
+        room: "2005".to_string(),
+        items: vec![
+            ManagedInventoryItem {
+                id: "bag".to_string(),
+                relation: "worn".to_string(),
+                parent: "player".to_string(),
+                name: "a patchwork backpack".to_string(),
+                article: "a".to_string(),
+                adjective: "patchwork".to_string(),
+                noun: "backpack".to_string(),
+                long: Some("a patchwork backpack bound by vines".to_string()),
+                weight: 5,
+                encum: Some(4),
+                in_max: Some(2000),
+                on_max: None,
+                in_encum: Some(7),
+                in_selector: Some("backpack".to_string()),
+                locker: false,
+                familyvault: false,
+                flags: vec!["closed".to_string()],
+            },
+            ManagedInventoryItem {
+                id: "pouch".to_string(),
+                relation: "in".to_string(),
+                parent: "bag".to_string(),
+                name: "a coal black purse".to_string(),
+                article: "a".to_string(),
+                adjective: "coal black".to_string(),
+                noun: "purse".to_string(),
+                long: None,
+                weight: 3,
+                encum: None,
+                in_max: Some(505),
+                on_max: Some(101),
+                in_encum: Some(2),
+                in_selector: None,
+                locker: true,
+                familyvault: true,
+                flags: vec!["closed".to_string(), "locked".to_string()],
+            },
+            ManagedInventoryItem {
+                id: "wand".to_string(),
+                relation: "in".to_string(),
+                parent: "pouch".to_string(),
+                name: "an aquamarine wand".to_string(),
+                article: "an".to_string(),
+                adjective: "aquamarine".to_string(),
+                noun: "wand".to_string(),
+                weight: 1,
+                ..Default::default()
+            },
+        ],
+        complete: true,
+        generation: 11,
+    });
+    sink.flush_state(RemoteStateSnapshot::from_game_state(&game_state, &[]));
+
+    let (mut client, snapshot) = connect_and_sync(addr, 0).await;
+    let tree = &snapshot["d"]["inventory_tree"];
+    assert_eq!(tree["room"], "2005");
+    assert_eq!(tree["complete"], true);
+    assert_eq!(tree["generation"], 11);
+    assert!(
+        tree.get("token").is_none(),
+        "request token stays core-internal"
+    );
+    assert_eq!(tree["items"].as_array().unwrap().len(), 3);
+    assert_eq!(tree["items"][1]["relation"], "in");
+    assert_eq!(tree["items"][1]["parent"], "bag");
+    assert_eq!(tree["items"][1]["in_max"], 505);
+    assert_eq!(tree["items"][1]["on_max"], 101);
+    assert_eq!(tree["items"][1]["in_encum"], 2);
+    assert_eq!(tree["items"][1]["locker"], true);
+    assert_eq!(tree["items"][1]["familyvault"], true);
+    assert_eq!(
+        tree["items"][1]["flags"],
+        serde_json::json!(["closed", "locked"])
+    );
+    assert_eq!(tree["items"][2]["parent"], "pouch");
+
+    let managed = game_state.managed_inventory.as_mut().unwrap();
+    managed.generation = 12;
+    managed.items[1].flags = vec!["closed".to_string()];
+    sink.flush_state(RemoteStateSnapshot::from_game_state(&game_state, &[]));
+    let replacement = read_json_timeout(&mut client).await;
+    assert_eq!(replacement["t"], "inventory_tree");
+    assert_eq!(replacement["d"]["generation"], 12);
+    assert_eq!(
+        replacement["d"]["items"][1]["flags"],
+        serde_json::json!(["closed"])
+    );
+
+    game_state.managed_inventory = None;
+    sink.flush_state(RemoteStateSnapshot::from_game_state(&game_state, &[]));
+    let clear = read_json_timeout(&mut client).await;
+    assert_eq!(clear["t"], "inventory_tree");
+    assert!(clear["d"].is_null());
 }
 
 #[tokio::test]

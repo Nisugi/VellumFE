@@ -171,6 +171,7 @@ function fullSnapshot(overrides = {}) {
         },
       }],
     }],
+    inventory_received: true,
     injuries: { head: 2 },
     doll_variant: "runic",
     doll_hidden: ["leftLeg"],
@@ -243,6 +244,52 @@ function fullSnapshot(overrides = {}) {
       travel: { dest: 101, done: 1, total: 2, eta: "0:05" },
     },
     text: [{ seq: 1, stream: "main", line: line("Welcome, Briar.") }],
+    ...overrides,
+  };
+}
+
+function inventoryTree(overrides = {}) {
+  return {
+    room: "100",
+    complete: true,
+    generation: 7,
+    items: [{
+      id: "535703780",
+      relation: "worn",
+      parent: "player",
+      name: "a patchwork backpack",
+      article: "a",
+      adjective: "patchwork",
+      noun: "backpack",
+      long: null,
+      weight: 4,
+      encum: null,
+      in_max: 1000,
+      on_max: null,
+      in_encum: 2,
+      in_selector: null,
+      locker: false,
+      familyvault: false,
+      flags: ["closed"],
+    }, {
+      id: "148848454",
+      relation: "in",
+      parent: "535703780",
+      name: "a slender wand",
+      article: "a",
+      adjective: "slender",
+      noun: "wand",
+      long: "A slender wand lies here.",
+      weight: 0,
+      encum: -1,
+      in_max: null,
+      on_max: null,
+      in_encum: null,
+      in_selector: "wand in my backpack",
+      locker: false,
+      familyvault: false,
+      flags: [],
+    }],
     ...overrides,
   };
 }
@@ -648,12 +695,77 @@ test("a full snapshot reduces the complete initial desktop slice", () => {
   assert.equal(event.state.mapState.ghosts[0].current, true);
   assert.ok(Object.isFrozen(event.state.effects[0].effects[0]));
   assert.ok(Object.isFrozen(event.state.inventory));
+  assert.equal(event.state.inventoryReceived, true);
   assert.ok(Object.isFrozen(event.state.inventory[0].segments[0].link_data));
   assert.ok(Object.isFrozen(event.state.objectives.objectives[0].actions));
   assert.ok(Object.isFrozen(event.state.mapScene.rooms));
   assert.ok(Object.isFrozen(event.state.mapState.travel));
   assert.equal(event.state.streams.main.length, 1);
   assert.equal(event.state.streams.main[0].line.segments[0].text, "Welcome, Briar.");
+});
+
+test("an inventory tree snapshot retains and deeply freezes the wire projection", () => {
+  const harness = makeHarness();
+  const socket = connectAndHello(harness);
+  const wireTree = inventoryTree();
+  socket.receive(frame("snapshot", fullSnapshot({ inventory_tree: wireTree }), 1));
+
+  const event = harness.events.findLast((entry) => entry.type === "snapshot");
+  assert.deepEqual(event.state.inventoryTree, wireTree);
+  assert.ok(event.changed.includes("inventoryTree"));
+  assert.ok(Object.isFrozen(event.state.inventoryTree));
+  assert.ok(Object.isFrozen(event.state.inventoryTree.items));
+  assert.ok(Object.isFrozen(event.state.inventoryTree.items[0]));
+  assert.ok(Object.isFrozen(event.state.inventoryTree.items[0].flags));
+  assert.notStrictEqual(event.state.inventoryTree, wireTree);
+  assert.notStrictEqual(event.state.inventoryTree.items, wireTree.items);
+  assert.notStrictEqual(event.state.inventoryTree.items[0], wireTree.items[0]);
+  assert.notStrictEqual(event.state.inventoryTree.items[0].flags, wireTree.items[0].flags);
+});
+
+test("inventory tree deltas fully replace the projection and malformed input clears it", () => {
+  const harness = makeHarness();
+  const socket = connectAndHello(harness);
+  socket.receive(frame("snapshot", fullSnapshot({ inventory_tree: inventoryTree() }), 1));
+  const previous = harness.events.at(-1).state.inventoryTree;
+
+  const replacement = inventoryTree({
+    room: "200",
+    complete: false,
+    generation: 8,
+    items: [],
+  });
+  socket.receive(frame("inventory_tree", replacement, 2));
+
+  const replacementEvent = harness.events.at(-1);
+  assert.equal(replacementEvent.type, "state");
+  assert.deepEqual(replacementEvent.changed, ["inventoryTree"]);
+  assert.deepEqual(replacementEvent.state.inventoryTree, replacement);
+  assert.notStrictEqual(replacementEvent.state.inventoryTree, previous);
+
+  socket.receive(frame("inventory_tree", inventoryTree({ generation: "invalid" }), 2));
+  const malformedEvent = harness.events.at(-1);
+  assert.deepEqual(malformedEvent.changed, ["inventoryTree"]);
+  assert.equal(malformedEvent.state.inventoryTree, null);
+
+  const malformedItem = inventoryTree();
+  malformedItem.items[0].flags.push(42);
+  socket.receive(frame("inventory_tree", malformedItem, 2));
+  assert.equal(harness.events.at(-1).state.inventoryTree, null);
+});
+
+test("inventory receipt is tracked independently of an empty inventory", () => {
+  const harness = makeHarness();
+  const socket = connectAndHello(harness);
+  socket.receive(frame("snapshot", fullSnapshot({ inventory: [], inventory_received: false }), 1));
+  assert.equal(harness.events.at(-1).state.inventoryReceived, false);
+  assert.deepEqual(harness.events.at(-1).state.inventory, []);
+
+  socket.receive(frame("inventory_received", true, 2));
+  const event = harness.events.at(-1);
+  assert.deepEqual(event.changed, ["inventoryReceived"]);
+  assert.equal(event.state.inventoryReceived, true);
+  assert.deepEqual(event.state.inventory, []);
 });
 
 test("text de-duplicates by seq while state at the same seq still applies", () => {
@@ -805,13 +917,15 @@ test("parity deltas replace frozen slices even when they share one sequence", ()
 test("a replacement snapshot clears omitted parity projections", () => {
   const harness = makeHarness();
   const socket = connectAndHello(harness);
-  socket.receive(frame("snapshot", fullSnapshot(), 1));
+  socket.receive(frame("snapshot", fullSnapshot({ inventory_tree: inventoryTree() }), 1));
 
   const replacement = fullSnapshot({ text: [] });
   for (const key of [
     "effects",
     "spellbook",
     "inventory",
+    "inventory_received",
+    "inventory_tree",
     "injuries",
     "doll_variant",
     "doll_hidden",
@@ -830,6 +944,8 @@ test("a replacement snapshot clears omitted parity projections", () => {
   assert.deepEqual(view.effects, []);
   assert.deepEqual(view.spellbook, []);
   assert.deepEqual(view.inventory, []);
+  assert.equal(view.inventoryReceived, false);
+  assert.equal(view.inventoryTree, null);
   assert.deepEqual(view.injuries, {});
   assert.deepEqual(view.doll, { variant: null, hidden: [] });
   assert.deepEqual(view.targets, []);
@@ -1105,7 +1221,7 @@ test("all intents honor controlled game-session state while sidecars stay playab
 test("a changed server epoch clears stale state and resumes from zero", () => {
   const harness = makeHarness();
   const first = connectAndHello(harness, "epoch-1", "Briar");
-  first.receive(frame("snapshot", fullSnapshot(), 1));
+  first.receive(frame("snapshot", fullSnapshot({ inventory_tree: inventoryTree() }), 1));
   first.serverClose();
   harness.timers.runNext();
 
@@ -1129,6 +1245,8 @@ test("a changed server epoch clears stale state and resumes from zero", () => {
   assert.deepEqual(reset.state.effects, []);
   assert.deepEqual(reset.state.spellbook, []);
   assert.deepEqual(reset.state.inventory, []);
+  assert.equal(reset.state.inventoryReceived, false);
+  assert.equal(reset.state.inventoryTree, null);
   assert.deepEqual(reset.state.injuries, {});
   assert.deepEqual(reset.state.doll, { variant: null, hidden: [] });
   assert.deepEqual(reset.state.targets, []);
