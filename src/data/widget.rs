@@ -247,6 +247,7 @@ pub enum SpanType {
     Monsterbold, // <preset id="monsterbold"> from parser (monsters)
     Spell,       // <spell> tag from parser (spells)
     Speech,      // <preset id="speech"> from parser (player speech)
+    PlayerTitle, // Non-clickable title prefix adjacent to a linked player name
     System,      // Client/system messages; skip highlight transforms
 }
 

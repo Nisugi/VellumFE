@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::Arc;
 
+use crate::core::classic_maps::ClassicMapCatalog;
 use crate::core::curated_maps::CuratedMaps;
 use crate::core::layout_engine::positioner::Cell;
 use crate::core::layout_engine::{
@@ -35,42 +36,158 @@ pub fn lich_game_dir_name(game: Option<&str>) -> &'static str {
     }
 }
 
-/// Resolve which mapdb to load from the configured options. Priority:
-/// explicit path (a folder scans for the newest map data inside; a file
-/// pins that exact build) > downloaded release > Lich folder. Downloaded
-/// releases carry GemStone data, so DragonRealms sessions skip straight to
-/// the Lich folder (which is per-game).
+const AMBIGUOUS_LICH_WARNING: &str =
+    "Multiple viable running Lich installs detected; set map.lich_dir to select one";
+
+/// Resolve which mapdb to load from the configured options.
+///
+/// This preserves the public API used by embedders. Vellum runtimes should use
+/// [`resolve_source_resolution`] so the mapdb and its classic-art authority are
+/// selected as one coherent session-scoped decision.
 pub fn resolve_source(
     mapdb_path: Option<&str>,
     lich_dir: Option<&str>,
     game: Option<&str>,
     download_dir: &std::path::Path,
 ) -> MapDbSource {
+    resolve_source_resolution(mapdb_path, lich_dir, game, download_dir).mapdb
+}
+
+/// Resolve which mapdb and classic-art directory to load from the configured
+/// options. Mapdb priority:
+/// explicit path (a folder scans for the newest map data inside; a file
+/// pins that exact build) > downloaded release > configured Lich folder >
+/// a running local Lich process. Downloaded releases carry GemStone data, so
+/// DragonRealms sessions skip straight to the Lich folder (which is per-game).
+///
+/// Classic art follows an explicit `lich_dir` first, then a Lich-owned mapdb,
+/// then automatic discovery. Automatic discovery is accepted only when
+/// exactly one running installation has map data for this game; ambiguity is
+/// reported instead of silently mixing one installation's data with another's
+/// images.
+pub fn resolve_source_resolution(
+    mapdb_path: Option<&str>,
+    lich_dir: Option<&str>,
+    game: Option<&str>,
+    download_dir: &std::path::Path,
+) -> MapSourceResolution {
+    resolve_source_with_auto(
+        mapdb_path,
+        lich_dir,
+        game,
+        download_dir,
+        crate::process_probe::running_lich_install_dirs,
+    )
+}
+
+/// Find the sibling `maps/` directory for a Lich map database. Downloaded or
+/// otherwise standalone databases have no sibling art and return `None`;
+/// callers may then fall back to a running local Lich installation.
+fn classic_maps_dir_for(mapdb_path: &std::path::Path) -> Option<PathBuf> {
+    let data_dir = mapdb_path
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "data"))?;
+    let maps = data_dir.parent()?.join("maps");
+    maps.is_dir().then_some(maps)
+}
+
+fn resolve_source_with_auto<F>(
+    mapdb_path: Option<&str>,
+    lich_dir: Option<&str>,
+    game: Option<&str>,
+    download_dir: &std::path::Path,
+    auto_lich_dirs: F,
+) -> MapSourceResolution
+where
+    F: FnOnce() -> Vec<PathBuf>,
+{
     fn non_empty(s: &str) -> Option<&str> {
         let t = s.trim();
         (!t.is_empty()).then_some(t)
     }
-    if let Some(path) = mapdb_path.and_then(non_empty) {
-        let path = PathBuf::from(path);
+    let explicit_mapdb = mapdb_path.and_then(non_empty).map(PathBuf::from);
+    let explicit_lich = lich_dir.and_then(non_empty).map(PathBuf::from);
+    let game_dir = lich_game_dir_name(game);
+
+    let mut mapdb = if let Some(path) = explicit_mapdb {
         // A folder means "the newest map data inside" — the primary way to
         // point at a Lich data dir, which rotates map-<timestamp>.json on
         // every update, so pinning one file there is guaranteed to dangle
         // eventually. An explicit file stays available for the odd case.
         if path.is_dir() {
-            return MapDbSource::GameDataDir(path);
+            MapDbSource::GameDataDir(path)
+        } else {
+            MapDbSource::File(path)
         }
-        return MapDbSource::File(path);
-    }
-    let game_dir = lich_game_dir_name(game);
-    if !game_dir.starts_with("DR") {
+    } else if !game_dir.starts_with("DR") {
         if let Some((_, path)) = crate::core::mapdb_update::latest_downloaded(download_dir) {
-            return MapDbSource::File(path);
+            MapDbSource::File(path)
+        } else if let Some(dir) = explicit_lich.as_ref() {
+            MapDbSource::GameDataDir(dir.join("data").join(game_dir))
+        } else {
+            MapDbSource::Unconfigured
+        }
+    } else if let Some(dir) = explicit_lich.as_ref() {
+        MapDbSource::GameDataDir(dir.join("data").join(game_dir))
+    } else {
+        MapDbSource::Unconfigured
+    };
+
+    let source_classic_dir = mapdb_path_hint(&mapdb)
+        .as_deref()
+        .and_then(classic_maps_dir_for);
+    let needs_auto = explicit_lich.is_none()
+        && (matches!(mapdb, MapDbSource::Unconfigured) || source_classic_dir.is_none());
+    let auto_dirs = needs_auto.then(auto_lich_dirs).unwrap_or_default();
+    let viable_auto: Vec<PathBuf> = auto_dirs
+        .into_iter()
+        .filter(|dir| find_latest_mapdb(&dir.join("data").join(game_dir)).is_some())
+        .collect();
+
+    let mut warning = None;
+    if matches!(mapdb, MapDbSource::Unconfigured) {
+        match viable_auto.as_slice() {
+            [dir] => mapdb = MapDbSource::GameDataDir(dir.join("data").join(game_dir)),
+            dirs if dirs.len() > 1 => warning = Some(AMBIGUOUS_LICH_WARNING.to_string()),
+            _ => {}
         }
     }
-    if let Some(dir) = lich_dir.and_then(non_empty) {
-        return MapDbSource::GameDataDir(std::path::Path::new(dir).join("data").join(game_dir));
+
+    let classic_maps_dir = if let Some(dir) = explicit_lich {
+        let maps = dir.join("maps");
+        maps.is_dir().then_some(maps)
+    } else if let Some(dir) = mapdb_path_hint(&mapdb)
+        .as_deref()
+        .and_then(classic_maps_dir_for)
+    {
+        Some(dir)
+    } else {
+        match viable_auto.as_slice() {
+            [dir] => {
+                let maps = dir.join("maps");
+                maps.is_dir().then_some(maps)
+            }
+            dirs if dirs.len() > 1 => {
+                warning = Some(AMBIGUOUS_LICH_WARNING.to_string());
+                None
+            }
+            _ => None,
+        }
+    };
+
+    MapSourceResolution {
+        mapdb,
+        classic_maps_dir,
+        warning,
     }
-    MapDbSource::Unconfigured
+}
+
+fn mapdb_path_hint(source: &MapDbSource) -> Option<PathBuf> {
+    match source {
+        MapDbSource::File(path) => Some(path.clone()),
+        MapDbSource::GameDataDir(dir) => find_latest_mapdb(dir),
+        MapDbSource::Unconfigured => None,
+    }
 }
 
 enum MapJob {
@@ -111,6 +228,30 @@ pub enum MapDbSource {
     File(PathBuf),
     /// A Lich per-game data dir (`<lich>/data/GSIV`); newest build wins.
     GameDataDir(PathBuf),
+}
+
+/// One coherent map-source decision for a session.
+///
+/// Keeping mapdb and classic-art selection together prevents frontends from
+/// rediscovering a different Lich installation behind the core's back.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MapSourceResolution {
+    pub mapdb: MapDbSource,
+    pub classic_maps_dir: Option<PathBuf>,
+    pub warning: Option<String>,
+}
+
+impl From<MapDbSource> for MapSourceResolution {
+    fn from(mapdb: MapDbSource) -> Self {
+        let classic_maps_dir = mapdb_path_hint(&mapdb)
+            .as_deref()
+            .and_then(classic_maps_dir_for);
+        Self {
+            mapdb,
+            classic_maps_dir,
+            warning: None,
+        }
+    }
 }
 
 /// One editor action against the override store.
@@ -179,7 +320,12 @@ pub struct MapService {
     // Worker detaches on drop; it exits when job_tx closes.
     _worker: std::thread::JoinHandle<()>,
 
-    source: MapDbSource,
+    source: MapSourceResolution,
+    /// Lich's classic annotated-map directory associated with the loaded
+    /// mapdb. Renderers see only registry names, never this path.
+    classic_maps_dir: Option<PathBuf>,
+    classic_maps: Arc<ClassicMapCatalog>,
+    classic_maps_warning: Option<String>,
     db_state: DbState,
     mapdb: Option<Arc<MapDb>>,
     pub db_error: Option<String>,
@@ -319,7 +465,10 @@ impl MapService {
             job_tx,
             event_rx,
             _worker: worker,
-            source: MapDbSource::Unconfigured,
+            source: MapSourceResolution::default(),
+            classic_maps_dir: None,
+            classic_maps: Arc::new(ClassicMapCatalog::new()),
+            classic_maps_warning: None,
             db_state: DbState::NotLoaded,
             mapdb: None,
             db_error: None,
@@ -355,6 +504,29 @@ impl MapService {
 
     pub fn mapdb(&self) -> Option<&Arc<MapDb>> {
         self.mapdb.as_ref()
+    }
+
+    /// The trusted classic-art catalog belonging to this game session.
+    /// Frontends clone the `Arc`; they never perform their own discovery.
+    pub fn classic_maps(&self) -> Arc<ClassicMapCatalog> {
+        Arc::clone(&self.classic_maps)
+    }
+
+    /// Non-fatal discovery warning. Generated/downloaded maps remain usable
+    /// when classic art is disabled because automatic Lich discovery was
+    /// ambiguous.
+    pub fn classic_maps_warning(&self) -> Option<&str> {
+        self.classic_maps_warning.as_deref()
+    }
+
+    /// The current room's classic annotated map and its pixel rectangle.
+    /// Missing art is normal and lets callers fall back to the local graph.
+    pub fn current_classic_map(&self) -> Option<(String, [f64; 4])> {
+        let room = self.mapdb.as_ref()?.room(self.current_room_id?)?;
+        let name = room.image.as_ref()?;
+        let coords = room.image_coords?;
+        self.classic_maps.get(name)?;
+        Some((name.clone(), coords))
     }
 
     /// The curated/satellite membership, once built. None in fallback mode
@@ -431,19 +603,53 @@ impl MapService {
         self.mapdb = None;
         self.db_state = DbState::NotLoaded;
         self.db_error = None;
-        self.source = MapDbSource::Unconfigured; // force ensure_db past its guard
+        self.source = MapSourceResolution::default(); // force ensure_db past its guard
         self.ensure_db(source);
     }
 
     /// Kick off (or re-kick after a source change) the mapdb load. Cheap to
     /// call repeatedly; only acts on a state change.
-    pub fn ensure_db(&mut self, source: MapDbSource) {
-        if source == self.source && !matches!(self.db_state, DbState::NotLoaded) {
+    pub fn ensure_db(&mut self, source: impl Into<MapSourceResolution>) {
+        let source = source.into();
+        let mapdb_changed = source.mapdb != self.source.mapdb;
+        let classic_dir_missing = self
+            .classic_maps_dir
+            .as_ref()
+            .is_some_and(|dir| !dir.is_dir());
+        let resolution_changed = source != self.source;
+        if resolution_changed || classic_dir_missing {
+            let classic_maps_dir = source.classic_maps_dir.clone();
+            let classic_dir_changed = classic_maps_dir != self.classic_maps_dir;
+            if classic_dir_changed {
+                self.classic_maps_dir = classic_maps_dir;
+            }
+            // A mapdb reload may add image files without changing the maps
+            // directory path, so source changes must refresh the registry too.
+            if resolution_changed || classic_dir_changed || classic_dir_missing {
+                let _ = self
+                    .classic_maps
+                    .reload_from_dir(self.classic_maps_dir.as_deref());
+                if classic_dir_changed {
+                    self.revision += 1;
+                }
+            }
+            if source.warning != self.classic_maps_warning {
+                if let Some(warning) = source.warning.as_deref() {
+                    tracing::warn!("{warning}; classic map art is disabled for this session");
+                }
+                self.classic_maps_warning = source.warning.clone();
+            }
+        }
+        if !mapdb_changed && !matches!(self.db_state, DbState::NotLoaded) {
+            // Art selection and its warning are independent of the mapdb
+            // worker. They were reconciled above; don't reload a healthy
+            // generated map merely because the classic directory changed.
+            self.source = source;
             return;
         }
         self.source = source;
         self.db_error = None;
-        let path = match &self.source {
+        let path = match &self.source.mapdb {
             MapDbSource::Unconfigured => {
                 self.db_state = DbState::NotLoaded;
                 return;
@@ -472,7 +678,7 @@ impl MapService {
             self.db_state = DbState::Failed;
             self.db_error = Some(format!(
                 "no map-<timestamp>.json found under {}",
-                match &self.source {
+                match &self.source.mapdb {
                     MapDbSource::GameDataDir(dir) => dir.display().to_string(),
                     _ => String::new(),
                 }
@@ -1334,35 +1540,39 @@ mod tests {
         let downloads = tempfile::tempdir().unwrap();
         let empty = tempfile::tempdir().unwrap();
 
+        let resolve = |mapdb_path, lich_dir, game, download_dir| {
+            resolve_source_with_auto(mapdb_path, lich_dir, game, download_dir, Vec::new).mapdb
+        };
+
         // Nothing configured, nothing downloaded.
         assert_eq!(
-            resolve_source(None, None, None, empty.path()),
+            resolve(None, None, None, empty.path()),
             MapDbSource::Unconfigured
         );
         // Lich folder alone resolves per-game.
         assert_eq!(
-            resolve_source(None, Some("C:/lich"), Some("prime"), empty.path()),
+            resolve(None, Some("C:/lich"), Some("prime"), empty.path()),
             MapDbSource::GameDataDir(std::path::Path::new("C:/lich").join("data").join("GSIV"))
         );
         // A downloaded release outranks the Lich folder...
         let downloaded = downloads.path().join("mapdb-v0.4.0.json");
         std::fs::write(&downloaded, "[]").unwrap();
         assert_eq!(
-            resolve_source(None, Some("C:/lich"), Some("prime"), downloads.path()),
+            resolve(None, Some("C:/lich"), Some("prime"), downloads.path()),
             MapDbSource::File(downloaded.clone())
         );
         // ...but never leaks GemStone rooms into a DragonRealms session.
         assert_eq!(
-            resolve_source(None, Some("C:/lich"), Some("dr"), downloads.path()),
+            resolve(None, Some("C:/lich"), Some("dr"), downloads.path()),
             MapDbSource::GameDataDir(std::path::Path::new("C:/lich").join("data").join("DR"))
         );
         // An explicit file outranks everything; blank strings don't count.
         assert_eq!(
-            resolve_source(Some("D:/my.json"), Some("C:/lich"), None, downloads.path()),
+            resolve(Some("D:/my.json"), Some("C:/lich"), None, downloads.path()),
             MapDbSource::File(PathBuf::from("D:/my.json"))
         );
         assert_eq!(
-            resolve_source(Some("  "), Some(""), None, downloads.path()),
+            resolve(Some("  "), Some(""), None, downloads.path()),
             MapDbSource::File(downloaded)
         );
         // An explicit path that is a FOLDER means "newest map data inside" —
@@ -1371,9 +1581,168 @@ mod tests {
         let scan_dir = tempfile::tempdir().unwrap();
         let dir_str = scan_dir.path().to_string_lossy().to_string();
         assert_eq!(
-            resolve_source(Some(&dir_str), Some("C:/lich"), None, downloads.path()),
+            resolve(Some(&dir_str), Some("C:/lich"), None, downloads.path()),
             MapDbSource::GameDataDir(scan_dir.path().to_path_buf())
         );
+    }
+
+    #[test]
+    fn source_resolution_uses_running_lich_install_last() {
+        let empty = tempfile::tempdir().unwrap();
+        let auto = tempfile::tempdir().unwrap();
+        let auto_game_dir = auto.path().join("data").join("GSIV");
+        std::fs::create_dir_all(&auto_game_dir).unwrap();
+        std::fs::write(auto_game_dir.join("map-123.json"), "[]").unwrap();
+
+        assert_eq!(
+            resolve_source_with_auto(None, None, Some("prime"), empty.path(), || {
+                vec![auto.path().to_path_buf()]
+            })
+            .mapdb,
+            MapDbSource::GameDataDir(auto_game_dir)
+        );
+
+        let explicit = empty.path().join("explicit.json");
+        std::fs::write(&explicit, "[]").unwrap();
+        assert_eq!(
+            resolve_source_with_auto(
+                explicit.to_str(),
+                None,
+                Some("prime"),
+                empty.path(),
+                Vec::new,
+            )
+            .mapdb,
+            MapDbSource::File(explicit)
+        );
+
+        let downloads = tempfile::tempdir().unwrap();
+        let downloaded = downloads.path().join("mapdb-v1.json");
+        std::fs::write(&downloaded, "[]").unwrap();
+        assert_eq!(
+            resolve_source_with_auto(None, None, Some("prime"), downloads.path(), Vec::new).mapdb,
+            MapDbSource::File(downloaded)
+        );
+
+        let configured = empty.path().join("configured-lich");
+        assert_eq!(
+            resolve_source_with_auto(
+                None,
+                configured.to_str(),
+                Some("prime"),
+                empty.path(),
+                || panic!("auto-discovery must not run when lich_dir is configured"),
+            )
+            .mapdb,
+            MapDbSource::GameDataDir(configured.join("data").join("GSIV"))
+        );
+    }
+
+    #[test]
+    fn auto_discovery_skips_installs_without_current_game_map_data() {
+        let empty = tempfile::tempdir().unwrap();
+        let wrong_game = tempfile::tempdir().unwrap();
+        let right_game = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(wrong_game.path().join("data").join("DR")).unwrap();
+        std::fs::write(
+            wrong_game.path().join("data").join("DR").join("map-1.json"),
+            "[]",
+        )
+        .unwrap();
+        let right_game_dir = right_game.path().join("data").join("GSIV");
+        std::fs::create_dir_all(&right_game_dir).unwrap();
+        std::fs::write(right_game_dir.join("map-2.json"), "[]").unwrap();
+
+        assert_eq!(
+            resolve_source_with_auto(None, None, Some("prime"), empty.path(), || {
+                vec![
+                    wrong_game.path().to_path_buf(),
+                    right_game.path().to_path_buf(),
+                ]
+            })
+            .mapdb,
+            MapDbSource::GameDataDir(right_game_dir)
+        );
+    }
+
+    #[test]
+    fn auto_discovery_fails_closed_when_viable_installs_are_ambiguous() {
+        let downloads = tempfile::tempdir().unwrap();
+        let downloaded = downloads.path().join("mapdb-v1.json");
+        std::fs::write(&downloaded, "[]").unwrap();
+        let empty = tempfile::tempdir().unwrap();
+        let first = viable_lich_install("GSIV", "first.png");
+        let second = viable_lich_install("GSIV", "second.png");
+
+        let resolution =
+            resolve_source_with_auto(None, None, Some("prime"), downloads.path(), || {
+                vec![first.path().to_path_buf(), second.path().to_path_buf()]
+            });
+
+        assert_eq!(resolution.mapdb, MapDbSource::File(downloaded));
+        assert_eq!(resolution.classic_maps_dir, None);
+        assert_eq!(resolution.warning.as_deref(), Some(AMBIGUOUS_LICH_WARNING));
+
+        let no_download = resolve_source_with_auto(None, None, Some("prime"), empty.path(), || {
+            vec![first.path().to_path_buf(), second.path().to_path_buf()]
+        });
+        assert_eq!(no_download.mapdb, MapDbSource::Unconfigured);
+        assert_eq!(no_download.classic_maps_dir, None);
+        assert_eq!(no_download.warning.as_deref(), Some(AMBIGUOUS_LICH_WARNING));
+    }
+
+    #[test]
+    fn explicit_lich_dir_wins_over_ambiguous_auto_art_discovery() {
+        let downloads = tempfile::tempdir().unwrap();
+        std::fs::write(downloads.path().join("mapdb-v1.json"), "[]").unwrap();
+        let configured = viable_lich_install("GSIV", "configured.png");
+
+        let resolution = resolve_source_with_auto(
+            None,
+            configured.path().to_str(),
+            Some("prime"),
+            downloads.path(),
+            || panic!("explicit map.lich_dir must suppress automatic discovery"),
+        );
+
+        assert_eq!(
+            resolution.classic_maps_dir,
+            Some(configured.path().join("maps"))
+        );
+        assert!(resolution.warning.is_none());
+    }
+
+    #[test]
+    fn auto_discovery_uses_the_only_install_viable_for_this_game() {
+        let downloads = tempfile::tempdir().unwrap();
+        std::fs::write(downloads.path().join("mapdb-v1.json"), "[]").unwrap();
+        let wrong_game = viable_lich_install("DR", "wrong.png");
+        let right_game = viable_lich_install("GSIV", "right.png");
+
+        let resolution =
+            resolve_source_with_auto(None, None, Some("prime"), downloads.path(), || {
+                vec![
+                    wrong_game.path().to_path_buf(),
+                    right_game.path().to_path_buf(),
+                ]
+            });
+
+        assert_eq!(
+            resolution.classic_maps_dir,
+            Some(right_game.path().join("maps"))
+        );
+        assert!(resolution.warning.is_none());
+    }
+
+    fn viable_lich_install(game_dir: &str, image: &str) -> tempfile::TempDir {
+        let install = tempfile::tempdir().unwrap();
+        let data = install.path().join("data").join(game_dir);
+        let maps = install.path().join("maps");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&maps).unwrap();
+        std::fs::write(data.join("map-1.json"), "[]").unwrap();
+        std::fs::write(maps.join(image), b"image").unwrap();
+        install
     }
 
     #[test]

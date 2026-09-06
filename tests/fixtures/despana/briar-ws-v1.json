@@ -1,0 +1,237 @@
+[
+  {
+    "v": 1,
+    "seq": 1,
+    "t": "hello",
+    "d": {
+      "character": "Briar",
+      "streams": ["main", "thoughts", "familiar"],
+      "session": "fixture-briar-epoch"
+    }
+  },
+  {
+    "v": 1,
+    "seq": 1,
+    "t": "snapshot",
+    "d": {
+      "mode": "full",
+      "character": "Briar",
+      "session": {
+        "state": "connected",
+        "character": "Briar",
+        "game": "GS3",
+        "session_control": true
+      },
+      "room": {
+        "name": "Duskruin Arena, Sands Approach",
+        "id": "23780",
+        "exits": ["south", "down"],
+        "description": [
+          {
+            "stream": "main",
+            "segments": [
+              {
+                "text": "Bright torchlight spills through the arena entrance.",
+                "fg": "#d7d7d7",
+                "bg": null,
+                "bold": false
+              }
+            ]
+          }
+        ]
+      },
+      "effects": [
+        {
+          "category": "ActiveSpells",
+          "effects": [
+            {
+              "id": "425",
+              "text": "Elemental Targeting",
+              "value": 91,
+              "time": "03:51:41",
+              "expires_at": 14300,
+              "bar_color": "#4c84d4",
+              "text_color": null
+            }
+          ],
+          "generation": 11
+        }
+      ],
+      "inventory": [
+        {
+          "stream": "inv",
+          "segments": [
+            {
+              "text": "some plain black robes",
+              "fg": "#c9b37e",
+              "bg": null,
+              "bold": false,
+              "link_data": {
+                "exist_id": "fixture-briar-robes-01",
+                "noun": "robes",
+                "text": "plain black robes",
+                "coord": null
+              }
+            }
+          ]
+        }
+      ],
+      "targets": [
+        {
+          "id": "#fixture-briar-target-01",
+          "name": "an arena champion",
+          "noun": "champion",
+          "status": null,
+          "current": true
+        }
+      ],
+      "objectives": {
+        "objectives": [
+          {
+            "id": "fixture-briar-task-01",
+            "kind": "ARENA",
+            "state": "active",
+            "name": "Complete an arena match",
+            "description": "Defeat every arena opponent.",
+            "location": "Duskruin Arena",
+            "cadence": "event",
+            "rewards": [
+              {
+                "reward_type": "bloodscrip",
+                "amount": 300
+              }
+            ],
+            "actions": []
+          }
+        ],
+        "generation": 14
+      },
+      "char_info": {
+        "profession": "Sorcerer",
+        "level": 90
+      },
+      "map_scene": {
+        "location": "Duskruin Arena",
+        "sheet": "arena",
+        "rooms": [
+          { "i": 23780, "x": 8, "y": 6, "e": true },
+          { "i": 23781, "x": 8, "y": 7, "e": false }
+        ],
+        "edges": [
+          { "x1": 8, "y1": 6, "x2": 8, "y2": 7, "k": 1, "l": "down", "ar": 23780, "br": 23781 }
+        ],
+        "labels": [
+          { "x": 8, "y": 5, "t": "Dueling Sands" }
+        ]
+      },
+      "map_state": {
+        "available": true,
+        "location": "Duskruin Arena",
+        "room": 23780,
+        "cell": [8, 6],
+        "in_ghost": false,
+        "ghosts": [],
+        "ghost_edges": [],
+        "travel": null
+      },
+      "text": [
+        {
+          "seq": 1,
+          "stream": "main",
+          "line": {
+            "stream": "main",
+            "segments": [
+              {
+                "text": "Briar waits beside the dueling sands.",
+                "fg": "#d7d7d7",
+                "bg": null,
+                "bold": false
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "v": 1,
+    "seq": 2,
+    "t": "text",
+    "d": {
+      "stream": "main",
+      "line": {
+        "stream": "main",
+        "segments": [
+          {
+            "text": "BRIAR_REPLAY_MARKER: ",
+            "fg": "#d7d7d7",
+            "bg": null,
+            "bold": false
+          },
+          {
+            "text": "an arena champion",
+            "fg": "#b58cff",
+            "bg": null,
+            "bold": true,
+            "link_data": {
+              "exist_id": "fixture-briar-target-01",
+              "noun": "champion",
+              "text": "arena champion",
+              "coord": null
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "v": 1,
+    "seq": 2,
+    "t": "inventory",
+    "d": [
+      {
+        "stream": "inv",
+        "segments": [
+          {
+            "text": "a polished oak runestaff",
+            "fg": "#e45b5b",
+            "bg": null,
+            "bold": true,
+            "link_data": {
+              "exist_id": "fixture-briar-staff-01",
+              "noun": "runestaff",
+              "text": "polished oak runestaff",
+              "coord": null
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "v": 1,
+    "seq": 2,
+    "t": "objectives",
+    "d": {
+      "objectives": [
+        {
+          "id": "fixture-briar-task-01",
+          "kind": "ARENA",
+          "state": "complete",
+          "name": "Complete an arena match",
+          "description": "The arena match is complete.",
+          "location": "Duskruin Arena",
+          "cadence": "event",
+          "rewards": [
+            {
+              "reward_type": "bloodscrip",
+              "amount": 300
+            }
+          ],
+          "actions": []
+        }
+      ],
+      "generation": 15
+    }
+  }
+]

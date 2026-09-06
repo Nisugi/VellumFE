@@ -12,13 +12,17 @@ about it. The last section is a tour of the screen you land on — which window 
 which, where you type, how you scroll back to the thing that killed you.
 
 If you'd rather click a saved connection than type flags, use
-[the Launcher](./launcher.md); it covers the same ground with stored passwords.
+[the Launcher](./launcher.md); it covers the same ground with stored passwords
+and can open the native GUI, Terminal, or Vellum Despana browser surface.
 Running `vellum-fe` with **no arguments at all** opens it.
 
 > ⚠️ **The same character, started two ways, lands in two different interfaces.**
-> A hand-typed command line defaults to the **terminal UI**; a saved Launcher
-> connection defaults to the **GUI**. Pass `--frontend gui` (or `-f gui`) to make
-> the command line match.
+> A hand-typed command line defaults to the **terminal UI**; a new saved
+> Launcher connection defaults to the **GUI**. A saved connection can instead
+> select **Despana**, which opens the paired Vellum Despana browser surface
+> automatically. Pass
+> `--frontend gui` (or `-f gui`) to make a manual command line match the native
+> GUI; use `--frontend headless` when you want a browser-only session.
 
 ## Set it up
 
@@ -204,6 +208,8 @@ stack, so Windows and macOS need nothing extra. On Linux, see
 
 - [Installation](./installation.md) — getting the binary, and Linux TLS notes
 - [The Launcher](./launcher.md) — saved connections, stored passwords, per-connection frontend
+- [Vellum Despana](../frontends/despana.md) — the optional desktop browser
+  workspace
 - [Command Reference](../reference/commands.md) — every dot-command
 - [keybinds.toml](../configuration/keybinds-toml.md) — rebinding anything in the tour above
 - [Widgets](../widgets/README.md) — the windows you add to the default six
@@ -244,7 +250,7 @@ explicitly alongside it still wins. `--launch-profile` cannot be combined with
 
 | Switch | Default | What it does |
 |---|---|---|
-| `--frontend` / `-f` | `tui` | `tui`, `gui`, or `headless` (no local UI; a browser at `/play` is the interface) |
+| `--frontend` / `-f` | `tui` | `tui`, `gui`, or `headless` (no local UI; use Vellum at `/play` or Vellum Despana at `/despana`) |
 | `--key` | *(unset)* | Lich's `%key%` login key, passed to the game server |
 | `--profile` | falls back to `--character` | Which folder under `profiles/` holds your config |
 | `--data-dir` | `~/.vellum-fe` | Moves the whole config tree; equivalent to the `VELLUM_FE_DIR` environment variable |

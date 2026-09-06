@@ -18,7 +18,8 @@ use std::process::Command;
 use tokio::sync::mpsc;
 
 use crate::config::profiles::{
-    self, help, LaunchFrontend, LaunchMode, LauncherProfile, LauncherStore, GAME_CHOICES,
+    self, help, LaunchFrontend, LaunchMode, LaunchWebClient, LauncherProfile, LauncherStore,
+    GAME_CHOICES,
 };
 
 /// Feedback line shown at the bottom of the launcher.
@@ -718,16 +719,28 @@ impl LauncherApp {
                         .show(ui, |ui| {
                             ui.label("Frontend").on_hover_text(help::FRONTEND);
                             ui.horizontal(|ui| {
-                                ui.selectable_value(
-                                    &mut profile.frontend,
-                                    LaunchFrontend::Gui,
-                                    "GUI",
-                                );
-                                ui.selectable_value(
-                                    &mut profile.frontend,
-                                    LaunchFrontend::Tui,
-                                    "Terminal",
-                                );
+                                let native_gui = profile.web_client.is_none()
+                                    && profile.frontend == LaunchFrontend::Gui;
+                                if ui.selectable_label(native_gui, "GUI").clicked() {
+                                    profile.select_frontend(LaunchFrontend::Gui);
+                                }
+
+                                let terminal = profile.web_client.is_none()
+                                    && profile.frontend == LaunchFrontend::Tui;
+                                if ui.selectable_label(terminal, "Terminal").clicked() {
+                                    profile.select_frontend(LaunchFrontend::Tui);
+                                }
+
+                                let despana = LaunchWebClient::Despana;
+                                if ui
+                                    .selectable_label(
+                                        profile.web_client == Some(despana),
+                                        despana.label(),
+                                    )
+                                    .clicked()
+                                {
+                                    profile.select_web_client(despana);
+                                }
                             });
                             ui.end_row();
 
@@ -801,7 +814,9 @@ impl LauncherApp {
                             }
                             ui.end_row();
 
-                            if profile.frontend == LaunchFrontend::Tui {
+                            if profile.web_client.is_none()
+                                && profile.frontend == LaunchFrontend::Tui
+                            {
                                 ui.label("Color mode").on_hover_text(help::COLOR_MODE);
                                 let selected = profile.color_mode.clone();
                                 egui::ComboBox::from_id_salt("launcher_color_mode")
@@ -1020,40 +1035,70 @@ pub fn run_launcher() -> Result<()> {
 
 // ----- session spawning ----------------------------------------------------
 
-/// Spawn a session process for a profile. `password` is only passed for GUI
-/// direct sessions with nothing in the credential store; it travels via a
-/// private environment variable, never argv.
+/// Spawn a session process for a profile. `password` is only passed for
+/// background direct sessions with nothing in the credential store; it travels
+/// via a private environment variable, never argv.
 fn spawn_session(profile: &LauncherProfile, password: Option<&str>) -> Result<()> {
     let exe = std::env::current_exe().context("Could not locate the vellum-fe executable")?;
 
-    match profile.frontend {
-        LaunchFrontend::Gui => {
-            let mut cmd = Command::new(&exe);
-            cmd.arg("--launch-profile").arg(&profile.name);
-            if let Some(password) = password {
-                cmd.env(profiles::PASSWORD_ENV, password);
-            }
-            // The launcher may have freed its console (double-click start),
-            // leaving dead std handles behind. Default Stdio::inherit would
-            // try to duplicate them and CreateProcess fails with os error 50
-            // (rust-lang/rust#113277), so hand the child explicit nulls -
-            // sessions log to a file, never to stdout.
-            cmd.stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                // Console-subsystem exe: suppress the console entirely for
-                // GUI children (the egui window is the only surface).
-                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-                cmd.creation_flags(CREATE_NO_WINDOW);
-            }
-            cmd.spawn().context("Failed to start session process")?;
+    match session_spawn_kind(profile) {
+        SessionSpawnKind::Background => {
+            background_session_command(&exe, profile, password)
+                .spawn()
+                .context("Failed to start session process")?;
             Ok(())
         }
-        LaunchFrontend::Tui => spawn_tui_session(&exe, profile, password),
+        SessionSpawnKind::Terminal => spawn_tui_session(&exe, profile, password),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionSpawnKind {
+    Background,
+    Terminal,
+}
+
+fn session_spawn_kind(profile: &LauncherProfile) -> SessionSpawnKind {
+    if profile.web_client.is_some() {
+        SessionSpawnKind::Background
+    } else {
+        match profile.frontend {
+            LaunchFrontend::Gui => SessionSpawnKind::Background,
+            LaunchFrontend::Tui => SessionSpawnKind::Terminal,
+        }
+    }
+}
+
+/// Build the console-free child used by both native GUI and Despana sessions.
+/// The profile name is the only launcher data on argv; a just-entered direct
+/// password stays in the private environment handoff used by the existing GUI
+/// path.
+fn background_session_command(
+    exe: &std::path::Path,
+    profile: &LauncherProfile,
+    password: Option<&str>,
+) -> Command {
+    let mut cmd = Command::new(exe);
+    cmd.arg("--launch-profile").arg(&profile.name);
+    if let Some(password) = password {
+        cmd.env(profiles::PASSWORD_ENV, password);
+    }
+    // The launcher may have freed its console (double-click start), leaving
+    // dead std handles behind. Default Stdio::inherit would try to duplicate
+    // them and CreateProcess fails with os error 50 (rust-lang/rust#113277),
+    // so hand the child explicit nulls. Sessions log to a file, never stdout.
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Console-subsystem exe: suppress the console entirely for background
+        // children (the native GUI or browser is the only visible surface).
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
 }
 
 /// Terminal sessions need a console/terminal of their own. A just-prompted
@@ -1181,4 +1226,50 @@ fn spawn_tui_session(
 #[cfg(target_os = "macos")]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn despana_uses_the_console_free_background_spawn_path() {
+        let mut profile = LauncherProfile::new_direct();
+        profile.name = "Aster".to_string();
+        profile.select_web_client(LaunchWebClient::Despana);
+
+        assert_eq!(session_spawn_kind(&profile), SessionSpawnKind::Background);
+
+        profile.select_frontend(LaunchFrontend::Gui);
+        assert_eq!(session_spawn_kind(&profile), SessionSpawnKind::Background);
+
+        profile.select_frontend(LaunchFrontend::Tui);
+        assert_eq!(session_spawn_kind(&profile), SessionSpawnKind::Terminal);
+    }
+
+    #[test]
+    fn background_spawn_keeps_password_off_argv() {
+        let mut profile = LauncherProfile::new_direct();
+        profile.name = "Aster".to_string();
+        profile.select_web_client(LaunchWebClient::Despana);
+
+        let command = background_session_command(
+            std::path::Path::new("vellum-fe-test"),
+            &profile,
+            Some("not-on-argv"),
+        );
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, ["--launch-profile", "Aster"]);
+        assert!(!args.iter().any(|arg| arg.contains("not-on-argv")));
+
+        let handed_off = command.get_envs().find_map(|(name, value)| {
+            (name == std::ffi::OsStr::new(profiles::PASSWORD_ENV))
+                .then(|| value.map(|value| value.to_string_lossy().into_owned()))
+                .flatten()
+        });
+        assert_eq!(handed_off.as_deref(), Some("not-on-argv"));
+    }
 }

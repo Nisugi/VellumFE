@@ -18,7 +18,11 @@ Two shapes, both first-class:
   running on the PC; the browser joins that same character. This is the shape
   this page leads with.
 - **The whole client in the browser.** Run VellumFE with no local UI at all and
-  the browser is the only screen — [Headless mode](#headless-mode) below.
+  use `/play` as the browser client — [Headless mode](#headless-mode) below.
+  For a dense desktop workspace, choose
+  [**Vellum Despana**](./despana.md) for a saved connection in Vellum's
+  native Launcher; it opens its authenticated `/despana` presentation
+  automatically.
 
 If you want the client living on your phone rather than served from your PC, the
 [Android](./android.md) and [iOS](./ios.md) apps do that job instead. Neither
@@ -180,14 +184,24 @@ desktop. Everything else on the list above is editable from the phone.
 
 ## Headless mode
 
+For ordinary desktop play in **Vellum Despana**, run `vellum-fe` with no
+arguments, edit the saved connection under **Advanced** ▸ **Frontend**, choose
+**Despana**, and click **Launch**. The saved Vellum login is applied once and
+the authoritative paired `/despana` URL opens automatically; you do not fill
+out a second browser login form.
+
+You can also start a browser-only session directly:
+
 ```bash
 vellum-fe --frontend headless
 ```
 
-This runs the core and the web server with **no local UI at all**. It prints the
-ready `/play` URL (token included) at startup and the browser does the rest.
-Give it credentials (`--direct --account … --character …`) to auto-connect, or
-give it nothing and it waits at the **login screen**.
+This runs the core and the web server with **no local UI at all**. Once the web
+server has actually bound, it prints tokenized URLs for Vellum's `/play`
+surface and Despana's `/despana` surface using the real bound port. Open the
+surface you want and the browser does the rest. Give it credentials (`--direct
+--account … --character …`) to auto-connect, or give it nothing and `/play`
+waits at the **login screen**.
 
 The login screen is the same overlay the phone apps show. In a **desktop
 browser** it has three tabs:
@@ -214,7 +228,10 @@ browser** it has three tabs:
 Headless sessions look after themselves: drops reconnect with backoff and typing
 resets it; repeated drops with **no input from you** stop the reconnect loop so
 an abandoned session winds down instead of relogging all night; a hung login is
-retried by a watchdog; and `quit` returns to the login screen.
+retried by a watchdog; and `quit` returns to the login screen. Closing the
+browser does not stop the independent headless process. Enter `.exit` to close
+it completely, or stop only its specific process when the browser is
+unreachable.
 
 ## Tips & gotchas
 
@@ -278,8 +295,9 @@ pinned = false
 | `bind` | string | `"127.0.0.1"` | The bind address. The default serves this machine only. Set `"0.0.0.0"` deliberately to let phones and tablets on your LAN connect. |
 | `pinned` | bool | `false` | Binds exactly `port` or disables web for the session with a loud warning — never a silent neighbor port. Set this in a character's profile config when you want a stable `/play` bookmark for that character. |
 
-Routes served: `/` is the multi-session dashboard, `/play` is the game client,
-and `/health` is a token-free reachability check (it is what puts the live or
+Routes served: `/` is the multi-session dashboard, `/play` is the mobile and
+sidecar game client, `/despana` is the optional desktop browser client, and
+`/health` is a token-free reachability check (it is what puts the live or
 offline dot next to a saved server in the phone apps' **Characters** picker).
 
 </details>

@@ -29,6 +29,16 @@ impl AppCore {
             .and_then(|sink| sink.bound_port())
     }
 
+    /// The authenticated endpoint installed by our web sidecar. Port and
+    /// token originate from the serving task as one indivisible readiness
+    /// value, so launchers cannot advertise mismatched auth state.
+    pub fn remote_launch_endpoint(&self) -> Option<crate::core::remote::RemoteLaunchEndpoint> {
+        self.message_processor
+            .remote
+            .as_ref()
+            .and_then(|sink| sink.launch_endpoint())
+    }
+
     /// Re-publish radial-wheel definitions to remote clients after the
     /// wheel config changed (keybinds reload, desktop wheel editor).
     /// No-op when web is disabled.
@@ -295,13 +305,15 @@ impl AppCore {
             &self.game_state,
             &self.config.target_list.excluded_nouns,
         );
-        // Room number lives on AppCore (nav tag in direct mode; extracted
-        // from the room name under Lich), not GameState.
+        // Room identity lives on AppCore, not GameState. Under Lich the
+        // decorated header supplies the map room number while `<nav rm>`
+        // supplies a distinct navigation UID; preserve both instead of
+        // presenting the UID as though it were the room number.
         if snap.room_id.is_none() {
-            snap.room_id = self
-                .nav_room_id
-                .clone()
-                .or_else(|| self.lich_room_id.clone());
+            snap.room_id = crate::core::messages::canonical_room_id(
+                self.lich_room_id.as_deref(),
+                self.nav_room_id.as_deref(),
+            );
         }
         // Portal resolution needs the map service, which lives here.
         snap.portals = self.portal_commands();
@@ -419,11 +431,14 @@ impl AppCore {
     ) {
         use crate::core::layout_engine::Sheet;
         use crate::core::remote::{
-            RemoteGhostEdge, RemoteGhostNode, RemoteMapSceneRef, RemoteMapState,
+            RemoteClassicMap, RemoteGhostEdge, RemoteGhostNode, RemoteMapSceneRef, RemoteMapState,
         };
 
         let map = &self.map;
         let mut state = RemoteMapState::default();
+        state.classic = map
+            .current_classic_map()
+            .map(|(image, room_rect)| RemoteClassicMap { image, room_rect });
         let Some(scene) = map.current_scene() else {
             self.remote_map_cache = None;
             return (RemoteMapSceneRef::default(), state);

@@ -60,6 +60,49 @@ pub fn injury_name_to_level(id: &str, name: &str) -> u8 {
     }
 }
 
+/// The room component uses this sentinel when Lich has disabled the native
+/// room stream.  It is transport metadata, not a description the player
+/// should see or retain as room state.
+fn room_description_is_disabled(text: &str) -> bool {
+    text.trim()
+        .eq_ignore_ascii_case("[Room window disabled at this location.]")
+}
+
+/// Format the two room identifiers without pretending Lich's navigation UID
+/// is its map room number.  Both are useful, but they are different domains.
+pub(crate) fn canonical_room_id(
+    lich_room_id: Option<&str>,
+    nav_room_uid: Option<&str>,
+) -> Option<String> {
+    let lich = lich_room_id.map(str::trim).filter(|id| !id.is_empty());
+    let uid = nav_room_uid.map(str::trim).filter(|id| !id.is_empty());
+    match (lich, uid) {
+        (Some(room), Some(uid)) if room != uid => Some(format!("{room} (u{uid})")),
+        (Some(room), _) => Some(room.to_string()),
+        (None, Some(uid)) => Some(format!("u{uid}")),
+        (None, None) => None,
+    }
+}
+
+#[derive(Clone)]
+struct PendingRemoteRoomStory {
+    identity: String,
+    title: Option<String>,
+    uid: Option<String>,
+    component_lines: Vec<crate::data::widget::StyledLine>,
+}
+
+struct NativeRoomCapture {
+    /// Header title with brackets and any ` - <room#>` suffix stripped.
+    title: String,
+    /// Navigation uid from an explicit `(uNNN)` suffix; when absent, the
+    /// identity resolves against `current_room_uid` at the prompt (nav can
+    /// arrive after the header line).
+    uid: Option<String>,
+    description: Vec<crate::data::widget::StyledLine>,
+    capturing_description: bool,
+}
+
 /// Routing precedence for a stream: subscribed window > `routes` entry >
 /// `fallback`. Route lookup is case-insensitive (matching the legacy
 /// drop-list comparison). A `window:<name>` route lists its window first,
@@ -260,6 +303,22 @@ pub struct MessageProcessor {
     /// the uid from here. None until the first nav tag.
     current_room_uid: Option<u64>,
 
+    /// Identity of the last room movement represented in remote Story.
+    last_remote_story_room: Option<String>,
+
+    /// Component-only room fallback, staged until the prompt.  A Lich session
+    /// commonly sends an authoritative decorated copy on `main` immediately
+    /// after the component stream; waiting lets that native copy win without
+    /// duplicating it.  Direct/component-only sessions still get one block at
+    /// the prompt.
+    pending_remote_room_story: Option<PendingRemoteRoomStory>,
+
+    /// Authoritative native room block currently arriving on `main`.  Its
+    /// header is already ordinary Story text; the first following prose line
+    /// is retained here so the Room latest-state projection can replace a
+    /// disabled component sentinel at the prompt boundary.
+    native_room_capture: Option<NativeRoomCapture>,
+
     /// Room art segments captured from the `sprite` component, held until
     /// the `room desc` component arrives so the mirrored description can
     /// LEAD with them. Sprite precedes the description in the room block, so
@@ -426,6 +485,9 @@ impl MessageProcessor {
             perception_buffer: Vec::new(),
             previous_room_components: std::collections::HashMap::new(),
             current_room_uid: None,
+            last_remote_story_room: None,
+            pending_remote_room_story: None,
+            native_room_capture: None,
             pending_room_art: Vec::new(),
             room_image_index: Default::default(),
             squelch_matcher: None,

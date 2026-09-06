@@ -1,18 +1,16 @@
 # Frontends
 
-> One character, one set of settings, five ways to sit down and play — pick the one that
+> One character, one core, six ways to sit down and play — pick the one that
 > matches where you are right now.
 
 ## What it's for
 
 You hunt at your desk, but you also want to check on a bounty from the couch, or keep a
-character parked over SSH on a box that has no desktop at all. VellumFE gives you five
-interfaces over **one core**, so the highlight that colors your critical hits, the keybind
-on your numpad, and the layout you spent an evening arranging follow you from the terminal
-to the desktop window to your phone. You configure a thing once. It shows up everywhere it
-can be shown.
+character parked over SSH on a box that has no desktop at all. VellumFE gives you six
+interfaces over **one core**, so connections, parsing, game state, and command dispatch
+stay consistent while each frontend presents them for its own screen and controls.
 
-The differences between the five are about **what the surface can physically do** — a
+The differences between the six are about **what the surface can physically do** — a
 terminal cannot draw a skin image, a phone cannot let you drag a window to a new corner —
 not about which one is the "real" client.
 
@@ -21,12 +19,13 @@ not about which one is the "real" client.
   <figcaption>The same character in three frontends at once: the Desktop GUI hunting layout, the same layout in a terminal, and the phone's status drawer.</figcaption>
 </figure>
 
-## The five at a glance
+## The six at a glance
 
 | Frontend | How you start it | Reach for it when | Maturity |
 |---|---|---|---|
 | [**Terminal (TUI)**](./tui.md) | `--frontend tui` (the CLI default) | You live in a terminal, play over SSH, or want the smallest possible footprint | Stable |
 | [**Desktop GUI**](./gui.md) | `--frontend gui`, or launch a saved connection (**its** default) | You want mouse-first layout work, graphics, skins, and the stay-open toolbar hubs | Stable |
+| [**Vellum Despana**](./despana.md) | Select **Despana** for a saved connection | You want a dense, customizable desktop workspace in a browser | Optional built-in |
 | [**Mobile Web**](./web.md) | Enable the web server (`--web-port`, or `[web]` in `config.toml`), then open the address in a browser | Your PC is running the session and you want a second screen, or you want to play from a browser with no local UI at all | Stable |
 | [**Android app**](./android.md) | Sideloaded APK | The whole client on an Android phone | **In progress** |
 | [**iOS app**](./ios.md) | TestFlight | The whole client on an iPhone | **Beta — via TestFlight** |
@@ -64,13 +63,14 @@ To start the GUI without going through the Launcher, run
 `vellum-fe --frontend gui --port 8000 --character YourName`.
 
 Which frontend a saved connection uses is set per row under **Advanced** ▸ **Frontend** ▸
-**GUI** / **Terminal**. **A saved connection defaults to GUI, but the `--frontend` command-line
-flag defaults to `tui`** — the same character started two ways lands in two different
-interfaces. That surprise is worth knowing before you go looking for a bug.
+**GUI** / **Terminal** / **Despana**. **A saved connection defaults to GUI, but
+the `--frontend` command-line flag defaults to `tui`** — the same character
+started two ways lands in two different interfaces. That surprise is worth
+knowing before you go looking for a bug.
 
 <figure class="shot" data-shot="gui/frontends-launcher-frontend-picker">
   <div class="shot-ph">📷 screenshot pending</div>
-  <figcaption>A connection's <b>Advanced</b> section with the <b>Frontend</b> submenu open on <b>GUI</b> / <b>Terminal</b>.</figcaption>
+  <figcaption>A connection's <b>Advanced</b> section with the <b>Frontend</b> submenu open on <b>GUI</b> / <b>Terminal</b> / <b>Despana</b>.</figcaption>
 </figure>
 
 → **Expected result:** a native window opens with your layout, and the top toolbar shows the
@@ -163,9 +163,10 @@ game already in progress — that is how you tell headless from sidecar at a gla
 
 - [Terminal (TUI)](./tui.md) — the terminal frontend in full
 - [Desktop GUI](./gui.md) — toolbar hubs, right-click window menu, skins
+- [Vellum Despana](./despana.md) — desktop browser workspace
 - [Mobile Web](./web.md) — sidecar and headless browser modes
 - [Android app](./android.md) · [iOS app](./ios.md)
-- [Configuration Files](../configuration/README.md) — the settings all five share
+- [Configuration Files](../configuration/README.md) — shared configuration
 
 <details>
 <summary>Config reference (TOML)</summary>
@@ -194,6 +195,7 @@ decide which face you get and how it reaches the network.
 | Field | Type | Default | What it does |
 |---|---|---|---|
 | `frontend` | `"gui"` \| `"tui"` | `"gui"` | Which frontend this saved connection launches. **Note the mismatch with the `--frontend` CLI default of `tui`.** |
+| `web_client` | `"despana"` | unset | Selects the optional Despana browser frontend while retaining the native GUI fallback for older builds. |
 | `save_password` | bool | `false` | Stores the password in the OS credential store (service id `vellum-fe`, keyed by the lowercased account). Never written to a file. |
 
 **Session behavior** (`config.toml`)

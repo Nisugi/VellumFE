@@ -1,7 +1,8 @@
 # The Launcher
 
-> Double-click, click **Launch**, you're in — with your password in the OS
-> credential store instead of your shell history.
+> Double-click, choose GUI, Terminal, or Vellum Despana, then click
+> **Launch** — with
+> your password in the OS credential store instead of your shell history.
 
 ## What it's for
 
@@ -11,7 +12,8 @@ as a named connection you click once. Passwords go into Windows Credential
 Manager, the macOS Keychain, or the Linux secret service — never into a file,
 never onto a command line where every process on the machine can read it. Each
 **Launch** starts a separate session process, so running four characters at once
-is four clicks.
+is four clicks. The Launcher is a normal native window, not a system-tray
+application; running the binary with no arguments opens it whenever you need it.
 
 <figure class="shot" data-shot="gui/launcher-profiles">
   <div class="shot-ph">📷 screenshot pending</div>
@@ -44,8 +46,10 @@ the desktop GUI, and the terminal and mobile tabs say what you use instead.
 
 → **Expected result:** the row appears with your name in bold and a summary
 beneath it — `Nisugi @ GemStone IV` for direct, or
-`Nisugi via Lich @ 127.0.0.1:8000` for Lich. Clicking **Launch** opens a session
-window and the status line at the bottom reads **Launched &lt;name&gt;**.
+`Nisugi via Lich @ 127.0.0.1:8000` for Lich. Clicking **Launch** opens the
+selected presentation: a native window for GUI, a console for Terminal, or an
+automatically paired browser tab for Vellum Despana. The status line at the
+bottom reads **Launched &lt;name&gt;**.
 
 <figure class="shot" data-shot="gui/launcher-new-connection">
   <div class="shot-ph">📷 screenshot pending</div>
@@ -146,6 +150,32 @@ the text interface:
 → A console window titled **VellumFE** opens running the terminal frontend, and
 it remembers its size and position the next time you launch that connection.
 
+### A connection that opens in Vellum Despana
+
+Vellum Despana presents Vellum's headless core and login system through a
+desktop browser workspace. It does not create a second login or bypass the
+saved connection:
+
+1. **Edit** the saved connection you want to use. For Lich scripts, confirm it
+   is a **Lich** connection with the expected host, detachable-client port, and
+   character.
+2. Open **Advanced** and set **Frontend** to **Despana**.
+3. **Save**, then click **Launch** on that row.
+
+Vellum applies the selected profile once, starts its WebUI, and opens the
+authoritative paired `/despana` URL after the server has actually bound. There
+is no second profile click in the browser and no token to copy. If the preferred
+Web dashboard port is occupied and not pinned, the server may choose a nearby
+port; the automatically opened URL already contains the correct port.
+
+→ The default browser opens Vellum Despana already connecting to the saved
+character. The native Launcher remains available for starting another
+character. Closing the browser tab does not stop its independent session
+process: enter `.exit` in Despana when you mean to close it completely (`.quit`
+disconnects and returns Despana to its Launcher handoff). See
+[Vellum Despana](../frontends/despana.md) for workspace, map, and
+troubleshooting details.
+
 ### Serve this session to your phone
 
 In the connection's **Advanced** fold:
@@ -165,8 +195,11 @@ is rendering.
 > ⚠️ **The Launcher defaults to the GUI; a hand-typed command line defaults to
 > the TUI.** A new connection is created with **Frontend: GUI**, but `vellum-fe`
 > invoked with flags uses `--frontend tui` unless you say otherwise. The same
-> character launched two ways can land in two different interfaces. Set it
-> explicitly under **Advanced** ▸ **Frontend**, or pass `--frontend gui`.
+> character launched two ways can land in different interfaces. Set GUI,
+> Terminal, or Despana explicitly under **Advanced** ▸ **Frontend**. The CLI's
+> `--frontend headless` runs a browser-only session directly; selecting Despana
+> in the Launcher is the convenient saved-connection path to that desktop
+> presentation.
 
 > ⚠️ **Deleting a connection can delete the saved password with it.** The
 > confirmation window **Delete profile?** says so: the keyring entry is removed
@@ -233,7 +266,8 @@ freshly started Lich.
 
 - [Installing VellumFE](./installation.md) — getting the binary in the first place
 - [First Launch](./first-launch.md) — connecting with flags instead of connections
-- [Desktop GUI](../frontends/gui.md) · [Terminal (TUI)](../frontends/tui.md)
+- [Desktop GUI](../frontends/gui.md) · [Terminal (TUI)](../frontends/tui.md) ·
+  [Vellum Despana](../frontends/despana.md)
 - [Put VellumFE on your phone](../how-to/vellum-on-your-phone.md) — the web dashboard
 
 <details>
@@ -252,7 +286,8 @@ written here.**
 | `game` | string | `"prime"` | One of `prime`, `platinum`, `shattered`, `test`, `dr`, `drplatinum`, `drfallen`, `drtest`. |
 | `password_saved` | bool | `false` | True when a password for `account` is in the OS credential store. |
 | `character` | string | `""` | Character to log in as; also selects that character's settings and layout. |
-| `frontend` | `"gui"` \| `"tui"` | `"gui"` | **Note the default differs from the CLI's `--frontend tui`.** |
+| `frontend` | `"gui"` \| `"tui"` | `"gui"` | Native fallback surface. Despana deliberately stores `"gui"` here so older Vellum builds can still read and launch the profile. |
+| `web_client` | `"despana"` | *unset* | Selects Vellum Despana as the browser presentation. This additive field is ignored by older Vellum builds. |
 | `host` | string | `"127.0.0.1"` | Lich host (lich mode). |
 | `port` | u16 | `8000` | Lich detachable-client port (lich mode). |
 | `custom_launch` | string | *unset* | Full Lich launch line; when present, connecting probes the port and SSH-launches Lich if it is down. |

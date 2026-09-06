@@ -6,21 +6,40 @@
 //! broadcast -> axum server -> WS client, plus client cmd -> RemoteEvent
 //! and reconnect-with-resume.
 
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
+use vellum_fe::config::WebConfig;
+use vellum_fe::core::classic_maps::ClassicMapCatalog;
 use vellum_fe::core::remote::{RemoteEvent, RemoteSink};
 use vellum_fe::core::GameState;
 use vellum_fe::data::widget::{StyledLine, TextSegment};
 use vellum_fe::frontend::web::server;
 
 const TEST_TOKEN: &str = "test-token";
+const FIXTURE_HOST_ENV: &str = "DESPANA_PROCESS_FIXTURE";
+const FIXTURE_PORT_ENV: &str = "DESPANA_PROCESS_FIXTURE_PORT";
+const WALKED_PORT_FIXTURE_ENV: &str = "DESPANA_WALKED_PORT_FIXTURE";
+const TOKEN_FAILURE_FIXTURE_ENV: &str = "DESPANA_TOKEN_FAILURE_FIXTURE";
 
 async fn start_server(
     sink_capacity: usize,
+) -> (
+    RemoteSink,
+    mpsc::UnboundedReceiver<RemoteEvent>,
+    std::net::SocketAddr,
+) {
+    start_server_with_catalog(sink_capacity, Arc::new(ClassicMapCatalog::new())).await
+}
+
+async fn start_server_with_catalog(
+    sink_capacity: usize,
+    classic_maps: Arc<ClassicMapCatalog>,
 ) -> (
     RemoteSink,
     mpsc::UnboundedReceiver<RemoteEvent>,
@@ -32,9 +51,232 @@ async fn start_server(
         .expect("bind ephemeral port");
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        let _ = server::serve_listener_with_token(listener, handles, TEST_TOKEN.to_string()).await;
+        let _ = server::serve_listener(
+            listener,
+            handles,
+            TEST_TOKEN.to_string(),
+            server::ServeOptions {
+                status_only: false,
+                classic_maps,
+            },
+        )
+        .await;
     });
     (sink, event_rx, addr)
+}
+
+/// Hidden child-process entry point for the process-isolation test below.
+///
+/// The ordinary integration-test run skips this function. The parent starts
+/// this same test executable with `--ignored --exact` and the two fixture
+/// environment variables set, giving each child its own runtime, RemoteSink,
+/// TCP listener, and WebSocket session id without adding a production test
+/// hook or a second server implementation.
+#[tokio::test]
+#[ignore]
+async fn process_isolation_fixture_host() {
+    let Ok(marker) = std::env::var(FIXTURE_HOST_ENV) else {
+        return;
+    };
+    let port: u16 = std::env::var(FIXTURE_PORT_ENV)
+        .expect("fixture port")
+        .parse()
+        .expect("numeric fixture port");
+
+    let (mut sink, handles, mut event_rx) = RemoteSink::new(100);
+    let mut state = GameState::new();
+    state.character_name = Some(marker.clone());
+    state.room_id = Some(format!("room-{marker}"));
+    state.room_name = Some(format!("{marker} Room"));
+    sink.push_text("main", styled(&format!("{marker} story marker"), "main"));
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&state, &[]));
+
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
+        .await
+        .expect("bind fixture server");
+    tokio::spawn(async move {
+        let _ = server::serve_listener(
+            listener,
+            handles,
+            TEST_TOKEN.to_string(),
+            server::ServeOptions::default(),
+        )
+        .await;
+    });
+
+    // Model the real frontend/core event pump: a command received by this
+    // process is acknowledged back into this process's own story stream.
+    while let Some(event) = event_rx.recv().await {
+        if let RemoteEvent::Command(command) = event {
+            sink.push_text("main", styled(&format!("{marker} ack: {command}"), "main"));
+        }
+    }
+}
+
+/// Hidden child-process entry point for the configured-server readiness test.
+///
+/// `server::serve` intentionally owns token loading and session-registry
+/// publication, so run it in a fresh process whose `VELLUM_FE_DIR` points at a
+/// temporary directory. Besides avoiding the user's config, this ensures the
+/// registry's process-wide cached directory cannot have been initialized by a
+/// different test first.
+#[tokio::test]
+#[ignore]
+async fn walked_port_readiness_fixture_host() {
+    if std::env::var_os(WALKED_PORT_FIXTURE_ENV).is_none() {
+        return;
+    }
+    let base_port: u16 = std::env::var(FIXTURE_PORT_ENV)
+        .expect("fixture port")
+        .parse()
+        .expect("numeric fixture port");
+
+    let (sink, handles, _event_rx) = RemoteSink::new(100);
+    let mut launch_endpoint_rx = sink.launch_endpoint_receiver();
+    let config = WebConfig {
+        enabled: true,
+        multiaccount: false,
+        port: base_port,
+        bind: std::net::Ipv4Addr::LOCALHOST.to_string(),
+        pinned: false,
+        ..WebConfig::default()
+    };
+    let mut serve_task = tokio::spawn(server::serve(
+        config,
+        handles,
+        "walked-port-readiness".to_string(),
+        server::ServeOptions::default(),
+    ));
+
+    if std::env::var_os(TOKEN_FAILURE_FIXTURE_ENV).is_some() {
+        let result = tokio::time::timeout(Duration::from_secs(2), &mut serve_task)
+            .await
+            .expect("token setup failure must return promptly")
+            .expect("configured server task must not panic");
+        assert!(result.is_err(), "an unusable token path must fail startup");
+        assert!(
+            sink.launch_endpoint().is_none(),
+            "token setup failure must not publish readiness"
+        );
+        return;
+    }
+
+    tokio::time::timeout(Duration::from_secs(5), launch_endpoint_rx.changed())
+        .await
+        .expect("configured web server did not publish its authenticated endpoint")
+        .expect("configured web server readiness channel closed before publication");
+    assert!(
+        !serve_task.is_finished(),
+        "configured web server exited while publishing readiness"
+    );
+    let endpoint = launch_endpoint_rx
+        .borrow()
+        .clone()
+        .expect("readiness notification must carry an authenticated endpoint");
+
+    assert_ne!(
+        endpoint.bound_port(),
+        base_port,
+        "an occupied unpinned base port must be walked"
+    );
+    let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, endpoint.bound_port()));
+    let health = http_get(addr, "/health").await;
+    assert!(health.contains("200"), "health: {health}");
+    assert!(health.ends_with("ok"), "health body: {health}");
+
+    // Readiness must describe the same auth state the live server installed,
+    // not a second token-file read that merely happens to agree most days.
+    let mut client = WsClient::connect_with_token(addr, endpoint.token()).await;
+    let hello = read_json_timeout(&mut client).await;
+    assert_eq!(hello["t"], "hello", "published token must authenticate");
+
+    serve_task.abort();
+    let _ = (&mut serve_task).await;
+    server::registry::remove_entry();
+}
+
+struct FixtureProcess {
+    child: Option<Child>,
+    addr: std::net::SocketAddr,
+}
+
+impl FixtureProcess {
+    async fn spawn(marker: &str) -> Self {
+        // Reserve an ephemeral port long enough to learn its number. The
+        // child binds it immediately; readiness polling below catches a rare
+        // bind race as a child exit instead of hanging the suite.
+        let reservation = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .expect("reserve fixture port");
+        let addr = reservation.local_addr().expect("fixture address");
+        drop(reservation);
+
+        let child = Command::new(std::env::current_exe().expect("current test executable"))
+            .arg("--ignored")
+            .arg("--exact")
+            .arg("process_isolation_fixture_host")
+            .arg("--nocapture")
+            .env(FIXTURE_HOST_ENV, marker)
+            .env(FIXTURE_PORT_ENV, addr.port().to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn fixture server process");
+        let mut fixture = Self {
+            child: Some(child),
+            addr,
+        };
+        fixture.wait_until_ready().await;
+        fixture
+    }
+
+    async fn wait_until_ready(&mut self) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if TcpStream::connect(self.addr).await.is_ok() {
+                return;
+            }
+            if let Some(status) = self
+                .child
+                .as_mut()
+                .expect("fixture child")
+                .try_wait()
+                .expect("inspect fixture child")
+            {
+                panic!("fixture server exited before readiness: {status}");
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "fixture server at {} did not become ready",
+                self.addr
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    fn stop(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+impl Drop for FixtureProcess {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn reserve_walkable_port() -> std::net::TcpListener {
+    loop {
+        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .expect("reserve ephemeral port");
+        if listener.local_addr().expect("reservation address").port() <= u16::MAX - 20 {
+            return listener;
+        }
+    }
 }
 
 fn styled(text: &str, stream: &str) -> Arc<StyledLine> {
@@ -46,8 +288,24 @@ fn styled(text: &str, stream: &str) -> Arc<StyledLine> {
 }
 
 async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
+    http_request(addr, &format!("GET {path}"), &[], "").await
+}
+
+async fn http_request(
+    addr: std::net::SocketAddr,
+    request_line: &str,
+    headers: &[(&str, &str)],
+    body: &str,
+) -> String {
     let mut stream = TcpStream::connect(addr).await.expect("connect");
-    let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    let extra_headers = headers
+        .iter()
+        .map(|(name, value)| format!("{name}: {value}\r\n"))
+        .collect::<String>();
+    let req = format!(
+        "{request_line} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: {}\r\n{extra_headers}\r\n{body}",
+        body.len()
+    );
     stream.write_all(req.as_bytes()).await.unwrap();
     let mut buf = Vec::new();
     stream.read_to_end(&mut buf).await.unwrap();
@@ -63,9 +321,15 @@ struct WsClient {
 impl WsClient {
     /// Handshake + pairing auth (the normal path for every test client).
     async fn connect(addr: std::net::SocketAddr) -> Self {
+        Self::connect_with_token(addr, TEST_TOKEN).await
+    }
+
+    /// Handshake + auth with an explicitly supplied token. Configured-server
+    /// readiness tests use this to prove the published endpoint is coherent.
+    async fn connect_with_token(addr: std::net::SocketAddr, token: &str) -> Self {
         let mut client = Self::connect_unauthenticated(addr).await;
         client
-            .send_text(&format!(r#"{{"t":"auth","d":{{"token":"{TEST_TOKEN}"}}}}"#))
+            .send_text(&format!(r#"{{"t":"auth","d":{{"token":"{token}"}}}}"#))
             .await;
         client
     }
@@ -163,6 +427,14 @@ async fn connect_and_sync(
     addr: std::net::SocketAddr,
     resume_seq: u64,
 ) -> (WsClient, serde_json::Value) {
+    let (client, _hello, snapshot) = connect_and_sync_with_hello(addr, resume_seq).await;
+    (client, snapshot)
+}
+
+async fn connect_and_sync_with_hello(
+    addr: std::net::SocketAddr,
+    resume_seq: u64,
+) -> (WsClient, serde_json::Value, serde_json::Value) {
     let mut client = WsClient::connect(addr).await;
     let hello = read_json_timeout(&mut client).await;
     assert_eq!(hello["t"], "hello");
@@ -173,7 +445,121 @@ async fn connect_and_sync(
     assert_eq!(macros["t"], "macros");
     let wheels = read_json_timeout(&mut client).await;
     assert_eq!(wheels["t"], "wheels");
-    (client, snapshot)
+    (client, hello, snapshot)
+}
+
+#[test]
+fn configured_server_reports_walked_port_and_serves_health() {
+    let reservation = reserve_walkable_port();
+    let base_port = reservation
+        .local_addr()
+        .expect("reservation address")
+        .port();
+    let data_dir = tempfile::tempdir().expect("temporary VELLUM_FE_DIR");
+
+    let output = Command::new(std::env::current_exe().expect("current test executable"))
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("walked_port_readiness_fixture_host")
+        .arg("--nocapture")
+        .env(WALKED_PORT_FIXTURE_ENV, "1")
+        .env(FIXTURE_PORT_ENV, base_port.to_string())
+        .env("VELLUM_FE_DIR", data_dir.path())
+        .output()
+        .expect("spawn walked-port readiness fixture");
+
+    assert!(
+        output.status.success(),
+        "walked-port readiness fixture failed: {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
+fn configured_server_token_failure_never_publishes_readiness() {
+    let reservation = reserve_walkable_port();
+    let base_port = reservation
+        .local_addr()
+        .expect("reservation address")
+        .port();
+    let data_dir = tempfile::tempdir().expect("temporary parent directory");
+    let unusable_data_dir = data_dir.path().join("not-a-directory");
+    std::fs::write(&unusable_data_dir, b"blocks directory creation")
+        .expect("create unusable VELLUM_FE_DIR path");
+
+    let output = Command::new(std::env::current_exe().expect("current test executable"))
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("walked_port_readiness_fixture_host")
+        .arg("--nocapture")
+        .env(WALKED_PORT_FIXTURE_ENV, "1")
+        .env(TOKEN_FAILURE_FIXTURE_ENV, "1")
+        .env(FIXTURE_PORT_ENV, base_port.to_string())
+        .env("VELLUM_FE_DIR", &unusable_data_dir)
+        .output()
+        .expect("spawn token-failure readiness fixture");
+
+    assert!(
+        output.status.success(),
+        "token-failure readiness fixture failed: {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[tokio::test]
+async fn pinned_occupied_port_failure_never_publishes_readiness() {
+    let reservation = reserve_walkable_port();
+    let port = reservation
+        .local_addr()
+        .expect("reservation address")
+        .port();
+    let (sink, handles, mut event_rx) = RemoteSink::new(100);
+    let config = WebConfig {
+        enabled: true,
+        multiaccount: false,
+        port,
+        bind: std::net::Ipv4Addr::LOCALHOST.to_string(),
+        pinned: true,
+        ..WebConfig::default()
+    };
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        server::serve(
+            config,
+            handles,
+            "pinned-port-failure".to_string(),
+            server::ServeOptions::default(),
+        ),
+    )
+    .await
+    .expect("pinned bind failure must return promptly");
+
+    assert!(result.is_err(), "an occupied pinned port must fail");
+    assert_eq!(
+        sink.launch_endpoint().map(|endpoint| endpoint.bound_port()),
+        None,
+        "a failed bind must not publish a launchable port"
+    );
+    let notice = tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
+        .await
+        .expect("bind failure Notice must arrive")
+        .expect("bind failure Notice channel closed early");
+    match notice {
+        RemoteEvent::Notice(message) => assert!(
+            message.contains("pinned port") && message.contains("is taken"),
+            "unexpected bind failure Notice: {message}"
+        ),
+        other => panic!("expected bind failure Notice, got {other:?}"),
+    }
+    assert!(
+        event_rx.recv().await.is_none(),
+        "the failed server must close its event channel"
+    );
 }
 
 #[tokio::test]
@@ -197,6 +583,92 @@ async fn health_and_static_assets_are_served() {
     assert!(index.contains("200"));
     assert!(index.contains("VellumFE"));
     assert!(index.contains("cmd-suggestion"));
+
+    let despana = http_get(addr, "/despana").await;
+    assert!(despana.contains("200"));
+    assert!(despana.contains("text/html"));
+    assert!(despana.contains("Vellum Despana"));
+    assert!(despana.contains("data-despana-desktop"));
+    assert!(despana.contains("href=\"/despana/app.css\""));
+    assert!(despana.contains("src=\"/despana/app.js\""));
+    for zone in ["top", "bottom", "left", "right", "center"] {
+        assert!(
+            despana.contains(&format!("data-zone=\"{zone}\"")),
+            "Despana shell is missing the {zone} workspace zone"
+        );
+    }
+    assert!(despana.contains("workspace-menu-button"));
+    assert!(despana.contains("font-scale"));
+    assert!(despana.contains("map-mode-classic"));
+    assert!(despana.contains("map-mode-local"));
+    assert!(despana.contains("map-selector"));
+    for direction in ["up", "down", "out"] {
+        assert!(
+            despana.contains(&format!("data-direction=\"{direction}\"")),
+            "Despana compass is missing the {direction} direction"
+        );
+    }
+
+    let despana_app = http_get(addr, "/despana/app.js").await;
+    assert!(despana_app.contains("text/javascript"));
+    assert!(despana_app.contains("DesktopSession"));
+    assert!(despana_app.contains("/api/v1/maps/classic"));
+
+    let despana_session = http_get(addr, "/despana/session.js").await;
+    assert!(despana_session.contains("text/javascript"));
+    assert!(despana_session.contains("export class DesktopSession"));
+
+    let despana_font_scale = http_get(addr, "/despana/font-scale.js").await;
+    assert!(despana_font_scale.contains("text/javascript"));
+    assert!(despana_font_scale.contains("export function normalizeFontScale"));
+
+    let despana_interactions = http_get(addr, "/despana/interactions.js").await;
+    assert!(despana_interactions.contains("text/javascript"));
+    assert!(despana_interactions.contains("export class DesktopInteractionCoordinator"));
+
+    let despana_layout = http_get(addr, "/despana/layout.js").await;
+    assert!(despana_layout.contains("text/javascript"));
+    assert!(despana_layout.contains("export class WorkspaceLayout"));
+
+    let despana_persistence = http_get(addr, "/despana/workspace-persistence.js").await;
+    assert!(despana_persistence.contains("text/javascript"));
+    assert!(despana_persistence.contains("export function createDesktopWorkspaceStore"));
+    assert!(!despana_persistence.contains("document.cookie"));
+
+    let workspace_denied = http_get(addr, "/api/v1/presentations/despana/workspace").await;
+    assert!(workspace_denied.contains("403"));
+    let workspace_without_character = http_request(
+        addr,
+        "GET /api/v1/presentations/despana/workspace",
+        &[("Authorization", "Bearer test-token")],
+        "",
+    )
+    .await;
+    assert!(workspace_without_character.contains("409"));
+
+    let despana_map = http_get(addr, "/despana/map.js").await;
+    assert!(despana_map.contains("text/javascript"));
+    assert!(despana_map.contains("export class DesktopMapViewport"));
+
+    let classic_maps_denied = http_get(addr, "/api/v1/maps/classic").await;
+    assert!(classic_maps_denied.contains("403"));
+    let classic_maps = http_get(addr, &format!("/api/v1/maps/classic?token={TEST_TOKEN}")).await;
+    assert!(classic_maps.contains("200"));
+    assert!(classic_maps.contains("application/json"));
+    let missing_classic = http_get(
+        addr,
+        &format!("/api/v1/maps/classic/not-a-real-map.png?token={TEST_TOKEN}"),
+    )
+    .await;
+    assert!(missing_classic.contains("404"));
+
+    let despana_workspace = http_get(addr, "/despana/workspace.js").await;
+    assert!(despana_workspace.contains("text/javascript"));
+    assert!(despana_workspace.contains("export class DesktopWorkspace"));
+
+    let despana_css = http_get(addr, "/despana/app.css").await;
+    assert!(despana_css.contains("text/css"));
+    assert!(despana_css.contains("--despana-amber"));
 
     // The multi-account status wall: dials every session's /ws in watch
     // mode client-side, so serving the page is all the server does.
@@ -232,6 +704,51 @@ async fn health_and_static_assets_are_served() {
 
     let icon = http_get(addr, "/icon.svg").await;
     assert!(icon.contains("image/svg+xml"));
+}
+
+#[tokio::test]
+async fn classic_map_filesystem_authority_is_isolated_per_server() {
+    let first_dir = tempfile::tempdir().unwrap();
+    let second_dir = tempfile::tempdir().unwrap();
+    std::fs::write(first_dir.path().join("aster.png"), b"aster-map").unwrap();
+    std::fs::write(second_dir.path().join("briar.png"), b"briar-map").unwrap();
+
+    let first_catalog = Arc::new(ClassicMapCatalog::new());
+    let second_catalog = Arc::new(ClassicMapCatalog::new());
+    first_catalog.reload_from_dir(Some(first_dir.path()));
+    second_catalog.reload_from_dir(Some(second_dir.path()));
+    let (_first_sink, _first_events, first_addr) =
+        start_server_with_catalog(10, first_catalog).await;
+    let (_second_sink, _second_events, second_addr) =
+        start_server_with_catalog(10, second_catalog).await;
+
+    let first = http_get(
+        first_addr,
+        &format!("/api/v1/maps/classic?token={TEST_TOKEN}"),
+    )
+    .await;
+    let second = http_get(
+        second_addr,
+        &format!("/api/v1/maps/classic?token={TEST_TOKEN}"),
+    )
+    .await;
+    assert!(first.contains("aster.png"));
+    assert!(!first.contains("briar.png"));
+    assert!(second.contains("briar.png"));
+    assert!(!second.contains("aster.png"));
+
+    let first_image = http_get(
+        first_addr,
+        &format!("/api/v1/maps/classic/aster.png?token={TEST_TOKEN}"),
+    )
+    .await;
+    let crossed_image = http_get(
+        first_addr,
+        &format!("/api/v1/maps/classic/briar.png?token={TEST_TOKEN}"),
+    )
+    .await;
+    assert!(first_image.contains("aster-map"));
+    assert!(crossed_image.contains("404"));
 }
 
 #[tokio::test]
@@ -278,6 +795,108 @@ async fn two_clients_both_receive_broadcasts() {
         assert_eq!(delta["t"], "text");
         assert_eq!(delta["d"]["line"]["segments"][0]["text"], "fan-out");
     }
+}
+
+#[tokio::test]
+async fn two_server_processes_keep_sessions_state_and_commands_isolated() {
+    let mut aster = FixtureProcess::spawn("Aster").await;
+    let mut briar = FixtureProcess::spawn("Briar").await;
+
+    for fixture in [&aster, &briar] {
+        let health = http_get(fixture.addr, "/health").await;
+        assert!(health.contains("200"), "health: {health}");
+        assert!(health.ends_with("ok"), "health body: {health}");
+
+        let despana = http_get(fixture.addr, "/despana").await;
+        assert!(despana.contains("200"), "Despana: {despana}");
+        assert!(despana.contains("data-despana-desktop"));
+    }
+
+    let (mut aster_client, aster_hello, aster_snapshot) =
+        connect_and_sync_with_hello(aster.addr, 0).await;
+    let (mut briar_client, briar_hello, briar_snapshot) =
+        connect_and_sync_with_hello(briar.addr, 0).await;
+
+    assert_ne!(
+        aster_hello["d"]["session"], briar_hello["d"]["session"],
+        "independent processes must advertise independent resume epochs"
+    );
+    assert_eq!(aster_hello["d"]["character"], "Aster");
+    assert_eq!(briar_hello["d"]["character"], "Briar");
+    assert_eq!(aster_snapshot["d"]["character"], "Aster");
+    assert_eq!(briar_snapshot["d"]["character"], "Briar");
+    assert_eq!(
+        aster_snapshot["d"]["room"]["name"], "Aster Room",
+        "Aster receives only Aster's state"
+    );
+    assert_eq!(
+        briar_snapshot["d"]["room"]["name"], "Briar Room",
+        "Briar receives only Briar's state"
+    );
+    assert_eq!(
+        aster_snapshot["d"]["text"][0]["line"]["segments"][0]["text"],
+        "Aster story marker"
+    );
+    assert_eq!(
+        briar_snapshot["d"]["text"][0]["line"]["segments"][0]["text"],
+        "Briar story marker"
+    );
+
+    aster_client
+        .send_text(r#"{"t":"cmd","d":{"text":"look aster"}}"#)
+        .await;
+    let aster_ack = read_json_timeout(&mut aster_client).await;
+    assert_eq!(aster_ack["t"], "text");
+    assert_eq!(
+        aster_ack["d"]["line"]["segments"][0]["text"],
+        "Aster ack: look aster"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), briar_client.read_json())
+            .await
+            .is_err(),
+        "Aster's command acknowledgment leaked into Briar's process"
+    );
+
+    briar_client
+        .send_text(r#"{"t":"cmd","d":{"text":"look briar"}}"#)
+        .await;
+    let briar_ack = read_json_timeout(&mut briar_client).await;
+    assert_eq!(briar_ack["t"], "text");
+    assert_eq!(
+        briar_ack["d"]["line"]["segments"][0]["text"],
+        "Briar ack: look briar"
+    );
+
+    // Losing one character runtime cannot take the other server, socket, or
+    // command loop down with it.
+    aster.stop();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), TcpStream::connect(aster.addr))
+            .await
+            .expect("closed fixture connection check timed out")
+            .is_err(),
+        "stopped Aster fixture still accepts connections"
+    );
+
+    let health = http_get(briar.addr, "/health").await;
+    assert!(
+        health.ends_with("ok"),
+        "Briar health after Aster exit: {health}"
+    );
+    briar_client
+        .send_text(r#"{"t":"cmd","d":{"text":"still here"}}"#)
+        .await;
+    let still_alive = read_json_timeout(&mut briar_client).await;
+    assert_eq!(still_alive["t"], "text");
+    assert_eq!(
+        still_alive["d"]["line"]["segments"][0]["text"],
+        "Briar ack: still here"
+    );
+
+    // Explicit stop exercises the idempotent cleanup path; Drop remains the
+    // panic-safe guarantee for either process on every earlier assertion.
+    briar.stop();
 }
 
 #[tokio::test]
@@ -581,6 +1200,61 @@ async fn room_description_and_spellbook_flow_in_snapshot_and_deltas() {
         spells["d"][0]["segments"][0]["text"],
         "Elemental Defense III (503)   00:13:12"
     );
+}
+
+#[tokio::test]
+async fn styled_inventory_flows_in_snapshot_and_replacement_delta() {
+    use vellum_fe::core::remote::RemoteStateSnapshot;
+    use vellum_fe::data::widget::{LinkData, StyledLine, TextSegment};
+
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    let inventory_line = |id: &str, noun: &str, text: &str| StyledLine {
+        segments: vec![TextSegment {
+            text: text.to_string(),
+            link_data: Some(LinkData {
+                exist_id: id.to_string(),
+                noun: noun.to_string(),
+                text: text.to_string(),
+                coord: None,
+            }),
+            ..Default::default()
+        }],
+        stream: "inv".to_string(),
+        timestamp: None,
+    };
+
+    let mut game_state = vellum_fe::core::GameState::new();
+    game_state.inventory = vec![inventory_line(
+        "535703780",
+        "backpack",
+        "a patchwork backpack",
+    )];
+    sink.flush_state(RemoteStateSnapshot::from_game_state(&game_state, &[]));
+
+    let (mut client, snapshot) = connect_and_sync(addr, 0).await;
+    assert_eq!(snapshot["d"]["inventory"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        snapshot["d"]["inventory"][0]["segments"][0]["link_data"]["exist_id"],
+        "535703780"
+    );
+    assert_eq!(
+        snapshot["d"]["inventory"][0]["segments"][0]["link_data"]["noun"],
+        "backpack"
+    );
+
+    game_state.inventory = vec![inventory_line("42", "orb", "a crystal orb")];
+    sink.flush_state(RemoteStateSnapshot::from_game_state(&game_state, &[]));
+    let delta = read_json_timeout(&mut client).await;
+    assert_eq!(delta["t"], "inventory");
+    assert_eq!(delta["d"].as_array().unwrap().len(), 1);
+    assert_eq!(delta["d"][0]["segments"][0]["text"], "a crystal orb");
+    assert_eq!(delta["d"][0]["segments"][0]["link_data"]["exist_id"], "42");
+
+    game_state.inventory.clear();
+    sink.flush_state(RemoteStateSnapshot::from_game_state(&game_state, &[]));
+    let delta = read_json_timeout(&mut client).await;
+    assert_eq!(delta["t"], "inventory");
+    assert_eq!(delta["d"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]

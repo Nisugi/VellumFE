@@ -614,6 +614,15 @@ impl MessageProcessor {
             value
         };
 
+        // Lich uses this sentence as a disabled-stream sentinel. Treat it as
+        // an absent component so it cannot replace real room prose or leak
+        // into Story while the native main-stream room block is in flight.
+        let value = if id == "room desc" && super::room_description_is_disabled(value) {
+            ""
+        } else {
+            value
+        };
+
         // An empty "room desc" component clears the mirrored prose (the parse
         // block below is skipped for empty values, so clear it here). Room
         // art survives on its own: a room with a picture but no description

@@ -6,7 +6,60 @@
 //! `crate::sound` and `crate::tts`: core asks the question, this answers it.
 //!
 //! Used by the session registry to garbage-collect entries left behind by
-//! instances that crashed rather than exiting cleanly.
+//! instances that crashed rather than exiting cleanly, and to discover the
+//! install directory of a running local Lich process without searching the
+//! filesystem or interpreting a launcher shell command.
+
+#[cfg(any(feature = "desktop", test))]
+use std::path::Path;
+use std::path::PathBuf;
+
+/// Return the install directories advertised by running local Lich processes.
+///
+/// Process arguments are already split by the operating system, so this only
+/// recognizes an argument whose basename is the Lich entrypoint. It never
+/// tokenizes or evaluates shell text. A candidate must also contain `data/`,
+/// which avoids treating an unrelated `lich.rbw` filename as an install.
+#[cfg(feature = "desktop")]
+pub fn running_lich_install_dirs() -> Vec<PathBuf> {
+    let system = sysinfo::System::new_all();
+    let mut dirs = std::collections::BTreeSet::new();
+    for process in system.processes().values() {
+        if let Some(dir) = lich_install_dir_from_argv(process.cmd(), process.cwd()) {
+            dirs.insert(dir);
+        }
+    }
+    dirs.into_iter().collect()
+}
+
+/// Mobile builds cannot have a local Lich process beside the app. Their map
+/// source is an explicit path or a downloaded mapdb release.
+#[cfg(not(feature = "desktop"))]
+pub fn running_lich_install_dirs() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+#[cfg(any(feature = "desktop", test))]
+fn lich_install_dir_from_argv(args: &[String], cwd: Option<&Path>) -> Option<PathBuf> {
+    args.iter().find_map(|arg| {
+        let entrypoint = Path::new(arg);
+        let name = entrypoint.file_name()?.to_string_lossy();
+        if !name.eq_ignore_ascii_case("lich.rbw") && !name.eq_ignore_ascii_case("lich.rb") {
+            return None;
+        }
+
+        let entrypoint = if entrypoint.is_absolute() {
+            entrypoint.to_path_buf()
+        } else {
+            cwd?.join(entrypoint)
+        };
+        let install = entrypoint.parent()?;
+        if !entrypoint.is_file() || !install.join("data").is_dir() {
+            return None;
+        }
+        Some(std::fs::canonicalize(install).unwrap_or_else(|_| install.to_path_buf()))
+    })
+}
 
 /// Which of the given pids are still running.
 ///
@@ -70,5 +123,51 @@ mod tests {
         assert!(live.contains(&own));
         assert!(!live.contains(&absent));
         assert_eq!(live.len(), 1);
+    }
+
+    #[test]
+    fn recognizes_absolute_lich_entrypoint_with_spaces() {
+        let root = tempfile::tempdir().unwrap();
+        let install = root.path().join("GemStone IV").join("Lich5");
+        std::fs::create_dir_all(install.join("data")).unwrap();
+        let entrypoint = install.join("lich.rbw");
+        std::fs::write(&entrypoint, "").unwrap();
+
+        let args = vec![
+            "/usr/bin/ruby".to_string(),
+            entrypoint.to_string_lossy().to_string(),
+            "--detachable-client=8000".to_string(),
+        ];
+        assert_eq!(
+            lich_install_dir_from_argv(&args, None),
+            Some(std::fs::canonicalize(install).unwrap())
+        );
+    }
+
+    #[test]
+    fn resolves_relative_lich_entrypoint_against_process_cwd() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("data")).unwrap();
+        std::fs::write(root.path().join("lich.rb"), "").unwrap();
+
+        assert_eq!(
+            lich_install_dir_from_argv(&["lich.rb".to_string()], Some(root.path())),
+            Some(std::fs::canonicalize(root.path()).unwrap())
+        );
+    }
+
+    #[test]
+    fn does_not_parse_lich_path_out_of_shell_text() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("data")).unwrap();
+        let entrypoint = root.path().join("lich.rbw");
+        std::fs::write(&entrypoint, "").unwrap();
+        let args = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!("ruby '{}' --detachable-client=8000", entrypoint.display()),
+        ];
+
+        assert_eq!(lich_install_dir_from_argv(&args, Some(root.path())), None);
     }
 }

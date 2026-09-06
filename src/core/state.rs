@@ -80,8 +80,9 @@ pub struct GameState {
     /// Vitals (health, mana, etc.)
     pub vitals: Vitals,
 
-    /// Inventory items
-    pub inventory: Vec<String>,
+    /// Latest complete `inv` stream snapshot. Styled lines retain the game's
+    /// authoritative colors and link metadata for every frontend.
+    pub inventory: Vec<crate::data::widget::StyledLine>,
 
     /// Current left hand item
     pub left_hand: Option<String>,

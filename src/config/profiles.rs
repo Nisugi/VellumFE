@@ -47,7 +47,7 @@ pub mod help {
          directly; any other host runs it over SSH (set the SSH user and key with .launcher). \
          Leave blank to attach only.";
     pub const FRONTEND: &str =
-        "GUI opens a native window; Terminal runs the text interface in its own console window";
+        "GUI opens Vellum's native window; Terminal runs the text interface in its own console window; Despana opens the Despana browser interface";
     pub const WEB_PORT: &str =
         "Enable the embedded web server on this port: serves a browser view of this session at localhost:PORT (e.g. for a phone on your LAN)";
     pub const WEB_BIND: &str =
@@ -85,6 +85,34 @@ pub enum LaunchFrontend {
 impl Default for LaunchFrontend {
     fn default() -> Self {
         LaunchFrontend::Gui
+    }
+}
+
+/// Optional browser client selected for a launcher profile.
+///
+/// This is deliberately additive to [`LaunchFrontend`], rather than another
+/// variant of that enum. Older Vellum builds ignore unknown profile fields,
+/// so a Despana profile still falls back to its serialized native GUI choice
+/// instead of making the whole `launcher.toml` unreadable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LaunchWebClient {
+    Despana,
+}
+
+impl LaunchWebClient {
+    /// Stable browser route owned by this built-in presentation.
+    pub const fn route(self) -> &'static str {
+        match self {
+            Self::Despana => "despana",
+        }
+    }
+
+    /// User-facing launcher label for this browser presentation.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Despana => "Despana (Web)",
+        }
     }
 }
 
@@ -131,6 +159,11 @@ pub struct LauncherProfile {
     pub character: String,
     #[serde(default)]
     pub frontend: LaunchFrontend,
+    /// An optional browser presentation layered over Vellum's headless core.
+    /// `frontend` remains `gui` for Despana as a safe fallback for older
+    /// Vellum builds that do not know this additive field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_client: Option<LaunchWebClient>,
 
     // Lich-mode fields
     #[serde(default = "default_host")]
@@ -176,6 +209,7 @@ impl LauncherProfile {
             password_saved: false,
             character: String::new(),
             frontend: LaunchFrontend::Gui,
+            web_client: None,
             host: default_host(),
             port: default_port(),
             custom_launch: None,
@@ -210,6 +244,19 @@ impl LauncherProfile {
                 }
             }
         }
+    }
+
+    /// Select a native frontend and clear any browser-client override.
+    pub fn select_frontend(&mut self, frontend: LaunchFrontend) {
+        self.frontend = frontend;
+        self.web_client = None;
+    }
+
+    /// Select a built-in browser client. `frontend = "gui"` remains the
+    /// serialized fallback for older Vellum builds that ignore `web_client`.
+    pub fn select_web_client(&mut self, web_client: LaunchWebClient) {
+        self.frontend = LaunchFrontend::Gui;
+        self.web_client = Some(web_client);
     }
 }
 
@@ -557,10 +604,12 @@ mod tests {
         assert_eq!(direct.web_port, Some(8080));
         assert_eq!(direct.web_bind.as_deref(), Some("0.0.0.0"));
         assert_eq!(direct.frontend, LaunchFrontend::Gui);
+        assert_eq!(direct.web_client, None);
 
         let lich = &loaded.profiles[1];
         assert_eq!(lich.mode, LaunchMode::Lich);
         assert_eq!(lich.frontend, LaunchFrontend::Tui);
+        assert_eq!(lich.web_client, None);
         assert_eq!(lich.host, "127.0.0.1");
         assert_eq!(lich.port, 8003);
     }
@@ -583,6 +632,7 @@ mod tests {
         assert_eq!(profile.host, "127.0.0.1");
         assert_eq!(profile.port, 8000);
         assert_eq!(profile.frontend, LaunchFrontend::Gui);
+        assert_eq!(profile.web_client, None);
         assert!(!profile.password_saved);
         assert!(profile.web_port.is_none());
         assert!(profile.web_bind.is_none());
@@ -615,5 +665,52 @@ mod tests {
         assert!(store.account_password_in_use("MYACCT"));
         store.remove("alt");
         assert!(!store.account_password_in_use("MYACCT"));
+    }
+
+    #[test]
+    fn despana_web_client_round_trips_with_gui_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("launcher.toml");
+        let mut profile = sample_lich();
+        profile.select_web_client(LaunchWebClient::Despana);
+        let store = LauncherStore {
+            profiles: vec![profile],
+        };
+
+        store.save_to(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("frontend = \"gui\""));
+        assert!(text.contains("web_client = \"despana\""));
+
+        let loaded = LauncherStore::load_from(&path).unwrap();
+        let profile = &loaded.profiles[0];
+        assert_eq!(profile.frontend, LaunchFrontend::Gui);
+        assert_eq!(profile.web_client, Some(LaunchWebClient::Despana));
+        assert_eq!(profile.mode, LaunchMode::Lich);
+        assert_eq!(profile.character, "Nisugi");
+        assert_eq!(profile.port, 8003);
+    }
+
+    #[test]
+    fn selecting_native_frontend_clears_the_browser_override() {
+        let mut profile = sample_direct();
+
+        profile.select_web_client(LaunchWebClient::Despana);
+        assert_eq!(profile.frontend, LaunchFrontend::Gui);
+        assert_eq!(profile.web_client, Some(LaunchWebClient::Despana));
+
+        profile.select_frontend(LaunchFrontend::Tui);
+        assert_eq!(profile.frontend, LaunchFrontend::Tui);
+        assert_eq!(profile.web_client, None);
+
+        profile.select_frontend(LaunchFrontend::Gui);
+        assert_eq!(profile.frontend, LaunchFrontend::Gui);
+        assert_eq!(profile.web_client, None);
+    }
+
+    #[test]
+    fn built_in_web_client_has_stable_identity_metadata() {
+        assert_eq!(LaunchWebClient::Despana.route(), "despana");
+        assert_eq!(LaunchWebClient::Despana.label(), "Despana (Web)");
     }
 }

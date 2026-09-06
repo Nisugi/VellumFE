@@ -13,7 +13,16 @@
 pub mod embedded;
 mod runtime;
 
+use crate::config::profiles::LaunchWebClient;
 use anyhow::Result;
+
+/// Internal launcher behavior. Public/embedded headless entrypoints use the
+/// default so they continue to wait on `/play` and never open a browser.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct HeadlessLaunchOptions {
+    auto_connect_lich: bool,
+    web_client: Option<LaunchWebClient>,
+}
 
 /// Desktop entry point (`--frontend headless`). Builds a tokio runtime and
 /// runs until `.quit`, Ctrl+C, or a fatal error. The web server is forced on.
@@ -23,6 +32,45 @@ pub fn run(
     direct: Option<crate::network::DirectConnectConfig>,
     login_key: Option<String>,
 ) -> Result<()> {
+    run_with_options(
+        config,
+        character,
+        direct,
+        login_key,
+        HeadlessLaunchOptions::default(),
+    )
+}
+
+/// Launcher-only browser-client entrypoint. The selected saved profile is
+/// already resolved into `config`/`direct`; the attach flag distinguishes a
+/// saved Lich profile from a credential-less manual headless start.
+pub(crate) fn run_launcher_web_client(
+    config: crate::config::Config,
+    character: Option<String>,
+    direct: Option<crate::network::DirectConnectConfig>,
+    login_key: Option<String>,
+    web_client: LaunchWebClient,
+    auto_connect_lich: bool,
+) -> Result<()> {
+    run_with_options(
+        config,
+        character,
+        direct,
+        login_key,
+        HeadlessLaunchOptions {
+            auto_connect_lich,
+            web_client: Some(web_client),
+        },
+    )
+}
+
+fn run_with_options(
+    config: crate::config::Config,
+    character: Option<String>,
+    direct: Option<crate::network::DirectConnectConfig>,
+    login_key: Option<String>,
+    launch: HeadlessLaunchOptions,
+) -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -31,7 +79,8 @@ pub fn run(
                 let _ = shutdown_tx.send(true);
             }
         });
-        runtime::async_run(config, character, direct, login_key, shutdown_rx).await
+        runtime::async_run_with_options(config, character, direct, login_key, shutdown_rx, launch)
+            .await
     })
 }
 

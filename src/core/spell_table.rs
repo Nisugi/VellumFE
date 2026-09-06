@@ -295,6 +295,16 @@ mod tests {
 
     #[test]
     fn table_parses_the_bundled_database() {
+        // The reload test swaps the process-global table to a 1-spell fixture
+        // mid-run; serialize on the same lock and force bundled state so this
+        // test reads the real database regardless of thread ordering.
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let cfg = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", cfg.path());
+        reload();
+        std::env::remove_var("VELLUM_FE_DIR");
         let table = table();
         // 511 numbered spells in the current data; allow drift on refresh.
         assert!(table.len() > 450, "got {} spells", table.len());
@@ -314,6 +324,15 @@ mod tests {
 
     #[test]
     fn formula_costs_mark_dynamic_and_fail_closed_data() {
+        // Reads the process-global table; same guard as
+        // table_parses_the_bundled_database.
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let cfg = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", cfg.path());
+        reload();
+        std::env::remove_var("VELLUM_FE_DIR");
         // Song of Luck (1006): bard cost formula -> dynamic_cost.
         let song = spell(1006).expect("spell 1006");
         assert!(song.dynamic_cost);

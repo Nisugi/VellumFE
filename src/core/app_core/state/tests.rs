@@ -17,6 +17,34 @@ fn reconnect_request_flag_is_consumed_exactly_once() {
     assert!(!core.take_reconnect_request());
 }
 
+#[test]
+fn remote_combat_target_menu_normalizes_protocol_prefixed_id() {
+    let mut core = AppCore::new_for_test();
+    let origin = crate::core::remote::MenuOrigin::Remote {
+        client_id: 41,
+        request_id: 7,
+    };
+    let link = crate::data::LinkData {
+        exist_id: "#209691632".to_string(),
+        noun: "king".to_string(),
+        text: "a massive troll king".to_string(),
+        coord: None,
+    };
+
+    let command = core
+        .resolve_link_activation(&link, origin.clone())
+        .expect("plain target link requests a context menu");
+
+    assert_eq!(command, "_menu #209691632 1\n");
+    let pending = core
+        .pending_menu_requests
+        .get("1")
+        .expect("menu request is correlated");
+    assert_eq!(pending.exist_id, "209691632");
+    assert_eq!(pending.noun, "king");
+    assert_eq!(pending.origin, origin);
+}
+
 // Test helper to create a minimal WindowBase
 fn test_window_base(name: &str) -> WindowBase {
     WindowBase {

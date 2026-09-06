@@ -574,6 +574,12 @@ impl AppCore {
         noun: String,
         origin: crate::core::remote::MenuOrigin,
     ) -> String {
+        // Parser links normally carry the bare object id, but target-list
+        // creatures retain the protocol's leading `#`. Keep the menu request
+        // and later cmdlist substitution on one canonical bare-id shape so a
+        // combat target never becomes `##123` on the wire.
+        let exist_id = exist_id.trim_start_matches('#').to_string();
+
         // Increment counter
         self.menu_request_counter += 1;
         let counter = self.menu_request_counter;

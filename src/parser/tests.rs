@@ -346,8 +346,8 @@ fn prompt_force_closes_open_streams() {
     assert!(
         prompt_elems
             .iter()
-            .any(|e| matches!(e, ParsedElement::StreamPop)),
-        "prompt must emit the missing pop: {prompt_elems:?}"
+            .any(|e| matches!(e, ParsedElement::StreamPopForced)),
+        "prompt must emit the missing pop, marked forced/torn: {prompt_elems:?}"
     );
     let after = parser.parse_line("normal game text");
     let stream = after

@@ -130,6 +130,8 @@ struct SnapshotPayload {
     objectives: crate::data::ObjectivesContent,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     spellbook: Vec<crate::data::widget::StyledLine>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    inventory: Vec<crate::data::widget::StyledLine>,
     injuries: std::collections::HashMap<String, u8>,
     /// Active doll variant + suppressed parts (host-resolved skin rules).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -234,6 +236,7 @@ pub fn snapshot_for(
         effects: state.effects.clone(),
         objectives: state.objectives.clone(),
         spellbook: state.spellbook.clone(),
+        inventory: state.inventory.clone(),
         injuries: state.injuries.clone(),
         doll_variant: state.doll_variant.clone(),
         doll_hidden: state.doll_hidden.clone(),
@@ -274,6 +277,7 @@ impl SnapshotPayload {
         self.room.exits = Vec::new();
         self.room.description = Vec::new();
         self.spellbook = Vec::new();
+        self.inventory = Vec::new();
         self.targets = Vec::new();
         self.entities = Default::default();
         self.portals = Vec::new();
@@ -361,6 +365,7 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
         RemoteDelta::Effects(effects) => encode("effects", last_seq, effects),
         RemoteDelta::Objectives(objectives) => encode("objectives", last_seq, objectives),
         RemoteDelta::Spells(lines) => encode("spells", last_seq, lines),
+        RemoteDelta::Inventory(lines) => encode("inventory", last_seq, lines),
         RemoteDelta::Session(info) => encode("session", last_seq, info),
         RemoteDelta::Injuries(injuries) => encode("injuries", last_seq, injuries),
         RemoteDelta::Doll { variant, hidden } => encode(
@@ -570,11 +575,7 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
             last_seq,
             serde_json::json!({ "connected": connected }),
         ),
-        RemoteDelta::SkillTrainer {
-            open,
-            status,
-            data,
-        } => encode(
+        RemoteDelta::SkillTrainer { open, status, data } => encode(
             "skill_trainer",
             last_seq,
             serde_json::json!({ "open": open, "status": status, "data": data }),
@@ -1024,9 +1025,7 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
             let client = opt_str(msg.d.get("client"));
             // A button needs a label and either a direct command, a
             // client action, or at least one option (menu button).
-            if label.is_empty()
-                || (command.is_empty() && client.is_none() && options.is_empty())
-            {
+            if label.is_empty() || (command.is_empty() && client.is_none() && options.is_empty()) {
                 return None;
             }
             let original = msg
@@ -1364,6 +1363,7 @@ mod tests {
             timestamp: None,
         }];
         state.spellbook = state.room_description.clone();
+        state.inventory = state.room_description.clone();
         state.portals = vec!["portal".to_string()];
         state.field = vec![crate::core::remote::RemoteFieldCard {
             id: "123".to_string(),
@@ -1479,6 +1479,10 @@ mod tests {
         assert!(
             d["spellbook"].as_array().map_or(true, |a| a.is_empty()),
             "spellbook must not ship"
+        );
+        assert!(
+            d["inventory"].as_array().map_or(true, |a| a.is_empty()),
+            "inventory must not ship"
         );
 
         // ...but the status a watcher exists to show is all still there.

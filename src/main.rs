@@ -127,8 +127,8 @@ struct Cli {
 enum FrontendType {
     Tui,
     Gui,
-    /// Core + web server only, no local UI — a browser (or the Android
-    /// WebView shell) at /play is the interface.
+    /// Core + web server only, no local UI — a browser at /play or /despana
+    /// (or the Android WebView shell at /play) is the interface.
     Headless,
 }
 
@@ -743,9 +743,9 @@ fn main() -> Result<()> {
     // Apply a saved launcher profile: fills the same fields the equivalent
     // CLI switches would have set (explicit CLI switches win over profile
     // values). Returns the resolved game code for direct connections.
-    let profile_game_code = match cli.launch_profile.clone() {
+    let applied_profile = match cli.launch_profile.clone() {
         Some(name) => apply_launch_profile(&mut cli, &name)?,
-        None => None,
+        None => AppliedLaunchProfile::default(),
     };
 
     // Load configuration
@@ -793,7 +793,10 @@ fn main() -> Result<()> {
 
     // Build direct connection config if enabled
     // Uses --character for login (not --profile, which is only for config directory)
-    let game_code_arg = cli.game.map(|g| g.code().to_string()).or(profile_game_code);
+    let game_code_arg = cli
+        .game
+        .map(|g| g.code().to_string())
+        .or(applied_profile.game_code);
     let direct_config = network::DirectConnectConfig::from_cli(
         cli.direct,
         cli.account.clone(),
@@ -833,7 +836,18 @@ fn main() -> Result<()> {
             run_gui(config, direct_config, login_key)?
         }
         FrontendType::Headless => {
-            frontend::headless::run(config, character, direct_config, login_key)?
+            if let Some(web_client) = applied_profile.web_client {
+                frontend::headless::run_launcher_web_client(
+                    config,
+                    character,
+                    direct_config,
+                    login_key,
+                    web_client,
+                    applied_profile.auto_connect_lich,
+                )?
+            } else {
+                frontend::headless::run(config, character, direct_config, login_key)?
+            }
         }
     }
 
@@ -862,6 +876,43 @@ fn detach_exclusive_console() {
     }
 }
 
+#[derive(Debug, Default)]
+struct AppliedLaunchProfile {
+    game_code: Option<String>,
+    /// Private launcher-to-runtime intent. Browser clients remain profile
+    /// choices rather than public `--frontend` values, so ordinary and
+    /// embedded headless starts keep their existing login-screen behavior.
+    web_client: Option<config::profiles::LaunchWebClient>,
+    /// A saved Lich profile supplies an attach target without needing a fake
+    /// one-shot login key to trigger the headless runtime's auto-connect path.
+    auto_connect_lich: bool,
+}
+
+fn apply_profile_frontend(
+    cli: &mut Cli,
+    profile: &config::profiles::LauncherProfile,
+) -> Option<config::profiles::LaunchWebClient> {
+    use config::profiles::LaunchFrontend;
+
+    if let Some(web_client) = profile.web_client {
+        cli.frontend = FrontendType::Headless;
+        Some(web_client)
+    } else {
+        cli.frontend = match profile.frontend {
+            LaunchFrontend::Gui => FrontendType::Gui,
+            LaunchFrontend::Tui => FrontendType::Tui,
+        };
+        None
+    }
+}
+
+fn profile_auto_connects_lich(
+    profile: &config::profiles::LauncherProfile,
+    web_client: Option<config::profiles::LaunchWebClient>,
+) -> bool {
+    web_client.is_some() && profile.mode == config::profiles::LaunchMode::Lich
+}
+
 /// Apply a saved launcher profile onto the parsed CLI arguments.
 ///
 /// Fills only fields the user did not set explicitly, so switches passed
@@ -869,9 +920,9 @@ fn detach_exclusive_console() {
 /// explicit CLI/env handoff from the launcher → OS credential store →
 /// (later, in `DirectConnectConfig::from_cli`) interactive prompt.
 ///
-/// Returns the game code ("GS3", "DRX", ...) for direct profiles.
-fn apply_launch_profile(cli: &mut Cli, name: &str) -> Result<Option<String>> {
-    use config::profiles::{self, LaunchFrontend, LaunchMode, LauncherStore};
+/// Returns the resolved game code plus any private browser-client launch intent.
+fn apply_launch_profile(cli: &mut Cli, name: &str) -> Result<AppliedLaunchProfile> {
+    use config::profiles::{self, LaunchMode, LauncherStore};
 
     let store = LauncherStore::load()?;
     let profile = store
@@ -946,10 +997,8 @@ fn apply_launch_profile(cli: &mut Cli, name: &str) -> Result<Option<String>> {
             }
         }
     }
-    cli.frontend = match profile.frontend {
-        LaunchFrontend::Gui => FrontendType::Gui,
-        LaunchFrontend::Tui => FrontendType::Tui,
-    };
+    let web_client = apply_profile_frontend(cli, &profile);
+    let auto_connect_lich = profile_auto_connects_lich(&profile, web_client);
     if cli.data_dir.is_none() {
         if let Some(dir) = profile.data_dir.as_deref().filter(|d| !d.is_empty()) {
             std::env::set_var("VELLUM_FE_DIR", dir);
@@ -957,7 +1006,11 @@ fn apply_launch_profile(cli: &mut Cli, name: &str) -> Result<Option<String>> {
         }
     }
 
-    Ok(game_code)
+    Ok(AppliedLaunchProfile {
+        game_code,
+        web_client,
+        auto_connect_lich,
+    })
 }
 
 /// Run GUI frontend
@@ -977,4 +1030,55 @@ fn run_gui(
     app.run()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::profiles::{LaunchFrontend, LaunchMode, LaunchWebClient, LauncherProfile};
+
+    fn cli() -> Cli {
+        Cli::try_parse_from(["vellum-fe", "--frontend", "tui"]).expect("test CLI")
+    }
+
+    #[test]
+    fn despana_lich_profile_maps_to_private_headless_web_client() {
+        let mut profile = LauncherProfile::new_direct();
+        profile.mode = LaunchMode::Lich;
+        profile.select_web_client(LaunchWebClient::Despana);
+        let mut cli = cli();
+
+        let web_client = apply_profile_frontend(&mut cli, &profile).expect("web client");
+
+        assert!(matches!(cli.frontend, FrontendType::Headless));
+        assert_eq!(web_client, LaunchWebClient::Despana);
+        assert!(profile_auto_connects_lich(&profile, Some(web_client)));
+    }
+
+    #[test]
+    fn despana_direct_profile_maps_to_private_headless_web_client() {
+        let mut profile = LauncherProfile::new_direct();
+        profile.select_web_client(LaunchWebClient::Despana);
+        let mut cli = cli();
+
+        let web_client = apply_profile_frontend(&mut cli, &profile).expect("web client");
+
+        assert!(matches!(cli.frontend, FrontendType::Headless));
+        assert_eq!(web_client, LaunchWebClient::Despana);
+        assert!(!profile_auto_connects_lich(&profile, Some(web_client)));
+    }
+
+    #[test]
+    fn native_profile_frontends_preserve_their_existing_behavior() {
+        let mut profile = LauncherProfile::new_direct();
+        let mut cli = cli();
+
+        profile.select_frontend(LaunchFrontend::Gui);
+        assert_eq!(apply_profile_frontend(&mut cli, &profile), None);
+        assert!(matches!(cli.frontend, FrontendType::Gui));
+
+        profile.select_frontend(LaunchFrontend::Tui);
+        assert_eq!(apply_profile_frontend(&mut cli, &profile), None);
+        assert!(matches!(cli.frontend, FrontendType::Tui));
+    }
 }

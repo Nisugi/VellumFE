@@ -436,22 +436,17 @@ impl AppCore {
             );
             return;
         }
-        let Some(port) = self
+        let Some(endpoint) = self
             .message_processor
             .remote
             .as_ref()
-            .and_then(|remote| remote.bound_port())
+            .and_then(|remote| remote.launch_endpoint())
         else {
             self.add_system_message("Web server is not running (bind failed or still starting)");
             return;
         };
-        let token = match crate::config::Config::load_or_create_web_token() {
-            Ok(token) => token,
-            Err(e) => {
-                self.add_system_message(&format!("Pairing token unavailable: {e:#}"));
-                return;
-            }
-        };
+        let port = endpoint.bound_port();
+        let token = endpoint.token();
         let host = if self.config.web.bind == "127.0.0.1" {
             "127.0.0.1".to_string()
         } else {

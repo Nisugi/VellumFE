@@ -1,0 +1,221 @@
+[
+  {
+    "v": 1,
+    "seq": 1,
+    "t": "hello",
+    "d": {
+      "character": "Aster",
+      "streams": ["main", "thoughts", "familiar"],
+      "session": "fixture-aster-epoch"
+    }
+  },
+  {
+    "v": 1,
+    "seq": 1,
+    "t": "snapshot",
+    "d": {
+      "mode": "full",
+      "character": "Aster",
+      "session": {
+        "state": "connected",
+        "character": "Aster",
+        "game": "GS3",
+        "session_control": true
+      },
+      "room": {
+        "name": "Darkstone, Winding Tunnel",
+        "id": "3717",
+        "exits": ["northeast", "southeast", "west"],
+        "description": [
+          {
+            "stream": "main",
+            "segments": [
+              {
+                "text": "The tunnel slopes into a dark cavern.",
+                "fg": "#d7d7d7",
+                "bg": null,
+                "bold": false
+              }
+            ]
+          }
+        ]
+      },
+      "effects": [
+        {
+          "category": "ActiveSpells",
+          "effects": [
+            {
+              "id": "101",
+              "text": "Spirit Warding I",
+              "value": 78,
+              "time": "01:06:40",
+              "expires_at": 6400,
+              "bar_color": "#7d63d4",
+              "text_color": "#f0e8ff"
+            }
+          ],
+          "generation": 4
+        }
+      ],
+      "inventory": [
+        {
+          "stream": "inv",
+          "segments": [
+            {
+              "text": "a simple grey longcoat",
+              "fg": "#c9b37e",
+              "bg": null,
+              "bold": false,
+              "link_data": {
+                "exist_id": "fixture-aster-coat-01",
+                "noun": "longcoat",
+                "text": "simple grey longcoat",
+                "coord": null
+              }
+            }
+          ]
+        }
+      ],
+      "targets": [
+        {
+          "id": "#fixture-aster-target-01",
+          "name": "a massive troll king",
+          "noun": "king",
+          "status": "standing",
+          "current": true
+        }
+      ],
+      "objectives": {
+        "objectives": [
+          {
+            "id": "fixture-aster-task-01",
+            "kind": "BOUNTY",
+            "state": "active",
+            "name": "Cull the troll kings",
+            "description": "Defeat creatures in Darkstone.",
+            "location": "Darkstone Castle",
+            "cadence": null,
+            "rewards": [
+              {
+                "reward_type": "experience",
+                "amount": 1000
+              }
+            ],
+            "actions": []
+          }
+        ],
+        "generation": 8
+      },
+      "map_scene": {
+        "location": "Darkstone Castle",
+        "sheet": "third-level",
+        "rooms": [
+          { "i": 3717, "x": 4, "y": 2, "e": false },
+          { "i": 3718, "x": 5, "y": 2, "e": false }
+        ],
+        "edges": [
+          { "x1": 4, "y1": 2, "x2": 5, "y2": 2, "k": 0, "l": "east", "ar": 3717, "br": 3718 }
+        ],
+        "labels": [
+          { "x": 4, "y": 1, "t": "Winding Tunnel" }
+        ]
+      },
+      "map_state": {
+        "available": true,
+        "location": "Darkstone Castle",
+        "room": 3717,
+        "cell": [4, 2],
+        "in_ghost": false,
+        "ghosts": [],
+        "ghost_edges": [],
+        "travel": null
+      },
+      "text": [
+        {
+          "seq": 1,
+          "stream": "main",
+          "line": {
+            "stream": "main",
+            "segments": [
+              {
+                "text": "Aster enters the winding tunnel.",
+                "fg": "#d7d7d7",
+                "bg": null,
+                "bold": false
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "v": 1,
+    "seq": 2,
+    "t": "text",
+    "d": {
+      "stream": "main",
+      "line": {
+        "stream": "main",
+        "segments": [
+          {
+            "text": "ASTER_REPLAY_MARKER: ",
+            "fg": "#d7d7d7",
+            "bg": null,
+            "bold": false
+          },
+          {
+            "text": "a massive troll king",
+            "fg": "#b58cff",
+            "bg": null,
+            "bold": true,
+            "link_data": {
+              "exist_id": "fixture-aster-target-01",
+              "noun": "king",
+              "text": "massive troll king",
+              "coord": null
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "v": 1,
+    "seq": 2,
+    "t": "inventory",
+    "d": [
+      {
+        "stream": "inv",
+        "segments": [
+          {
+            "text": "a torn scroll",
+            "fg": "#68a9ff",
+            "bg": null,
+            "bold": true,
+            "link_data": {
+              "exist_id": "fixture-aster-scroll-01",
+              "noun": "scroll",
+              "text": "torn scroll",
+              "coord": null
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "v": 1,
+    "seq": 2,
+    "t": "targets",
+    "d": [
+      {
+        "id": "#fixture-aster-target-01",
+        "name": "a massive troll king",
+        "noun": "king",
+        "status": "stunned",
+        "current": true
+      }
+    ]
+  }
+]

@@ -1,0 +1,125 @@
+name: VellumFE - Despana CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/frontend/web/**"
+      - "tests/**"
+      - "examples/**"
+      - ".github/workflows/despana-ci.yml"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/frontend/web/**"
+      - "tests/**"
+      - "examples/**"
+      - ".github/workflows/despana-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: despana-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-unit:
+    name: Browser unit tests (Node 22)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Test Despana browser modules
+        run: >-
+          node --test
+          src/frontend/web/assets/despana/session.test.mjs
+          src/frontend/web/assets/despana/layout.test.mjs
+          src/frontend/web/assets/despana/layout-storage.test.mjs
+          src/frontend/web/assets/despana/interactions.test.mjs
+          src/frontend/web/assets/despana/map.test.mjs
+          src/frontend/web/assets/despana/font-scale.test.mjs
+
+  rust-tests:
+    name: Rust tests (no default frontend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test the feature-independent Rust suite
+        run: cargo test --no-default-features
+
+  desktop-build:
+    name: Desktop launcher build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libasound2-dev libspeechd-dev libclang-dev libudev-dev
+
+      - name: Build the desktop launcher and web presentation
+        run: cargo build --no-default-features --features gui,desktop
+
+  firefox-smoke:
+    name: Firefox browser smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Third-party browser setup actions are pinned to reviewable commits.
+      # Firefox ESR keeps the smoke test representative without relying on
+      # Ubuntu's Snap launcher, which WebDriver cannot use as a binary.
+      - name: Install Firefox ESR
+        id: firefox
+        uses: browser-actions/setup-firefox@0bc507ddf224827e3b1af68e014d5e42ab93e795 # v1.7.2
+        with:
+          firefox-version: latest-esr
+
+      - name: Install geckodriver
+        uses: browser-actions/setup-geckodriver@fac5b0424c584257f32cf12c5eb4ba86014c34f8 # latest (built) branch; master has no index.js
+        with:
+          geckodriver-version: "0.36.0"
+
+      - name: Run Despana in Firefox
+        env:
+          FIREFOX: ${{ steps.firefox.outputs.firefox-path }}
+          GECKODRIVER: geckodriver
+          MOZ_HEADLESS: "1"
+        run: node --test src/frontend/web/assets/despana/browser-smoke.test.mjs

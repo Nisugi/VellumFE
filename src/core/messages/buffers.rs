@@ -4,14 +4,23 @@
 use super::*;
 
 impl MessageProcessor {
-    /// Flush inventory buffer to window (only if content changed)
-    pub fn flush_inventory_buffer(&mut self, ui_state: &mut UiState) {
-        // If buffer is empty, nothing to do
-        if self.inventory_buffer.is_empty() {
-            return;
-        }
+    /// Commit one complete inventory snapshot and update open inventory windows.
+    pub fn flush_inventory_buffer(&mut self, game_state: &mut GameState, ui_state: &mut UiState) {
+        // Every inv push/pop pair is a whole replacement. Mirror the exact
+        // styled buffer even when it is empty so remote state cannot retain a
+        // stale inventory after the game reports none.
+        game_state.inventory = self
+            .inventory_buffer
+            .iter()
+            .map(|segments| StyledLine {
+                segments: segments.clone(),
+                stream: String::from("inv"),
+                timestamp: None,
+            })
+            .collect();
 
-        // Compare to previous inventory
+        // Compare to the previous complete snapshot. An empty buffer is still
+        // authoritative and must clear any stale inventory window.
         let inventory_changed = self.inventory_buffer != self.previous_inventory;
 
         if inventory_changed {
@@ -27,13 +36,9 @@ impl MessageProcessor {
                     // Clear existing content
                     content.lines.clear();
 
-                    // Add all buffered lines
-                    for line_segments in &self.inventory_buffer {
-                        content.add_line(StyledLine {
-                            segments: line_segments.clone(),
-                            stream: String::from("inv"),
-                            timestamp: None,
-                        });
+                    // Add the complete current snapshot
+                    for line in &game_state.inventory {
+                        content.add_line(line.clone());
                     }
                     tracing::debug!(
                         "Updated inventory window '{}' with {} lines",

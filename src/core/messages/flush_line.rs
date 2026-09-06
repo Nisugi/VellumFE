@@ -3,6 +3,134 @@
 
 use super::*;
 
+/// Give a player's displayed title the same visual treatment as their linked
+/// name without making the title itself clickable.
+///
+/// GemStone emits room-player titles outside the `<a exist="-...">` element,
+/// so the parser correctly treats only the base name as a link.  The wire
+/// shape is typically one plain segment ending in `Great Noble ` followed by
+/// the linked `Fizzleworth` segment.  A trailing run of capitalized words
+/// (with title connectors such as "of" and "the") is the title; ordinary
+/// prose like `You wave at ` stops at its final lowercase word and is left
+/// alone.
+pub(super) fn style_player_title_prefixes(segments: &mut Vec<TextSegment>) {
+    let mut player_index = 0;
+    while player_index < segments.len() {
+        let is_player = segments[player_index]
+            .link_data
+            .as_ref()
+            .is_some_and(|link| link.exist_id.starts_with('-'));
+        if !is_player || player_index == 0 {
+            player_index += 1;
+            continue;
+        }
+
+        let Some(title_start) = player_title_suffix_start(&segments[player_index - 1].text) else {
+            player_index += 1;
+            continue;
+        };
+
+        let title_source = player_index - 1;
+        let mut title = segments[title_source].clone();
+        let prefix = title.text[..title_start].to_string();
+        title.text = title.text[title_start..].to_string();
+
+        // Copy presentation only. PlayerTitle gives renderers a fallback color
+        // when the game link itself has no inline foreground; link_data stays
+        // empty so actions remain attached exclusively to the actual name.
+        title.fg = segments[player_index].fg.clone();
+        title.bg = segments[player_index].bg.clone();
+        title.bold = segments[player_index].bold;
+        title.mono = segments[player_index].mono;
+        title.span_type = SpanType::PlayerTitle;
+        title.link_data = None;
+        title.custom_emoji = None;
+        title.inline_image = None;
+
+        if prefix.is_empty() {
+            segments[title_source] = title;
+        } else {
+            segments[title_source].text = prefix;
+            segments.insert(player_index, title);
+            player_index += 1;
+        }
+        player_index += 1;
+    }
+}
+
+/// Byte offset of the capitalized title run at the end of `text`.
+fn player_title_suffix_start(text: &str) -> Option<usize> {
+    let mut words: Vec<(usize, usize, bool, bool)> = Vec::new();
+    let mut word_start = None;
+
+    for (byte, ch) in text.char_indices() {
+        if ch.is_whitespace() {
+            if let Some(start) = word_start.take() {
+                let word = &text[start..byte];
+                words.push((
+                    start,
+                    byte,
+                    title_word_is_capitalized(word),
+                    title_word_is_connector(word),
+                ));
+            }
+        } else if word_start.is_none() {
+            word_start = Some(byte);
+        }
+    }
+    if let Some(start) = word_start {
+        let word = &text[start..];
+        words.push((
+            start,
+            text.len(),
+            title_word_is_capitalized(word),
+            title_word_is_connector(word),
+        ));
+    }
+
+    let mut first = words.len();
+    let mut saw_capitalized = false;
+    for (index, (_, _, capitalized, connector)) in words.iter().enumerate().rev() {
+        if *capitalized {
+            first = index;
+            saw_capitalized = true;
+        } else if *connector && saw_capitalized {
+            first = index;
+        } else {
+            break;
+        }
+    }
+
+    // A connector is only internal to a title (`Captain of the Falcon`),
+    // never its beginning (`the body of Lord`).
+    while first < words.len() && words[first].3 {
+        first += 1;
+    }
+    (first < words.len() && saw_capitalized).then(|| words[first].0)
+}
+
+fn title_word_is_capitalized(word: &str) -> bool {
+    // Titles are emitted as bare words. Sentence-leading prose such as
+    // `Suddenly, <player>` must not inherit the player's presentation merely
+    // because it begins with a capital letter.
+    if word.chars().any(|ch| {
+        !ch.is_alphanumeric() && !ch.is_whitespace() && ch != '\'' && ch != '-'
+    }) {
+        return false;
+    }
+    word.chars()
+        .find(|ch| ch.is_alphabetic())
+        .is_some_and(char::is_uppercase)
+}
+
+fn title_word_is_connector(word: &str) -> bool {
+    let normalized = word.trim_matches(|ch: char| !ch.is_alphanumeric());
+    matches!(
+        normalized,
+        "of" | "the" | "and" | "de" | "du" | "von" | "van"
+    )
+}
+
 impl MessageProcessor {
     /// Flush current stream with optional TTS enqueuing. Wrapper drains
     /// any lines a transform injected (sorter categories) through the
@@ -351,6 +479,7 @@ impl MessageProcessor {
             .highlight_engine
             .apply_highlights(&self.current_segments, &self.current_stream);
         self.current_segments = highlight_result.segments;
+        style_player_title_prefixes(&mut self.current_segments);
         let deferred_replacements = highlight_result.deferred_replacements;
 
         // Expand :grin:-style emoji shortcodes at the same seam as highlight
@@ -370,6 +499,12 @@ impl MessageProcessor {
             stream: self.current_stream.clone(),
             timestamp: None,
         };
+
+        // The ordinary Lich `main` stream carries the authoritative room
+        // header/prose immediately after its component projection. Observe
+        // the finalized styled line before the remote tap so prompt-time
+        // reconciliation can keep one Story copy and refresh Room state.
+        self.observe_native_room_line(&line);
 
         // Track main stream text for prompt skip logic.
         // If a line contains any Speech spans, treat it as speech-only (even with trailing punctuation).
@@ -1158,5 +1293,115 @@ impl MessageProcessor {
             spoken: false,
             repeats: 1,
         });
+    }
+}
+
+#[cfg(test)]
+mod player_title_tests {
+    use super::*;
+    use crate::data::LinkData;
+
+    fn player(name: &str) -> TextSegment {
+        TextSegment {
+            text: name.to_string(),
+            fg: Some("#548cff".to_string()),
+            bg: Some("#101820".to_string()),
+            bold: true,
+            mono: true,
+            span_type: SpanType::Link,
+            link_data: Some(LinkData {
+                exist_id: "-123".to_string(),
+                noun: name.to_string(),
+                text: name.to_string(),
+                coord: None,
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn player_title_copies_visual_style_but_not_link_action() {
+        let mut processor = MessageProcessor::new(
+            Config::default(),
+            crate::config::SavedDialogPositions::default(),
+        );
+        let (sink, handles, _events) = crate::core::remote::RemoteSink::new(10);
+        processor.remote = Some(sink);
+        processor.current_stream = "main".to_string();
+        processor.current_segments = vec![
+            TextSegment::plain("Also here: Great Noble "),
+            player("Fizzleworth"),
+        ];
+        processor.flush_current_stream_with_tts(&mut UiState::default(), None);
+
+        let lines = handles.buffer.lock().unwrap().tail("main", 10);
+        assert_eq!(lines.len(), 1);
+        let segments = &lines[0].line.segments;
+
+        assert_eq!(segments.len(), 3);
+        assert_eq!(segments[0].text, "Also here: ");
+        let title = &segments[1];
+        assert_eq!(title.text, "Great Noble ");
+        assert_eq!(title.fg.as_deref(), Some("#548cff"));
+        assert_eq!(title.bg.as_deref(), Some("#101820"));
+        assert!(title.bold);
+        assert!(title.mono);
+        assert_eq!(title.span_type, SpanType::PlayerTitle);
+        assert!(
+            title.link_data.is_none(),
+            "title must not become actionable"
+        );
+        assert!(
+            segments[2].link_data.is_some(),
+            "base name remains actionable"
+        );
+    }
+
+    #[test]
+    fn player_title_supports_internal_lowercase_connectors() {
+        let mut segments = vec![
+            TextSegment::plain("Also here: Captain of the Falcon "),
+            player("Aster"),
+        ];
+
+        style_player_title_prefixes(&mut segments);
+
+        assert_eq!(segments[1].text, "Captain of the Falcon ");
+        assert_eq!(segments[1].fg.as_deref(), Some("#548cff"));
+        assert!(segments[1].link_data.is_none());
+    }
+
+    #[test]
+    fn ordinary_prose_before_player_link_is_not_restyled() {
+        let mut segments = vec![TextSegment::plain("You wave at "), player("Fizzleworth")];
+
+        style_player_title_prefixes(&mut segments);
+
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0], TextSegment::plain("You wave at "));
+    }
+
+    #[test]
+    fn sentence_leading_prose_before_player_link_is_not_restyled() {
+        let mut segments = vec![TextSegment::plain("Suddenly, "), player("Fizzleworth")];
+
+        style_player_title_prefixes(&mut segments);
+
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0], TextSegment::plain("Suddenly, "));
+    }
+
+    #[test]
+    fn corpse_marker_is_not_mistaken_for_part_of_title() {
+        let mut segments = vec![
+            TextSegment::plain("Also here: the body of Lord "),
+            player("Briar"),
+        ];
+
+        style_player_title_prefixes(&mut segments);
+
+        assert_eq!(segments[0].text, "Also here: the body of ");
+        assert_eq!(segments[1].text, "Lord ");
+        assert_eq!(segments[1].fg.as_deref(), Some("#548cff"));
     }
 }

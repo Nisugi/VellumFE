@@ -952,13 +952,20 @@ impl AppCore {
     pub fn refresh_map_source(&mut self) {
         self.refresh_curated_maps();
         let base = Config::base_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let source = crate::core::map_service::resolve_source(
+        let source = crate::core::map_service::resolve_source_resolution(
             self.config.map.mapdb_path.as_deref(),
             self.config.map.lich_dir.as_deref(),
             self.config.connection.game.as_deref(),
             &crate::core::mapdb_update::download_dir(&base),
         );
+        let previous_warning = self.map.classic_maps_warning().map(str::to_owned);
         self.map.ensure_db(source);
+        let current_warning = self.map.classic_maps_warning().map(str::to_owned);
+        if current_warning != previous_warning {
+            if let Some(warning) = current_warning {
+                self.add_system_message(&format!("Classic map art disabled: {warning}"));
+            }
+        }
     }
 
     /// Load curated base-map membership: the rosters embedded in the build

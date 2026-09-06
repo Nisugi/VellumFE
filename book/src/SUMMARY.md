@@ -21,6 +21,7 @@
 - [Frontends](./frontends/README.md)
   - [Terminal (TUI)](./frontends/tui.md)
   - [Desktop GUI](./frontends/gui.md)
+  - [Vellum Despana](./frontends/despana.md)
   - [Mobile Web](./frontends/web.md)
   - [Android App](./frontends/android.md)
   - [iOS App](./frontends/ios.md)

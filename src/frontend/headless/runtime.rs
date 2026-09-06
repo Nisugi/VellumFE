@@ -15,7 +15,7 @@ use anyhow::Result;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-use crate::core::remote::{RemoteSessionInfo, SessionState};
+use crate::core::remote::{RemoteLaunchEndpoint, RemoteSessionInfo, SessionState};
 use crate::core::AppCore;
 use crate::network::{
     AuthFailed, DirectConnectConfig, DirectConnection, LichConnection, RawLogger, ServerMessage,
@@ -35,6 +35,35 @@ const BACKOFF: &[u64] = &[1, 2, 5, 10, 30];
 /// the game idle-kicks after ~30 minutes, and without this cap the
 /// supervisor would re-login all night (battery + pointless auth churn).
 const MAX_UNATTENDED_LOSSES: u32 = 2;
+
+/// Build a loopback browser URL only after the web sidecar has published the
+/// port it actually bound. An unpinned sidecar may walk above its configured
+/// base port, so formatting the configured value is not authoritative.
+fn local_web_client_url(endpoint: &RemoteLaunchEndpoint, route: &str) -> String {
+    format!(
+        "http://127.0.0.1:{}/{route}#token={}",
+        endpoint.bound_port(),
+        endpoint.token()
+    )
+}
+
+/// Open a launcher-requested local client without surfacing its authenticated
+/// URL in errors or making browser availability part of session correctness.
+fn open_local_web_client_with<F>(
+    endpoint: &RemoteLaunchEndpoint,
+    client: crate::config::profiles::LaunchWebClient,
+    opener: F,
+) -> bool
+where
+    F: FnOnce(&str) -> Result<()>,
+{
+    let url = local_web_client_url(endpoint, client.route());
+    opener(&url).is_ok()
+}
+
+fn lich_session_configured(login_key: Option<&str>, launch: super::HeadlessLaunchOptions) -> bool {
+    login_key.is_some() || launch.auto_connect_lich
+}
 
 fn backoff_delay(attempt: u32) -> Duration {
     let base = BACKOFF[(attempt as usize).min(BACKOFF.len() - 1)];
@@ -333,11 +362,30 @@ fn resolve_connect(req: &SessionRequest) -> Result<ResolvedConnect, String> {
 }
 
 pub async fn async_run(
+    config: crate::config::Config,
+    character: Option<String>,
+    direct: Option<DirectConnectConfig>,
+    login_key: Option<String>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
+    async_run_with_options(
+        config,
+        character,
+        direct,
+        login_key,
+        shutdown,
+        super::HeadlessLaunchOptions::default(),
+    )
+    .await
+}
+
+pub(super) async fn async_run_with_options(
     mut config: crate::config::Config,
     character: Option<String>,
     direct: Option<DirectConnectConfig>,
     login_key: Option<String>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
+    launch: super::HeadlessLaunchOptions,
 ) -> Result<()> {
     // The web frontend is the only interface — it is not optional here.
     config.web.enabled = true;
@@ -354,31 +402,21 @@ pub async fn async_run(
         .clone()
         .or_else(|| app_core.config.connection.character.clone())
         .unwrap_or_else(|| "default".to_string());
-    let (sink, mut remote_rx) = crate::frontend::web::start(&app_core.config.web, session_label);
+    let (sink, mut remote_rx) = crate::frontend::web::start_with_classic_maps(
+        &app_core.config.web,
+        session_label,
+        app_core.map.classic_maps(),
+    );
+    let mut launch_endpoint_rx = sink.launch_endpoint_receiver();
     app_core.enable_remote(sink);
     app_core.set_remote_session_control(true);
 
-    // With no local UI there is no `.webinfo` to surface the pairing token —
-    // print the ready-to-open URL instead. (Unpinned instances may port-walk
-    // above the base port if it's taken; the log from the server task shows
-    // the actual bind.)
-    match crate::config::Config::load_or_create_web_token() {
-        Ok(token) => {
-            let url = format!(
-                "http://127.0.0.1:{}/play#token={}",
-                app_core.config.web.port, token
-            );
-            tracing::info!("Web client URL: {url}");
-            println!("Web UI: {url}");
-            if app_core.config.web.bind != "127.0.0.1" {
-                println!(
-                    "LAN clients: same #token fragment with this machine's IP (bind = {})",
-                    app_core.config.web.bind
-                );
-            }
-        }
-        Err(e) => tracing::warn!("Could not load web pairing token: {e:#}"),
-    }
+    // With no local UI there is no `.webinfo` to surface the pairing token.
+    // Keep launch output pending until the sidecar publishes the authenticated
+    // endpoint it actually installed. The server is the sole token authority;
+    // loading it here as well could race first-run creation and advertise a
+    // token different from the one accepted by the listener.
+    let mut launch_urls_pending = true;
 
     app_core.init_windows(NOMINAL_COLS, NOMINAL_ROWS);
 
@@ -393,7 +431,7 @@ pub async fn async_run(
             .or_else(|| character.clone()),
         game: None,
         direct,
-        lich_configured: login_key.is_some(),
+        lich_configured: lich_session_configured(login_key.as_deref(), launch),
         login_key,
         lich_target: None,
         connection: None,
@@ -458,6 +496,12 @@ pub async fn async_run(
         // Wait for any wake-up source, then drain everything non-blocking
         // below so remote state flushes once per batch.
         tokio::select! {
+            readiness = launch_endpoint_rx.changed(), if launch_urls_pending => {
+                if readiness.is_err() {
+                    tracing::warn!("Web server readiness channel closed before startup completed");
+                    launch_urls_pending = false;
+                }
+            }
             _ = shutdown.changed() => {
                 if *shutdown.borrow() {
                     tracing::info!("Shutdown requested");
@@ -699,6 +743,31 @@ pub async fn async_run(
                     .clone()
                     .or(supervisor.character.take());
                 app_core.set_remote_session_state(supervisor.status(SessionState::Connected));
+            }
+        }
+
+        if launch_urls_pending {
+            if let Some(endpoint) = launch_endpoint_rx.borrow().clone() {
+                if let Some(client) = launch.web_client {
+                    if !open_local_web_client_with(&endpoint, client, crate::platform::open_url) {
+                        // Do not include the authenticated URL or opener error:
+                        // either can expose the fragment in a detached session log.
+                        tracing::warn!("Could not open {} in the default browser", client.label());
+                    }
+                } else {
+                    let play_url = local_web_client_url(&endpoint, "play");
+                    let despana = crate::config::profiles::LaunchWebClient::Despana;
+                    let despana_url = local_web_client_url(&endpoint, despana.route());
+                    println!("Vellum Web UI: {play_url}");
+                    println!("{}: {despana_url}", despana.label());
+                    if app_core.config.web.bind != "127.0.0.1" {
+                        println!(
+                            "LAN clients: same #token fragment with this machine's IP (bind = {})",
+                            app_core.config.web.bind
+                        );
+                    }
+                }
+                launch_urls_pending = false;
             }
         }
 
@@ -1620,6 +1689,11 @@ fn handle_server_message(app_core: &mut AppCore, msg: ServerMessage) -> bool {
             tracing::info!("Connected to game server");
             let newly = !app_core.game_state.connected;
             app_core.game_state.connected = true;
+            // A web/headless session can be created before its launcher has
+            // started the local Lich process. Re-resolve here so automatic
+            // map discovery observes the process that owns this connection;
+            // ensure_db is a no-op when the configured source is unchanged.
+            app_core.refresh_map_source();
             newly
         }
         ServerMessage::Disconnected => {
@@ -1638,6 +1712,56 @@ mod tests {
 
     fn app() -> AppCore {
         AppCore::new(Config::default()).expect("AppCore")
+    }
+
+    #[test]
+    fn local_web_url_requires_the_actual_port_and_preserves_the_route() {
+        let endpoint = RemoteLaunchEndpoint::new(8041, "abc".to_string());
+        assert_eq!(
+            local_web_client_url(&endpoint, "despana"),
+            "http://127.0.0.1:8041/despana#token=abc"
+        );
+        assert_eq!(
+            local_web_client_url(&endpoint, "play"),
+            "http://127.0.0.1:8041/play#token=abc"
+        );
+    }
+
+    #[test]
+    fn ordinary_headless_does_not_auto_attach_lich_or_open_a_browser() {
+        let launch = super::super::HeadlessLaunchOptions::default();
+
+        assert!(!lich_session_configured(None, launch));
+        assert_eq!(launch.web_client, None);
+        assert!(lich_session_configured(Some("one-shot-key"), launch));
+    }
+
+    #[test]
+    fn launcher_web_client_auto_attach_does_not_need_a_fake_login_key() {
+        let launch = super::super::HeadlessLaunchOptions {
+            auto_connect_lich: true,
+            web_client: Some(crate::config::profiles::LaunchWebClient::Despana),
+        };
+
+        assert!(lich_session_configured(None, launch));
+    }
+
+    #[test]
+    fn despana_open_uses_the_authoritative_endpoint_and_failure_is_nonfatal() {
+        let endpoint = RemoteLaunchEndpoint::new(8057, "secret".to_string());
+        let mut opened = String::new();
+
+        let opened_ok = open_local_web_client_with(
+            &endpoint,
+            crate::config::profiles::LaunchWebClient::Despana,
+            |url| {
+                opened.push_str(url);
+                anyhow::bail!("browser unavailable")
+            },
+        );
+
+        assert!(!opened_ok);
+        assert_eq!(opened, "http://127.0.0.1:8057/despana#token=secret");
     }
 
     /// `.reconnect` from the phone must ask the supervisor to reconnect — the

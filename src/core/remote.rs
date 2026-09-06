@@ -439,6 +439,8 @@ pub enum RemoteDelta {
     Objectives(crate::data::ObjectivesContent),
     /// The full spellbook ("Spells" stream) changed, as styled lines.
     Spells(Vec<crate::data::widget::StyledLine>),
+    /// The latest complete inventory stream changed, as styled lines.
+    Inventory(Vec<crate::data::widget::StyledLine>),
     /// Body-part injuries changed: id -> level (1-3 wounds, 4-6 scars);
     /// cleared parts are absent.
     Injuries(std::collections::HashMap<String, u8>),
@@ -869,6 +871,8 @@ pub struct RemoteStateSnapshot {
     /// links), so remote clients get the whole active-spell list without a
     /// Spells window.
     pub spellbook: Vec<crate::data::widget::StyledLine>,
+    /// Latest complete inventory stream snapshot, including item links.
+    pub inventory: Vec<crate::data::widget::StyledLine>,
     /// Body-part injuries: id -> level (1-3 wounds, 4-6 scars).
     pub injuries: std::collections::HashMap<String, u8>,
     /// Targetable creatures in the room (tap-to-target list).
@@ -995,6 +999,12 @@ pub struct RemoteTarget {
 /// back into a number.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct RemoteCharInfo {
+    /// Character identity fields used by presentation chrome. They remain
+    /// absent until the corresponding game feeds have reported them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profession: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<u32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub experience: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1188,6 +1198,15 @@ pub struct RemoteTravelStatus {
     pub eta: String,
 }
 
+/// The current room's position on one of Lich's classic annotated map
+/// images. `image` is a registry name served by the authenticated web sidecar,
+/// never a filesystem path.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteClassicMap {
+    pub image: String,
+    pub room_rect: [f64; 4],
+}
+
 /// Small per-step map state: where the character is on the current scene.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct RemoteMapState {
@@ -1205,6 +1224,8 @@ pub struct RemoteMapState {
     /// Centering cell (the ghost's cell while in an unmapped room).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cell: Option<[i32; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classic: Option<RemoteClassicMap>,
     #[serde(skip_serializing_if = "is_false")]
     pub in_ghost: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1248,6 +1269,7 @@ impl RemoteStateSnapshot {
                 .cloned()
                 .collect(),
             spellbook: game_state.spellbook.clone(),
+            inventory: game_state.inventory.clone(),
             objectives: game_state.objectives.clone(),
             injuries: game_state.injuries.clone(),
             targets: {
@@ -1311,6 +1333,12 @@ impl RemoteStateSnapshot {
             char_info: {
                 let mut info = RemoteCharInfo::default();
                 let exp = &game_state.gs4_experience;
+                info.profession = game_state.character.profession.clone();
+                info.level = exp
+                    .level_text
+                    .split_whitespace()
+                    .last()
+                    .and_then(|value| value.parse().ok());
                 if !exp.level_text.is_empty() {
                     info.experience.push(exp.level_text.clone());
                 }
@@ -1395,6 +1423,32 @@ impl RemoteStateSnapshot {
     }
 }
 
+/// Authenticated endpoint installed by the web server.
+///
+/// Port and token are deliberately published as one value: consumers must
+/// never combine the port from one server startup with independently loaded
+/// auth state. This type intentionally omits `Debug` so a diagnostic dump
+/// cannot accidentally persist the token.
+#[derive(Clone)]
+pub struct RemoteLaunchEndpoint {
+    bound_port: u16,
+    token: String,
+}
+
+impl RemoteLaunchEndpoint {
+    pub(crate) fn new(bound_port: u16, token: String) -> Self {
+        Self { bound_port, token }
+    }
+
+    pub fn bound_port(&self) -> u16 {
+        self.bound_port
+    }
+
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+}
+
 /// Everything the web server task needs; returned by [`RemoteSink::new`].
 #[derive(Clone)]
 pub struct RemoteServerHandles {
@@ -1410,9 +1464,10 @@ pub struct RemoteServerHandles {
     /// Identifies this process instance. Sent in `hello`; clients discard
     /// their resume cursor when it changes (seqs restart with the process).
     pub session: String,
-    /// Set by the server task once it binds (unpinned instances may walk
-    /// past the configured port). Read by `.webinfo`.
-    pub bound_port: Arc<std::sync::OnceLock<u16>>,
+    /// Published by the server only after both the listener and its
+    /// authentication token are ready. Unpinned instances may walk past the
+    /// configured port.
+    pub(crate) launch_endpoint_tx: watch::Sender<Option<RemoteLaunchEndpoint>>,
 }
 
 /// Core-side producer for remote clients.
@@ -1422,7 +1477,7 @@ pub struct RemoteSink {
     state_tx: watch::Sender<RemoteStateSnapshot>,
     macros_tx: watch::Sender<Arc<RemoteMacros>>,
     wheels_tx: watch::Sender<Arc<RemoteWheels>>,
-    bound_port: Arc<std::sync::OnceLock<u16>>,
+    launch_endpoint_rx: watch::Receiver<Option<RemoteLaunchEndpoint>>,
     /// State as of the previous flush, for change detection.
     last: RemoteStateSnapshot,
     /// Session status owned by the serving runtime (headless supervisor);
@@ -1458,7 +1513,7 @@ impl RemoteSink {
                 .map(|d| d.as_millis())
                 .unwrap_or(0)
         );
-        let bound_port = Arc::new(std::sync::OnceLock::new());
+        let (launch_endpoint_tx, launch_endpoint_rx) = watch::channel(None);
         let handles = RemoteServerHandles {
             buffer: buffer.clone(),
             delta_tx: delta_tx.clone(),
@@ -1467,7 +1522,7 @@ impl RemoteSink {
             macros_rx,
             wheels_rx,
             session,
-            bound_port: bound_port.clone(),
+            launch_endpoint_tx,
         };
         (
             Self {
@@ -1476,7 +1531,7 @@ impl RemoteSink {
                 state_tx,
                 macros_tx,
                 wheels_tx,
-                bound_port,
+                launch_endpoint_rx,
                 last: RemoteStateSnapshot::default(),
                 session: RemoteSessionInfo::default(),
                 webui_pages: Vec::new(),
@@ -1531,10 +1586,21 @@ impl RemoteSink {
         self.last.session = self.session.clone();
     }
 
-    /// The port the server actually bound (may differ from config when an
-    /// unpinned instance walked past a taken port). None until bound.
+    /// The authenticated endpoint the server installed. None until the
+    /// listener and the token used by that listener are both ready.
+    pub fn launch_endpoint(&self) -> Option<RemoteLaunchEndpoint> {
+        self.launch_endpoint_rx.borrow().clone()
+    }
+
+    /// Subscribe to authenticated endpoint readiness without polling.
+    pub fn launch_endpoint_receiver(&self) -> watch::Receiver<Option<RemoteLaunchEndpoint>> {
+        self.launch_endpoint_rx.clone()
+    }
+
+    /// The port the ready server actually bound (may differ from config when
+    /// an unpinned instance walked past a taken port).
     pub fn bound_port(&self) -> Option<u16> {
-        self.bound_port.get().copied()
+        self.launch_endpoint().map(|endpoint| endpoint.bound_port())
     }
 
     /// Publish macro definitions: stored for connect-time delivery and
@@ -1777,11 +1843,9 @@ impl RemoteSink {
         data: Option<serde_json::Value>,
     ) {
         self.last_skill_trainer = Some((open, status.clone(), revision));
-        let _ = self.delta_tx.send(RemoteDelta::SkillTrainer {
-            open,
-            status,
-            data,
-        });
+        let _ = self
+            .delta_tx
+            .send(RemoteDelta::SkillTrainer { open, status, data });
     }
 
     /// Route a settings catalog / put reply to the requesting client.
@@ -1909,6 +1973,11 @@ impl RemoteSink {
                 .delta_tx
                 .send(RemoteDelta::Spells(snap.spellbook.clone()));
         }
+        if snap.inventory != self.last.inventory {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::Inventory(snap.inventory.clone()));
+        }
         if snap.injuries != self.last.injuries {
             let _ = self
                 .delta_tx
@@ -2027,6 +2096,18 @@ mod tests {
             .encumbrance
             .iter()
             .any(|l| l == "Light (17%)"));
+    }
+
+    #[test]
+    fn character_identity_is_structured_for_presentation_chrome() {
+        let mut gs = GameState::new();
+        gs.character.profession = Some("Sorcerer".to_string());
+        gs.gs4_experience.update_level("Level 90".to_string());
+
+        let snap = RemoteStateSnapshot::from_game_state(&gs, &[]);
+
+        assert_eq!(snap.char_info.profession.as_deref(), Some("Sorcerer"));
+        assert_eq!(snap.char_info.level, Some(90));
     }
 
     /// An unreported gauge must be absent from the wire rather than a zero.

@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Vellum Despana</title>
+  <link rel="stylesheet" href="/despana/app.css">
+  <script type="module" src="/despana/app.js"></script>
+</head>
+<body data-despana-desktop>
+  <div id="desktop-app" class="desktop-shell">
+    <header class="application-header">
+      <nav class="menu-bar" aria-label="Application menu">
+        <span class="application-name">Vellum Despana</span>
+        <span class="menu-label">Session</span>
+        <div class="workspace-menu-control">
+          <button id="view-menu-button" class="menu-button" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="view-menu">View</button>
+          <div id="view-menu" class="module-menu view-menu" role="dialog" aria-modal="false" aria-labelledby="view-menu-button" hidden>
+            <div class="font-scale-heading">
+              <label for="font-scale">Font scale</label>
+              <output id="font-scale-value" for="font-scale">100%</output>
+            </div>
+            <input id="font-scale" type="range" min="75" max="200" step="5" value="100">
+            <button id="font-scale-reset" type="button">Reset to 100%</button>
+          </div>
+        </div>
+        <div class="workspace-menu-control">
+          <button id="workspace-menu-button" class="menu-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="workspace-menu">Workspace</button>
+          <div id="workspace-menu" class="module-menu" role="menu" aria-labelledby="workspace-menu-button" hidden></div>
+        </div>
+        <span class="menu-label">Help</span>
+      </nav>
+
+      <div class="title-bar">
+        <h1 id="character-title">Vellum Despana</h1>
+        <div class="header-status">
+          <output id="workspace-status" class="workspace-status" role="status" aria-live="polite">Default workspace</output>
+          <output id="connection-status" class="connection-status" aria-live="polite">Not connected</output>
+        </div>
+      </div>
+    </header>
+
+    <main id="workspace" class="workspace" aria-label="Character workspace">
+      <section class="workspace-zone zone-top" data-zone="top" aria-label="Top workspace zone">
+        <section class="hands-strip" data-module="hands" aria-label="Hands and prepared spell">
+          <div class="hands-body" data-module-body>
+            <div class="hand-slot">
+              <span class="slot-label">Left hand</span>
+              <output id="hands-left">Empty</output>
+            </div>
+            <div class="hand-slot">
+              <span class="slot-label">Right hand</span>
+              <output id="hands-right">Empty</output>
+            </div>
+            <div class="hand-slot prepared-slot">
+              <span class="slot-label">Prepared</span>
+              <output id="hands-prepared">None</output>
+            </div>
+          </div>
+        </section>
+
+        <section class="pane thoughts-pane" data-module="thoughts" aria-labelledby="thoughts-heading">
+          <header class="pane-header">
+            <h2 id="thoughts-heading">Thoughts</h2>
+          </header>
+          <div id="thoughts-output" class="pane-output text-output" data-module-body role="log" aria-live="polite">
+            <p class="empty-state">No data received</p>
+          </div>
+        </section>
+      </section>
+
+      <div class="workspace-middle">
+        <section class="workspace-zone zone-left" data-zone="left" aria-label="Left workspace zone">
+          <section class="pane" data-module="active-spells" aria-labelledby="spells-heading">
+            <header class="pane-header">
+              <h2 id="spells-heading">Active Spells</h2>
+            </header>
+            <div id="spells-output" class="pane-output" data-module-body aria-live="polite">
+              <p class="empty-state">No data received</p>
+            </div>
+          </section>
+
+          <section class="pane" data-module="known-spells" aria-labelledby="known-spells-heading">
+            <header class="pane-header">
+              <h2 id="known-spells-heading">Known Spells</h2>
+            </header>
+            <div id="known-spells-output" class="pane-output text-output compact-output" data-module-body>
+              <p class="empty-state">No data received</p>
+            </div>
+          </section>
+
+          <section class="pane" data-module="injuries" aria-labelledby="injuries-heading">
+            <header class="pane-header">
+              <h2 id="injuries-heading">Injuries</h2>
+            </header>
+            <div id="injuries-output" class="pane-output" data-module-body aria-live="polite">
+              <p class="empty-state">No data received</p>
+            </div>
+          </section>
+
+          <section class="pane" data-module="cooldowns" aria-labelledby="cooldowns-heading">
+            <header class="pane-header">
+              <h2 id="cooldowns-heading">Cooldowns</h2>
+            </header>
+            <div id="cooldowns-output" class="pane-output effect-list" data-module-body aria-live="polite">
+              <p class="empty-state">No data received</p>
+            </div>
+          </section>
+        </section>
+
+        <section class="workspace-zone zone-center" data-zone="center" aria-label="Center workspace zone">
+          <section class="pane room-pane" data-module="room" aria-labelledby="room-heading">
+            <header class="pane-header">
+              <h2 id="room-heading">Room</h2>
+            </header>
+            <div class="room-content" data-module-body>
+              <h3 id="room-title">No room data</h3>
+              <div id="room-description" class="room-description"></div>
+              <div class="room-detail">
+                <span class="detail-label">Occupants</span>
+                <div id="room-occupants" class="detail-content empty-state">No data received</div>
+              </div>
+              <div class="room-detail">
+                <span class="detail-label">Exits</span>
+                <div id="room-exits" class="detail-content empty-state">No data received</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="pane story-pane" data-module="story" aria-labelledby="story-heading">
+            <header class="pane-header">
+              <h2 id="story-heading">Story</h2>
+              <div class="pane-header-tools" aria-label="Story controls">
+                <button id="story-pause" class="pane-header-action" type="button" aria-pressed="false">Pause</button>
+                <button id="story-bottom" class="pane-header-action" type="button">Bottom</button>
+              </div>
+            </header>
+            <div id="story-output" class="pane-output text-output" data-module-body role="log" aria-live="polite">
+              <p class="empty-state">No game text received</p>
+            </div>
+            <section class="story-command" aria-label="Command input">
+              <div class="command-body">
+                <form id="command-form" autocomplete="off">
+                  <label class="visually-hidden" for="command-input">Game command</label>
+                  <input id="command-input" name="command" type="text" spellcheck="false" autocomplete="off" placeholder="Enter command" disabled>
+                  <button type="submit" disabled>Send</button>
+                </form>
+                <output id="command-status" class="command-status" aria-live="polite">Waiting for connection</output>
+              </div>
+            </section>
+          </section>
+        </section>
+
+        <section class="workspace-zone zone-right" data-zone="right" aria-label="Right workspace zone">
+          <section class="pane" data-module="familiar" aria-labelledby="familiar-heading">
+            <header class="pane-header">
+              <h2 id="familiar-heading">Familiar</h2>
+            </header>
+            <div id="familiar-output" class="pane-output text-output" data-module-body role="log" aria-live="polite">
+              <p class="empty-state">No data received</p>
+            </div>
+          </section>
+
+          <section class="pane map-pane" data-module="map" aria-labelledby="map-heading">
+            <header class="pane-header">
+              <h2 id="map-heading">Map</h2>
+              <div class="pane-header-tools map-mode-tools" role="group" aria-label="Map mode">
+                <button id="map-mode-classic" class="pane-header-action" type="button" aria-pressed="true">Classic</button>
+                <button id="map-mode-local" class="pane-header-action" type="button" aria-pressed="false">Local</button>
+                <button id="map-center" class="pane-header-action" type="button">Center</button>
+              </div>
+            </header>
+            <div class="map-content" data-module-body>
+              <label class="visually-hidden" for="map-selector">Choose map</label>
+              <select id="map-selector" class="map-selector" aria-label="Choose map">
+                <option value="">Current map</option>
+              </select>
+              <canvas id="map-canvas" tabindex="0" aria-label="Local area map; click a room to travel, Control-click for its room ID, drag to pan, and use the mouse wheel to zoom"></canvas>
+              <div id="map-classic-stage" class="map-classic-stage" tabindex="0" aria-label="Classic annotated map; drag to pan and use the mouse wheel to zoom" hidden>
+                <img id="map-classic-image" alt="" draggable="false">
+                <span id="map-classic-marker" class="map-classic-marker" aria-label="Current room"></span>
+              </div>
+              <p id="map-empty" class="empty-state">No map data received</p>
+            </div>
+          </section>
+
+          <section class="pane compass-pane" data-module="compass" aria-labelledby="compass-heading">
+            <header class="pane-header">
+              <h2 id="compass-heading">Compass</h2>
+            </header>
+            <div id="compass" class="compass-grid" data-module-body role="group" aria-label="Available directions">
+              <button type="button" data-direction="up" disabled>UP</button>
+              <button type="button" data-direction="northwest" disabled>NW</button>
+              <button type="button" data-direction="north" disabled>N</button>
+              <button type="button" data-direction="northeast" disabled>NE</button>
+              <button type="button" data-direction="out" disabled>OUT</button>
+              <button type="button" data-direction="west" disabled>W</button>
+              <span class="compass-center" aria-hidden="true"></span>
+              <button type="button" data-direction="east" disabled>E</button>
+              <button type="button" data-direction="down" disabled>DOWN</button>
+              <button type="button" data-direction="southwest" disabled>SW</button>
+              <button type="button" data-direction="south" disabled>S</button>
+              <button type="button" data-direction="southeast" disabled>SE</button>
+            </div>
+          </section>
+
+          <section class="pane" data-module="combat" aria-labelledby="combat-heading">
+            <header class="pane-header">
+              <h2 id="combat-heading">Combat</h2>
+            </header>
+            <div id="combat-output" class="pane-output" data-module-body aria-live="polite">
+              <p class="empty-state">No combat data received</p>
+            </div>
+          </section>
+
+          <section class="pane" data-module="tasks" aria-labelledby="tasks-heading">
+            <header class="pane-header">
+              <h2 id="tasks-heading">Tasks / Bounty / Society</h2>
+            </header>
+            <div id="tasks-output" class="pane-output" data-module-body aria-live="polite">
+              <p class="empty-state">No task data received</p>
+            </div>
+          </section>
+
+          <section class="pane" data-module="inventory" aria-labelledby="inventory-heading">
+            <header class="pane-header">
+              <h2 id="inventory-heading">Inventory</h2>
+            </header>
+            <div id="inventory-output" class="pane-output text-output compact-output" data-module-body aria-live="polite">
+              <p class="empty-state">No inventory data received</p>
+            </div>
+          </section>
+        </section>
+      </div>
+
+      <section class="workspace-zone zone-bottom" data-zone="bottom" aria-label="Bottom workspace zone">
+        <section class="footer-module conditions-module" data-module="conditions" aria-labelledby="conditions-heading">
+          <h2 id="conditions-heading">Conditions</h2>
+          <div id="conditions" class="condition-strip" data-module-body aria-live="polite">
+            <span class="empty-state">No conditions reported</span>
+          </div>
+        </section>
+
+        <section id="vitals" class="footer-module vitals-module" data-module="vitals" aria-labelledby="vitals-heading">
+          <h2 id="vitals-heading">Vitals</h2>
+          <div class="vital-grid" data-module-body>
+            <div id="vital-health" class="vital-row vital-health" data-current="0" data-maximum="0">
+              <span class="vital-label">Health</span><span class="vital-track"><span class="vital-fill"></span></span><output>--</output>
+            </div>
+            <div id="vital-mana" class="vital-row vital-mana" data-current="0" data-maximum="0">
+              <span class="vital-label">Mana</span><span class="vital-track"><span class="vital-fill"></span></span><output>--</output>
+            </div>
+            <div id="vital-stamina" class="vital-row vital-stamina" data-current="0" data-maximum="0">
+              <span class="vital-label">Stamina</span><span class="vital-track"><span class="vital-fill"></span></span><output>--</output>
+            </div>
+            <div id="vital-spirit" class="vital-row vital-spirit" data-current="0" data-maximum="0">
+              <span class="vital-label">Spirit</span><span class="vital-track"><span class="vital-fill"></span></span><output>--</output>
+            </div>
+            <div class="vital-status-grid" aria-label="Character status gauges">
+              <output id="gauge-mind" class="vital-status">Mind: unknown</output>
+              <output id="gauge-encumbrance" class="vital-status">Encumbrance: unknown</output>
+              <output id="gauge-stance" class="vital-status">Stance: unknown</output>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+  <section id="vellum-idle" class="vellum-login" aria-labelledby="vellum-idle-title">
+    <div class="vellum-login-frame desktop-shell">
+      <header class="application-header">
+        <nav class="menu-bar" aria-label="VellumFE presentation">
+          <span class="application-name">Vellum Despana</span>
+        </nav>
+        <div class="title-bar">
+          <h1 id="vellum-idle-title">Connecting to VellumFE</h1>
+        </div>
+      </header>
+      <main class="pane story-pane">
+        <header class="pane-header">
+          <h2>Session</h2>
+          <a class="pane-header-action" href="/play" target="_blank" rel="noopener noreferrer">Open Vellum play page</a>
+        </header>
+        <p id="vellum-idle-message" class="pane-output empty-state" role="status" aria-live="polite">
+          Despana is waiting for VellumFE's authenticated session state.
+        </p>
+      </main>
+    </div>
+  </section>
+</body>
+</html>

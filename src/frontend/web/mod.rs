@@ -32,10 +32,31 @@ pub fn start(
     RemoteSink,
     tokio::sync::mpsc::UnboundedReceiver<RemoteEvent>,
 ) {
+    start_with_classic_maps(
+        config,
+        session_label,
+        std::sync::Arc::new(crate::core::classic_maps::ClassicMapCatalog::new()),
+    )
+}
+
+/// Start the sidecar with classic-map filesystem authority scoped to the
+/// calling game session.
+pub fn start_with_classic_maps(
+    config: &WebConfig,
+    session_label: String,
+    classic_maps: std::sync::Arc<crate::core::classic_maps::ClassicMapCatalog>,
+) -> (
+    RemoteSink,
+    tokio::sync::mpsc::UnboundedReceiver<RemoteEvent>,
+) {
     let (sink, handles, event_rx) = RemoteSink::new(DEFAULT_MAX_LINES_PER_STREAM);
     let config = config.clone();
     tokio::spawn(async move {
-        if let Err(e) = server::serve(config, handles, session_label).await {
+        let options = server::ServeOptions {
+            status_only: config.local_status_only(),
+            classic_maps,
+        };
+        if let Err(e) = server::serve(config, handles, session_label, options).await {
             tracing::error!("web server error: {e:#}");
         }
     });

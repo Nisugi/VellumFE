@@ -274,7 +274,11 @@ async fn async_run(
             .clone()
             .or_else(|| app_core.config.connection.character.clone())
             .unwrap_or_else(|| "default".to_string());
-        let (sink, event_rx) = crate::frontend::web::start(&app_core.config.web, session_label);
+        let (sink, event_rx) = crate::frontend::web::start_with_classic_maps(
+            &app_core.config.web,
+            session_label,
+            app_core.map.classic_maps(),
+        );
         app_core.enable_remote(sink);
         Some(event_rx)
     } else {

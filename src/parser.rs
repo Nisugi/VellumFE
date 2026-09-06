@@ -163,6 +163,10 @@ pub enum ParsedElement {
         rpa: Option<f32>,
     },
     StreamPop,
+    /// A stream redirect force-closed by `<prompt>` because its popStream was
+    /// eaten upstream. Consumers must treat any per-stream buffer as TORN
+    /// (possibly truncated), not as a complete authoritative snapshot.
+    StreamPopForced,
     /// A pop uncovered an enclosing stream redirect: subsequent text belongs
     /// to `id`, but WITHOUT the arrival side effects of a fresh StreamPush
     /// (buffer clears for room/inv/reserve). Emitted by the parser's stream

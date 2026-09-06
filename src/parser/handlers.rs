@@ -224,8 +224,16 @@ impl XmlParser {
     /// otherwise falls back to main. A pop with nothing open is not an
     /// error — the wire does this — and still re-asserts main.
     pub(super) fn pop_stream(&mut self, elements: &mut Vec<ParsedElement>) {
+        self.pop_stream_inner(elements, false)
+    }
+
+    pub(super) fn pop_stream_inner(&mut self, elements: &mut Vec<ParsedElement>, forced: bool) {
         self.stream_stack.pop();
-        elements.push(ParsedElement::StreamPop);
+        elements.push(if forced {
+            ParsedElement::StreamPopForced
+        } else {
+            ParsedElement::StreamPop
+        });
         match self.stream_stack.last() {
             Some(outer) => {
                 self.current_stream = outer.clone();
@@ -301,7 +309,7 @@ impl XmlParser {
                 self.stream_stack.join(", ")
             );
             while !self.stream_stack.is_empty() {
-                self.pop_stream(elements);
+                self.pop_stream_inner(elements, true);
             }
         }
 

@@ -10,6 +10,7 @@ pub mod app_core;
 pub mod bestiary;
 pub mod bounty_parser;
 pub mod character_state;
+pub mod classic_maps;
 pub mod conditions;
 pub mod creature_cards;
 pub mod curated_maps;

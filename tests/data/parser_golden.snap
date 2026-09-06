@@ -382,7 +382,7 @@ Text { content: "Your familiar sees a ", stream: "familiar", fg_color: None, bg_
 Text { content: "troll", stream: "familiar", fg_color: None, bg_color: None, bold: false, mono: false, span_type: Monsterbold, link_data: None }
 Text { content: " arrive.", stream: "familiar", fg_color: None, bg_color: None, bold: false, mono: false, span_type: Normal, link_data: None }
 -- line 8: "<prompt time=\"1756300001\">&gt;</prompt>"
-StreamPop
+StreamPopForced
 Prompt { time: "1756300001", text: ">" }
 -- line 9: "<style id=\"roomName\"/>[Town Square, Small Park]<style id=\"\"/>"
 Text { content: "[Town Square, Small Park]", stream: "main", fg_color: None, bg_color: None, bold: false, mono: false, span_type: Normal, link_data: None }
