@@ -142,8 +142,19 @@ fn spawn_local(spec: &LaunchSpec) -> Result<()> {
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
     }
-    cmd.spawn()
+    let child = cmd
+        .spawn()
         .with_context(|| format!("Could not run '{}'", spec.program))?;
+    let pid = child.id();
+    std::thread::Builder::new()
+        .name(format!("lich-reaper-{pid}"))
+        .spawn(move || {
+            let mut child = child;
+            if let Err(error) = child.wait() {
+                tracing::warn!(pid, %error, "could not reap local Lich child");
+            }
+        })
+        .context("Could not start local Lich child reaper")?;
     Ok(())
 }
 
@@ -578,6 +589,50 @@ mod tests {
             spec.local,
             "the per-profile host is the specific signal and must win over global ssh settings"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn local_launch_child_is_reaped_after_exit() {
+        let root = tempfile::tempdir().unwrap();
+        let pid_file = root.path().join("child.pid");
+        let spec = LaunchSpec {
+            ssh_host: String::new(),
+            ssh_port: 22,
+            ssh_user: String::new(),
+            remote_os: crate::launcher::ssh::RemoteOs::Unix,
+            program: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                format!("echo $$ > {}; exit 0", pid_file.display()),
+            ],
+            attach_host: "127.0.0.1".to_string(),
+            attach_port: 8000,
+            character: "Test".to_string(),
+            local: true,
+        };
+
+        spawn_local(&spec).expect("short-lived local process starts");
+        for _ in 0..100 {
+            if pid_file.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let pid = std::fs::read_to_string(&pid_file)
+            .expect("child published its pid")
+            .trim()
+            .parse::<u32>()
+            .expect("published pid is numeric");
+        let proc_path = std::path::PathBuf::from(format!("/proc/{pid}"));
+        for _ in 0..100 {
+            if !proc_path.exists() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        panic!("finished local launch child remained unreaped at {proc_path:?}");
     }
 
     fn cfg_with_port(port: u16) -> LauncherConfig {

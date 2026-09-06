@@ -2,7 +2,8 @@
 //! one place.
 //!
 //! Each running VellumFE already publishes its own state over the web
-//! sidecar's websocket and registers itself in `~/.vellum-fe/web-sessions/`.
+//! sidecar's websocket and registers itself in the machine-local Vellum
+//! runtime registry.
 //! So the pieces already exist: this module holds the *model* -- what a peer
 //! is, how stale it is, and how peers cluster into groups -- while the
 //! transport that fills it lives in `core::multiaccount::hub`.

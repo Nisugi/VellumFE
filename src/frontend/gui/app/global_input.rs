@@ -581,12 +581,15 @@ impl VellumGuiApp {
                 for outcome in outcomes {
                     match outcome {
                         crate::data::CommandOutcome::Game(outbound) => {
-                            if Self::should_send_to_network(&outbound) {
+                            let sent = if Self::should_send_to_network(&outbound) {
                                 self.app_core
                                     .perf_stats
                                     .record_bytes_sent((outbound.len() + 1) as u64);
-                                let _ = self.command_tx.send(outbound);
-                            }
+                                self.command_tx.send(outbound.clone()).is_ok()
+                            } else {
+                                false
+                            };
+                            self.app_core.finish_game_command_send(&outbound, sent);
                         }
                         crate::data::CommandOutcome::Handled => {}
                         // A macro bound to a dot-command that opens an

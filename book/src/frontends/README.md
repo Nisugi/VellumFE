@@ -25,7 +25,7 @@ not about which one is the "real" client.
 |---|---|---|---|
 | [**Terminal (TUI)**](./tui.md) | `--frontend tui` (the CLI default) | You live in a terminal, play over SSH, or want the smallest possible footprint | Stable |
 | [**Desktop GUI**](./gui.md) | `--frontend gui`, or launch a saved connection (**its** default) | You want mouse-first layout work, graphics, skins, and the stay-open toolbar hubs | Stable |
-| [**Vellum Despana**](./despana.md) | Select **Despana** for a saved connection | You want a dense, customizable desktop workspace in a browser | Optional built-in |
+| [**Vellum Despana**](./despana.md) | Select **Vellum Despana** for a saved connection | You want a dense, customizable desktop workspace in a browser | Optional built-in |
 | [**Mobile Web**](./web.md) | Enable the web server (`--web-port`, or `[web]` in `config.toml`), then open the address in a browser | Your PC is running the session and you want a second screen, or you want to play from a browser with no local UI at all | Stable |
 | [**Android app**](./android.md) | Sideloaded APK | The whole client on an Android phone | **In progress** |
 | [**iOS app**](./ios.md) | TestFlight | The whole client on an iPhone | **Beta — via TestFlight** |
@@ -63,14 +63,14 @@ To start the GUI without going through the Launcher, run
 `vellum-fe --frontend gui --port 8000 --character YourName`.
 
 Which frontend a saved connection uses is set per row under **Advanced** ▸ **Frontend** ▸
-**GUI** / **Terminal** / **Despana**. **A saved connection defaults to GUI, but
+**GUI** / **Terminal** / **Vellum Despana**. **A saved connection defaults to GUI, but
 the `--frontend` command-line flag defaults to `tui`** — the same character
 started two ways lands in two different interfaces. That surprise is worth
 knowing before you go looking for a bug.
 
 <figure class="shot" data-shot="gui/frontends-launcher-frontend-picker">
   <div class="shot-ph">📷 screenshot pending</div>
-  <figcaption>A connection's <b>Advanced</b> section with the <b>Frontend</b> submenu open on <b>GUI</b> / <b>Terminal</b> / <b>Despana</b>.</figcaption>
+  <figcaption>A connection's <b>Advanced</b> section with the <b>Frontend</b> submenu open on <b>GUI</b> / <b>Terminal</b> / <b>Vellum Despana</b>.</figcaption>
 </figure>
 
 → **Expected result:** a native window opens with your layout, and the top toolbar shows the
@@ -195,7 +195,7 @@ decide which face you get and how it reaches the network.
 | Field | Type | Default | What it does |
 |---|---|---|---|
 | `frontend` | `"gui"` \| `"tui"` | `"gui"` | Which frontend this saved connection launches. **Note the mismatch with the `--frontend` CLI default of `tui`.** |
-| `web_client` | `"despana"` | unset | Selects the optional Despana browser frontend while retaining the native GUI fallback for older builds. |
+| `web_client` | `"despana"` | unset | Selects the optional Vellum Despana browser frontend while retaining the native GUI fallback for older builds. |
 | `save_password` | bool | `false` | Stores the password in the OS credential store (service id `vellum-fe`, keyed by the lowercased account). Never written to a file. |
 
 **Session behavior** (`config.toml`)

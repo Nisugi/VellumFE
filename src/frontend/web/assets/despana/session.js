@@ -68,6 +68,12 @@ function stringArray(value) {
   ));
 }
 
+function despanaMapLocations(value) {
+  return Object.freeze(stringArray(value).filter(
+    (entry) => !/^sat(?:id)?-\d+$/i.test(entry),
+  ));
+}
+
 function nullableInteger(value) {
   return Number.isSafeInteger(value) ? value : null;
 }
@@ -104,13 +110,18 @@ export function shouldShowVellumIdle(view) {
   return session.state !== "connected" && session.state !== "reconnecting";
 }
 
-/** Build the shared browser/window title from whatever identity is confirmed. */
-export function presentationTitle(view) {
+/** Build the window title without hiding one known identity field behind another. */
+export function characterTitleText(view) {
   const name = nullableString(view?.character) || nullableString(view?.session?.character);
   const profession = nullableString(view?.charInfo?.profession);
-  const rawLevel = view?.charInfo?.level;
-  const level = Number.isSafeInteger(rawLevel) && rawLevel >= 0 ? String(rawLevel) : null;
-  return ["Vellum Despana", name, profession, level].filter(Boolean).join(" - ");
+  const level = nullableString(view?.charInfo?.level);
+  const parts = ["Vellum Despana"];
+  if (name) {
+    parts.push(name);
+    if (profession) parts.push(profession);
+    if (level) parts.push(level);
+  }
+  return parts.join(" - ");
 }
 
 function normalizeRoom(value) {
@@ -325,7 +336,7 @@ function normalizeCharInfo(value) {
     : null;
   return Object.freeze({
     profession: nullableString(info.profession),
-    level: Number.isSafeInteger(info.level) && info.level >= 0 ? info.level : null,
+    level: nullableString(info.level),
     experience: stringArray(info.experience),
     encumbrance: stringArray(info.encumbrance),
     bounty: stringArray(info.bounty),
@@ -683,7 +694,10 @@ export class DesktopSession {
     let menuRequestId = null;
     let mapRequestKind = null;
     let unconfirmedDispatch = null;
-    if (kind === "submit-text" || kind === "command") {
+    if (kind === "exit-and-logout") {
+      id = `exit-${++this._dispatchId}`;
+      frame = { t: "exit_logout", d: {} };
+    } else if (kind === "submit-text" || kind === "command") {
       if (typeof intent.text !== "string" || intent.text.trim().length === 0) {
         throw new DesktopSessionError("intent", "command text must not be empty");
       }
@@ -940,7 +954,7 @@ export class DesktopSession {
     this._authenticated = true;
     this._setConnection("synchronizing", null);
     try {
-      socket.send(JSON.stringify({ t: "subscribe", d: { mode: "play" } }));
+      socket.send(JSON.stringify({ t: "subscribe", d: { mode: "desktop" } }));
       socket.send(JSON.stringify({ t: "resume", d: { seq: this._lastTextSeq } }));
     } catch (error) {
       this._surfaceError("handshake-send", error, true);
@@ -1070,11 +1084,24 @@ export class DesktopSession {
       return;
     }
 
+    if (type === "open_url") {
+      const url = nullableString(payload?.url);
+      if (!url || !/^https?:\/\//i.test(url)) {
+        this._surfaceError("malformed-open-url", new Error("invalid external URL delta"), true);
+        return;
+      }
+      this._emit("open-url", { url });
+      return;
+    }
+
     if (type === "map_locations") {
       const requestId = payload?.request_id;
       if (this._pendingMapRequests.get(requestId) !== "locations") return;
       this._pendingMapRequests.delete(requestId);
-      const locations = stringArray(payload?.locations);
+      // Vellum uses satellite keys internally to render uncurated current
+      // rooms. They remain valid protocol data, but are not human-selectable
+      // maps and therefore do not belong in Despana's browse picker.
+      const locations = despanaMapLocations(payload?.locations);
       this._emit("map-locations", { requestId, locations });
       return;
     }

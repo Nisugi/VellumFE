@@ -360,6 +360,12 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
                 items,
             },
         ),
+        // client_id stays server-side: the ws task already filtered on it.
+        RemoteDelta::OpenUrl { url, .. } => encode(
+            "open_url",
+            last_seq,
+            serde_json::json!({ "url": url }),
+        ),
         RemoteDelta::Macros(m) => macros(m, last_seq),
         RemoteDelta::Wheels(w) => wheels(w, last_seq),
         RemoteDelta::Effects(effects) => encode("effects", last_seq, effects),
@@ -639,11 +645,12 @@ pub fn denied() -> String {
 
 /// What a connected client is here to do.
 ///
-/// These are two different jobs, not a volume knob. `Play` is the phone
-/// client: the text stream IS the game, so it needs scrollback, room prose,
-/// the map, and everything else. `Watch` is a status observer -- the
-/// multi-account display -- which never renders a line of game text and would
-/// otherwise pay for the full feed once per sibling connection.
+/// These are different jobs, not a volume knob. `Play` and `Desktop` both
+/// receive the full feed; the distinct desktop value identifies Despana
+/// without coupling browser-tab lifetime to game-session lifetime. `Watch` is
+/// a status observer -- the multi-account display -- which never renders a
+/// line of game text and would otherwise pay for the full feed once per
+/// sibling connection.
 ///
 /// `Play` is the default precisely because a client that does not ask is the
 /// phone, which shipped before this existed.
@@ -652,6 +659,8 @@ pub enum SubscribeMode {
     /// Everything. The default.
     #[default]
     Play,
+    /// Everything, tagged as the full Despana presentation.
+    Desktop,
     /// Status only: no text scrollback, no map, no room prose, no spellbook.
     Watch,
 }
@@ -660,6 +669,7 @@ impl SubscribeMode {
     fn from_wire(s: &str) -> Self {
         match s {
             "watch" => Self::Watch,
+            "desktop" => Self::Desktop,
             // Unknown modes fall back to the full feed rather than silently
             // starving a client of the data it came for.
             _ => Self::Play,
@@ -673,7 +683,7 @@ impl SubscribeMode {
     pub fn wants(&self, delta: &crate::core::remote::RemoteDelta) -> bool {
         use crate::core::remote::RemoteDelta as D;
         match self {
-            Self::Play => true,
+            Self::Play | Self::Desktop => true,
             Self::Watch => matches!(
                 delta,
                 D::Vitals(_)
@@ -708,6 +718,9 @@ pub enum ClientMessage {
     /// Declare what this connection is for. Optional; absent means `Play`,
     /// which is what every pre-existing client implies.
     Subscribe { mode: SubscribeMode },
+    /// Explicit Despana request to quit the game normally and terminate the
+    /// owning headless runtime after the game transport disconnects.
+    ExitLogout,
     /// A typed command destined for the game (or a dot-command).
     Cmd { text: String },
     /// Resume request with the highest text seq the client has rendered
@@ -934,6 +947,7 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 .unwrap_or_default();
             Some(ClientMessage::Subscribe { mode })
         }
+        "exit_logout" => Some(ClientMessage::ExitLogout),
         "link_tap" => {
             let request_id = msg.d.get("request_id")?.as_u64()?;
             let exist_id = msg.d.get("exist_id")?.as_str()?.to_string();
@@ -1425,6 +1439,12 @@ mod tests {
     #[test]
     fn parse_subscribe_defaults_to_play() {
         assert_eq!(
+            parse_client_message(r#"{"t":"subscribe","d":{"mode":"desktop"}}"#),
+            Some(ClientMessage::Subscribe {
+                mode: SubscribeMode::Desktop
+            })
+        );
+        assert_eq!(
             parse_client_message(r#"{"t":"subscribe","d":{"mode":"watch"}}"#),
             Some(ClientMessage::Subscribe {
                 mode: SubscribeMode::Watch
@@ -1449,6 +1469,14 @@ mod tests {
             Some(ClientMessage::Subscribe {
                 mode: SubscribeMode::Play
             })
+        );
+    }
+
+    #[test]
+    fn parses_explicit_exit_logout() {
+        assert_eq!(
+            parse_client_message(r#"{"t":"exit_logout","d":{}}"#),
+            Some(ClientMessage::ExitLogout)
         );
     }
 

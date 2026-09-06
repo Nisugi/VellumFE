@@ -23,10 +23,10 @@ const MIN_TRACK_PIXELS = 48;
 const MAX_TRACK_PIXELS = 4096;
 const DEFAULT_STORAGE_PREFIX = "despana.workspace";
 const BUILTIN_TRACKS = Object.freeze({
-  top: 150,
-  bottom: 128,
-  left: 250,
-  right: 340,
+  top: 181,
+  bottom: 79,
+  left: 288,
+  right: 388,
 });
 
 export class WorkspaceLayoutError extends Error {
@@ -43,48 +43,73 @@ export const DEFAULT_DESPANA_LAYOUT = deepFreeze({
   tracks: { ...BUILTIN_TRACKS },
   zones: {
     top: {
-      flow: "vertical",
+      flow: "horizontal",
       modules: [
-        { id: "hands", weight: 250 },
-        { id: "thoughts", weight: 750 },
+        { id: "thoughts", weight: 473 },
+        { id: "familiar", weight: 527 },
       ],
     },
     bottom: {
       flow: "horizontal",
       modules: [
-        { id: "conditions", weight: 450 },
-        { id: "vitals", weight: 550 },
+        { id: "hands", weight: 166 },
+        { id: "conditions", weight: 293 },
+        { id: "cooldowns", weight: 274 },
+        { id: "injuries", weight: 267 },
       ],
     },
     left: {
       flow: "vertical",
       modules: [
-        { id: "active-spells", weight: 300 },
-        { id: "known-spells", weight: 260 },
-        { id: "injuries", weight: 240 },
-        { id: "cooldowns", weight: 200 },
+        { id: "active-spells", weight: 550 },
+        { id: "combat", weight: 223 },
+        { id: "vitals", weight: 227 },
       ],
     },
     right: {
       flow: "vertical",
       modules: [
-        { id: "familiar", weight: 230 },
-        { id: "map", weight: 300 },
-        { id: "compass", weight: 120 },
-        { id: "combat", weight: 140 },
-        { id: "tasks", weight: 110 },
-        { id: "inventory", weight: 100 },
+        { id: "map", weight: 627 },
+        { id: "tasks", weight: 373 },
       ],
     },
     center: {
       flow: "vertical",
       modules: [
-        { id: "room", weight: 330 },
-        { id: "story", weight: 670 },
+        { id: "room", weight: 225 },
+        { id: "story", weight: 775 },
       ],
     },
   },
-  hidden: [],
+  hidden: [
+    {
+      id: "compass",
+      zone: "right",
+      index: 1,
+      weight: 110,
+      before: "map",
+      after: "combat",
+      order: ["map", "compass", "combat", "tasks", "inventory"],
+    },
+    {
+      id: "inventory",
+      zone: "right",
+      index: 2,
+      weight: 125,
+      before: "tasks",
+      after: null,
+      order: ["map", "compass", "tasks", "inventory"],
+    },
+    {
+      id: "known-spells",
+      zone: "right",
+      index: 3,
+      weight: 78,
+      before: "injuries",
+      after: null,
+      order: ["map", "compass", "tasks", "inventory", "injuries", "known-spells"],
+    },
+  ],
 });
 
 /** Normalize the identity used to isolate one character's persisted layout. */
@@ -702,6 +727,15 @@ function normalizeModuleWeights(entries, total = WEIGHT_TOTAL) {
   const safeTotal = Math.max(entries.length * MIN_WEIGHT, Math.round(total));
   const raw = entries.map((entry) => positiveWeight(entry.weight));
   const sum = raw.reduce((result, weight) => result + weight, 0);
+  // A canonical layout already sums to its requested total. Re-scaling it
+  // would apply the minimum-weight allowance again and make persisted splits
+  // drift by a pixel on every load/save cycle.
+  if (sum === safeTotal) {
+    for (let index = 0; index < entries.length; index += 1) {
+      entries[index].weight = raw[index];
+    }
+    return;
+  }
   const distributable = safeTotal - entries.length * MIN_WEIGHT;
   const shares = raw.map((weight, index) => {
     const exact = (weight / sum) * distributable;

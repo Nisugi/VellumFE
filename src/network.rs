@@ -210,7 +210,7 @@ fn flush_log_buffer(
 impl DirectConnectConfig {
     /// Convert game name to game code
     pub(crate) fn game_name_to_code(name: &str) -> &'static str {
-        match name.to_lowercase().as_str() {
+        match name.trim().to_ascii_lowercase().as_str() {
             // GemStone IV
             "prime" | "gs3" => "GS3",
             "platinum" | "gsx" => "GSX",
@@ -1295,6 +1295,12 @@ mod eaccess {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_game_codes_trim_and_normalize_profile_names() {
+        assert_eq!(DirectConnectConfig::game_name_to_code(" platinum "), "GSX");
+        assert_eq!(DirectConnectConfig::game_name_to_code(" gs3 "), "GS3");
+    }
 
     // ========== decode_wire_line tests ==========
 

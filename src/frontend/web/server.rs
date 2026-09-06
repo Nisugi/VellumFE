@@ -13,9 +13,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::header;
+use axum::http::{header, HeaderMap};
 use axum::response::{Html, IntoResponse};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use tokio::sync::broadcast;
 
@@ -192,12 +192,27 @@ pub async fn serve(
     // launchable URL; setting it before token creation could briefly surface
     // a dead endpoint when token setup fails.
     //
-    // The session registry is best-effort. Its health checks hide stale
-    // entries, while launch readiness below carries the authenticated truth.
-    registry::write_entry(bound_port, &session_label);
+    // Registry publication is part of startup correctness: advertising a
+    // listener that the launcher cannot discover would permit duplicate
+    // runtimes for the same immutable game endpoint.
+    let control_host =
+        crate::core::session_registry::control_host_for_bind(config.effective_bind());
+    let _registration =
+        match registry::register(bound_port, &control_host, &session_label, &handles.session) {
+            Ok(registration) => registration,
+            Err(error) => {
+                let error = error.context("Could not publish the web session registry entry");
+                tracing::error!("{error:#}");
+                let _ = handles.event_tx.send(RemoteEvent::Notice(format!(
+                    "Web server disabled: {error:#}"
+                )));
+                return Err(error);
+            }
+        };
     handles
         .launch_endpoint_tx
         .send_replace(Some(RemoteLaunchEndpoint::new(
+            control_host,
             bound_port,
             auth_token.clone(),
         )));
@@ -205,11 +220,10 @@ pub async fn serve(
     serve_listener(listener, handles, auth_token, options).await
 }
 
-/// Session registry: files in ~/.vellum-fe/web-sessions/, one per running
-/// instance, keyed by pid.
 /// Session registry, re-exported from core so existing call sites keep
 /// working. The implementation moved to `core::session_registry` because the
-/// multi-account hub needs it and core cannot import from `frontend/`.
+/// launcher lifecycle policy and multi-account hub need it, and core cannot
+/// import from `frontend/`.
 pub use crate::core::session_registry as registry;
 
 /// Serve on an already-bound listener with a fixed token (integration
@@ -242,6 +256,7 @@ pub async fn serve_listener(
     let router = if status_only {
         Router::new()
             .route("/health", get(health))
+            .route("/api/v1/session/exit-logout", post(exit_logout_session))
             .route("/ws", get(ws_upgrade))
             .with_state(state)
     } else {
@@ -267,6 +282,8 @@ fn full_router(state: Arc<WebState>) -> Router {
         .route("/icon.svg", get(icon_svg))
         .route("/health", get(health))
         .route("/status", get(status_json))
+        .route("/api/v1/session/stop", post(stop_session))
+        .route("/api/v1/session/exit-logout", post(exit_logout_session))
         .route("/sounds/{name}", get(sound_file))
         .route("/emoji", get(emoji_list))
         .route("/emoji/{name}", get(emoji_file))
@@ -892,6 +909,104 @@ async fn status_json(
     )
 }
 
+/// Authenticated, state-checked process shutdown. This asks the owning
+/// runtime to stop itself; it never trusts a registry PID and never sends a
+/// command to the game. A verified connected session must use Exit & Log Out,
+/// but a stalled startup/reconnect must always remain recoverable.
+async fn stop_session(headers: HeaderMap, State(state): State<Arc<WebState>>) -> impl IntoResponse {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    if !token.is_some_and(|token| token_matches(token, &state.auth_token)) {
+        return (axum::http::StatusCode::FORBIDDEN, "forbidden");
+    }
+
+    let expected_instance = headers
+        .get("x-vellum-instance")
+        .and_then(|value| value.to_str().ok());
+    if expected_instance != Some(state.handles.session.as_str()) {
+        return (axum::http::StatusCode::CONFLICT, "session instance changed");
+    }
+
+    let session = state.handles.state_rx.borrow().session.clone();
+    if !session.session_control
+        || !matches!(
+            session.state,
+            crate::core::remote::SessionState::Idle
+                | crate::core::remote::SessionState::Authenticating
+                | crate::core::remote::SessionState::Connecting
+                | crate::core::remote::SessionState::Reconnecting
+                | crate::core::remote::SessionState::Disconnected
+        )
+    {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "a connected session must use Exit & Log Out",
+        );
+    }
+    if state
+        .handles
+        .event_tx
+        .send(RemoteEvent::SessionStop)
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "session runtime is unavailable",
+        );
+    }
+    (axum::http::StatusCode::ACCEPTED, "stopping")
+}
+
+/// Authenticated launcher handoff for a connected session. The caller must
+/// name the exact runtime instance it discovered, so a stale registry entry
+/// cannot log out a newer process that reused the same walked web port.
+///
+/// The runtime owns logout ordering and sends the ordinary game `quit`; this
+/// endpoint only queues the existing orderly Exit & Log Out request.
+async fn exit_logout_session(
+    headers: HeaderMap,
+    State(state): State<Arc<WebState>>,
+) -> impl IntoResponse {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    if !token.is_some_and(|token| token_matches(token, &state.auth_token)) {
+        return (axum::http::StatusCode::FORBIDDEN, "forbidden");
+    }
+
+    let expected_instance = headers
+        .get("x-vellum-instance")
+        .and_then(|value| value.to_str().ok());
+    if expected_instance != Some(state.handles.session.as_str()) {
+        return (axum::http::StatusCode::CONFLICT, "session instance changed");
+    }
+
+    let session = state.handles.state_rx.borrow().session.clone();
+    if !session.session_control
+        || !matches!(session.state, crate::core::remote::SessionState::Connected)
+    {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "session must be connected before it can be logged out",
+        );
+    }
+    if state
+        .handles
+        .event_tx
+        .send(RemoteEvent::SessionExitLogout)
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "session runtime is unavailable",
+        );
+    }
+    (axum::http::StatusCode::ACCEPTED, "logging out")
+}
+
 async fn ws_upgrade(ws: WebSocketUpgrade, State(state): State<Arc<WebState>>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_client(socket, state))
 }
@@ -986,13 +1101,18 @@ async fn handle_client_message(
             *sub = mode;
             true
         }
+        ClientMessage::ExitLogout => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::SessionExitLogout)
+            .is_ok(),
         ClientMessage::Cmd { text } => {
             // Forward into the main loop; it runs the same path as local
             // input. Send fails only if the app is shutting down.
             state
                 .handles
                 .event_tx
-                .send(RemoteEvent::Command(text))
+                .send(RemoteEvent::Command { client_id, text })
                 .is_ok()
         }
         ClientMessage::Resume { seq } => {
@@ -1556,6 +1676,7 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                     // Menus and config/highlight replies are addressed:
                     // only the requesting client's task forwards them.
                     if let RemoteDelta::Menu { client_id: target, .. }
+                    | RemoteDelta::OpenUrl { client_id: target, .. }
                     | RemoteDelta::ConfigFile { client_id: target, .. }
                     | RemoteDelta::LauncherSsh { client_id: target, .. }
                     | RemoteDelta::Highlights { client_id: target, .. }

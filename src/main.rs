@@ -94,6 +94,11 @@ struct Cli {
     #[arg(long, value_name = "NAME", conflicts_with_all = ["direct", "key", "launcher"])]
     launch_profile: Option<String>,
 
+    /// Internal launcher-to-child guard against profile edits between
+    /// confirmation and child startup.
+    #[arg(long, value_name = "DIGEST", requires = "launch_profile", hide = true)]
+    launch_target_fingerprint: Option<String>,
+
     /// Open the graphical launcher (also the default when run with no arguments)
     #[arg(long)]
     launcher: bool,
@@ -342,7 +347,9 @@ fn main() -> Result<()> {
                 }
                 #[cfg(not(feature = "gui"))]
                 {
-                    eprintln!("✗ This build has no GUI support; Vellum Studio needs the gui feature");
+                    eprintln!(
+                        "✗ This build has no GUI support; Vellum Studio needs the gui feature"
+                    );
                     std::process::exit(1);
                 }
             }
@@ -747,6 +754,16 @@ fn main() -> Result<()> {
         Some(name) => apply_launch_profile(&mut cli, &name)?,
         None => AppliedLaunchProfile::default(),
     };
+    let _endpoint_lease = if let Some(identity) = applied_profile.registry_identity.clone() {
+        core::session_registry::set_launch_identity(identity.clone());
+        Some(
+            core::session_registry::acquire_endpoint_lease(&identity).with_context(|| {
+                format!("Could not start launcher profile '{}'", identity.profile)
+            })?,
+        )
+    } else {
+        None
+    };
 
     // Load configuration
     // Profile (for config directory) uses --profile if specified, otherwise falls back to --character
@@ -844,6 +861,9 @@ fn main() -> Result<()> {
                     login_key,
                     web_client,
                     applied_profile.auto_connect_lich,
+                    applied_profile.registry_identity.clone().expect(
+                        "a launcher web client always comes from an applied launch profile",
+                    ),
                 )?
             } else {
                 frontend::headless::run(config, character, direct_config, login_key)?
@@ -886,6 +906,10 @@ struct AppliedLaunchProfile {
     /// A saved Lich profile supplies an attach target without needing a fake
     /// one-shot login key to trigger the headless runtime's auto-connect path.
     auto_connect_lich: bool,
+    /// Immutable identity captured from the exact saved profile loaded by
+    /// this child.  The runtime registry publishes it without consulting the
+    /// launcher store again.
+    registry_identity: Option<core::session_registry::SessionLaunchIdentity>,
 }
 
 fn apply_profile_frontend(
@@ -911,6 +935,40 @@ fn profile_auto_connects_lich(
     web_client: Option<config::profiles::LaunchWebClient>,
 ) -> bool {
     web_client.is_some() && profile.mode == config::profiles::LaunchMode::Lich
+}
+
+/// Freeze the connection identity after profile defaults and documented CLI
+/// overrides have been combined. The endpoint lease, live registry, and
+/// headless retarget guard must describe the connection the child will
+/// actually use, not the saved profile values that were overridden.
+fn effective_launch_identity(
+    name: &str,
+    profile: &config::profiles::LauncherProfile,
+    cli: &Cli,
+) -> core::session_registry::SessionLaunchIdentity {
+    let mut effective = profile.clone();
+    if let Some(character) = cli.character.as_deref() {
+        effective.character = character.to_string();
+    }
+    match profile.mode {
+        config::profiles::LaunchMode::Direct => {
+            if let Some(account) = cli.account.as_deref() {
+                effective.account = account.to_string();
+            }
+            if let Some(game) = cli.game {
+                effective.game = game.code().to_string();
+            }
+        }
+        config::profiles::LaunchMode::Lich => {
+            if let Some(host) = cli.host.as_deref() {
+                effective.host = host.to_string();
+            }
+            if let Some(port) = cli.port {
+                effective.port = port;
+            }
+        }
+    }
+    core::session_registry::SessionLaunchIdentity::from_profile(name, &effective)
 }
 
 /// Apply a saved launcher profile onto the parsed CLI arguments.
@@ -944,6 +1002,11 @@ fn apply_launch_profile(cli: &mut Cli, name: &str) -> Result<AppliedLaunchProfil
     let mut game_code = None;
     match profile.mode {
         LaunchMode::Direct => {
+            anyhow::ensure!(
+                !profile.character.trim().is_empty(),
+                "Direct launcher profile '{}' has no character; edit the saved connection before launching",
+                name
+            );
             cli.direct = true;
             if cli.account.is_none() {
                 cli.account = Some(profile.account.clone());
@@ -957,11 +1020,13 @@ fn apply_launch_profile(cli: &mut Cli, name: &str) -> Result<AppliedLaunchProfil
                     }
                 });
             }
-            if !profile.game.is_empty() {
-                game_code = Some(
-                    network::DirectConnectConfig::game_name_to_code(&profile.game).to_string(),
-                );
-            }
+            // A blank game can survive from an old or hand-edited launcher
+            // profile. Treat it exactly like a newly-created profile: Prime.
+            // Do this here so the child cannot inherit an unrelated game from
+            // its per-character config after the launcher already claimed the
+            // profile's canonical Prime identity.
+            game_code =
+                Some(network::DirectConnectConfig::game_name_to_code(&profile.game).to_string());
         }
         LaunchMode::Lich => {
             if cli.host.is_none() {
@@ -1001,15 +1066,26 @@ fn apply_launch_profile(cli: &mut Cli, name: &str) -> Result<AppliedLaunchProfil
     let auto_connect_lich = profile_auto_connects_lich(&profile, web_client);
     if cli.data_dir.is_none() {
         if let Some(dir) = profile.data_dir.as_deref().filter(|d| !d.is_empty()) {
+            profiles::remember_launcher_root(&config::Config::base_dir()?);
             std::env::set_var("VELLUM_FE_DIR", dir);
             tracing::info!("Using data directory from launcher profile: {}", dir);
         }
     }
 
+    let registry_identity = effective_launch_identity(name, &profile, cli);
+    if let Some(expected) = cli.launch_target_fingerprint.as_deref() {
+        let actual = launcher::session_lifecycle::launch_identity_fingerprint(&registry_identity);
+        anyhow::ensure!(
+            actual.eq_ignore_ascii_case(expected),
+            "Launcher profile '{}' changed after launch confirmation; the confirmed target was not launched",
+            name
+        );
+    }
     Ok(AppliedLaunchProfile {
         game_code,
         web_client,
         auto_connect_lich,
+        registry_identity: Some(registry_identity),
     })
 }
 
@@ -1080,5 +1156,200 @@ mod tests {
         profile.select_frontend(LaunchFrontend::Tui);
         assert_eq!(apply_profile_frontend(&mut cli, &profile), None);
         assert!(matches!(cli.frontend, FrontendType::Tui));
+    }
+
+    #[test]
+    fn launch_identity_uses_effective_lich_cli_overrides() {
+        use crate::core::session_registry::{SessionConnectionIdentity, SessionLaunchIdentity};
+
+        let mut profile = LauncherProfile::new_direct();
+        profile.name = "Calvix".to_string();
+        profile.mode = LaunchMode::Lich;
+        profile.character = "SavedName".to_string();
+        profile.host = "127.0.0.1".to_string();
+        profile.port = 8000;
+        let mut cli = cli();
+        cli.character = Some("OverrideName".to_string());
+        cli.host = Some("lich.example.test".to_string());
+        cli.port = Some(8111);
+
+        assert_eq!(
+            effective_launch_identity("Calvix", &profile, &cli),
+            SessionLaunchIdentity {
+                profile: "Calvix".to_string(),
+                character: "OverrideName".to_string(),
+                connection: SessionConnectionIdentity::Lich {
+                    host: "lich.example.test".to_string(),
+                    port: 8111,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn blank_direct_profile_game_defaults_to_prime_at_profile_application() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let root = tempfile::tempdir().expect("temp config root");
+        let original_root = std::env::var_os("VELLUM_FE_DIR");
+        std::env::set_var("VELLUM_FE_DIR", root.path());
+        let mut profile = LauncherProfile::new_direct();
+        profile.name = "Aster".to_string();
+        profile.account = "Account".to_string();
+        profile.character = "Aster".to_string();
+        profile.game.clear();
+        let store = crate::config::profiles::LauncherStore {
+            profiles: vec![profile],
+            ..Default::default()
+        };
+        store.save().expect("save launcher profile");
+
+        let mut args = cli();
+        let applied = apply_launch_profile(&mut args, "Aster").expect("apply profile");
+        let mut config = config::Config::default();
+        config.connection.game = Some("platinum".to_string());
+        let resolved = network::DirectConnectConfig::from_cli(
+            args.direct,
+            args.account,
+            Some("password".to_string()),
+            args.character.clone(),
+            args.character,
+            applied.game_code.as_deref(),
+            &config,
+        )
+        .expect("resolve direct config")
+        .expect("direct config enabled");
+
+        match original_root {
+            Some(path) => std::env::set_var("VELLUM_FE_DIR", path),
+            None => std::env::remove_var("VELLUM_FE_DIR"),
+        }
+        assert_eq!(applied.game_code.as_deref(), Some("GS3"));
+        assert_eq!(resolved.game_code, "GS3");
+        assert!(matches!(
+            applied
+                .registry_identity
+                .expect("launcher profile identity")
+                .connection,
+            crate::core::session_registry::SessionConnectionIdentity::Direct { game, .. }
+                if game == "gs3"
+        ));
+    }
+
+    #[test]
+    fn profile_data_dir_keeps_nondefault_launcher_root_and_sibling_roots_discoverable() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let root = tempfile::tempdir().expect("temporary roots");
+        let launcher_root = root.path().join("launcher");
+        let selected_root = root.path().join("selected");
+        let sibling_root = root.path().join("sibling");
+        let original_data_root = std::env::var_os("VELLUM_FE_DIR");
+        let original_launcher_root = std::env::var_os(crate::config::profiles::LAUNCHER_ROOT_ENV);
+        std::env::set_var("VELLUM_FE_DIR", &launcher_root);
+        std::env::remove_var(crate::config::profiles::LAUNCHER_ROOT_ENV);
+
+        let mut selected = LauncherProfile::new_direct();
+        selected.name = "Aster".to_string();
+        selected.account = "Account".to_string();
+        selected.character = "Aster".to_string();
+        selected.data_dir = Some(selected_root.to_string_lossy().into_owned());
+        let mut sibling = LauncherProfile::new_direct();
+        sibling.name = "Briar".to_string();
+        sibling.account = "Account".to_string();
+        sibling.character = "Briar".to_string();
+        sibling.data_dir = Some(sibling_root.to_string_lossy().into_owned());
+        crate::config::profiles::LauncherStore {
+            profiles: vec![selected, sibling],
+            ..Default::default()
+        }
+        .save()
+        .expect("save launcher profiles");
+
+        apply_launch_profile(&mut cli(), "Aster").expect("apply selected profile");
+        let effective_root = config::Config::base_dir().expect("effective profile root");
+        let known_roots = crate::config::profiles::known_data_roots();
+
+        match original_data_root {
+            Some(path) => std::env::set_var("VELLUM_FE_DIR", path),
+            None => std::env::remove_var("VELLUM_FE_DIR"),
+        }
+        match original_launcher_root {
+            Some(path) => std::env::set_var(crate::config::profiles::LAUNCHER_ROOT_ENV, path),
+            None => std::env::remove_var(crate::config::profiles::LAUNCHER_ROOT_ENV),
+        }
+
+        assert_eq!(effective_root, selected_root);
+        assert!(known_roots.contains(&launcher_root));
+        assert!(known_roots.contains(&selected_root));
+        assert!(known_roots.contains(&sibling_root));
+    }
+
+    #[test]
+    fn blank_direct_profile_character_is_rejected_before_identity_or_login_resolution() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let root = tempfile::tempdir().expect("temp config root");
+        let original_root = std::env::var_os("VELLUM_FE_DIR");
+        std::env::set_var("VELLUM_FE_DIR", root.path());
+
+        let mut profile = LauncherProfile::new_direct();
+        profile.name = "Aster".to_string();
+        profile.account = "Account".to_string();
+        profile.character = "  ".to_string();
+        crate::config::profiles::LauncherStore {
+            profiles: vec![profile],
+            ..Default::default()
+        }
+        .save()
+        .expect("save malformed launcher profile");
+
+        let error = apply_launch_profile(&mut cli(), "Aster").unwrap_err();
+
+        match original_root {
+            Some(path) => std::env::set_var("VELLUM_FE_DIR", path),
+            None => std::env::remove_var("VELLUM_FE_DIR"),
+        }
+        assert!(error.to_string().contains("has no character"));
+    }
+
+    #[test]
+    fn child_rejects_profile_edited_after_launcher_confirmation() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let root = tempfile::tempdir().expect("temp config root");
+        let original_root = std::env::var_os("VELLUM_FE_DIR");
+        std::env::set_var("VELLUM_FE_DIR", root.path());
+
+        let mut confirmed = LauncherProfile::new_direct();
+        confirmed.name = "Aster".to_string();
+        confirmed.account = "Account".to_string();
+        confirmed.character = "Aster".to_string();
+        let fingerprint = launcher::session_lifecycle::launch_target_fingerprint(&confirmed);
+
+        let mut edited = confirmed.clone();
+        edited.character = "Briar".to_string();
+        crate::config::profiles::LauncherStore {
+            profiles: vec![edited],
+            ..Default::default()
+        }
+        .save()
+        .expect("save edited launcher profile");
+
+        let mut args = cli();
+        args.launch_target_fingerprint = Some(fingerprint);
+        let error = apply_launch_profile(&mut args, "Aster").unwrap_err();
+
+        match original_root {
+            Some(path) => std::env::set_var("VELLUM_FE_DIR", path),
+            None => std::env::remove_var("VELLUM_FE_DIR"),
+        }
+        assert!(error
+            .to_string()
+            .contains("changed after launch confirmation"));
     }
 }

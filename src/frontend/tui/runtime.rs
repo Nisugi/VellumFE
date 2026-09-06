@@ -4,6 +4,19 @@ use std::time::Instant;
 use super::TuiFrontend;
 use crate::frontend::Frontend;
 
+fn send_game_command(
+    app_core: &mut crate::core::AppCore,
+    command_tx: &tokio::sync::mpsc::UnboundedSender<String>,
+    command: String,
+) -> bool {
+    let is_goals = command.trim().eq_ignore_ascii_case("goals");
+    let sent = command_tx.send(command).is_ok();
+    if is_goals {
+        app_core.finish_game_command_send("goals", sent);
+    }
+    sent
+}
+
 /// Run the TUI frontend with the given configuration.
 /// This is the main entry point for TUI mode.
 ///
@@ -381,7 +394,7 @@ async fn async_run(
             app_core
                 .perf_stats
                 .record_bytes_sent((command.len() + 1) as u64);
-            let _ = command_tx.send(command);
+            send_game_command(&mut app_core, &command_tx, command);
         }
     }
 
@@ -493,7 +506,7 @@ async fn async_run(
                     app_core
                         .perf_stats
                         .record_bytes_sent((out.len() + 1) as u64);
-                    let _ = command_tx.send(out);
+                    send_game_command(&mut app_core, &command_tx, out);
                 }
                 // Travel never produces UI actions; drop defensively.
                 Ok(_) => {}
@@ -518,7 +531,11 @@ async fn async_run(
                     }
                     app_core.needs_render = true;
                 }
-                Ok(_) => app_core.needs_render = true,
+                Ok(crate::data::CommandOutcome::Game(outbound)) => {
+                    app_core.finish_game_command_send(&outbound, false);
+                    app_core.needs_render = true;
+                }
+                Ok(crate::data::CommandOutcome::Handled) => app_core.needs_render = true,
                 Err(e) => tracing::warn!("vellumCmd failed: {e}"),
             }
         }
@@ -587,6 +604,7 @@ async fn async_run(
         if app_core.take_disconnect_request() {
             network_handle.abort();
             app_core.game_state.connected = false;
+            app_core.clear_pending_goals_launches();
             app_core.needs_render = true;
         }
 
@@ -625,7 +643,7 @@ async fn async_run(
                             app_core
                                 .perf_stats
                                 .record_bytes_sent((cmd.len() + 1) as u64);
-                            let _ = command_tx.send(cmd);
+                            send_game_command(&mut app_core, &command_tx, cmd);
                         }
                     }
 
@@ -647,7 +665,7 @@ async fn async_run(
                 app_core
                     .perf_stats
                     .record_bytes_sent((command.len() + 1) as u64);
-                let _ = command_tx.send(command);
+                send_game_command(&mut app_core, &command_tx, command);
             }
 
             let duration = event_start.elapsed();
@@ -665,16 +683,16 @@ async fn async_run(
         if let Some(rx) = remote_rx.as_mut() {
             while let Ok(event) = rx.try_recv() {
                 match event {
-                    crate::core::remote::RemoteEvent::Command(text) => {
+                    crate::core::remote::RemoteEvent::Command { client_id, text } => {
                         tracing::debug!("remote command: '{}'", text);
                         frontend.command_input_record_external("command_input", &text);
                         if let Some(cmd) =
-                            frontend.handle_command_submission(text, &mut app_core)?
+                            frontend.handle_remote_command_submission(client_id, text, &mut app_core)?
                         {
                             app_core
                                 .perf_stats
                                 .record_bytes_sent((cmd.len() + 1) as u64);
-                            let _ = command_tx.send(cmd);
+                            send_game_command(&mut app_core, &command_tx, cmd);
                         }
                     }
                     crate::core::remote::RemoteEvent::LinkTap {
@@ -704,7 +722,7 @@ async fn async_run(
                             app_core
                                 .perf_stats
                                 .record_bytes_sent((cmd.len() + 1) as u64);
-                            let _ = command_tx.send(cmd);
+                            send_game_command(&mut app_core, &command_tx, cmd);
                         }
                     }
                     crate::core::remote::RemoteEvent::MacroSave {
@@ -890,7 +908,9 @@ async fn async_run(
                         app_core.handle_remote_highlight_delete(client_id, request_id, scope, name);
                     }
                     crate::core::remote::RemoteEvent::SessionConnect { .. }
-                    | crate::core::remote::RemoteEvent::SessionDisconnect => {
+                    | crate::core::remote::RemoteEvent::SessionDisconnect
+                    | crate::core::remote::RemoteEvent::SessionStop
+                    | crate::core::remote::RemoteEvent::SessionExitLogout => {
                         // Sidecar sessions are owned by this local UI; the
                         // web client shouldn't offer these (session_control
                         // is false), but answer stray requests politely.
@@ -918,7 +938,7 @@ async fn async_run(
                             app_core
                                 .perf_stats
                                 .record_bytes_sent((cmd.len() + 1) as u64);
-                            let _ = command_tx.send(cmd);
+                            send_game_command(&mut app_core, &command_tx, cmd);
                         }
                     }
                     crate::core::remote::RemoteEvent::WheelPick { key, path } => {
@@ -939,7 +959,7 @@ async fn async_run(
                             app_core
                                 .perf_stats
                                 .record_bytes_sent((cmd.len() + 1) as u64);
-                            let _ = command_tx.send(cmd);
+                            send_game_command(&mut app_core, &command_tx, cmd);
                         }
                     }
                     crate::core::remote::RemoteEvent::SkillTrainerOpen => {
@@ -947,13 +967,13 @@ async fn async_run(
                             app_core.ui_state.skill_trainer.open = true;
                         } else {
                             let cmd = app_core.skill_trainer_reload_command();
-                            let _ = command_tx.send(cmd);
+                            send_game_command(&mut app_core, &command_tx, cmd);
                         }
                         app_core.push_skill_trainer_remote();
                     }
                     crate::core::remote::RemoteEvent::SkillTrainerReload => {
                         let cmd = app_core.skill_trainer_reload_command();
-                        let _ = command_tx.send(cmd);
+                        send_game_command(&mut app_core, &command_tx, cmd);
                         app_core.push_skill_trainer_remote();
                     }
                     crate::core::remote::RemoteEvent::SkillTrainerStep { id, n, raise } => {
@@ -1031,6 +1051,7 @@ async fn async_run(
                 ServerMessage::Disconnected => {
                     tracing::info!("Disconnected from game server");
                     app_core.game_state.connected = false;
+                    app_core.clear_pending_goals_launches();
                     app_core.needs_render = true;
                 }
             }

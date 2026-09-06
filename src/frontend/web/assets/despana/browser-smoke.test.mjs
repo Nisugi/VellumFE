@@ -26,6 +26,7 @@ const TEST_PRELUDE = String.raw`<script>
     sockets: [],
     errors: [],
     rejections: [],
+    opened: [],
   };
 
   class FakeWebSocket {
@@ -85,6 +86,24 @@ const TEST_PRELUDE = String.raw`<script>
   });
 
   window.WebSocket = FakeWebSocket;
+  window.open = (initialUrl = "", target = "", features = "") => {
+    const opened = {
+      url: String(initialUrl),
+      target: String(target),
+      features: String(features),
+      closed: false,
+      opener: window,
+      close() { this.closed = true; },
+    };
+    opened.location = {
+      assign(url) { opened.url = String(url); },
+      replace(url) { opened.url = String(url); },
+      get href() { return opened.url; },
+      set href(url) { opened.url = String(url); },
+    };
+    harness.opened.push(opened);
+    return opened;
+  };
   window.__desktopTest = harness;
 })();
 </script>`;
@@ -390,8 +409,8 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
       modules: document.querySelectorAll('[data-module]').length,
       controls: document.querySelectorAll('[data-module] > .module-menu-button').length,
       moduleErrors: document.querySelectorAll('[data-module-error]').length,
+      applicationNames: [...document.querySelectorAll('.application-name')].map((node) => node.textContent),
       title: document.querySelector('#character-title')?.textContent,
-      documentTitle: document.title,
       room: document.querySelector('#room-title')?.textContent,
       spell: document.querySelector('#spells-output')?.textContent,
       inventory: document.querySelector('#inventory-output')?.textContent,
@@ -414,8 +433,8 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
   assert.equal(composition.modules, 16);
   assert.equal(composition.controls, 16);
   assert.equal(composition.moduleErrors, 0);
-  assert.equal(composition.title, "Vellum Despana - Briar - Sorcerer - 90");
-  assert.equal(composition.documentTitle, composition.title);
+  assert.deepEqual(composition.applicationNames, ["Vellum Despana", "Vellum Despana"]);
+  assert.equal(composition.title, "Vellum Despana - Briar - Wizard - 90");
   assert.match(composition.room, /Duskruin Arena, Sands Approach - 23780/);
   assert.match(composition.spell, /425 · Elemental Targeting/);
   assert.match(composition.inventory, /polished oak runestaff/);
@@ -435,6 +454,116 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
   assert.deepEqual(composition.errors, []);
   assert.deepEqual(composition.rejections, []);
 
+  const titled = await driver.execute(`
+    const socket = window.__desktopTest.sockets[0];
+    socket.receive({
+      v: 1,
+      t: 'charinfo',
+      seq: 70,
+      d: { profession: 'Wizard', level: '100' },
+    });
+    return {
+      documentTitle: document.title,
+      windowTitle: document.querySelector('#character-title')?.textContent,
+    };
+  `);
+  assert.deepEqual(titled, {
+    documentTitle: "Vellum Despana - Briar - Wizard - 100",
+    windowTitle: "Vellum Despana - Briar - Wizard - 100",
+  });
+
+  const goalsNavigation = await driver.execute(`
+    const input = document.querySelector('#command-input');
+    input.value = 'GOALS';
+    document.querySelector('#command-form').dispatchEvent(new Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    }));
+    const socket = window.__desktopTest.sockets[0];
+    const sent = socket.sent.filter((frame) => frame.t === 'cmd').at(-1);
+    const reserved = window.__desktopTest.opened.at(-1);
+    const beforeReply = reserved?.url;
+    socket.receive({
+      v: 1,
+      t: 'open_url',
+      seq: 71,
+      d: { url: 'https://www.play.net/gs4/play/cm/loader.asp?ticket=browser-smoke' },
+    });
+    return {
+      sent,
+      openedCount: window.__desktopTest.opened.length,
+      beforeReply,
+      afterReply: reserved?.url,
+      openerCleared: reserved?.opener === null,
+    };
+  `);
+  assert.deepEqual(goalsNavigation, {
+    sent: { t: "cmd", d: { text: "GOALS" } },
+    openedCount: 1,
+    beforeReply: "about:blank",
+    afterReply: "https://www.play.net/gs4/play/cm/loader.asp?ticket=browser-smoke",
+    openerCleared: true,
+  });
+
+  const goalsLifecycle = await driver.execute(`
+    const input = document.querySelector('#command-input');
+    const submit = (text) => {
+      input.value = text;
+      document.querySelector('#command-form').dispatchEvent(new Event('submit', {
+        bubbles: true,
+        cancelable: true,
+      }));
+    };
+    const socket = window.__desktopTest.sockets[0];
+
+    submit('GOALS');
+    submit('GOALS web');
+    const first = window.__desktopTest.opened.at(-2);
+    const second = window.__desktopTest.opened.at(-1);
+    socket.receive({
+      v: 1,
+      t: 'open_url',
+      seq: 72,
+      d: { url: 'https://www.play.net/gs4/play/cm/loader.asp?ticket=first' },
+    });
+    const afterFirst = [first.url, second.url];
+    socket.receive({
+      v: 1,
+      t: 'open_url',
+      seq: 73,
+      d: { url: 'https://www.play.net/gs4/play/cm/loader.asp?ticket=second' },
+    });
+    const afterSecond = [first.url, second.url];
+
+    submit('GOALS');
+    submit('GOALS web');
+    const cancelled = window.__desktopTest.opened.slice(-2);
+    socket.receive({
+      v: 1,
+      t: 'session',
+      seq: 74,
+      d: { state: 'idle', character: 'Briar', game: 'GS3', session_control: true },
+    });
+    const closedOnSessionDisconnect = cancelled.map((target) => target.closed);
+    socket.receive({
+      v: 1,
+      t: 'session',
+      seq: 75,
+      d: { state: 'connected', character: 'Briar', game: 'GS3', session_control: true },
+    });
+    return { afterFirst, afterSecond, closedOnSessionDisconnect };
+  `);
+  assert.deepEqual(goalsLifecycle, {
+    afterFirst: [
+      "https://www.play.net/gs4/play/cm/loader.asp?ticket=first",
+      "about:blank",
+    ],
+    afterSecond: [
+      "https://www.play.net/gs4/play/cm/loader.asp?ticket=first",
+      "https://www.play.net/gs4/play/cm/loader.asp?ticket=second",
+    ],
+    closedOnSessionDisconnect: [true, true],
+  });
   const fontScale = await driver.execute(`
     const bodyBefore = Number.parseFloat(getComputedStyle(document.body).fontSize);
     const input = document.querySelector('#font-scale');
@@ -455,6 +584,15 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
   assert.equal(fontScale.output, '150%');
   assert.equal(fontScale.expanded, 'true');
   assert.equal(fontScale.stored, '150');
+
+  const resetFontScale = await driver.execute(`
+    document.querySelector('#font-scale-reset').click();
+    return {
+      body: Number.parseFloat(getComputedStyle(document.body).fontSize),
+      stored: localStorage.getItem('vellum-despana-font-scale-v1'),
+    };
+  `);
+  assert.deepEqual(resetFontScale, { body: 13, stored: '100' });
 
   const mapGestures = await driver.execute(`
     document.querySelector('#map-mode-local').click();
@@ -650,7 +788,7 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
 
   const drag = await driver.execute(`
     const source = document.querySelector('[data-module="cooldowns"] > .pane-header');
-    const target = document.querySelector('[data-zone="right"] [data-module="inventory"]');
+    const target = document.querySelector('[data-zone="right"] [data-module="tasks"]');
     const from = source.getBoundingClientRect();
     const to = target.getBoundingClientRect();
     return {
@@ -774,7 +912,20 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
   await waitFor(() => sharedWorkspace.writes > 0, "Vellum-owned workspace save");
   assert.equal(JSON.parse(sharedWorkspace.value).layout.character, "briar");
 
+  const transportReservation = await driver.execute(`
+    const input = document.querySelector('#command-input');
+    input.value = 'GOALS';
+    document.querySelector('#command-form').dispatchEvent(new Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    }));
+    return window.__desktopTest.opened.length - 1;
+  `);
   await driver.execute("window.__desktopTest.sockets[0].serverClose();");
+  assert.equal(await driver.execute(
+    "return window.__desktopTest.opened[arguments[0]].closed;",
+    [transportReservation],
+  ), true, "transport disconnect must close pending GOALS reservations");
   assert.equal(await driver.execute(
     "return document.querySelector('#command-status').textContent;",
   ), "The last command or action may not have reached the game and was not replayed.");
@@ -824,4 +975,21 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
   assert.equal(restored.mirrored, true);
   assert.deepEqual(restored.errors, []);
   assert.deepEqual(restored.rejections, []);
+
+  const pagehideCleanup = await driver.execute(`
+    const input = document.querySelector('#command-input');
+    const submit = (text) => {
+      input.value = text;
+      document.querySelector('#command-form').dispatchEvent(new Event('submit', {
+        bubbles: true,
+        cancelable: true,
+      }));
+    };
+    submit('GOALS');
+    submit('GOALS web');
+    const pending = window.__desktopTest.opened.slice(-2);
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+    return pending.map((target) => target.closed);
+  `);
+  assert.deepEqual(pagehideCleanup, [true, true]);
 });

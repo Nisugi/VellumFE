@@ -25,7 +25,7 @@ frontend to render normal game state.
 2. Create a connection, or edit an existing one.
 3. Choose **Direct** to log in through play.net, or **Lich** to attach to a
    detachable-client Lich port.
-4. Open **Advanced** and select **Despana** under **Frontend**.
+4. Open **Advanced** and select **Vellum Despana** under **Frontend**.
 5. Save and launch the connection.
 
 Vellum starts the session and opens an authenticated Despana tab after its web

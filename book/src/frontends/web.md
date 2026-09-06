@@ -186,7 +186,7 @@ desktop. Everything else on the list above is editable from the phone.
 
 For ordinary desktop play in **Vellum Despana**, run `vellum-fe` with no
 arguments, edit the saved connection under **Advanced** ▸ **Frontend**, choose
-**Despana**, and click **Launch**. The saved Vellum login is applied once and
+**Vellum Despana**, and click **Launch**. The saved Vellum login is applied once and
 the authoritative paired `/despana` URL opens automatically; you do not fill
 out a second browser login form.
 

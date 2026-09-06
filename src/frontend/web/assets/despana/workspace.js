@@ -86,7 +86,7 @@ export class DesktopWorkspace {
       !this.workspaceMenuButton ||
       !this.workspaceMenu
     ) {
-      throw new Error("Despana workspace shell is incomplete");
+      throw new Error("Vellum Despana workspace shell is incomplete");
     }
 
     this.zones = new Map();
@@ -98,7 +98,7 @@ export class DesktopWorkspace {
       this.zones.set(zone, element);
     }
     if (this.zones.size !== LAYOUT_ZONES.length) {
-      throw new Error("Despana workspace must expose exactly five zones");
+      throw new Error("Vellum Despana workspace must expose exactly five zones");
     }
 
     this.moduleElements = new Map();
@@ -109,7 +109,7 @@ export class DesktopWorkspace {
       }
       this.moduleElements.set(id, element);
     }
-    if (!this.moduleElements.size) throw new Error("Despana workspace has no modules");
+    if (!this.moduleElements.size) throw new Error("Vellum Despana workspace has no modules");
 
     this.hiddenDepot = this.document.createElement("div");
     this.hiddenDepot.id = "workspace-hidden-modules";

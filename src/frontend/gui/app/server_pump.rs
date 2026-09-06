@@ -9,10 +9,10 @@ impl VellumGuiApp {
         // the local input bar.
         while let Ok(event) = self.remote_rx.try_recv() {
             match event {
-                crate::core::remote::RemoteEvent::Command(text) => {
+                crate::core::remote::RemoteEvent::Command { client_id, text } => {
                     tracing::debug!("remote command: '{}'", text);
                     self.record_command_history(&text);
-                    self.dispatch_command(text);
+                    self.dispatch_remote_command(client_id, text);
                 }
                 crate::core::remote::RemoteEvent::LinkTap {
                     client_id,
@@ -41,7 +41,8 @@ impl VellumGuiApp {
                         self.app_core
                             .perf_stats
                             .record_bytes_sent((cmd.len() + 1) as u64);
-                        let _ = self.command_tx.send(cmd);
+                        let sent = self.command_tx.send(cmd.clone()).is_ok();
+                        self.app_core.finish_game_command_send(&cmd, sent);
                     }
                 }
                 crate::core::remote::RemoteEvent::MacroSave {
@@ -240,7 +241,9 @@ impl VellumGuiApp {
                         .handle_remote_highlight_delete(client_id, request_id, scope, name);
                 }
                 crate::core::remote::RemoteEvent::SessionConnect { .. }
-                | crate::core::remote::RemoteEvent::SessionDisconnect => {
+                | crate::core::remote::RemoteEvent::SessionDisconnect
+                | crate::core::remote::RemoteEvent::SessionStop
+                | crate::core::remote::RemoteEvent::SessionExitLogout => {
                     // Sidecar sessions are owned by this local UI; the web
                     // client shouldn't offer these (session_control is
                     // false), but answer stray requests politely.
@@ -377,6 +380,7 @@ impl VellumGuiApp {
                 }
                 ServerMessage::Disconnected => {
                     self.app_core.game_state.connected = false;
+                    self.app_core.clear_pending_goals_launches();
                     self.app_core.needs_render = true;
                 }
             }

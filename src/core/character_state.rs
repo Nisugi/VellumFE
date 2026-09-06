@@ -54,6 +54,11 @@ re!(
     CHAR_RACE_PROF,
     r"^Name:\s+(?P<name>[A-Za-z\s'-]+)\s+Race:\s+(?P<race>[A-Za-z]+|[A-Za-z]+(?: |-)[A-Za-z]+)\s+Profession:\s+(?P<profession>[-A-Za-z]+)"
 );
+re!(
+    CHAR_PROF_LEVEL,
+    r"^Profession:\s+(?P<profession>[-A-Za-z]+)\s+Level:\s*(?P<level>\d+)"
+);
+re!(CHAR_INFO_LEVEL, r"^Gender:.*\sLevel:\s*(?P<level>\d+)\s*$");
 
 // --- CHE / House (PROFILE / RESIGN) ---
 const HOUSE_NAMES: &str = "Argent Aspis|Rising Phoenix|Paupers|Arcane Masters|Brigatta|Twilight Hall|Silvergate Inn|Sovyn|Sylvanfair|Helden Hall|White Haven|Beacon Hall|Rone Academy|Willow Hall|Moonstone Abbey|Obsidian Tower|Cairnfang Manor";
@@ -114,6 +119,10 @@ pub struct CharacterState {
     /// Profession (Lich `stat.profession`), e.g. "Ranger".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profession: Option<String>,
+    /// Display-ready character level from the character sheet. The live
+    /// experience dialog remains authoritative while it is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
     /// CHE / House affiliation, normalized (Lich `che`), e.g. "twilight_hall"
     /// or "none".
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -131,6 +140,11 @@ pub struct CharacterState {
     /// struct through the session cache.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub watched_spells: Vec<u16>,
+    /// Base character name observed from the live `INFO` character-sheet
+    /// header. Runtime-only: a cached name must never authenticate a later
+    /// detachable-client connection.
+    #[serde(skip)]
+    observed_name: Option<String>,
     /// True while inside a PROFILE block (between PERSONAL INFORMATION and the
     /// house line) — the house line is only trusted then, matching Lich's
     /// State::Profile gate. Runtime-only.
@@ -210,10 +224,16 @@ impl CharacterState {
             self.set_society(self.society.clone(), self.society_rank + 1);
         } else if SOCIETY_RESIGN.is_match(line) {
             self.set_society(Some("None".into()), 0);
-        } else if let Some(c) = CHAR_RACE_PROF.captures(line) {
+        } else if let Some(c) = CHAR_RACE_PROF.captures(line.trim_start()) {
             // Lich buffers this until StatEnd; we can commit directly — the
             // header line alone carries the profession.
+            self.observed_name = c["name"].split_whitespace().next().map(str::to_string);
             self.set_profession(Some(c["profession"].to_string()));
+        } else if let Some(c) = CHAR_PROF_LEVEL.captures(line) {
+            self.set_profession(Some(c["profession"].to_string()));
+            self.set_level(Some(c["level"].to_string()));
+        } else if let Some(c) = CHAR_INFO_LEVEL.captures(line) {
+            self.set_level(Some(c["level"].to_string()));
         } else if PROFILE_START.is_match(line) {
             self.in_profile = true;
         } else if self.in_profile && PROFILE_HOUSE_CHE.is_match(line) {
@@ -263,6 +283,18 @@ impl CharacterState {
         self.society.as_deref() == Some("Order of Voln") && self.society_rank == 26
     }
 
+    /// Character name observed from live character-sheet output during this
+    /// process lifetime. This is deliberately excluded from persistence.
+    pub fn observed_name(&self) -> Option<&str> {
+        self.observed_name.as_deref()
+    }
+
+    /// Forget parser observations that cannot cross a transport generation.
+    pub fn clear_connection_observations(&mut self) {
+        self.observed_name = None;
+        self.in_profile = false;
+    }
+
     /// The guild tag for `.go2 guild` (Lich composes `<prof> guild`), lower
     /// case, e.g. "wizard guild". None until profession is known.
     pub fn guild_tag(&self, suffix: &str) -> Option<String> {
@@ -310,6 +342,20 @@ impl CharacterState {
             self.profession = p;
             self.generation += 1;
         }
+    }
+    fn set_level(&mut self, level: Option<String>) {
+        if self.level != level {
+            self.level = level;
+            self.generation += 1;
+        }
+    }
+
+    /// Mirror the live experience dialog's level into the durable identity
+    /// cache. The caller still owns the richer experience state.
+    pub fn observe_level(&mut self, text: &str) -> bool {
+        let before = self.generation;
+        self.set_level(normalized_level_text(text));
+        self.generation != before
     }
     fn set_che(&mut self, c: Option<String>) {
         if self.che != c {
@@ -384,6 +430,8 @@ pub fn line_is_character_state(line: &str) -> bool {
     t.starts_with("You are a ")
         || t.starts_with("You are not a member")
         || t.starts_with("Name:")
+        || t.starts_with("Profession:")
+        || t.starts_with("Gender:")
         || t.starts_with("PERSONAL INFORMATION")
         || t.starts_with("You currently have ")
         || t.starts_with("You don't seem to have citizenship")
@@ -400,6 +448,22 @@ pub fn line_is_character_state(line: &str) -> bool {
         // A PROFILE house line (only trusted while in_profile); cheap check.
         || t.contains(" of House ")
         || t == "No House affiliation"
+}
+
+/// Normalize either the experience label (`Level: 90`) or the character
+/// sheet's numeric capture (`90`) into the value clients display.
+pub(crate) fn normalized_level_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let without_label = trimmed
+        .get(..5)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("level"))
+        .map_or(trimmed, |_| {
+            trimmed[5..].trim_start_matches(|c: char| c == ':' || c.is_whitespace())
+        });
+    (!without_label.is_empty()).then(|| without_label.to_string())
 }
 
 #[cfg(test)]
@@ -446,6 +510,39 @@ mod tests {
         assert_eq!(s.profession.as_deref(), Some("Ranger"));
         assert_eq!(s.guild_tag("guild").as_deref(), Some("ranger guild"));
         assert_eq!(s.guild_tag("").as_deref(), Some("ranger guild"));
+    }
+
+    #[test]
+    fn parses_character_sheet_profession_and_level_for_persistence() {
+        let mut s = CharacterState::default();
+
+        let identity =
+            "Name: Calvix Shenron Race: Dark Elf  Profession: Sorcerer (shown as: Warlock)";
+        let details = "Gender: Male    Age: 472    Expr: 6,527,263    Level:  90";
+        assert!(line_is_character_state(identity));
+        assert!(line_is_character_state(details));
+        assert!(s.parse_line(identity));
+        assert!(s.parse_line(details));
+        assert_eq!(s.observed_name(), Some("Calvix"));
+        assert_eq!(s.profession.as_deref(), Some("Sorcerer"));
+        assert_eq!(s.level.as_deref(), Some("90"));
+
+        let toml = toml::to_string(&s).unwrap();
+        let restored: CharacterState = toml::from_str(&toml).unwrap();
+        assert_eq!(restored.observed_name(), None);
+        assert_eq!(restored.profession.as_deref(), Some("Sorcerer"));
+        assert_eq!(restored.level.as_deref(), Some("90"));
+    }
+
+    #[test]
+    fn parses_indented_character_sheet_identity() {
+        let mut state = CharacterState::default();
+        assert!(line_is_character_state(
+            "   Name: Calvix Shenron Race: Dark Elf  Profession: Sorcerer"
+        ));
+        state.parse_line("   Name: Calvix Shenron Race: Dark Elf  Profession: Sorcerer");
+        assert_eq!(state.observed_name(), Some("Calvix"));
+        assert_eq!(state.profession.as_deref(), Some("Sorcerer"));
     }
 
     #[test]

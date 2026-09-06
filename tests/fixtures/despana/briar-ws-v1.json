@@ -107,8 +107,8 @@
         "generation": 14
       },
       "char_info": {
-        "profession": "Sorcerer",
-        "level": 90
+        "profession": "Wizard",
+        "level": "90"
       },
       "map_scene": {
         "location": "Duskruin Arena",

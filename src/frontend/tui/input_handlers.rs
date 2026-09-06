@@ -498,11 +498,32 @@ impl super::TuiFrontend {
         command: String,
         app_core: &mut crate::core::AppCore,
     ) -> Result<Option<String>> {
+        self.handle_command_submission_from(None, command, app_core)
+    }
+
+    pub(super) fn handle_remote_command_submission(
+        &mut self,
+        client_id: u64,
+        command: String,
+        app_core: &mut crate::core::AppCore,
+    ) -> Result<Option<String>> {
+        self.handle_command_submission_from(Some(client_id), command, app_core)
+    }
+
+    fn handle_command_submission_from(
+        &mut self,
+        remote_client_id: Option<u64>,
+        command: String,
+        app_core: &mut crate::core::AppCore,
+    ) -> Result<Option<String>> {
         tracing::debug!("handle_command_submission: start '{}'", command);
         // Layout commands ride the same core dispatch as everything else
         // now (parity plan D3): core emits SaveLayout/LoadLayout/... UI
         // actions and menu_actions supplies the live terminal size.
-        let outcome = app_core.send_command(command)?;
+        let outcome = match remote_client_id {
+            Some(client_id) => app_core.send_remote_command(client_id, command)?,
+            None => app_core.send_command(command)?,
+        };
         tracing::debug!(
             "handle_command_submission: send_command returned {:?}",
             outcome

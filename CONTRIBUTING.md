@@ -14,7 +14,7 @@ cargo test
 RUST_LOG=debug cargo run -- --port 8000
 ```
 
-### VellumFE — Despana checks
+### Vellum Despana checks
 
 Despana's browser unit tests use only Node.js 22's built-in test runner; there
 is no npm install step. Run the same focused checks as CI from the repository

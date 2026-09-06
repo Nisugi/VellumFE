@@ -51,6 +51,13 @@ selected presentation: a native window for GUI, a console for Terminal, or an
 automatically paired browser tab for Vellum Despana. The status line at the
 bottom reads **Launched &lt;name&gt;**.
 
+While that session is active, its row says **Open** and reopens the existing
+presentation instead of starting a duplicate. If the process is still alive
+after its game connection has ended, the row says **Restart**: Vellum stops
+that dormant runtime, waits for it to release its session registry entry, and
+then performs a normal launch. **Stop** removes the dormant runtime without
+relaunching it.
+
 <figure class="shot" data-shot="gui/launcher-new-connection">
   <div class="shot-ph">📷 screenshot pending</div>
   <figcaption>The <b>New connection</b> form in <b>Direct</b> mode, showing
@@ -159,7 +166,7 @@ saved connection:
 1. **Edit** the saved connection you want to use. For Lich scripts, confirm it
    is a **Lich** connection with the expected host, detachable-client port, and
    character.
-2. Open **Advanced** and set **Frontend** to **Despana**.
+2. Open **Advanced** and set **Frontend** to **Vellum Despana**.
 3. **Save**, then click **Launch** on that row.
 
 Vellum applies the selected profile once, starts its WebUI, and opens the
@@ -196,8 +203,8 @@ is rendering.
 > the TUI.** A new connection is created with **Frontend: GUI**, but `vellum-fe`
 > invoked with flags uses `--frontend tui` unless you say otherwise. The same
 > character launched two ways can land in different interfaces. Set GUI,
-> Terminal, or Despana explicitly under **Advanced** ▸ **Frontend**. The CLI's
-> `--frontend headless` runs a browser-only session directly; selecting Despana
+> Terminal, or Vellum Despana explicitly under **Advanced** ▸ **Frontend**. The CLI's
+> `--frontend headless` runs a browser-only session directly; selecting Vellum Despana
 > in the Launcher is the convenient saved-connection path to that desktop
 > presentation.
 

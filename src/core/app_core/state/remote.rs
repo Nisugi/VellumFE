@@ -215,6 +215,15 @@ impl AppCore {
     /// Push a session status change to remote clients (headless supervisor
     /// state transitions). No-op when web is disabled.
     pub fn set_remote_session_state(&mut self, info: crate::core::remote::RemoteSessionInfo) {
+        use crate::core::remote::SessionState;
+        use crate::core::session_registry::SessionLifecycleState as RegistryState;
+        crate::core::session_registry::set_lifecycle(match info.state {
+            SessionState::Idle => RegistryState::Idle,
+            SessionState::Authenticating | SessionState::Connecting => RegistryState::Connecting,
+            SessionState::Connected => RegistryState::Connected,
+            SessionState::Reconnecting => RegistryState::Reconnecting,
+            SessionState::Disconnected => RegistryState::Disconnected,
+        });
         if let Some(remote) = self.message_processor.remote.as_mut() {
             remote.set_session_state(info);
         }

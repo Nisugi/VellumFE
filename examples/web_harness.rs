@@ -556,7 +556,7 @@ async fn main() {
 
     while let Some(event) = event_rx.recv().await {
         match event {
-            RemoteEvent::Command(text) if login_mode && text == "drop" => {
+            RemoteEvent::Command { text, .. } if login_mode && text == "drop" => {
                 println!("EVENT cmd: {text:?} (scripted drop → reconnect)");
                 let character = Some("Harness".to_string());
                 sink.set_session_state(session(SessionState::Reconnecting, &character));
@@ -824,7 +824,7 @@ async fn main() {
                     true,
                 );
             }
-            RemoteEvent::Command(text) => {
+            RemoteEvent::Command { text, .. } => {
                 println!("EVENT cmd: {text:?}");
                 // `echo <text>` / `echot <text>` / `echod <text>` send the
                 // text back as a main/thoughts/death stream line, so

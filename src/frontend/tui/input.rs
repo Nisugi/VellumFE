@@ -3100,6 +3100,9 @@ impl TuiFrontend {
                             app_core, self, action,
                         )?;
                     }
+                    Ok(crate::data::CommandOutcome::Game(outbound)) => {
+                        app_core.finish_game_command_send(&outbound, false);
+                    }
                     Err(e) => {
                         tracing::error!("Dot command error: {}", e);
                     }

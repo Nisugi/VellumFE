@@ -1,8 +1,8 @@
 //! The transport half of the multi-account display: find the other VellumFE
 //! instances on this machine and keep a status-only websocket open to each.
 //!
-//! Every running instance already registers itself in
-//! `~/.vellum-fe/web-sessions/<pid>.json` and serves the same websocket the
+//! Every running instance already registers itself in the machine-local
+//! Vellum runtime registry and serves the same websocket the
 //! phone uses, so nothing new is published here -- the hub is purely a
 //! consumer. It connects with `subscribe {mode:"watch"}` so each peer sends
 //! status and nothing else; without that a six-character setup would pull six

@@ -72,20 +72,86 @@ test("default restore is canonical and deeply frozen", () => {
   assert.throws(() => snapshot.zones.center.modules.push({ id: "nope", weight: 1 }));
 });
 
+test("factory workspace matches the proven Calvix starting layout", () => {
+  const snapshot = restore().snapshot();
+
+  assert.deepEqual(snapshot.tracks, {
+    top: 181,
+    bottom: 79,
+    left: 288,
+    right: 388,
+  });
+  assert.deepEqual(
+    Object.fromEntries(
+      LAYOUT_ZONES.map((zone) => [
+        zone,
+        snapshot.zones[zone].modules.map(({ id, weight }) => ({ id, weight })),
+      ]),
+    ),
+    {
+      top: [
+        { id: "thoughts", weight: 473 },
+        { id: "familiar", weight: 527 },
+      ],
+      bottom: [
+        { id: "hands", weight: 166 },
+        { id: "conditions", weight: 293 },
+        { id: "cooldowns", weight: 274 },
+        { id: "injuries", weight: 267 },
+      ],
+      left: [
+        { id: "active-spells", weight: 550 },
+        { id: "combat", weight: 223 },
+        { id: "vitals", weight: 227 },
+      ],
+      right: [
+        { id: "map", weight: 627 },
+        { id: "tasks", weight: 373 },
+      ],
+      center: [
+        { id: "room", weight: 225 },
+        { id: "story", weight: 775 },
+      ],
+    },
+  );
+  assert.deepEqual(
+    snapshot.hidden.map(({ id, zone, weight }) => ({ id, zone, weight })),
+    [
+      { id: "compass", zone: "right", weight: 110 },
+      { id: "inventory", zone: "right", weight: 125 },
+      { id: "known-spells", zone: "right", weight: 78 },
+    ],
+  );
+});
+
+test("canonical workspace weights remain stable across repeated restore cycles", () => {
+  let serialized = restore().serialize();
+  for (let cycle = 0; cycle < 10; cycle += 1) {
+    const model = WorkspaceLayout.restore({
+      moduleIds: MODULE_IDS,
+      defaults: DEFAULT_DESPANA_LAYOUT,
+      saved: serialized,
+      character: "Aster",
+    });
+    assert.equal(model.serialize(), serialized);
+    serialized = model.serialize();
+  }
+});
+
 test("move, reorder, and flow intents preserve every module exactly once", () => {
   const model = restore();
 
   model.apply({ type: "move", id: "story", zone: "top", index: 1 });
   assert.deepEqual(
     model.snapshot().zones.top.modules.map((entry) => entry.id),
-    ["hands", "story", "thoughts"],
+    ["thoughts", "story", "familiar"],
   );
   assert.equal(find(model.snapshot(), "story").zone, "top");
 
   model.apply({ type: "move", id: "hands", zone: "top", index: 2 });
   assert.deepEqual(
     model.snapshot().zones.top.modules.map((entry) => entry.id),
-    ["story", "thoughts", "hands"],
+    ["thoughts", "story", "hands", "familiar"],
   );
   model.apply({ type: "set-flow", zone: "top", flow: "horizontal" });
   assert.equal(model.snapshot().zones.top.flow, "horizontal");
@@ -94,6 +160,7 @@ test("move, reorder, and flow intents preserve every module exactly once", () =>
 
 test("hide and show retain the previous zone, index, and a positive weight", () => {
   const model = restore();
+  const original = structuredClone(model.snapshot().zones.center.modules);
   const before = model.snapshot().zones.center.modules[1];
 
   model.apply({ type: "hide", id: "story" });
@@ -114,28 +181,25 @@ test("hide and show retain the previous zone, index, and a positive weight", () 
     model.snapshot().zones.center.modules.map((entry) => entry.id),
     ["room", "story"],
   );
-  assert.deepEqual(model.snapshot().zones.center.modules, [
-    { id: "room", weight: 330 },
-    { id: "story", weight: 670 },
-  ]);
+  assert.deepEqual(model.snapshot().zones.center.modules, original);
   assert.equal(model.snapshot().hidden.some((entry) => entry.id === "story"), false);
   assertCanonical(model.snapshot());
 });
 
-test("bottom modules restore their stable order and proportional sizes", () => {
+test("two-module zones restore their stable order and proportional sizes", () => {
   const orders = [
-    ["conditions", "vitals"],
-    ["vitals", "conditions"],
+    ["room", "story"],
+    ["story", "room"],
   ];
   for (const hideOrder of orders) {
     for (const showOrder of orders) {
       const model = restore();
-      const original = structuredClone(model.snapshot().zones.bottom.modules);
+      const original = structuredClone(model.snapshot().zones.center.modules);
       for (const id of hideOrder) model.apply({ type: "hide", id });
-      assert.equal(model.snapshot().zones.bottom.modules.length, 0);
+      assert.equal(model.snapshot().zones.center.modules.length, 0);
       for (const id of showOrder) model.apply({ type: "show", id });
       assert.deepEqual(
-        model.snapshot().zones.bottom.modules,
+        model.snapshot().zones.center.modules,
         original,
         `hide ${hideOrder.join(", ")}; show ${showOrder.join(", ")}`,
       );
@@ -157,7 +221,7 @@ test("legacy version-one command placements are discarded", () => {
   assert.equal(find(snapshot, "command"), undefined);
   assert.deepEqual(
     snapshot.zones.bottom.modules.map((entry) => entry.id),
-    ["conditions", "vitals"],
+    ["hands", "conditions", "cooldowns", "injuries", "vitals"],
   );
   assertCanonical(snapshot);
 });
@@ -293,8 +357,7 @@ test("reset is canonical, character-scoped, and idempotent", () => {
   const second = model.apply({ type: "reset" });
   assert.strictEqual(first, second);
   assert.equal(first.character, "aster");
-  assert.deepEqual(first.zones.center.modules.map((entry) => entry.id), ["room", "story"]);
-  assert.deepEqual(first.hidden, []);
+  assert.deepEqual(first, restore().snapshot());
   assertCanonical(first);
 });
 

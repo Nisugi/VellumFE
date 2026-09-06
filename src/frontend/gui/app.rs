@@ -1888,7 +1888,8 @@ impl VellumGuiApp {
         self.app_core
             .perf_stats
             .record_bytes_sent((outbound.len() + 1) as u64);
-        let _ = self.command_tx.send(outbound);
+        let sent = self.command_tx.send(outbound.clone()).is_ok();
+        self.app_core.finish_game_command_send(&outbound, sent);
     }
 
     fn resolve_link_dispatch(
@@ -2395,6 +2396,7 @@ impl eframe::App for VellumGuiApp {
                 handle.abort();
             }
             self.app_core.game_state.connected = false;
+            self.app_core.clear_pending_goals_launches();
         }
         // Keep painting while the map worker, mapdb download, or walk
         // executor is busy so results and progress appear without waiting

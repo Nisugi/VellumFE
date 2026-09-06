@@ -5,9 +5,9 @@ import test from "node:test";
 const source = await readFile(new URL("./session.js", import.meta.url), "utf8");
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 const {
+  characterTitleText,
   DesktopSession,
   DesktopSessionError,
-  presentationTitle,
   shouldShowVellumIdle,
 } = await import(moduleUrl);
 
@@ -208,8 +208,8 @@ function fullSnapshot(overrides = {}) {
       generation: 3,
     },
     char_info: {
-      profession: "Sorcerer",
-      level: 90,
+      profession: "Wizard",
+      level: "90",
       experience: ["Mind: muddled (42%)"],
       encumbrance: ["Light (17%)"],
       bounty: ["Cull 10 rats"],
@@ -284,6 +284,23 @@ function connectAndHello(harness, epoch = "epoch-1", character = "Briar") {
   return socket;
 }
 
+test("character title renders profession and level independently", () => {
+  const base = { character: "Briar", session: {}, charInfo: {} };
+  assert.equal(characterTitleText(base), "Vellum Despana - Briar");
+  assert.equal(
+    characterTitleText({ ...base, charInfo: { profession: "Wizard" } }),
+    "Vellum Despana - Briar - Wizard",
+  );
+  assert.equal(
+    characterTitleText({ ...base, charInfo: { level: "90" } }),
+    "Vellum Despana - Briar - 90",
+  );
+  assert.equal(
+    characterTitleText({ ...base, charInfo: { profession: "Wizard", level: "90" } }),
+    "Vellum Despana - Briar - Wizard - 90",
+  );
+});
+
 function openForReplay(harness) {
   harness.session.connect();
   const socket = harness.sockets.at(-1);
@@ -316,25 +333,6 @@ test("the native idle handoff owns controlled non-running states but not reconne
     connection: { status: "reconnecting" },
     session: { state: "connected", session_control: false },
   }), false, "sidecar transports do not have a Vellum login lifecycle");
-});
-
-test("presentation title uses confirmed identity fields with graceful fallbacks", () => {
-  assert.equal(presentationTitle({}), "Vellum Despana");
-  assert.equal(
-    presentationTitle({ session: { character: "Briar" } }),
-    "Vellum Despana - Briar",
-  );
-  assert.equal(
-    presentationTitle({
-      character: "Briar",
-      charInfo: { profession: "Sorcerer", level: 90 },
-    }),
-    "Vellum Despana - Briar - Sorcerer - 90",
-  );
-  assert.equal(
-    presentationTitle({ character: "Briar", charInfo: { level: 0 } }),
-    "Vellum Despana - Briar - 0",
-  );
 });
 
 test("a token entered in a separate Vellum page recovers a denied desktop session", () => {
@@ -392,7 +390,7 @@ function receiveReplayFrame(socket, message) {
 function expectedHandshake() {
   return [
     { t: "auth", d: { token: "stored-token" } },
-    { t: "subscribe", d: { mode: "play" } },
+    { t: "subscribe", d: { mode: "desktop" } },
     { t: "resume", d: { seq: 0 } },
   ];
 }
@@ -570,7 +568,7 @@ test("auth is first, then play subscription, then resume", () => {
   );
   assert.deepEqual(socket.sent, [
     { t: "auth", d: { token: "stored-token" } },
-    { t: "subscribe", d: { mode: "play" } },
+    { t: "subscribe", d: { mode: "desktop" } },
     { t: "resume", d: { seq: 0 } },
   ]);
 });
@@ -638,8 +636,8 @@ test("a full snapshot reduces the complete initial desktop slice", () => {
   assert.equal(event.state.objectives.objectives[0].actions[0].command, "QUEST ACCEPT s24352");
   assert.equal(event.state.charInfo.gauges.stance.text, "defensive");
   assert.equal(event.state.charInfo.gauges.fieldExp.max, 1000);
-  assert.equal(event.state.charInfo.profession, "Sorcerer");
-  assert.equal(event.state.charInfo.level, 90);
+  assert.equal(event.state.charInfo.profession, "Wizard");
+  assert.equal(event.state.charInfo.level, "90");
   assert.deepEqual(event.state.mapScene.rooms[0], {
     i: 100,
     x: 0,
@@ -675,6 +673,23 @@ test("text de-duplicates by seq while state at the same seq still applies", () =
   assert.equal(event.state.streams.main.length, 2);
   assert.equal(event.state.streams.main[1].line.segments[0].text, "Second line");
   assert.equal(event.state.vitals.health, 41);
+});
+
+test("an addressed browser URL is surfaced as a transient session event", () => {
+  const harness = makeHarness();
+  const socket = connectAndHello(harness);
+  socket.receive(frame("snapshot", fullSnapshot(), 1));
+
+  const before = harness.events.length;
+  socket.receive(frame("open_url", { url: "https://www.play.net/gs4/goals" }, 2));
+
+  assert.deepEqual(harness.events.slice(before).map((event) => ({
+    type: event.type,
+    url: event.url,
+  })), [{
+    type: "open-url",
+    url: "https://www.play.net/gs4/goals",
+  }]);
 });
 
 test("an entities delta replaces the normalized entity projection", () => {
@@ -738,8 +753,6 @@ test("parity deltas replace frozen slices even when they share one sequence", ()
     }], "field"],
     ["objectives", { objectives: [], generation: 4 }, "objectives"],
     ["charinfo", {
-      profession: "Ranger",
-      level: 42,
       experience: ["Mind: clear (0%)"],
       gauges: { mind: { value: 0, text: "clear" } },
     }, "charInfo"],
@@ -778,8 +791,6 @@ test("parity deltas replace frozen slices even when they share one sequence", ()
   assert.equal(view.field[0].boss, true);
   assert.deepEqual(view.objectives, { objectives: [], generation: 4 });
   assert.equal(view.charInfo.gauges.mind.text, "clear");
-  assert.equal(view.charInfo.profession, "Ranger");
-  assert.equal(view.charInfo.level, 42);
   assert.equal(view.mapScene.rooms[0].i, 500);
   assert.equal(view.mapState.inGhost, true);
   assert.equal(view.mapState.travel, null);
@@ -857,6 +868,14 @@ test("classic map metadata and local map browse replies stay structured", () => 
     roomRect: [277, 615, 313, 651],
   });
 
+  socket.receive(frame("map_state", {
+    available: true,
+    location: "sat-200",
+    room: 100,
+    cell: [0, 0],
+  }, 2));
+  assert.equal(harness.events.at(-1).state.mapState.location, "sat-200");
+
   harness.session.dispatch({ kind: "map-locations", requestId: 31 });
   assert.deepEqual(socket.sent.at(-1), {
     t: "map_locations",
@@ -864,11 +883,21 @@ test("classic map metadata and local map browse replies stay structured", () => 
   });
   socket.receive(frame("map_locations", {
     request_id: 31,
-    locations: ["Wehnimer's Landing", "Darkstone Castle"],
-  }, 2));
+    locations: [
+      "Wehnimer's Landing",
+      "sat-200",
+      "Darkstone Castle",
+      "satid-401",
+    ],
+  }, 3));
   const locations = harness.events.at(-1);
   assert.equal(locations.type, "map-locations");
   assert.deepEqual(locations.locations, ["Wehnimer's Landing", "Darkstone Castle"]);
+  assert.equal(
+    harness.events.at(-2).state.mapState.location,
+    "sat-200",
+    "picker filtering must not disturb the rendered current-room map state",
+  );
 
   harness.session.dispatch({ kind: "map-view", requestId: 32, location: "Darkstone Castle" });
   assert.deepEqual(socket.sent.at(-1), {
@@ -950,6 +979,17 @@ test("a link tap dispatches the exact protocol v1 wire frame", () => {
       coord: "42,19",
     },
   });
+});
+
+test("explicit exit and logout dispatches one dedicated lifecycle frame", () => {
+  const harness = makeHarness();
+  const socket = connectAndHello(harness);
+  socket.receive(frame("snapshot", fullSnapshot(), 1));
+
+  const receipt = harness.session.dispatch({ kind: "exit-and-logout" });
+
+  assert.deepEqual(receipt, { id: "exit-1", status: "sent" });
+  assert.deepEqual(socket.sent.at(-1), { t: "exit_logout", d: {} });
 });
 
 test("a live combat target dispatch preserves its protocol-prefixed id", () => {
@@ -1166,7 +1206,7 @@ test("reconnect resumes state but never resends a dispatched command", () => {
   );
   assert.deepEqual(second.sent, [
     { t: "auth", d: { token: "stored-token" } },
-    { t: "subscribe", d: { mode: "play" } },
+    { t: "subscribe", d: { mode: "desktop" } },
     { t: "resume", d: { seq: 1 } },
   ]);
 

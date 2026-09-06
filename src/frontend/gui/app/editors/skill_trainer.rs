@@ -331,10 +331,7 @@ impl VellumGuiApp {
             self.app_core.skill_trainer_apply();
         }
         if actions.open_web {
-            // Disarm so the LaunchURL reply falls through to the browser,
-            // then send GOALS through the normal command path.
-            self.app_core.skill_trainer_armed = None;
-            self.dispatch_command("goals".to_string());
+            self.dispatch_command("goals web".to_string());
         }
         if let Some(name) = actions.save_profile {
             self.app_core.skill_trainer_save_profile(&name);

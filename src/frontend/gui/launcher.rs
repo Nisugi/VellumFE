@@ -2,9 +2,9 @@
 //!
 //! Shown when vellum-fe starts with no arguments (double-click) or with
 //! `--launcher`. Each profile row spawns a *separate process* running
-//! `vellum-fe --launch-profile NAME`, so a session goes through exactly the
-//! same startup path as a hand-typed command line and several characters can
-//! play at once.
+//! `vellum-fe --launch-profile NAME` with a fingerprint of the confirmed
+//! profile, so a session goes through the same startup path as a hand-typed
+//! command line without a later profile edit retargeting it.
 //!
 //! Passwords never appear on a child's command line. A session resolves its
 //! own password from the OS credential store; only when nothing is saved
@@ -108,26 +108,145 @@ impl EditForm {
 
 /// Modal shown when launching a GUI direct profile with no saved password.
 struct PasswordPrompt {
-    profile_name: String,
+    /// Immutable profile selected before any lifecycle work began.
+    profile: LauncherProfile,
+    launch_identity: crate::core::session_registry::SessionLaunchIdentity,
     password: String,
     show_password: bool,
     remember: bool,
+    /// Held only when an old dormant runtime was stopped before this prompt.
+    launch_claim: Option<crate::core::session_registry::LaunchClaim>,
+}
+
+impl PasswordPrompt {
+    fn new(
+        profile: LauncherProfile,
+        launch_claim: Option<crate::core::session_registry::LaunchClaim>,
+    ) -> Self {
+        let launch_identity = crate::core::session_registry::SessionLaunchIdentity::from_profile(
+            &profile.name,
+            &profile,
+        );
+        Self {
+            profile,
+            launch_identity,
+            password: String::new(),
+            show_password: false,
+            remember: true,
+            launch_claim,
+        }
+    }
+
+    fn verified_profile(
+        &self,
+        store: &LauncherStore,
+    ) -> std::result::Result<LauncherProfile, String> {
+        let Some(current) = store.find(&self.profile.name) else {
+            return Err(format!(
+                "The {} profile was deleted before launch; nothing was started.",
+                self.profile.name
+            ));
+        };
+        let current_identity = crate::core::session_registry::SessionLaunchIdentity::from_profile(
+            &current.name,
+            current,
+        );
+        let snapshot_identity = crate::core::session_registry::SessionLaunchIdentity::from_profile(
+            &self.profile.name,
+            &self.profile,
+        );
+        if current_identity != self.launch_identity || snapshot_identity != self.launch_identity {
+            return Err(format!(
+                "The {} profile changed while launch was pending; nothing was started.",
+                self.profile.name
+            ));
+        }
+        Ok(self.profile.clone())
+    }
+}
+
+/// Confirmation state for handing a shared Lich endpoint to another
+/// character.  Keeping the immutable request here ensures the modal cannot
+/// accidentally confirm a different, later registry observation.
+struct CharacterSwitchPrompt {
+    request: crate::launcher::session_lifecycle::SwitchRequest,
+    profile: LauncherProfile,
+    dont_warn_again: bool,
+}
+
+type CharacterSwitchResult = (
+    LauncherProfile,
+    std::result::Result<crate::core::session_registry::LaunchClaim, String>,
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CharacterSwitchAction {
+    RejectAttachOnly,
+    RejectUncontrollableOwner,
+    Confirm,
+    Start,
+}
+
+fn character_switch_action(
+    profile: &LauncherProfile,
+    request: &crate::launcher::session_lifecycle::SwitchRequest,
+    skip_warning: bool,
+) -> CharacterSwitchAction {
+    let has_launch_command = profile
+        .custom_launch
+        .as_deref()
+        .is_some_and(|command| !command.trim().is_empty());
+    if profile.mode != LaunchMode::Lich || !has_launch_command {
+        CharacterSwitchAction::RejectAttachOnly
+    } else if !request.owner_supports_character_handoff() {
+        CharacterSwitchAction::RejectUncontrollableOwner
+    } else if skip_warning {
+        CharacterSwitchAction::Start
+    } else {
+        CharacterSwitchAction::Confirm
+    }
 }
 
 pub struct LauncherApp {
     store: LauncherStore,
     edit: Option<EditForm>,
     password_prompt: Option<PasswordPrompt>,
+    character_switch_prompt: Option<CharacterSwitchPrompt>,
     confirm_delete: Option<String>,
     status: Option<Status>,
     /// In-flight SSH launch (Lich profiles with a launch command): progress
     /// from the flow thread, plus the profile to spawn once the port is up.
     launch_progress_rx: Option<mpsc::UnboundedReceiver<crate::launcher::flow::LaunchProgress>>,
     pending_launch: Option<LauncherProfile>,
+    pending_launch_claim: Option<crate::core::session_registry::LaunchClaim>,
+    /// A confirmed character handoff owns its launch claim on this worker
+    /// until the old runtime and Lich endpoint have both gone away.
+    character_switch_rx: Option<mpsc::UnboundedReceiver<CharacterSwitchResult>>,
+    /// A matching idle/disconnected runtime must stop before its replacement
+    /// enters the ordinary launch flow.
+    dormant_restart_rx: Option<mpsc::UnboundedReceiver<CharacterSwitchResult>>,
+    /// Blocking HTTP stop requests run on a worker; the egui thread only
+    /// polls this result channel.
+    stop_progress_rx: Option<mpsc::UnboundedReceiver<(String, Result<(), String>)>>,
+    /// Registry discovery probes the process table, so keep it out of the
+    /// launcher's normal per-frame paint work. Launch clicks still perform an
+    /// authoritative fresh read before deciding whether to spawn or resume.
+    live_sessions: Vec<crate::core::session_registry::SessionEntry>,
+    live_sessions_refreshed_at: std::time::Instant,
+    /// Keep launcher-owned children until `try_wait` reaps them. Dropping a
+    /// live `Child` handle leaves a zombie behind on Unix when that process
+    /// later exits while the launcher remains open.
+    session_children: Vec<std::process::Child>,
+    /// Captured while the launcher executable still exists at this path. A
+    /// development rebuild may replace that file while this process remains
+    /// alive; resolving `/proc/self/exe` later would then point at `(deleted)`.
+    session_executable: std::result::Result<std::path::PathBuf, String>,
 }
 
 impl LauncherApp {
     fn new() -> Self {
+        let session_executable = std::env::current_exe()
+            .map_err(|error| format!("Could not locate the vellum-fe executable: {error}"));
         let (store, status) = match LauncherStore::load() {
             Ok(store) => (store, None),
             Err(err) => (
@@ -139,15 +258,33 @@ impl LauncherApp {
                 ))),
             ),
         };
+        let live_sessions = crate::core::session_registry::list_and_gc();
         Self {
             store,
             edit: None,
             password_prompt: None,
+            character_switch_prompt: None,
             confirm_delete: None,
             status,
             launch_progress_rx: None,
             pending_launch: None,
+            pending_launch_claim: None,
+            character_switch_rx: None,
+            dormant_restart_rx: None,
+            stop_progress_rx: None,
+            live_sessions,
+            live_sessions_refreshed_at: std::time::Instant::now(),
+            session_children: Vec::new(),
+            session_executable,
         }
+    }
+
+    fn refresh_live_sessions_if_stale(&mut self) {
+        if self.live_sessions_refreshed_at.elapsed() < std::time::Duration::from_secs(2) {
+            return;
+        }
+        self.live_sessions = crate::core::session_registry::list_and_gc();
+        self.live_sessions_refreshed_at = std::time::Instant::now();
     }
 
     fn save_store(&mut self) {
@@ -159,9 +296,18 @@ impl LauncherApp {
     // ----- launching -------------------------------------------------------
 
     fn launch(&mut self, name: &str) {
+        if self.launch_or_switch_busy() {
+            self.status = Some(Status::error(
+                "A launch or character switch is already in progress; wait for it to finish.",
+            ));
+            return;
+        }
         let Some(profile) = self.store.find(name).cloned() else {
             return;
         };
+        if self.resume_or_reject(&profile) {
+            return;
+        }
         match profile.mode {
             LaunchMode::Direct => {
                 let saved = if profile.password_saved {
@@ -178,12 +324,7 @@ impl LauncherApp {
                     // launcher beats a bare console prompt with no way to
                     // save the password.
                     None => {
-                        self.password_prompt = Some(PasswordPrompt {
-                            profile_name: profile.name.clone(),
-                            password: String::new(),
-                            show_password: false,
-                            remember: true,
-                        });
+                        self.password_prompt = Some(PasswordPrompt::new(profile, None));
                     }
                 }
             }
@@ -199,12 +340,47 @@ impl LauncherApp {
         }
     }
 
+    fn launch_or_switch_busy(&self) -> bool {
+        self.launch_progress_rx.is_some()
+            || self.character_switch_rx.is_some()
+            || self.dormant_restart_rx.is_some()
+            || self.stop_progress_rx.is_some()
+            || self.character_switch_prompt.is_some()
+            || self.password_prompt.is_some()
+    }
+
     /// Kick off the probe → SSH → wait-for-port flow on its own thread and
     /// remember which profile to spawn when it reports Ready.
     fn start_ssh_launch(&mut self, profile: &LauncherProfile, command: &str) {
-        if self.launch_progress_rx.is_some() {
+        if self.launch_or_switch_busy() {
             self.status = Some(Status::error(
-                "A launch is already in progress; wait for it to finish.".to_string(),
+                "A launch or character switch is already in progress; wait for it to finish.",
+            ));
+            return;
+        }
+        let Some(claim) = self.reserve_launch(profile) else {
+            return;
+        };
+        self.start_ssh_launch_reserved(profile, command, claim);
+    }
+
+    /// Enter the normal Lich probe/start flow with a claim acquired by the
+    /// character-handoff worker.  This path must not reserve the endpoint a
+    /// second time: the handoff claim closes the race between old and new
+    /// runtime ownership.
+    fn start_ssh_launch_reserved(
+        &mut self,
+        profile: &LauncherProfile,
+        command: &str,
+        claim: crate::core::session_registry::LaunchClaim,
+    ) {
+        if self.launch_progress_rx.is_some()
+            || self.character_switch_rx.is_some()
+            || self.dormant_restart_rx.is_some()
+            || self.stop_progress_rx.is_some()
+        {
+            self.status = Some(Status::error(
+                "A launch or character switch is already in progress; the target was not launched.",
             ));
             return;
         }
@@ -231,13 +407,10 @@ impl LauncherApp {
             &ssh,
         );
         let (tx, rx) = mpsc::unbounded_channel();
-        self.launch_progress_rx = Some(rx);
-        self.pending_launch = Some(profile.clone());
-        self.status = Some(Status::ok(format!("Starting Lich for {}…", profile.name)));
         // Same constraint as the in-session launcher: russh's Handle isn't
         // provably Send across awaits, so this needs its own current-thread
         // runtime rather than the shared pool.
-        std::thread::Builder::new()
+        let worker = std::thread::Builder::new()
             .name("ssh-launcher".into())
             .spawn(move || {
                 let rt = match tokio::runtime::Builder::new_current_thread()
@@ -270,8 +443,20 @@ impl LauncherApp {
                         });
                     }
                 });
-            })
-            .ok();
+            });
+        match worker {
+            Ok(_) => {
+                self.launch_progress_rx = Some(rx);
+                self.pending_launch = Some(profile.clone());
+                self.pending_launch_claim = Some(claim);
+                self.status = Some(Status::ok(format!("Starting Lich for {}…", profile.name)));
+            }
+            Err(error) => {
+                self.status = Some(Status::error(format!(
+                    "Could not start the Lich launch worker: {error}; the target was not launched."
+                )));
+            }
+        }
     }
 
     /// Drain SSH-launch progress into the status line; spawn the session
@@ -326,12 +511,14 @@ impl LauncherApp {
         }
         if ready {
             if let Some(profile) = self.pending_launch.clone() {
-                self.spawn(&profile, None);
+                let claim = self.pending_launch_claim.take();
+                self.spawn_reserved(&profile, None, claim);
             }
         }
         if finished {
             self.launch_progress_rx = None;
             self.pending_launch = None;
+            self.pending_launch_claim = None;
         }
         // A launch in flight produces progress from another thread; keep the
         // UI repainting so the status line actually advances.
@@ -341,8 +528,73 @@ impl LauncherApp {
     }
 
     fn spawn(&mut self, profile: &LauncherProfile, password: Option<&str>) {
-        match spawn_session(profile, password) {
-            Ok(()) => self.status = Some(Status::ok(format!("Launched {}", profile.name))),
+        if self.launch_or_switch_busy() {
+            self.status = Some(Status::error(
+                "A launch or character switch is already in progress; wait for it to finish.",
+            ));
+            return;
+        }
+        if self.resume_or_reject(profile) {
+            return;
+        }
+        let Some(claim) = self.reserve_launch(profile) else {
+            return;
+        };
+        self.spawn_reserved(profile, password, Some(claim));
+    }
+
+    fn reserve_launch(
+        &mut self,
+        profile: &LauncherProfile,
+    ) -> Option<crate::core::session_registry::LaunchClaim> {
+        let identity = crate::core::session_registry::SessionLaunchIdentity::from_profile(
+            &profile.name,
+            profile,
+        );
+        match crate::core::session_registry::acquire_launch_claim(&identity) {
+            Ok(crate::core::session_registry::LaunchClaimResult::Acquired(claim)) => Some(claim),
+            Ok(crate::core::session_registry::LaunchClaimResult::Existing {
+                profile,
+                character,
+            }) => {
+                self.status = Some(Status::error(format!(
+                    "A launch is already in progress for {character} ({profile})."
+                )));
+                None
+            }
+            Err(error) => {
+                self.status = Some(Status::error(format!(
+                    "Could not reserve this connection: {error:#}"
+                )));
+                None
+            }
+        }
+    }
+
+    fn spawn_reserved(
+        &mut self,
+        profile: &LauncherProfile,
+        password: Option<&str>,
+        claim: Option<crate::core::session_registry::LaunchClaim>,
+    ) {
+        let executable = match &self.session_executable {
+            Ok(path) => path,
+            Err(error) => {
+                self.status = Some(Status::error(format!(
+                    "Failed to launch {}: {error}",
+                    profile.name
+                )));
+                return;
+            }
+        };
+        match spawn_session(executable, profile, password) {
+            Ok(child) => {
+                self.session_children.push(child);
+                if let Some(claim) = claim {
+                    claim.persist_until_registration();
+                }
+                self.status = Some(Status::ok(format!("Launched {}", profile.name)));
+            }
             Err(err) => {
                 self.status = Some(Status::error(format!(
                     "Failed to launch {}: {err:#}",
@@ -352,9 +604,316 @@ impl LauncherApp {
         }
     }
 
+    /// Return true when launching was handled by resuming, replacing a
+    /// dormant runtime, or surfacing a conflict. Only `Spawn` falls through.
+    fn resume_or_reject(&mut self, profile: &LauncherProfile) -> bool {
+        use crate::launcher::session_lifecycle::{decide_launch, resume_url, LaunchDisposition};
+
+        let requested = crate::core::session_registry::SessionLaunchIdentity::from_profile(
+            &profile.name,
+            profile,
+        );
+        match decide_launch(&requested, &crate::core::session_registry::list_and_gc()) {
+            LaunchDisposition::Spawn => false,
+            LaunchDisposition::Resume(entry) => {
+                if let Some(client) = profile.web_client {
+                    match resume_url(&entry, client).and_then(|url| crate::platform::open_url(&url))
+                    {
+                        Ok(()) => {
+                            self.status = Some(Status::ok(format!(
+                                "Reopened the existing {} session.",
+                                profile.name
+                            )))
+                        }
+                        Err(error) => {
+                            self.status = Some(Status::error(format!(
+                                "Session is already running, but could not reopen it: {error:#}"
+                            )))
+                        }
+                    }
+                } else {
+                    self.status = Some(Status::ok(format!(
+                        "{} is already running (process {}).",
+                        profile.name, entry.pid
+                    )));
+                }
+                true
+            }
+            LaunchDisposition::Replace(entry) => {
+                self.start_dormant_restart(profile.clone(), entry, requested);
+                true
+            }
+            LaunchDisposition::EndpointConflict(request) => {
+                match character_switch_action(
+                    profile,
+                    &request,
+                    self.store.skip_lich_switch_warning,
+                ) {
+                    CharacterSwitchAction::RejectAttachOnly => {
+                        self.status = Some(Status::error(format!(
+                            "Cannot launch {} ({}): Lich endpoint {}:{} is already owned by {} ({}). This attach-only profile cannot safely switch characters; stop the current session normally or add a Lich launch command.",
+                            request.target_character(),
+                            request.target_profile(),
+                            request.host(),
+                            request.port(),
+                            request.current_character(),
+                            request.current_profile()
+                        )));
+                    }
+                    CharacterSwitchAction::RejectUncontrollableOwner => {
+                        self.status = Some(Status::error(format!(
+                            "Cannot switch {} to {} on Lich endpoint {}:{} because the current owner does not support launcher lifecycle control. Log out or close that native GUI/TUI session normally first.",
+                            request.current_character(),
+                            request.target_character(),
+                            request.host(),
+                            request.port(),
+                        )));
+                    }
+                    CharacterSwitchAction::Confirm => {
+                        self.character_switch_prompt = Some(CharacterSwitchPrompt {
+                            request,
+                            profile: profile.clone(),
+                            dont_warn_again: false,
+                        });
+                    }
+                    CharacterSwitchAction::Start => {
+                        self.start_character_switch(profile.clone(), request);
+                    }
+                }
+                true
+            }
+        }
+    }
+
+    fn start_dormant_restart(
+        &mut self,
+        profile: LauncherProfile,
+        current: crate::core::session_registry::SessionEntry,
+        target: crate::core::session_registry::SessionLaunchIdentity,
+    ) {
+        if self.launch_progress_rx.is_some()
+            || self.character_switch_rx.is_some()
+            || self.dormant_restart_rx.is_some()
+            || self.stop_progress_rx.is_some()
+        {
+            self.status = Some(Status::error(
+                "A launch or session restart is already in progress; wait for it to finish.",
+            ));
+            return;
+        }
+
+        let character = profile.character.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let worker = std::thread::Builder::new()
+            .name("dormant-session-restart".into())
+            .spawn(move || {
+                let result =
+                    crate::launcher::session_lifecycle::replace_dormant_session(&current, &target)
+                        .map_err(|error| format!("{error:#}"));
+                let _ = tx.send((profile, result));
+            });
+        match worker {
+            Ok(_) => {
+                self.dormant_restart_rx = Some(rx);
+                self.status = Some(Status::ok(format!(
+                    "Stopping the dormant {character} session before relaunch…"
+                )));
+            }
+            Err(error) => {
+                self.status = Some(Status::error(format!(
+                    "Could not start the session-restart worker: {error}; {character} was not launched."
+                )));
+            }
+        }
+    }
+
+    fn finish_reserved_launch(
+        &mut self,
+        profile: LauncherProfile,
+        claim: crate::core::session_registry::LaunchClaim,
+    ) {
+        match profile.mode {
+            LaunchMode::Lich => match profile.custom_launch.clone() {
+                Some(command) => self.start_ssh_launch_reserved(&profile, &command, claim),
+                None => self.spawn_reserved(&profile, None, Some(claim)),
+            },
+            LaunchMode::Direct => {
+                if profile.password_saved && profiles::load_password(&profile.account).is_some() {
+                    self.spawn_reserved(&profile, None, Some(claim));
+                } else {
+                    self.password_prompt = Some(PasswordPrompt::new(profile, Some(claim)));
+                }
+            }
+        }
+    }
+
+    fn pump_dormant_restart(&mut self, ctx: &egui::Context) {
+        let result = self.dormant_restart_rx.as_mut().map(|rx| rx.try_recv());
+        match result {
+            Some(Ok((profile, Ok(claim)))) => {
+                self.dormant_restart_rx = None;
+                self.finish_reserved_launch(profile, claim);
+            }
+            Some(Ok((profile, Err(error)))) => {
+                self.dormant_restart_rx = None;
+                self.status = Some(Status::error(format!(
+                    "Could not restart {}: {error}. The replacement was not launched.",
+                    profile.character
+                )));
+            }
+            Some(Err(mpsc::error::TryRecvError::Disconnected)) => {
+                self.dormant_restart_rx = None;
+                self.status = Some(Status::error(
+                    "The session-restart worker ended without a result; the replacement was not launched.",
+                ));
+            }
+            Some(Err(mpsc::error::TryRecvError::Empty)) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+            None => {}
+        }
+    }
+
+    fn start_character_switch(
+        &mut self,
+        profile: LauncherProfile,
+        request: crate::launcher::session_lifecycle::SwitchRequest,
+    ) {
+        if self.launch_progress_rx.is_some()
+            || self.character_switch_rx.is_some()
+            || self.dormant_restart_rx.is_some()
+            || self.stop_progress_rx.is_some()
+        {
+            self.status = Some(Status::error(
+                "A launch or character switch is already in progress; wait for it to finish.",
+            ));
+            return;
+        }
+
+        let current = request.current_character().to_string();
+        let target = request.target_character().to_string();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let worker = std::thread::Builder::new()
+            .name("character-switch".into())
+            .spawn(move || {
+                let result = crate::launcher::session_lifecycle::handoff_character_switch(&request)
+                    .map_err(|error| format!("{error:#}"));
+                let _ = tx.send((profile, result));
+            });
+        match worker {
+            Ok(_) => {
+                self.character_switch_rx = Some(rx);
+                self.status = Some(Status::ok(format!(
+                    "Logging out {current} and preparing {target}…"
+                )));
+            }
+            Err(error) => {
+                self.status = Some(Status::error(format!(
+                    "Could not start the character-switch worker: {error}; {target} was not launched."
+                )));
+            }
+        }
+    }
+
+    fn pump_character_switch(&mut self, ctx: &egui::Context) {
+        let result = self.character_switch_rx.as_mut().map(|rx| rx.try_recv());
+        match result {
+            Some(Ok((profile, Ok(claim)))) => {
+                self.character_switch_rx = None;
+                let Some(command) = profile.custom_launch.clone() else {
+                    self.status = Some(Status::error(format!(
+                        "Character handoff completed, but {} has no Lich launch command; the target was not launched.",
+                        profile.name
+                    )));
+                    return;
+                };
+                self.start_ssh_launch_reserved(&profile, &command, claim);
+            }
+            Some(Ok((profile, Err(error)))) => {
+                self.character_switch_rx = None;
+                self.status = Some(Status::error(format!(
+                    "Could not switch to {}: {error}. The target was not launched.",
+                    profile.character
+                )));
+            }
+            Some(Err(mpsc::error::TryRecvError::Disconnected)) => {
+                self.character_switch_rx = None;
+                self.status = Some(Status::error(
+                    "The character-switch worker ended without a result; the target was not launched.",
+                ));
+            }
+            Some(Err(mpsc::error::TryRecvError::Empty)) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+            None => {}
+        }
+    }
+
+    fn start_stop(&mut self, entry: crate::core::session_registry::SessionEntry) {
+        if self.launch_or_switch_busy() {
+            self.status = Some(Status::error(
+                "A launch, switch, or session stop request is already in progress.",
+            ));
+            return;
+        }
+        let character = entry.character.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        match std::thread::Builder::new()
+            .name("session-stop".into())
+            .spawn(move || {
+                let result = crate::launcher::session_lifecycle::stop_inactive_runtime(&entry)
+                    .map_err(|error| format!("{error:#}"));
+                let _ = tx.send((character, result));
+            }) {
+            Ok(_) => {
+                self.stop_progress_rx = Some(rx);
+                self.status = Some(Status::ok("Stopping session…"));
+            }
+            Err(error) => {
+                self.status = Some(Status::error(format!(
+                    "Could not start session stop request: {error}"
+                )));
+            }
+        }
+    }
+
+    fn pump_stop_progress(&mut self, ctx: &egui::Context) {
+        let result = self.stop_progress_rx.as_mut().map(|rx| rx.try_recv());
+        match result {
+            Some(Ok((character, result))) => {
+                self.stop_progress_rx = None;
+                self.status = Some(match result {
+                    Ok(()) => Status::ok(format!("Stopping {character} session…")),
+                    Err(error) => {
+                        Status::error(format!("Could not stop {character} session: {error}"))
+                    }
+                });
+            }
+            Some(Err(mpsc::error::TryRecvError::Disconnected)) => {
+                self.stop_progress_rx = None;
+                self.status = Some(Status::error(
+                    "The session stop worker ended without a result.",
+                ));
+            }
+            Some(Err(mpsc::error::TryRecvError::Empty)) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+            None => {}
+        }
+    }
+
     // ----- saving the edit form --------------------------------------------
 
     fn commit_edit(&mut self) {
+        if self.launch_or_switch_busy() {
+            if let Some(form) = self.edit.as_mut() {
+                form.error = Some(
+                    "A launch or session lifecycle operation is in progress; this profile was not changed."
+                        .to_string(),
+                );
+            }
+            return;
+        }
         let Some(form) = self.edit.as_mut() else {
             return;
         };
@@ -494,6 +1053,12 @@ impl LauncherApp {
     }
 
     fn delete_profile(&mut self, name: &str) {
+        if self.launch_or_switch_busy() {
+            self.status = Some(Status::error(
+                "A launch or session lifecycle operation is in progress; the profile was not deleted.",
+            ));
+            return;
+        }
         if let Some(removed) = self.store.remove(name) {
             if removed.password_saved && !self.store.account_password_in_use(&removed.account) {
                 profiles::delete_password(&removed.account);
@@ -509,6 +1074,10 @@ impl LauncherApp {
         let mut launch_request = None;
         let mut edit_request = None;
         let mut delete_request = None;
+        let mut stop_request = None;
+        self.refresh_live_sessions_if_stale();
+        let live_sessions = self.live_sessions.clone();
+        let mutation_enabled = !self.launch_or_switch_busy();
 
         if self.store.profiles.is_empty() {
             ui.add_space(24.0);
@@ -522,6 +1091,24 @@ impl LauncherApp {
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 for profile in &self.store.profiles {
+                    let identity =
+                        crate::core::session_registry::SessionLaunchIdentity::from_profile(
+                            &profile.name,
+                            profile,
+                        );
+                    let disposition = crate::launcher::session_lifecycle::decide_launch(
+                        &identity,
+                        &live_sessions,
+                    );
+                    let (live, action) = match disposition {
+                        crate::launcher::session_lifecycle::LaunchDisposition::Resume(entry) => {
+                            (Some(entry), "Open")
+                        }
+                        crate::launcher::session_lifecycle::LaunchDisposition::Replace(entry) => {
+                            (Some(entry), "Restart")
+                        }
+                        _ => (None, "Launch"),
+                    };
                     ui.add_space(4.0);
                     egui::Frame::group(ui.style()).show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -533,13 +1120,31 @@ impl LauncherApp {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if ui.button("Delete").clicked() {
+                                    if ui
+                                        .add_enabled(mutation_enabled, egui::Button::new("Delete"))
+                                        .clicked()
+                                    {
                                         delete_request = Some(profile.name.clone());
                                     }
-                                    if ui.button("Edit").clicked() {
+                                    if ui
+                                        .add_enabled(mutation_enabled, egui::Button::new("Edit"))
+                                        .clicked()
+                                    {
                                         edit_request = Some(profile.name.clone());
                                     }
-                                    if ui.button(egui::RichText::new("Launch").strong()).clicked() {
+                                    if live.as_ref().is_some_and(|entry| {
+                                        matches!(
+                                            entry.lifecycle,
+                                            crate::core::session_registry::SessionLifecycleState::Idle
+                                                | crate::core::session_registry::SessionLifecycleState::Connecting
+                                                | crate::core::session_registry::SessionLifecycleState::Reconnecting
+                                                | crate::core::session_registry::SessionLifecycleState::Disconnected
+                                        )
+                                    }) && ui.button("Stop").clicked()
+                                    {
+                                        stop_request = live.clone();
+                                    }
+                                    if ui.button(egui::RichText::new(action).strong()).clicked() {
                                         launch_request = Some(profile.name.clone());
                                     }
                                 },
@@ -550,7 +1155,10 @@ impl LauncherApp {
             });
 
         ui.add_space(8.0);
-        if ui.button("➕ New connection").clicked() {
+        if ui
+            .add_enabled(mutation_enabled, egui::Button::new("➕ New connection"))
+            .clicked()
+        {
             self.edit = Some(EditForm::new_profile());
         }
 
@@ -564,6 +1172,9 @@ impl LauncherApp {
         }
         if let Some(name) = delete_request {
             self.confirm_delete = Some(name);
+        }
+        if let Some(entry) = stop_request {
+            self.start_stop(entry);
         }
     }
 
@@ -879,7 +1490,7 @@ impl LauncherApp {
         let mut submit = false;
         let mut cancel = false;
 
-        egui::Window::new(format!("Password for {}", prompt.profile_name))
+        egui::Window::new(format!("Password for {}", prompt.profile.name))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -928,8 +1539,12 @@ impl LauncherApp {
         }
 
         let prompt = self.password_prompt.take().expect("prompt present");
-        let Some(profile) = self.store.find(&prompt.profile_name).cloned() else {
-            return;
+        let profile = match prompt.verified_profile(&self.store) {
+            Ok(profile) => profile,
+            Err(error) => {
+                self.status = Some(Status::error(error));
+                return;
+            }
         };
         if prompt.remember {
             match profiles::save_password(&profile.account, &prompt.password) {
@@ -951,13 +1566,87 @@ impl LauncherApp {
                 }
             }
         }
-        self.spawn(&profile, Some(&prompt.password));
+        if let Some(claim) = prompt.launch_claim {
+            self.spawn_reserved(&profile, Some(&prompt.password), Some(claim));
+        } else {
+            self.spawn(&profile, Some(&prompt.password));
+        }
+    }
+
+    fn show_character_switch_prompt(&mut self, ctx: &egui::Context) {
+        let Some(prompt) = self.character_switch_prompt.as_mut() else {
+            return;
+        };
+        let current_character = prompt.request.current_character().to_string();
+        let current_profile = prompt.request.current_profile().to_string();
+        let target_character = prompt.request.target_character().to_string();
+        let target_profile = prompt.request.target_profile().to_string();
+        let host = prompt.request.host().to_string();
+        let port = prompt.request.port();
+        let mut confirm = false;
+        let mut cancel = false;
+
+        egui::Window::new("Switch Lich character?")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "{current_character} ({current_profile}) currently uses Lich at {host}:{port}."
+                ));
+                ui.label(format!(
+                    "Launching {target_character} ({target_profile}) will log out {current_character} before starting the new session."
+                ));
+                ui.add_space(6.0);
+                ui.checkbox(&mut prompt.dont_warn_again, "Don't warn again");
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(egui::RichText::new("Log out and switch").strong())
+                        .clicked()
+                    {
+                        confirm = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+
+        if cancel {
+            // Deliberately no persistence, shutdown request, or worker start.
+            self.character_switch_prompt = None;
+            return;
+        }
+        if !confirm {
+            return;
+        }
+
+        let prompt = self
+            .character_switch_prompt
+            .take()
+            .expect("character switch prompt present");
+        if prompt.dont_warn_again && !self.store.skip_lich_switch_warning {
+            self.store.skip_lich_switch_warning = true;
+            if let Err(error) = self.store.save() {
+                // The preference must reach disk before any logout I/O. Keep
+                // the confirmation open so the user can retry or uncheck it.
+                self.store.skip_lich_switch_warning = false;
+                self.status = Some(Status::error(format!(
+                    "Could not save 'Don't warn again': {error:#}. No session was logged out."
+                )));
+                self.character_switch_prompt = Some(prompt);
+                return;
+            }
+        }
+        self.start_character_switch(prompt.profile, prompt.request);
     }
 
     fn show_delete_confirm(&mut self, ctx: &egui::Context) {
         let Some(name) = self.confirm_delete.clone() else {
             return;
         };
+        let mutation_enabled = !self.launch_or_switch_busy();
         let mut close = false;
         egui::Window::new("Delete profile?")
             .collapsible(false)
@@ -968,7 +1657,13 @@ impl LauncherApp {
                     "Delete '{name}'? Its saved password is removed too (unless another profile uses the same account)."
                 ));
                 ui.horizontal(|ui| {
-                    if ui.button(egui::RichText::new("Delete").strong()).clicked() {
+                    if ui
+                        .add_enabled(
+                            mutation_enabled,
+                            egui::Button::new(egui::RichText::new("Delete").strong()),
+                        )
+                        .clicked()
+                    {
                         self.delete_profile(&name);
                         close = true;
                     }
@@ -988,8 +1683,14 @@ impl eframe::App for LauncherApp {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
         let ctx = &ctx;
-        // Advance any in-flight SSH launch before painting this frame.
+        // Advance any confirmed handoff and then the existing Lich launch
+        // flow before painting this frame.
+        self.pump_character_switch(ctx);
+        self.pump_dormant_restart(ctx);
         self.pump_launch_progress(ctx);
+        self.pump_stop_progress(ctx);
+        reap_finished_session_children(&mut self.session_children);
+        ctx.request_repaint_after(std::time::Duration::from_secs(2));
         egui::CentralPanel::default().show(root, |ui| {
             if self.edit.is_some() {
                 self.show_edit_form(ui);
@@ -1012,6 +1713,7 @@ impl eframe::App for LauncherApp {
         });
 
         self.show_password_prompt(ctx);
+        self.show_character_switch_prompt(ctx);
         self.show_delete_confirm(ctx);
     }
 }
@@ -1038,18 +1740,28 @@ pub fn run_launcher() -> Result<()> {
 /// Spawn a session process for a profile. `password` is only passed for
 /// background direct sessions with nothing in the credential store; it travels
 /// via a private environment variable, never argv.
-fn spawn_session(profile: &LauncherProfile, password: Option<&str>) -> Result<()> {
-    let exe = std::env::current_exe().context("Could not locate the vellum-fe executable")?;
-
+fn spawn_session(
+    exe: &std::path::Path,
+    profile: &LauncherProfile,
+    password: Option<&str>,
+) -> Result<std::process::Child> {
     match session_spawn_kind(profile) {
-        SessionSpawnKind::Background => {
-            background_session_command(&exe, profile, password)
-                .spawn()
-                .context("Failed to start session process")?;
-            Ok(())
-        }
-        SessionSpawnKind::Terminal => spawn_tui_session(&exe, profile, password),
+        SessionSpawnKind::Background => background_session_command(exe, profile, password)
+            .spawn()
+            .with_context(|| format!("Failed to start session process from {}", exe.display())),
+        SessionSpawnKind::Terminal => spawn_tui_session(exe, profile, password),
     }
+}
+
+fn reap_finished_session_children(children: &mut Vec<std::process::Child>) {
+    children.retain_mut(|child| match child.try_wait() {
+        Ok(Some(_)) => false,
+        Ok(None) => true,
+        Err(error) => {
+            tracing::warn!(pid = child.id(), %error, "could not reap launcher child");
+            true
+        }
+    });
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1079,7 +1791,10 @@ fn background_session_command(
     password: Option<&str>,
 ) -> Command {
     let mut cmd = Command::new(exe);
-    cmd.arg("--launch-profile").arg(&profile.name);
+    cmd.arg("--launch-profile")
+        .arg(&profile.name)
+        .arg("--launch-target-fingerprint")
+        .arg(crate::launcher::session_lifecycle::launch_target_fingerprint(profile));
     if let Some(password) = password {
         cmd.env(profiles::PASSWORD_ENV, password);
     }
@@ -1116,7 +1831,7 @@ fn spawn_tui_session(
     exe: &std::path::Path,
     profile: &LauncherProfile,
     password: Option<&str>,
-) -> Result<()> {
+) -> Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -1139,16 +1854,17 @@ fn spawn_tui_session(
     cmd
         // First quoted token after `start` is the window title.
         .raw_arg(format!(
-            "/c start \"VellumFE\" \"{}\" --launch-profile \"{}\"",
-            exe, profile.name
+            "/c start \"VellumFE\" \"{}\" --launch-profile \"{}\" --launch-target-fingerprint \"{}\"",
+            exe,
+            profile.name,
+            crate::launcher::session_lifecycle::launch_target_fingerprint(profile),
         ))
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
-        .context("Failed to start terminal session")?;
-    Ok(())
+        .context("Failed to start terminal session")
 }
 
 #[cfg(target_os = "macos")]
@@ -1156,7 +1872,7 @@ fn spawn_tui_session(
     exe: &std::path::Path,
     profile: &LauncherProfile,
     _password: Option<&str>,
-) -> Result<()> {
+) -> Result<std::process::Child> {
     // No env handoff: `open` routes through LaunchServices, which does not
     // propagate our environment. The session prompts in Terminal instead.
     use std::io::Write;
@@ -1164,9 +1880,10 @@ fn spawn_tui_session(
 
     // Terminal.app runs .command files; generate one that execs the session.
     let script = format!(
-        "#!/bin/sh\nexec {} --launch-profile {}\n",
+        "#!/bin/sh\nexec {} --launch-profile {} --launch-target-fingerprint {}\n",
         shell_quote(&exe.display().to_string()),
         shell_quote(&profile.name),
+        shell_quote(&crate::launcher::session_lifecycle::launch_target_fingerprint(profile)),
     );
     let path = std::env::temp_dir().join(format!("vellum-fe-{}.command", std::process::id()));
     let mut file = std::fs::File::create(&path)?;
@@ -1175,8 +1892,7 @@ fn spawn_tui_session(
     Command::new("open")
         .arg(&path)
         .spawn()
-        .context("Failed to open Terminal for the session")?;
-    Ok(())
+        .context("Failed to open Terminal for the session")
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -1184,7 +1900,7 @@ fn spawn_tui_session(
     exe: &std::path::Path,
     profile: &LauncherProfile,
     password: Option<&str>,
-) -> Result<()> {
+) -> Result<std::process::Child> {
     let exe = exe.display().to_string();
     // $TERMINAL first, then common emulators. gnome-terminal wants `--`,
     // the rest take `-e`-style trailing commands.
@@ -1206,14 +1922,16 @@ fn spawn_tui_session(
         cmd.args(prefix)
             .arg(&exe)
             .arg("--launch-profile")
-            .arg(&profile.name);
+            .arg(&profile.name)
+            .arg("--launch-target-fingerprint")
+            .arg(crate::launcher::session_lifecycle::launch_target_fingerprint(profile));
         // Best-effort: factory-model emulators (gnome-terminal) do not
         // inherit our environment; the session prompts in its terminal then.
         if let Some(password) = password {
             cmd.env(crate::config::profiles::PASSWORD_ENV, password);
         }
-        if cmd.spawn().is_ok() {
-            return Ok(());
+        if let Ok(child) = cmd.spawn() {
+            return Ok(child);
         }
     }
     Err(anyhow!(
@@ -1231,6 +1949,180 @@ fn shell_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn switch_request(
+        lifecycle: crate::core::session_registry::SessionLifecycleState,
+    ) -> crate::launcher::session_lifecycle::SwitchRequest {
+        use crate::core::session_registry::{
+            SessionConnectionIdentity, SessionEntry, SessionLaunchIdentity,
+        };
+        let connection = SessionConnectionIdentity::Lich {
+            host: "loopback".to_string(),
+            port: 8000,
+        };
+        let current_identity = SessionLaunchIdentity {
+            profile: "Briar".to_string(),
+            character: "Briar".to_string(),
+            connection: connection.clone(),
+        };
+        let current = SessionEntry {
+            character: "Briar".to_string(),
+            port: 8040,
+            control_host: None,
+            pid: 8040,
+            started_at: "then".to_string(),
+            instance_id: Some("instance-briar".to_string()),
+            process_started_at: None,
+            launch: Some(current_identity),
+            data_root: Some(std::path::PathBuf::from("headless-data")),
+            lifecycle,
+        };
+        let target = SessionLaunchIdentity {
+            profile: "Aster".to_string(),
+            character: "Aster".to_string(),
+            connection,
+        };
+        match crate::launcher::session_lifecycle::decide_launch(&target, &[current]) {
+            crate::launcher::session_lifecycle::LaunchDisposition::EndpointConflict(request) => {
+                request
+            }
+            other => panic!("expected endpoint conflict, got {other:?}"),
+        }
+    }
+
+    fn lich_profile_with_command(command: Option<&str>) -> LauncherProfile {
+        let mut profile = LauncherProfile::new_direct();
+        profile.mode = LaunchMode::Lich;
+        profile.custom_launch = command.map(str::to_string);
+        profile
+    }
+
+    fn direct_profile(name: &str, account: &str) -> LauncherProfile {
+        let mut profile = LauncherProfile::new_direct();
+        profile.name = name.to_string();
+        profile.account = account.to_string();
+        profile.character = name.to_string();
+        profile
+    }
+
+    fn test_launcher_app(store: LauncherStore) -> LauncherApp {
+        LauncherApp {
+            store,
+            edit: None,
+            password_prompt: None,
+            character_switch_prompt: None,
+            confirm_delete: None,
+            status: None,
+            launch_progress_rx: None,
+            pending_launch: None,
+            pending_launch_claim: None,
+            character_switch_rx: None,
+            dormant_restart_rx: None,
+            stop_progress_rx: None,
+            live_sessions: Vec::new(),
+            live_sessions_refreshed_at: std::time::Instant::now(),
+            session_children: Vec::new(),
+            session_executable: Ok(std::path::PathBuf::from("vellum-fe-test")),
+        }
+    }
+
+    #[test]
+    fn password_prompt_preserves_and_revalidates_launch_identity() {
+        let original = direct_profile("Aster", "original-account");
+        let prompt = PasswordPrompt::new(original.clone(), None);
+        let mut store = LauncherStore::default();
+        store.profiles.push(original.clone());
+
+        assert_eq!(
+            prompt.verified_profile(&store).unwrap().account,
+            "original-account"
+        );
+
+        store.profiles[0].account = "different-account".to_string();
+        assert!(prompt
+            .verified_profile(&store)
+            .unwrap_err()
+            .contains("changed"));
+        assert_eq!(prompt.profile.account, "original-account");
+
+        store.profiles.clear();
+        assert!(prompt
+            .verified_profile(&store)
+            .unwrap_err()
+            .contains("deleted"));
+    }
+
+    #[test]
+    fn profile_mutations_are_rejected_during_dormant_restart() {
+        let original = direct_profile("Aster", "original-account");
+        let mut store = LauncherStore::default();
+        store.profiles.push(original.clone());
+        let mut app = test_launcher_app(store);
+        let (_tx, rx) = mpsc::unbounded_channel::<CharacterSwitchResult>();
+        app.dormant_restart_rx = Some(rx);
+
+        app.edit = Some(EditForm::edit(direct_profile("Aster", "changed-account")));
+        app.commit_edit();
+        assert_eq!(app.store.find("Aster").unwrap().account, "original-account");
+        assert!(app.edit.as_ref().unwrap().error.is_some());
+
+        app.delete_profile("Aster");
+        assert!(app.store.find("Aster").is_some());
+        assert!(app.status.as_ref().is_some_and(|status| status.is_error));
+    }
+
+    #[test]
+    fn attach_only_conflicts_are_never_switchable() {
+        let profile = lich_profile_with_command(None);
+        let request =
+            switch_request(crate::core::session_registry::SessionLifecycleState::Connected);
+
+        assert_eq!(
+            character_switch_action(&profile, &request, false),
+            CharacterSwitchAction::RejectAttachOnly
+        );
+        assert_eq!(
+            character_switch_action(&profile, &request, true),
+            CharacterSwitchAction::RejectAttachOnly
+        );
+
+        let empty_command = lich_profile_with_command(Some("  "));
+        assert_eq!(
+            character_switch_action(&empty_command, &request, true),
+            CharacterSwitchAction::RejectAttachOnly
+        );
+    }
+
+    #[test]
+    fn launch_capable_conflicts_respect_the_global_warning_preference() {
+        let profile = lich_profile_with_command(Some("start-lich"));
+        let request =
+            switch_request(crate::core::session_registry::SessionLifecycleState::Connected);
+
+        assert_eq!(
+            character_switch_action(&profile, &request, false),
+            CharacterSwitchAction::Confirm
+        );
+        assert_eq!(
+            character_switch_action(&profile, &request, true),
+            CharacterSwitchAction::Start
+        );
+    }
+
+    #[test]
+    fn native_owner_conflict_never_offers_destructive_handoff() {
+        let profile = lich_profile_with_command(Some("start-lich"));
+        let request = switch_request(crate::core::session_registry::SessionLifecycleState::Unknown);
+
+        assert_eq!(
+            character_switch_action(&profile, &request, false),
+            CharacterSwitchAction::RejectUncontrollableOwner
+        );
+        assert_eq!(
+            character_switch_action(&profile, &request, true),
+            CharacterSwitchAction::RejectUncontrollableOwner
+        );
+    }
 
     #[test]
     fn despana_uses_the_console_free_background_spawn_path() {
@@ -1262,7 +2154,16 @@ mod tests {
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
-        assert_eq!(args, ["--launch-profile", "Aster"]);
+        let fingerprint = crate::launcher::session_lifecycle::launch_target_fingerprint(&profile);
+        assert_eq!(
+            args,
+            vec![
+                "--launch-profile".to_string(),
+                "Aster".to_string(),
+                "--launch-target-fingerprint".to_string(),
+                fingerprint,
+            ]
+        );
         assert!(!args.iter().any(|arg| arg.contains("not-on-argv")));
 
         let handed_off = command.get_envs().find_map(|(name, value)| {
@@ -1271,5 +2172,58 @@ mod tests {
                 .flatten()
         });
         assert_eq!(handed_off.as_deref(), Some("not-on-argv"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retained_executable_path_survives_file_replacement() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("vellum-fe-test");
+        let install = |path: &std::path::Path| {
+            std::fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        install(&executable);
+
+        // This is what LauncherApp captures at startup. Replacing the file
+        // emulates `cargo build` unlinking the launcher's running image.
+        let retained = executable.clone();
+        std::fs::remove_file(&executable).unwrap();
+        install(&executable);
+
+        let mut profile = LauncherProfile::new_direct();
+        profile.name = "Aster".to_string();
+        profile.select_web_client(LaunchWebClient::Despana);
+        let status = spawn_session(&retained, &profile, None)
+            .unwrap()
+            .wait()
+            .unwrap();
+
+        assert!(status.success());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finished_session_children_are_reaped() {
+        let child = Command::new("sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .expect("short-lived child starts");
+        let mut children = vec![child];
+
+        for _ in 0..100 {
+            reap_finished_session_children(&mut children);
+            if children.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        assert!(
+            children.is_empty(),
+            "finished child must be waited and removed"
+        );
     }
 }

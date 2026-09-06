@@ -50,8 +50,8 @@ Quickbar reconciliation untouched.
 Phase 5b: `/` is the dashboard (session cards by character, browser
 health-checked, 10s refresh); the client moved to `/play`. Unpinned
 instances port-walk (+20); `pinned = true` binds exactly or fails loudly
-via a Notice system message. Pid-keyed registry files in
-`~/.vellum-fe/web-sessions/`, removed on clean shutdown, pid-liveness
+via a Notice system message. Pid-keyed registry files in the machine-local
+Vellum runtime registry, removed on clean shutdown, pid-liveness
 GC'd after crashes. Verified with two live instances sharing a base port.
 Phase 6: pairing token (generated once into the shared base dir, one
 pairing covers all characters) required as the first WS message, denied
@@ -294,7 +294,7 @@ ever auto-connects to "whatever is running".
   silently takes a neighboring port. Pinning is what makes a per-character `/play`
   bookmark stable.
 - **Session registry**: on web-server start, each instance writes an entry to a shared
-  registry (one file per instance in `~/.vellum-fe/web-sessions/` — per-file avoids
+  machine-local runtime registry (one file per instance — per-file avoids
   write races): character, game, port, pid, started-at. Entry removed on clean
   shutdown.
 - **Dashboard hosting**: every instance serves the same dashboard at its own `/`, so

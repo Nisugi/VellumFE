@@ -18,10 +18,15 @@ use anyhow::Result;
 
 /// Internal launcher behavior. Public/embedded headless entrypoints use the
 /// default so they continue to wait on `/play` and never open a browser.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct HeadlessLaunchOptions {
     auto_connect_lich: bool,
     web_client: Option<LaunchWebClient>,
+    /// Immutable identity of a launcher-profile-owned child.  When present,
+    /// web session controls may reconnect only this character and connection;
+    /// they cannot retarget the process away from the registry/endpoint lease
+    /// acquired at startup.
+    startup_identity: Option<crate::core::session_registry::SessionLaunchIdentity>,
 }
 
 /// Desktop entry point (`--frontend headless`). Builds a tokio runtime and
@@ -51,6 +56,7 @@ pub(crate) fn run_launcher_web_client(
     login_key: Option<String>,
     web_client: LaunchWebClient,
     auto_connect_lich: bool,
+    startup_identity: crate::core::session_registry::SessionLaunchIdentity,
 ) -> Result<()> {
     run_with_options(
         config,
@@ -60,6 +66,7 @@ pub(crate) fn run_launcher_web_client(
         HeadlessLaunchOptions {
             auto_connect_lich,
             web_client: Some(web_client),
+            startup_identity: Some(startup_identity),
         },
     )
 }

@@ -427,6 +427,13 @@ pub enum RemoteDelta {
         noun: String,
         items: Vec<RemoteMenuItem>,
     },
+    /// Ask one browser client to open a game-provided external URL. The
+    /// WebSocket task filters this like every other addressed reply; the
+    /// client id never crosses the wire.
+    OpenUrl {
+        client_id: u64,
+        url: String,
+    },
     /// Macro definitions changed (`.reloadmacros`); sent to every client.
     Macros(Arc<RemoteMacros>),
     /// Radial-wheel definitions changed (keybinds reload or the desktop
@@ -611,8 +618,10 @@ pub enum RemoteDelta {
 /// locally typed input.
 #[derive(Clone, Debug)]
 pub enum RemoteEvent {
-    /// A command typed on a remote client.
-    Command(String),
+    /// A command typed on a remote client. The connection id is retained so
+    /// an asynchronous game reply such as GOALS' LaunchURL can return only to
+    /// the browser that initiated it.
+    Command { client_id: u64, text: String },
     /// The map location picker wants the list of mapped locations.
     MapLocations { client_id: u64, request_id: u64 },
     /// Browse another location's map (reply arrives once its layout is
@@ -694,6 +703,13 @@ pub enum RemoteEvent {
     },
     /// User-initiated disconnect: end the session, suppress reconnection.
     SessionDisconnect,
+    /// Deliberately terminate an idle headless runtime. The authenticated
+    /// server endpoint rejects this while any game transport is active.
+    SessionStop,
+    /// Despana's explicit "Exit & Log Out" control. The headless runtime sends
+    /// an ordinary game `quit` and exits only after the game transport reports
+    /// its authoritative disconnect.
+    SessionExitLogout,
     /// Read the SSH-launcher settings (user, host override, port, remote OS,
     /// and whether a key is stored + its public line). Reply routes back as
     /// `RemoteDelta::LauncherSsh`.
@@ -999,12 +1015,12 @@ pub struct RemoteTarget {
 /// back into a number.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct RemoteCharInfo {
-    /// Character identity fields used by presentation chrome. They remain
-    /// absent until the corresponding game feeds have reported them.
+    /// Character profession as reported by INFO/session cache.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profession: Option<String>,
+    /// Display-ready numeric level text (for example, "90").
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub level: Option<u32>,
+    pub level: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub experience: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1334,11 +1350,8 @@ impl RemoteStateSnapshot {
                 let mut info = RemoteCharInfo::default();
                 let exp = &game_state.gs4_experience;
                 info.profession = game_state.character.profession.clone();
-                info.level = exp
-                    .level_text
-                    .split_whitespace()
-                    .last()
-                    .and_then(|value| value.parse().ok());
+                info.level = crate::core::character_state::normalized_level_text(&exp.level_text)
+                    .or_else(|| game_state.character.level.clone());
                 if !exp.level_text.is_empty() {
                     info.experience.push(exp.level_text.clone());
                 }
@@ -1431,13 +1444,18 @@ impl RemoteStateSnapshot {
 /// cannot accidentally persist the token.
 #[derive(Clone)]
 pub struct RemoteLaunchEndpoint {
+    control_host: String,
     bound_port: u16,
     token: String,
 }
 
 impl RemoteLaunchEndpoint {
-    pub(crate) fn new(bound_port: u16, token: String) -> Self {
-        Self { bound_port, token }
+    pub(crate) fn new(control_host: String, bound_port: u16, token: String) -> Self {
+        Self {
+            control_host,
+            bound_port,
+            token,
+        }
     }
 
     pub fn bound_port(&self) -> u16 {
@@ -1446,6 +1464,11 @@ impl RemoteLaunchEndpoint {
 
     pub fn token(&self) -> &str {
         &self.token
+    }
+
+    pub fn browser_url(&self, route: &str) -> String {
+        let path = format!("/{route}#token={}", self.token);
+        crate::core::session_registry::control_url(&self.control_host, self.bound_port, &path)
     }
 }
 
@@ -1906,6 +1929,11 @@ impl RemoteSink {
         });
     }
 
+    /// Route one game-provided URL to the browser command that requested it.
+    pub fn push_open_url(&mut self, client_id: u64, url: String) {
+        let _ = self.delta_tx.send(RemoteDelta::OpenUrl { client_id, url });
+    }
+
     /// Diff a freshly built state snapshot against the last flush and
     /// broadcast one coalesced delta per changed group. Called once per
     /// message batch (AppCore::flush_remote_state builds the snapshot —
@@ -2099,15 +2127,32 @@ mod tests {
     }
 
     #[test]
-    fn character_identity_is_structured_for_presentation_chrome() {
+    fn character_identity_carries_display_ready_profession_and_level() {
         let mut gs = GameState::new();
-        gs.character.profession = Some("Sorcerer".to_string());
-        gs.gs4_experience.update_level("Level 90".to_string());
+        gs.character.profession = Some("Wizard".to_string());
+        gs.gs4_experience.update_level("Level: 90".to_string());
 
-        let snap = RemoteStateSnapshot::from_game_state(&gs, &[]);
+        let info = RemoteStateSnapshot::from_game_state(&gs, &[]).char_info;
+        assert_eq!(info.profession.as_deref(), Some("Wizard"));
+        assert_eq!(info.level.as_deref(), Some("90"));
 
-        assert_eq!(snap.char_info.profession.as_deref(), Some("Sorcerer"));
-        assert_eq!(snap.char_info.level, Some(90));
+        let json = serde_json::to_value(info).expect("serialize character identity");
+        assert_eq!(json["profession"], "Wizard");
+        assert_eq!(json["level"], "90");
+    }
+
+    #[test]
+    fn live_experience_level_overrides_cached_character_sheet_level() {
+        let mut gs = GameState::new();
+        gs.character.parse_line("Profession: Wizard   Level: 89");
+
+        let cached = RemoteStateSnapshot::from_game_state(&gs, &[]).char_info;
+        assert_eq!(cached.profession.as_deref(), Some("Wizard"));
+        assert_eq!(cached.level.as_deref(), Some("89"));
+
+        gs.gs4_experience.update_level("Level: 90".to_string());
+        let live = RemoteStateSnapshot::from_game_state(&gs, &[]).char_info;
+        assert_eq!(live.level.as_deref(), Some("90"));
     }
 
     /// An unreported gauge must be absent from the wire rather than a zero.

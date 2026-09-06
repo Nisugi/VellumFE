@@ -31,4 +31,5 @@
 
 pub mod config;
 pub mod flow;
+pub mod session_lifecycle;
 pub mod ssh;

@@ -6,10 +6,13 @@
  * - only the newest pending request may publish a menu or dispatch a pick;
  * - picks use the command stored in the accepted server reply, never caller text;
  * - a pick is consumed before submission, so failure cannot cause an implicit retry;
+ * - each GOALS browser route keeps one FIFO reservation (including a null
+ *   tombstone), so an addressed URL reply can never navigate a newer tab;
  * - close invalidates pending/menu state without resetting request ids.
  */
 
 const INTERNAL_COMMAND = /^(?:__|action:|menu:)/;
+const URL_RESERVATION_TIMEOUT_MS = 15_000;
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -101,19 +104,90 @@ export class DesktopInteractionError extends Error {
  * whether either remote operation is currently safe, and `openUrl` is optional.
  */
 export class DesktopInteractionCoordinator {
-  constructor({ dispatch, submit, isOnline, openUrl = null } = {}) {
+  constructor({ dispatch, submit, isOnline, openUrl = null, reserveUrl = null } = {}) {
     if (typeof dispatch !== "function") throw new TypeError("dispatch must be a function");
     if (typeof submit !== "function") throw new TypeError("submit must be a function");
     if (typeof isOnline !== "function") throw new TypeError("isOnline must be a function");
     if (openUrl !== null && typeof openUrl !== "function") {
       throw new TypeError("openUrl must be a function or null");
     }
+    if (reserveUrl !== null && typeof reserveUrl !== "function") {
+      throw new TypeError("reserveUrl must be a function or null");
+    }
     this._dispatch = dispatch;
     this._submit = submit;
     this._isOnline = isOnline;
     this._openUrl = openUrl;
+    this._reserveUrl = reserveUrl;
     this._nextRequestId = 1;
     this._active = null;
+    this._pendingUrls = [];
+  }
+
+  /** Submit a command, reserving a popup-safe tab only for GOALS browser routes. */
+  submit(command) {
+    const normalized = typeof command === "string" ? command.trim().toLowerCase() : "";
+    const reservesUrl =
+      normalized === "goals" || normalized === "goals web" || normalized === ".goals web";
+    let target = null;
+    if (reservesUrl && this._reserveUrl) {
+      try {
+        target = this._reserveUrl();
+      } catch {
+        target = null;
+      }
+    }
+
+    let receipt;
+    try {
+      receipt = this._submit(command);
+    } catch (error) {
+      target?.close?.();
+      throw error;
+    }
+
+    if (reservesUrl) {
+      const pending = { target, timer: null };
+      if (target) {
+        pending.timer = setTimeout(() => {
+          pending.timer = null;
+          pending.target?.close?.();
+          // Keep the queue slot as a tombstone. Removing it would let this
+          // request's late reply navigate a newer request's reserved tab.
+          pending.target = null;
+        }, URL_RESERVATION_TIMEOUT_MS);
+      }
+      this._pendingUrls.push(pending);
+    }
+    return receipt;
+  }
+
+  /** Close and discard every reserved tab when their requests cannot complete. */
+  cancelPendingUrls() {
+    for (const pending of this._pendingUrls.splice(0)) {
+      if (pending.timer !== null) clearTimeout(pending.timer);
+      pending.target?.close?.();
+    }
+  }
+
+  /** Navigate the oldest tab reserved for an addressed GOALS reply. */
+  receiveOpenUrl(value) {
+    const url = webUrl({ noun: value });
+    const pending = this._pendingUrls.shift() ?? null;
+    if (pending?.timer != null) clearTimeout(pending.timer);
+    const target = pending?.target ?? null;
+    if (target) {
+      try {
+        target.navigate(url);
+      } catch (error) {
+        target.close?.();
+        throw new DesktopInteractionError("open-url", "game URL was not opened", {
+          cause: error,
+        });
+      }
+      return freezeEffect("url", { url, reserved: true });
+    }
+    return freezeEffect("url", { url, reserved: false, dropped: true });
   }
 
   /** Activate one protocol link and return a UI-facing effect. */
@@ -223,7 +297,7 @@ export class DesktopInteractionCoordinator {
     this._active = null;
     let receipt;
     try {
-      receipt = this._submit(item.command);
+      receipt = this.submit(item.command);
     } catch (error) {
       throw new DesktopInteractionError("submit", "menu command was not sent", {
         cause: error,

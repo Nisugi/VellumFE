@@ -39,10 +39,13 @@ function normalizedMenu(requestId, overrides = {}) {
   return reply;
 }
 
-function harness() {
+function harness({ blockedReservations = [] } = {}) {
   const intents = [];
   const commands = [];
   const urls = [];
+  const reservedUrls = [];
+  const blocked = new Set(blockedReservations);
+  let reservationAttempt = 0;
   let online = true;
   const coordinator = new DesktopInteractionCoordinator({
     dispatch(intent) {
@@ -57,17 +60,121 @@ function harness() {
     openUrl(url) {
       urls.push(url);
     },
+    reserveUrl() {
+      if (blocked.has(reservationAttempt++)) return null;
+      const target = {
+        navigated: [],
+        closed: false,
+        navigate(url) {
+          this.navigated.push(url);
+        },
+        close() {
+          this.closed = true;
+        },
+      };
+      reservedUrls.push(target);
+      return target;
+    },
   });
   return {
     coordinator,
     intents,
     commands,
     urls,
+    reservedUrls,
     setOnline(value) {
       online = value;
     },
   };
 }
+
+test("overlapping GOALS replies navigate reserved tabs in submission order", () => {
+  const h = harness();
+
+  assert.deepEqual(h.coordinator.submit(" GOALS "), {
+    id: "command-1",
+    status: "sent",
+  });
+  assert.deepEqual(h.commands, [" GOALS "]);
+  assert.equal(h.reservedUrls.length, 1);
+  assert.deepEqual(h.reservedUrls[0].navigated, []);
+
+  h.coordinator.submit("goals web");
+  assert.equal(h.reservedUrls.length, 2, "browser goals web must reserve its own tab");
+  assert.equal(h.reservedUrls[0].closed, false);
+
+  assert.deepEqual(
+    h.coordinator.receiveOpenUrl("https://www.play.net/gs4/play/cm/loader.asp?ticket=first"),
+    {
+      type: "url",
+      url: "https://www.play.net/gs4/play/cm/loader.asp?ticket=first",
+      reserved: true,
+    },
+  );
+  assert.deepEqual(h.reservedUrls[0].navigated, [
+    "https://www.play.net/gs4/play/cm/loader.asp?ticket=first",
+  ]);
+  assert.deepEqual(h.reservedUrls[1].navigated, []);
+
+  h.coordinator.receiveOpenUrl("https://www.play.net/gs4/play/cm/loader.asp?ticket=second");
+  assert.deepEqual(h.reservedUrls[1].navigated, [
+    "https://www.play.net/gs4/play/cm/loader.asp?ticket=second",
+  ]);
+});
+
+test("a blocked reservation leaves a FIFO tombstone for its reply", () => {
+  const h = harness({ blockedReservations: [0] });
+
+  h.coordinator.submit("goals");
+  h.coordinator.submit("goals web");
+  assert.equal(h.reservedUrls.length, 1, "only the second popup reservation succeeds");
+
+  const first = "https://www.play.net/gs4/play/cm/loader.asp?ticket=blocked";
+  assert.deepEqual(h.coordinator.receiveOpenUrl(first), {
+    type: "url",
+    url: first,
+    reserved: false,
+    dropped: true,
+  });
+  assert.deepEqual(h.urls, [], "a tombstoned reply must not use the popup fallback");
+  assert.deepEqual(h.reservedUrls[0].navigated, []);
+
+  const second = "https://www.play.net/gs4/play/cm/loader.asp?ticket=reserved";
+  assert.deepEqual(h.coordinator.receiveOpenUrl(second), {
+    type: "url",
+    url: second,
+    reserved: true,
+  });
+  assert.deepEqual(h.reservedUrls[0].navigated, [second]);
+});
+
+test("documented dotted GOALS web command reserves its browser tab", () => {
+  const h = harness();
+
+  h.coordinator.submit(" .GOALS web ");
+
+  assert.deepEqual(h.commands, [" .GOALS web "]);
+  assert.equal(h.reservedUrls.length, 1);
+});
+
+test("cancelling pending GOALS closes and discards every reservation", () => {
+  const h = harness();
+  h.coordinator.submit("goals");
+  h.coordinator.submit("goals web");
+
+  h.coordinator.cancelPendingUrls();
+  assert.deepEqual(h.reservedUrls.map((target) => target.closed), [true, true]);
+
+  const late = "https://www.play.net/gs4/play/cm/loader.asp?ticket=late";
+  assert.deepEqual(h.coordinator.receiveOpenUrl(late), {
+    type: "url",
+    url: late,
+    reserved: false,
+    dropped: true,
+  });
+  assert.deepEqual(h.urls, [], "a late addressed reply must not open a new popup");
+  assert.deepEqual(h.reservedUrls.map((target) => target.navigated), [[], []]);
+});
 
 test("noun activations dispatch exact link-tap intents with monotonic ids", () => {
   const h = harness();

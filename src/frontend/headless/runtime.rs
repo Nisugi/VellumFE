@@ -36,15 +36,19 @@ const BACKOFF: &[u64] = &[1, 2, 5, 10, 30];
 /// supervisor would re-login all night (battery + pointless auth churn).
 const MAX_UNATTENDED_LOSSES: u32 = 2;
 
+/// How often the connection bootstrap watchdog evaluates progress. This is a
+/// persistent interval: ordinary incoming traffic must not postpone it.
+const CONNECTION_WATCHDOG_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Maximum time allowed for a silent connection or an unanswered Lich
+/// identity probe before the connection is recycled or failed closed.
+const CONNECTION_STALL_TIMEOUT: Duration = Duration::from_secs(45);
+
 /// Build a loopback browser URL only after the web sidecar has published the
 /// port it actually bound. An unpinned sidecar may walk above its configured
 /// base port, so formatting the configured value is not authoritative.
 fn local_web_client_url(endpoint: &RemoteLaunchEndpoint, route: &str) -> String {
-    format!(
-        "http://127.0.0.1:{}/{route}#token={}",
-        endpoint.bound_port(),
-        endpoint.token()
-    )
+    endpoint.browser_url(route)
 }
 
 /// Open a launcher-requested local client without surfacing its authenticated
@@ -61,7 +65,7 @@ where
     opener(&url).is_ok()
 }
 
-fn lich_session_configured(login_key: Option<&str>, launch: super::HeadlessLaunchOptions) -> bool {
+fn lich_session_configured(login_key: Option<&str>, launch: &super::HeadlessLaunchOptions) -> bool {
     login_key.is_some() || launch.auto_connect_lich
 }
 
@@ -77,7 +81,31 @@ fn backoff_delay(attempt: u32) -> Duration {
 /// One live connection: a fresh command channel and the running network task.
 struct Connection {
     command_tx: mpsc::UnboundedSender<String>,
+    /// Server messages belong to this connection generation. Keeping the
+    /// receiver here (rather than on the runtime) makes it impossible for a
+    /// queued message from an aborted socket to be consumed as part of the
+    /// next connection.
+    server_rx: mpsc::Receiver<ServerMessage>,
     task: tokio::task::JoinHandle<Result<()>>,
+}
+
+enum ConnectionEvent {
+    Message(ServerMessage),
+    Ended(Result<Result<()>, tokio::task::JoinError>),
+}
+
+impl Connection {
+    async fn next_event(&mut self) -> ConnectionEvent {
+        tokio::select! {
+            message = self.server_rx.recv() => match message {
+                Some(message) => ConnectionEvent::Message(message),
+                // All senders are gone. The network task is ending too; wait
+                // for its authoritative result instead of synthesizing one.
+                None => ConnectionEvent::Ended((&mut self.task).await),
+            },
+            result = &mut self.task => ConnectionEvent::Ended(result),
+        }
+    }
 }
 
 /// A session-control request from a web client, extracted from the remote
@@ -96,6 +124,11 @@ enum SessionRequest {
         custom_launch: Option<String>,
     },
     Disconnect,
+    /// Authenticated launcher request to terminate this process while idle.
+    Stop,
+    /// Quit the game normally and stop this runtime only after an
+    /// authoritative game/transport disconnect.
+    ExitLogout,
     /// The user sent `quit` to the game: the server will close the
     /// connection shortly — treat that close as an intentional logout
     /// (no reconnect, back to the login screen), not a network drop.
@@ -107,6 +140,35 @@ enum SessionRequest {
     /// cold-start a headless Lich on the home PC, then attach to the resulting
     /// detachable-client target.
     Launch(String),
+}
+
+fn session_requests_block_commands(requests: &[SessionRequest]) -> bool {
+    requests.iter().any(|request| {
+        matches!(
+            request,
+            SessionRequest::Disconnect | SessionRequest::Stop | SessionRequest::ExitLogout
+        )
+    })
+}
+
+/// State for Despana's explicit Exit & Log Out operation. Closing a browser
+/// tab only detaches the presentation and never changes the game session.
+struct SessionExitLifecycle {
+    exit_requested: bool,
+    quit_sent: bool,
+}
+
+impl SessionExitLifecycle {
+    fn new() -> Self {
+        Self {
+            exit_requested: false,
+            quit_sent: false,
+        }
+    }
+
+    fn request_exit(&mut self) {
+        self.exit_requested = true;
+    }
 }
 
 /// A web-requested Lich attach target (detachable-client mode).
@@ -140,8 +202,24 @@ struct Supervisor {
     /// Whether any game text has arrived on the current connection — a
     /// connected-but-silent session is treated as stalled.
     first_text_seen: bool,
+    /// The current connection generation delivered an authoritative game
+    /// disconnect, even if its network task has not returned yet.
+    game_disconnect_seen: bool,
     /// Display fields for session status pushes.
     character: Option<String>,
+    /// Character requested by the profile for the current Lich attach. The
+    /// game feed's `<app char>` value must confirm this before commands are
+    /// allowed onto the socket. Direct sessions authenticate the character
+    /// themselves and do not need this extra guard.
+    expected_character: Option<String>,
+    identity_confirmed: bool,
+    /// Exactly one character-sheet query may bypass the identity gate for a
+    /// configured Lich attach. No other command is allowed before matching.
+    identity_probe_sent: bool,
+    post_connect_commands_sent: bool,
+    /// A terminal bootstrap failure carried through network-task teardown so
+    /// the public lifecycle becomes Disconnected instead of reconnecting.
+    terminal_connection_error: Option<String>,
     game: Option<String>,
 }
 
@@ -159,11 +237,33 @@ impl Supervisor {
         self.direct.is_some() || self.login_key.is_none()
     }
 
-    fn spawn(&mut self, app_core: &AppCore, server_tx: mpsc::Sender<ServerMessage>) {
+    fn spawn(&mut self, app_core: &mut AppCore) {
         self.saw_input_since_connect = false;
         self.phase_started = Some(Instant::now());
         self.first_text_seen = false;
+        self.game_disconnect_seen = false;
+        self.post_connect_commands_sent = false;
+        self.identity_probe_sent = false;
+        self.terminal_connection_error = None;
+        self.identity_confirmed = self.direct.is_some() || self.expected_character.is_none();
+        // A WebUI bridge is scoped to the old Lich session too. Drop it and
+        // any unconsumed handshake before attaching a new game transport so
+        // browser component events cannot cross session generations.
+        app_core.stop_webui();
+        drop(app_core.take_webui_handshake());
+        reset_connection_observations(app_core);
+        if self.direct.is_none() {
+            // Never let the previous session's observed identity satisfy the
+            // next Lich attach. Only fresh feed data may confirm it.
+            app_core.game_state.character_name = None;
+        } else if let Some(character) = self.direct.as_ref().map(|cfg| cfg.character.clone()) {
+            // Direct authentication selected this character itself, so the
+            // configured name is already trustworthy while its feed starts.
+            app_core.game_state.character_name = Some(character);
+        }
         let (command_tx, command_rx) = mpsc::unbounded_channel::<String>();
+        let (server_tx, server_rx) =
+            mpsc::channel::<ServerMessage>(crate::network::SERVER_CHANNEL_CAPACITY);
         let raw_logger = match RawLogger::new(&app_core.config) {
             Ok(logger) => logger,
             Err(e) => {
@@ -193,7 +293,19 @@ impl Supervisor {
                 })
             }
         };
-        self.connection = Some(Connection { command_tx, task });
+        self.connection = Some(Connection {
+            command_tx,
+            server_rx,
+            task,
+        });
+    }
+
+    /// A socket is not command-capable until its requested Lich character has
+    /// been confirmed by the authoritative game feed.
+    fn command_connection(&self) -> Option<&Connection> {
+        self.identity_confirmed
+            .then_some(self.connection.as_ref())
+            .flatten()
     }
 
     fn status(&self, state: SessionState) -> RemoteSessionInfo {
@@ -209,6 +321,425 @@ impl Supervisor {
             // false and let the sink overlay the real value.
             webui_available: false,
         }
+    }
+}
+
+/// Clear state that is only meaningful for the transport which observed it.
+/// Persistent character metadata remains intact, but no buffered identity or
+/// prior room may suppress the fresh attach's verification/bootstrap.
+fn reset_connection_observations(app_core: &mut AppCore) {
+    app_core
+        .game_state
+        .character
+        .clear_connection_observations();
+    app_core.message_processor.discard_pending_character_state();
+    app_core.nav_room_id = None;
+    app_core.lich_room_id = None;
+    app_core.room_subtitle = None;
+}
+
+/// Send the sole command allowed before a configured Lich character is
+/// verified. Current Lich releases do not replay `<app char=...>` to a
+/// detachable client that attaches after login, but `_info character` returns
+/// the same identity in its `Name:` header.
+fn probe_lich_identity_if_needed(supervisor: &mut Supervisor) {
+    if supervisor.direct.is_some()
+        || supervisor.expected_character.is_none()
+        || supervisor.identity_confirmed
+        || supervisor.identity_probe_sent
+    {
+        return;
+    }
+    let Some(connection) = supervisor.connection.as_ref() else {
+        return;
+    };
+    if connection
+        .command_tx
+        .send("_info character".to_string())
+        .is_ok()
+    {
+        supervisor.identity_probe_sent = true;
+        // The socket may have spent most of the startup allowance connecting.
+        // Give the actual identity response its own complete window.
+        supervisor.phase_started = Some(Instant::now());
+    }
+}
+
+/// Keep the startup watchdog active until a configured Lich attach has both
+/// received data and proven it is the requested character.
+fn connection_bootstrap_pending(supervisor: &Supervisor) -> bool {
+    supervisor.connection.is_some()
+        && (!supervisor.first_text_seen
+            || (supervisor.expected_character.is_some() && !supervisor.identity_confirmed))
+}
+
+fn connection_bootstrap_stalled(supervisor: &Supervisor) -> bool {
+    connection_bootstrap_pending(supervisor)
+        && supervisor
+            .phase_started
+            .is_some_and(|at| at.elapsed() > CONNECTION_STALL_TIMEOUT)
+}
+
+fn live_room_known(app_core: &AppCore) -> bool {
+    [
+        app_core.nav_room_id.as_deref(),
+        app_core.lich_room_id.as_deref(),
+        app_core.room_subtitle.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| !value.trim().is_empty())
+}
+
+/// Stop an inactive or not-yet-verified runtime without ever sending an
+/// in-game command. A verified connected character must use Exit & Log Out.
+fn stop_inactive_session(app_core: &mut AppCore, supervisor: &mut Supervisor) -> bool {
+    if app_core.game_state.connected && supervisor.identity_confirmed {
+        app_core.add_system_message("Stop rejected: use Exit & Log Out for an active session.");
+        return false;
+    }
+
+    supervisor.user_disconnected = true;
+    supervisor.reconnect_at = None;
+    supervisor.reconnect_attempt = 0;
+    if let Some(connection) = supervisor.connection.take() {
+        connection.task.abort();
+    }
+    app_core.game_state.connected = false;
+    app_core.add_system_message("Stopping session by launcher request.");
+    app_core.running = false;
+    true
+}
+
+/// Advance an orderly Exit & Log Out request without introducing a timeout
+/// that could falsely report success. The child remains alive after sending
+/// `quit`; only an authoritative `ServerMessage::Disconnected` or network-task
+/// completion ends it.
+fn progress_exit_logout(
+    app_core: &mut AppCore,
+    supervisor: &mut Supervisor,
+    lifecycle: &mut SessionExitLifecycle,
+) {
+    if !lifecycle.exit_requested || lifecycle.quit_sent {
+        return;
+    }
+
+    supervisor.user_disconnected = true;
+    supervisor.reconnect_at = None;
+    supervisor.reconnect_attempt = 0;
+
+    if supervisor.game_disconnect_seen {
+        finish_exit_on_authoritative_disconnect(app_core, supervisor, lifecycle);
+        return;
+    }
+
+    let Some(connection) = supervisor.connection.as_ref() else {
+        // There is no game transport to wait for; its absence is already the
+        // authoritative disconnected state.
+        app_core.running = false;
+        return;
+    };
+
+    // A Lich socket may be connected before its configured character is
+    // identified. Never send `quit` onto an unverified session; the intent is
+    // retained and progresses immediately after the matching <app char>.
+    if !app_core.game_state.connected || !supervisor.identity_confirmed {
+        return;
+    }
+
+    app_core
+        .perf_stats
+        .record_bytes_sent(("quit".len() + 1) as u64);
+    if connection.command_tx.send("quit".to_string()).is_ok() {
+        lifecycle.quit_sent = true;
+        app_core.add_system_message("Exit requested; waiting for the game to disconnect.");
+    }
+}
+
+fn finish_exit_on_authoritative_disconnect(
+    app_core: &mut AppCore,
+    supervisor: &Supervisor,
+    lifecycle: &SessionExitLifecycle,
+) -> bool {
+    if !lifecycle.exit_requested {
+        return false;
+    }
+    app_core.add_system_message("Logged out.");
+    app_core.set_remote_session_state(supervisor.status(SessionState::Idle));
+    app_core.running = false;
+    true
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum IdentityCheck {
+    Pending,
+    Matched { newly_confirmed: bool },
+    Mismatch { expected: String, actual: String },
+}
+
+/// Return the configured/observed pair only when both names are meaningful
+/// and differ. GemStone character names are case-insensitive.
+fn character_identity_mismatch(
+    expected: Option<&str>,
+    actual: Option<&str>,
+) -> Option<(String, String)> {
+    let expected = expected.map(str::trim).filter(|name| !name.is_empty())?;
+    let actual = actual.map(str::trim).filter(|name| !name.is_empty())?;
+    (!expected.eq_ignore_ascii_case(actual)).then(|| (expected.to_string(), actual.to_string()))
+}
+
+fn check_character_identity(supervisor: &mut Supervisor, app_core: &mut AppCore) -> IdentityCheck {
+    // Direct authentication already selected the character. An unnamed Lich
+    // target has no profile identity to verify.
+    if supervisor.direct.is_some() || supervisor.expected_character.is_none() {
+        if let Some(actual) = app_core
+            .game_state
+            .character_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            supervisor.character = Some(actual.to_string());
+        }
+        let newly_confirmed = !supervisor.identity_confirmed;
+        supervisor.identity_confirmed = true;
+        return IdentityCheck::Matched { newly_confirmed };
+    }
+
+    let actual = app_core
+        .game_state
+        .character_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            app_core
+                .game_state
+                .character
+                .observed_name()
+                .map(str::to_string)
+        });
+    let Some(actual) = actual else {
+        return IdentityCheck::Pending;
+    };
+
+    if let Some((expected, actual)) =
+        character_identity_mismatch(supervisor.expected_character.as_deref(), Some(&actual))
+    {
+        return IdentityCheck::Mismatch { expected, actual };
+    }
+
+    let newly_confirmed = !supervisor.identity_confirmed;
+    supervisor.identity_confirmed = true;
+    supervisor.character = Some(actual.clone());
+    app_core.game_state.character_name = Some(actual);
+    IdentityCheck::Matched { newly_confirmed }
+}
+
+/// Reject a wrong-character Lich attach locally. Aborting the Vellum network
+/// task drops only its detachable-client socket; importantly, this path never
+/// queues or sends the in-game `quit` command.
+fn reject_identity_mismatch(
+    supervisor: &mut Supervisor,
+    app_core: &mut AppCore,
+    expected: String,
+    actual: String,
+) {
+    if let Some(connection) = supervisor.connection.take() {
+        connection.task.abort();
+    }
+    supervisor.identity_confirmed = false;
+    supervisor.user_disconnected = true;
+    supervisor.reconnect_at = None;
+    supervisor.reconnect_attempt = 0;
+    app_core.game_state.connected = false;
+    app_core.clear_pending_goals_launches();
+
+    // Do not let commands parsed or queued from the rejected session survive
+    // into a later, correctly matched connection.
+    drop(app_core.take_pending_client_commands());
+    drop(app_core.take_outbound());
+    drop(app_core.take_webui_pending_raw());
+    drop(app_core.take_webui_handshake());
+    app_core.stop_webui();
+
+    let message = format!(
+        "Wrong Lich character on this port: expected {expected}, received {actual}. Connection closed locally; the game session was left running."
+    );
+    app_core.add_system_message(&message);
+    let mut info = supervisor.status(SessionState::Disconnected);
+    info.error = Some(message);
+    app_core.set_remote_session_state(info);
+}
+
+fn initialize_lich_session_if_ready(app_core: &mut AppCore, supervisor: &mut Supervisor) {
+    if supervisor.direct.is_some()
+        || !supervisor.identity_confirmed
+        || !app_core.game_state.connected
+        || supervisor.post_connect_commands_sent
+    {
+        return;
+    }
+
+    app_core.seed_default_quickbars_if_empty();
+    let identity_unknown = app_core.game_state.character.profession.is_none()
+        || app_core.game_state.character.level.is_none();
+    if identity_unknown && !supervisor.identity_probe_sent {
+        if let Some(conn) = supervisor.command_connection() {
+            // This is the same quiet StormFront character-sheet request as
+            // the built-in quickbar. It bypasses send_command deliberately:
+            // bootstrap traffic should not echo into Story.
+            let _ = conn.command_tx.send("_info character".to_string());
+        }
+    }
+    if !live_room_known(app_core) {
+        if let Some(conn) = supervisor.command_connection() {
+            // A late detachable-client attach also lacks a room replay. Ask
+            // only when neither live room field is known, avoiding duplicate
+            // LOOKs during ordinary fresh logins.
+            let _ = conn.command_tx.send("look".to_string());
+        }
+    }
+    if app_core
+        .ui_state
+        .get_window_by_type(crate::data::window::WidgetType::Spells, None)
+        .is_some()
+    {
+        if let Some(conn) = supervisor.command_connection() {
+            app_core.message_processor.skip_next_spells_clear();
+            let _ = conn
+                .command_tx
+                .send("_spell _spell_update_links".to_string());
+        }
+    }
+    supervisor.post_connect_commands_sent = true;
+}
+
+fn process_connection_message(
+    app_core: &mut AppCore,
+    supervisor: &mut Supervisor,
+    message: ServerMessage,
+) {
+    let is_text = matches!(message, ServerMessage::Text(_));
+    if matches!(message, ServerMessage::Disconnected) {
+        supervisor.game_disconnect_seen = true;
+    }
+    if is_text {
+        supervisor.first_text_seen = true;
+    }
+
+    let newly_connected = handle_server_message(app_core, message);
+    if newly_connected && supervisor.identity_confirmed {
+        supervisor.reconnect_attempt = 0;
+        app_core.set_remote_session_state(supervisor.status(SessionState::Connected));
+    } else if newly_connected {
+        // The TCP socket exists, but it is not yet the configured character.
+        // Keep the public lifecycle in Connecting until `<app>` confirms it.
+        app_core.set_remote_session_state(supervisor.status(SessionState::Connecting));
+    }
+
+    if newly_connected {
+        probe_lich_identity_if_needed(supervisor);
+    }
+
+    if !is_text {
+        return;
+    }
+
+    match check_character_identity(supervisor, app_core) {
+        IdentityCheck::Pending => {}
+        IdentityCheck::Matched { newly_confirmed } => {
+            if newly_confirmed && app_core.game_state.connected {
+                supervisor.reconnect_attempt = 0;
+                app_core.set_remote_session_state(supervisor.status(SessionState::Connected));
+            }
+        }
+        IdentityCheck::Mismatch { expected, actual } => {
+            reject_identity_mismatch(supervisor, app_core, expected, actual);
+        }
+    }
+}
+
+fn process_connection_end(
+    app_core: &mut AppCore,
+    supervisor: &mut Supervisor,
+    result: Result<Result<()>, tokio::task::JoinError>,
+    quit_deadline: &mut Option<Instant>,
+) {
+    supervisor.connection = None;
+    *quit_deadline = None;
+    app_core.game_state.connected = false;
+    app_core.clear_pending_goals_launches();
+    // Unattended tracking: a loss with zero user input since the connection
+    // came up counts toward the cap. Without it, an abandoned phone would
+    // re-login forever after game idle-kicks.
+    if supervisor.saw_input_since_connect {
+        supervisor.unattended_losses = 0;
+    } else {
+        supervisor.unattended_losses += 1;
+    }
+    let unattended = supervisor.unattended_losses >= MAX_UNATTENDED_LOSSES;
+    let mut error_text = supervisor.terminal_connection_error.take();
+    let terminal_failure = error_text.is_some();
+    let stop_from_result = terminal_failure
+        || match result {
+            Ok(Ok(())) => {
+                app_core.add_system_message("Connection closed.");
+                !supervisor.can_reconnect()
+            }
+            Ok(Err(e)) => {
+                if e.chain().any(|c| c.is::<AuthFailed>()) {
+                    app_core.add_system_message(&format!("Login failed: {e:#}"));
+                    tracing::error!("Auth failure, not retrying: {e:#}");
+                    error_text = Some(format!("{e:#}"));
+                    true
+                } else {
+                    tracing::warn!("Connection error: {e:#}");
+                    app_core.add_system_message(&format!("Connection error: {e:#}"));
+                    error_text = Some(format!("{e:#}"));
+                    !supervisor.can_reconnect()
+                }
+            }
+            Err(join_err) if join_err.is_cancelled() => !supervisor.can_reconnect(),
+            Err(join_err) => {
+                tracing::error!("Network task panicked: {join_err}");
+                !supervisor.can_reconnect()
+            }
+        };
+    if stop_from_result || unattended {
+        supervisor.reconnect_at = None;
+        if supervisor.user_disconnected {
+            app_core.add_system_message("Logged out.");
+            app_core.set_remote_session_state(supervisor.status(SessionState::Idle));
+        } else if unattended && !stop_from_result {
+            tracing::info!(
+                "No user input across {} connections; not reconnecting",
+                supervisor.unattended_losses
+            );
+            app_core.add_system_message(
+                "Session looked idle - not reconnecting. Log in from the app to continue.",
+            );
+            let mut info = supervisor.status(SessionState::Disconnected);
+            info.error = Some("Idle session ended".to_string());
+            app_core.set_remote_session_state(info);
+        } else {
+            app_core
+                .add_system_message("Session ended. Log in again from the web UI to reconnect.");
+            let mut info = supervisor.status(SessionState::Disconnected);
+            info.error = error_text;
+            app_core.set_remote_session_state(info);
+        }
+    } else {
+        let delay = backoff_delay(supervisor.reconnect_attempt);
+        supervisor.reconnect_attempt += 1;
+        app_core.add_system_message(&format!(
+            "Disconnected. Reconnecting in {}s (attempt {})...",
+            delay.as_secs().max(1),
+            supervisor.reconnect_attempt
+        ));
+        supervisor.reconnect_at = Some(Instant::now() + delay);
+        app_core.set_remote_session_state(supervisor.status(SessionState::Reconnecting));
     }
 }
 
@@ -361,6 +892,131 @@ fn resolve_connect(req: &SessionRequest) -> Result<ResolvedConnect, String> {
     }))
 }
 
+/// Resolve only the immutable connection + character named by a web connect
+/// request.  This deliberately happens before [`resolve_connect`]: an owned
+/// child must reject retargeting before password lookup, profile persistence,
+/// SSH launch, or any other side effect can occur.
+fn owned_connect_matches_startup(
+    req: &SessionRequest,
+    startup: &crate::core::session_registry::SessionLaunchIdentity,
+) -> Result<bool, String> {
+    use crate::core::session_registry::{SessionConnectionIdentity, SessionLaunchIdentity};
+
+    let SessionRequest::Connect {
+        profile,
+        account,
+        character,
+        game,
+        lich_host,
+        lich_port,
+        ..
+    } = req
+    else {
+        return Err("not a connect request".to_string());
+    };
+
+    let requested = if let Some(name) = profile {
+        let store = crate::config::profiles::LauncherStore::load()
+            .map_err(|e| format!("Could not read saved profiles: {e}"))?;
+        let saved = store
+            .find(name)
+            .ok_or_else(|| format!("Profile '{name}' not found"))?;
+        SessionLaunchIdentity::from_profile(name, saved)
+    } else if let (Some(host), Some(port)) = (lich_host.as_deref(), *lich_port) {
+        let host = crate::network::normalize_lich_host(host)?;
+        SessionLaunchIdentity {
+            profile: String::new(),
+            character: character.clone().unwrap_or_default().trim().to_string(),
+            connection: SessionConnectionIdentity::Lich {
+                host: crate::core::session_registry::normalize_host(&host),
+                port,
+            },
+        }
+    } else {
+        let account = account
+            .as_deref()
+            .ok_or_else(|| "Account is required".to_string())?;
+        let character = character
+            .as_deref()
+            .ok_or_else(|| "Character is required".to_string())?;
+        SessionLaunchIdentity {
+            profile: String::new(),
+            character: character.trim().to_string(),
+            connection: SessionConnectionIdentity::Direct {
+                game: game
+                    .as_deref()
+                    .unwrap_or("prime")
+                    .trim()
+                    .to_ascii_lowercase(),
+                account: account.trim().to_ascii_lowercase(),
+            },
+        }
+    };
+
+    Ok(startup
+        .character
+        .eq_ignore_ascii_case(requested.character.trim())
+        && startup.connection == requested.connection)
+}
+
+/// `.launch` resolves through a different configuration surface than web
+/// `connect`, but it is subject to the same immutable launcher ownership.
+fn owned_launch_matches_startup(
+    character: &str,
+    requested: &crate::launcher::config::ResolvedLaunch,
+    startup: &crate::core::session_registry::SessionLaunchIdentity,
+) -> bool {
+    use crate::core::session_registry::SessionConnectionIdentity;
+
+    startup.character.eq_ignore_ascii_case(character.trim())
+        && startup.connection
+            == (SessionConnectionIdentity::Lich {
+                host: crate::core::session_registry::normalize_host(&requested.attach_host),
+                port: requested.attach_port,
+            })
+}
+
+/// Re-check the resolved target that will actually be applied to the
+/// supervisor. Saved profiles are mutable files, so this closes the narrow
+/// time-of-check/time-of-use window between the side-effect-free ownership
+/// preflight and [`resolve_connect`]'s second load.
+fn owned_resolved_connect_matches_startup(
+    resolved: &ResolvedConnect,
+    startup: &crate::core::session_registry::SessionLaunchIdentity,
+) -> bool {
+    use crate::core::session_registry::SessionConnectionIdentity;
+
+    match (resolved, &startup.connection) {
+        (
+            ResolvedConnect::Lich {
+                target, character, ..
+            },
+            SessionConnectionIdentity::Lich { host, port },
+        ) => {
+            character
+                .as_deref()
+                .is_some_and(|character| startup.character.eq_ignore_ascii_case(character.trim()))
+                && crate::core::session_registry::normalize_host(&target.host) == *host
+                && target.port == *port
+        }
+        (ResolvedConnect::Direct(config), SessionConnectionIdentity::Direct { game, account }) => {
+            startup
+                .character
+                .eq_ignore_ascii_case(config.character.trim())
+                && account.eq_ignore_ascii_case(config.account.trim())
+                && crate::network::DirectConnectConfig::game_name_to_code(game)
+                    .eq_ignore_ascii_case(&config.game_code)
+        }
+        _ => false,
+    }
+}
+
+fn reject_owned_retarget(app_core: &mut AppCore, startup_character: &str) {
+    app_core.add_system_message(&format!(
+        "This launcher-owned session is locked to {startup_character} and its startup connection. Use the launcher to open another session."
+    ));
+}
+
 pub async fn async_run(
     config: crate::config::Config,
     character: Option<String>,
@@ -420,18 +1076,28 @@ pub(super) async fn async_run_with_options(
 
     app_core.init_windows(NOMINAL_COLS, NOMINAL_ROWS);
 
-    let (server_tx, mut server_rx) =
-        mpsc::channel::<ServerMessage>(crate::network::SERVER_CHANNEL_CAPACITY);
-
     let is_direct = direct.is_some();
+    let initial_expected_character = (!is_direct)
+        .then(|| {
+            character
+                .clone()
+                .or_else(|| app_core.config.connection.character.clone())
+        })
+        .flatten()
+        .filter(|name| !name.trim().is_empty());
     let mut supervisor = Supervisor {
         character: direct
             .as_ref()
             .map(|d| d.character.clone())
             .or_else(|| character.clone()),
+        expected_character: initial_expected_character,
+        identity_confirmed: is_direct,
+        identity_probe_sent: false,
+        post_connect_commands_sent: false,
+        terminal_connection_error: None,
         game: None,
         direct,
-        lich_configured: lich_session_configured(login_key.as_deref(), launch),
+        lich_configured: lich_session_configured(login_key.as_deref(), &launch),
         login_key,
         lich_target: None,
         connection: None,
@@ -442,6 +1108,7 @@ pub(super) async fn async_run_with_options(
         unattended_losses: 0,
         phase_started: None,
         first_text_seen: false,
+        game_disconnect_seen: false,
     };
 
     // Lich WebUI is reachable only on a Lich-attached session (a direct
@@ -455,7 +1122,7 @@ pub(super) async fn async_run_with_options(
     // Auto-connect only when the CLI asked for a session (--direct / --key);
     // otherwise idle on the login screen.
     if supervisor.direct.is_some() || supervisor.lich_configured {
-        supervisor.spawn(&app_core, server_tx.clone());
+        supervisor.spawn(&mut app_core);
         let state = if is_direct {
             SessionState::Authenticating
         } else {
@@ -467,26 +1134,13 @@ pub(super) async fn async_run_with_options(
         tracing::info!("No credentials on the command line; waiting for web login");
     }
 
-    if !is_direct && supervisor.connection.is_some() {
-        app_core.seed_default_quickbars_if_empty();
-        if app_core
-            .ui_state
-            .get_window_by_type(crate::data::window::WidgetType::Spells, None)
-            .is_some()
-        {
-            if let Some(conn) = supervisor.connection.as_ref() {
-                app_core.message_processor.skip_next_spells_clear();
-                let _ = conn
-                    .command_tx
-                    .send("_spell _spell_update_links\n".to_string());
-            }
-        }
-    }
-
     // Set when the user quits: if the server hasn't closed the connection
     // by the deadline, close it ourselves (some closes linger server-side —
     // playtests saw quits that needed a follow-up command to complete).
     let mut quit_deadline: Option<Instant> = None;
+    let mut exit_lifecycle = SessionExitLifecycle::new();
+    let mut stall_watchdog = tokio::time::interval(CONNECTION_WATCHDOG_INTERVAL);
+    stall_watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     tracing::info!("Headless runtime started (web UI is the interface)");
 
@@ -517,7 +1171,8 @@ pub(super) async fn async_run_with_options(
                     Some(event) => {
                         if handle_remote_event(
                             &mut app_core,
-                            supervisor.connection.as_ref(),
+                            supervisor.command_connection(),
+                            supervisor.identity_confirmed && !exit_lifecycle.exit_requested,
                             event,
                             &mut session_requests,
                         ) {
@@ -527,140 +1182,67 @@ pub(super) async fn async_run_with_options(
                     }
                 }
             }
-            maybe_msg = server_rx.recv() => {
-                if let Some(msg) = maybe_msg {
-                    if matches!(msg, ServerMessage::Text(_)) {
-                        supervisor.first_text_seen = true;
-                    }
-                    let newly_connected = handle_server_message(&mut app_core, msg);
-                    if newly_connected {
-                        supervisor.reconnect_attempt = 0;
-                        // The game feed never carries the character name;
-                        // the supervisor knows it from the login. Write it
-                        // into game state so remote clients (top-bar title,
-                        // hello payload) see it.
-                        if app_core.game_state.character_name.is_none() {
-                            app_core.game_state.character_name = supervisor.character.clone();
-                        }
-                        supervisor.character = app_core
-                            .game_state
-                            .character_name
-                            .clone()
-                            .or(supervisor.character.take());
-                        app_core.set_remote_session_state(
-                            supervisor.status(SessionState::Connected),
-                        );
-                    }
-                }
-            }
-            // Network task ended: session over — classify and maybe reconnect.
-            result = async {
+            connection_event = async {
                 match supervisor.connection.as_mut() {
-                    Some(conn) => (&mut conn.task).await,
+                    Some(conn) => conn.next_event().await,
                     None => std::future::pending().await,
                 }
             } => {
-                supervisor.connection = None;
-                quit_deadline = None;
-                app_core.game_state.connected = false;
-                // Unattended tracking: a loss with zero user input since
-                // the connection came up counts toward the cap — without
-                // it, an abandoned phone would re-login in a loop all
-                // night as the game idle-kicks every ~30 minutes.
-                if supervisor.saw_input_since_connect {
-                    supervisor.unattended_losses = 0;
-                } else {
-                    supervisor.unattended_losses += 1;
-                }
-                let unattended = supervisor.unattended_losses >= MAX_UNATTENDED_LOSSES;
-                let mut error_text = None;
-                let stop_from_result = match result {
-                    Ok(Ok(())) => {
-                        app_core.add_system_message("Connection closed.");
-                        !supervisor.can_reconnect()
-                    }
-                    Ok(Err(e)) => {
-                        if e.chain().any(|c| c.is::<AuthFailed>()) {
-                            app_core.add_system_message(&format!("Login failed: {e:#}"));
-                            tracing::error!("Auth failure, not retrying: {e:#}");
-                            error_text = Some(format!("{e:#}"));
-                            true
-                        } else {
-                            tracing::warn!("Connection error: {e:#}");
-                            // Surface the real failure in the game window: a
-                            // phone user has no log access, and "refused" vs
-                            // "reset mid-stream" points at opposite culprits.
-                            app_core.add_system_message(&format!("Connection error: {e:#}"));
-                            error_text = Some(format!("{e:#}"));
-                            !supervisor.can_reconnect()
+                match connection_event {
+                    ConnectionEvent::Message(message) => {
+                        let authoritative_disconnect =
+                            matches!(message, ServerMessage::Disconnected);
+                        process_connection_message(&mut app_core, &mut supervisor, message);
+                        if authoritative_disconnect {
+                            finish_exit_on_authoritative_disconnect(
+                                &mut app_core,
+                                &supervisor,
+                                &exit_lifecycle,
+                            );
                         }
                     }
-                    Err(join_err) if join_err.is_cancelled() => {
-                        // Watchdog or teardown aborted the task; the
-                        // scheduler below decides what happens next.
-                        !supervisor.can_reconnect()
+                    ConnectionEvent::Ended(result) => {
+                        process_connection_end(
+                            &mut app_core,
+                            &mut supervisor,
+                            result,
+                            &mut quit_deadline,
+                        );
+                        // process_connection_end already records the
+                        // authoritative close and publishes the idle/logged
+                        // out state. This policy only decides whether the
+                        // owning child should now terminate.
+                        if exit_lifecycle.exit_requested {
+                            app_core.running = false;
+                        }
                     }
-                    Err(join_err) => {
-                        tracing::error!("Network task panicked: {join_err}");
-                        !supervisor.can_reconnect()
-                    }
-                };
-                if stop_from_result || unattended {
-                    supervisor.reconnect_at = None;
-                    if supervisor.user_disconnected {
-                        // Intentional logout (quit / disconnect button):
-                        // clean return to the login screen, no error.
-                        app_core.add_system_message("Logged out.");
-                        app_core.set_remote_session_state(
-                            supervisor.status(SessionState::Idle),
-                        );
-                    } else if unattended && !stop_from_result {
-                        tracing::info!(
-                            "No user input across {} connections; not reconnecting",
-                            supervisor.unattended_losses
-                        );
-                        app_core.add_system_message(
-                            "Session looked idle - not reconnecting. Log in from the app to continue.",
-                        );
-                        let mut info = supervisor.status(SessionState::Disconnected);
-                        info.error = Some("Idle session ended".to_string());
-                        app_core.set_remote_session_state(info);
-                    } else {
-                        app_core.add_system_message(
-                            "Session ended. Log in again from the web UI to reconnect.",
-                        );
-                        let mut info = supervisor.status(SessionState::Disconnected);
-                        info.error = error_text;
-                        app_core.set_remote_session_state(info);
-                    }
-                } else {
-                    let delay = backoff_delay(supervisor.reconnect_attempt);
-                    supervisor.reconnect_attempt += 1;
-                    app_core.add_system_message(&format!(
-                        "Disconnected. Reconnecting in {}s (attempt {})...",
-                        delay.as_secs().max(1),
-                        supervisor.reconnect_attempt
-                    ));
-                    supervisor.reconnect_at = Some(Instant::now() + delay);
-                    app_core.set_remote_session_state(
-                        supervisor.status(SessionState::Reconnecting),
-                    );
                 }
             }
             // Stall watchdog: a connection that has produced no game text
             // within the window is stuck (auth server hang, silent socket).
-            // Tear it down; the completion arm schedules the retry. Once
-            // text flows this branch goes dormant (no periodic wakeups).
-            _ = tokio::time::sleep(Duration::from_secs(5)),
-                if supervisor.connection.is_some() && !supervisor.first_text_seen => {
-                let stalled = supervisor
-                    .phase_started
-                    .is_some_and(|at| at.elapsed() > Duration::from_secs(45));
-                if stalled {
-                    tracing::warn!("No game data within 45s of starting the connection; recycling");
-                    app_core.add_system_message(
-                        "Login is not responding - retrying...",
-                    );
+            // Tear it down; the completion arm schedules a retry for a silent
+            // transport or fails closed for an unidentified Lich attach.
+            _ = stall_watchdog.tick(),
+                if connection_bootstrap_pending(&supervisor) => {
+                if connection_bootstrap_stalled(&supervisor) {
+                    if supervisor.first_text_seen && !supervisor.identity_confirmed {
+                        let message = supervisor.expected_character.as_deref().map_or_else(
+                            || "Lich connected, but character identity could not be verified.".to_string(),
+                            |expected| format!(
+                                "Lich connected, but did not identify the requested character {expected}."
+                            ),
+                        );
+                        tracing::warn!("{message} Stopping this Vellum connection.");
+                        app_core.add_system_message(&format!(
+                            "{message} Stop or restart it from the launcher; the game session was left running."
+                        ));
+                        supervisor.terminal_connection_error = Some(message);
+                    } else {
+                        tracing::warn!("No game data within 45s of starting the connection; recycling");
+                        app_core.add_system_message(
+                            "Login is not responding - retrying...",
+                        );
+                    }
                     if let Some(conn) = supervisor.connection.as_ref() {
                         conn.task.abort();
                     }
@@ -682,6 +1264,7 @@ pub(super) async fn async_run_with_options(
                     tracing::info!("Server didn't close after quit; closing locally");
                 }
                 app_core.game_state.connected = false;
+                app_core.clear_pending_goals_launches();
                 app_core.add_system_message("Logged out.");
                 app_core.set_remote_session_state(supervisor.status(SessionState::Idle));
             }
@@ -705,7 +1288,7 @@ pub(super) async fn async_run_with_options(
                     "Reconnecting (attempt {})...",
                     supervisor.reconnect_attempt
                 ));
-                supervisor.spawn(&app_core, server_tx.clone());
+                supervisor.spawn(&mut app_core);
                 let state = if supervisor.direct.is_some() {
                     SessionState::Authenticating
                 } else {
@@ -717,9 +1300,17 @@ pub(super) async fn async_run_with_options(
 
         // Drain whatever else queued up while we were handling the wake-up.
         while let Ok(event) = remote_rx.try_recv() {
+            let commands_blocked =
+                exit_lifecycle.exit_requested || session_requests_block_commands(&session_requests);
+            let connection = if commands_blocked {
+                None
+            } else {
+                supervisor.command_connection()
+            };
             if handle_remote_event(
                 &mut app_core,
-                supervisor.connection.as_ref(),
+                connection,
+                supervisor.identity_confirmed && !commands_blocked,
                 event,
                 &mut session_requests,
             ) {
@@ -727,22 +1318,24 @@ pub(super) async fn async_run_with_options(
                 supervisor.unattended_losses = 0;
             }
         }
-        while let Ok(msg) = server_rx.try_recv() {
-            if matches!(msg, ServerMessage::Text(_)) {
-                supervisor.first_text_seen = true;
-            }
-            let newly_connected = handle_server_message(&mut app_core, msg);
-            if newly_connected {
-                supervisor.reconnect_attempt = 0;
-                if app_core.game_state.character_name.is_none() {
-                    app_core.game_state.character_name = supervisor.character.clone();
-                }
-                supervisor.character = app_core
-                    .game_state
-                    .character_name
-                    .clone()
-                    .or(supervisor.character.take());
-                app_core.set_remote_session_state(supervisor.status(SessionState::Connected));
+        loop {
+            let message = supervisor
+                .connection
+                .as_mut()
+                .and_then(|connection| connection.server_rx.try_recv().ok());
+            let Some(message) = message else {
+                break;
+            };
+            let authoritative_disconnect = matches!(message, ServerMessage::Disconnected);
+            process_connection_message(&mut app_core, &mut supervisor, message);
+            if authoritative_disconnect
+                && finish_exit_on_authoritative_disconnect(
+                    &mut app_core,
+                    &supervisor,
+                    &exit_lifecycle,
+                )
+            {
+                break;
             }
         }
 
@@ -774,43 +1367,54 @@ pub(super) async fn async_run_with_options(
         // Map worker, mapdb updater, and walk executor tick once per batch;
         // travel commands go out through the same path as typed ones.
         app_core.poll_map();
-        for command in app_core.take_outbound() {
-            match app_core.send_command(command) {
-                Ok(crate::data::CommandOutcome::Game(out)) => {
-                    if let Some(conn) = supervisor.connection.as_ref() {
-                        let _ = conn.command_tx.send(out);
+        let commands_blocked =
+            exit_lifecycle.exit_requested || session_requests_block_commands(&session_requests);
+        if !commands_blocked {
+            initialize_lich_session_if_ready(&mut app_core, &mut supervisor);
+        }
+        if !commands_blocked && supervisor.command_connection().is_some() {
+            for command in app_core.take_outbound() {
+                match app_core.send_command(command) {
+                    Ok(crate::data::CommandOutcome::Game(out)) => {
+                        let sent = supervisor
+                            .command_connection()
+                            .is_some_and(|conn| conn.command_tx.send(out.clone()).is_ok());
+                        app_core.finish_game_command_send(&out, sent);
                     }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("travel command failed: {e}"),
                 }
-                Ok(_) => {}
-                Err(e) => tracing::warn!("travel command failed: {e}"),
             }
-        }
 
-        // Feed-injected dot-commands (<vellumCmd> from Lich scripts):
-        // same core path as typed input; UI actions need a local UI and
-        // are quietly skipped here.
-        for command in app_core.take_pending_client_commands() {
-            match app_core.send_command(command) {
-                Ok(crate::data::CommandOutcome::Ui(action)) => {
-                    tracing::debug!("vellumCmd UI action skipped headless: {action}");
+            // Feed-injected dot-commands (<vellumCmd> from Lich scripts):
+            // same core path as typed input; UI actions need a local UI and
+            // are quietly skipped here.
+            for command in app_core.take_pending_client_commands() {
+                match app_core.send_command(command) {
+                    Ok(crate::data::CommandOutcome::Ui(action)) => {
+                        tracing::debug!("vellumCmd UI action skipped headless: {action}");
+                    }
+                    Ok(crate::data::CommandOutcome::Game(outbound)) => {
+                        app_core.finish_game_command_send(&outbound, false);
+                    }
+                    Ok(crate::data::CommandOutcome::Handled) => {}
+                    Err(e) => tracing::warn!("vellumCmd failed: {e}"),
                 }
-                Ok(_) => {}
-                Err(e) => tracing::warn!("vellumCmd failed: {e}"),
             }
-        }
 
-        // Lich WebUI tick: drain the bridge (fans renders to phone clients),
-        // send any queued `;ui handshake` to the game, and start the bridge
-        // once its reply arrives. Only meaningful on a Lich-attached session
-        // (webui_available); a direct eAccess connection has no Lich.
-        app_core.pump_webui();
-        for raw in app_core.take_webui_pending_raw() {
-            if let Some(conn) = supervisor.connection.as_ref() {
-                let _ = conn.command_tx.send(format!("{raw}\n"));
+            // Lich WebUI tick: drain the bridge (fans renders to phone clients),
+            // send any queued `;ui handshake` to the game, and start the bridge
+            // once its reply arrives. Only meaningful on a Lich-attached session
+            // (webui_available); a direct eAccess connection has no Lich.
+            app_core.pump_webui();
+            for raw in app_core.take_webui_pending_raw() {
+                if let Some(conn) = supervisor.command_connection() {
+                    let _ = conn.command_tx.send(format!("{raw}\n"));
+                }
             }
-        }
-        if let Some(handshake) = app_core.take_webui_handshake() {
-            app_core.start_webui(&tokio::runtime::Handle::current(), &handshake);
+            if let Some(handshake) = app_core.take_webui_handshake() {
+                app_core.start_webui(&tokio::runtime::Handle::current(), &handshake);
+            }
         }
 
         // Keep-open `.quit`: core asked to drop the connection without
@@ -838,6 +1442,16 @@ pub(super) async fn async_run_with_options(
         // Apply session-control requests from web clients.
         for request in session_requests {
             match request {
+                SessionRequest::Stop => {
+                    stop_inactive_session(&mut app_core, &mut supervisor);
+                }
+                SessionRequest::ExitLogout => {
+                    // This orderly path deliberately disables the legacy
+                    // typed-quit timeout: no timeout may abort the socket or
+                    // claim logout before the game actually disconnects.
+                    quit_deadline = None;
+                    exit_lifecycle.request_exit();
+                }
                 SessionRequest::Disconnect => {
                     supervisor.user_disconnected = true;
                     supervisor.reconnect_at = None;
@@ -847,6 +1461,7 @@ pub(super) async fn async_run_with_options(
                         app_core.add_system_message("Disconnected by request.");
                     }
                     app_core.game_state.connected = false;
+                    app_core.clear_pending_goals_launches();
                     app_core.set_remote_session_state(supervisor.status(SessionState::Idle));
                 }
                 SessionRequest::UserQuit => {
@@ -881,7 +1496,7 @@ pub(super) async fn async_run_with_options(
                         } else {
                             SessionState::Connecting
                         };
-                        supervisor.spawn(&app_core, server_tx.clone());
+                        supervisor.spawn(&mut app_core);
                         app_core.set_remote_session_state(supervisor.status(state));
                     }
                 }
@@ -892,11 +1507,33 @@ pub(super) async fn async_run_with_options(
                         );
                         continue;
                     }
+                    if let Some(startup) = launch.startup_identity.as_ref() {
+                        match owned_connect_matches_startup(&connect, startup) {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                reject_owned_retarget(&mut app_core, &startup.character);
+                                continue;
+                            }
+                            Err(message) => {
+                                app_core.add_system_message(&format!(
+                                    "Connect rejected for this launcher-owned session: {message}"
+                                ));
+                                continue;
+                            }
+                        }
+                    }
                     match resolve_connect(&connect) {
                         Ok(resolved) => {
+                            if let Some(startup) = launch.startup_identity.as_ref() {
+                                if !owned_resolved_connect_matches_startup(&resolved, startup) {
+                                    reject_owned_retarget(&mut app_core, &startup.character);
+                                    continue;
+                                }
+                            }
                             let state = match resolved {
                                 ResolvedConnect::Direct(cfg) => {
                                     supervisor.character = Some(cfg.character.clone());
+                                    supervisor.expected_character = None;
                                     supervisor.game = Some(cfg.game_code.clone());
                                     supervisor.direct = Some(cfg);
                                     supervisor.lich_target = None;
@@ -933,6 +1570,9 @@ pub(super) async fn async_run_with_options(
                                             .await;
                                         match outcome {
                                             Ok(_) => {
+                                                supervisor.expected_character = character
+                                                    .clone()
+                                                    .filter(|name| !name.trim().is_empty());
                                                 supervisor.character = character;
                                                 supervisor.game = None;
                                                 supervisor.direct = None;
@@ -950,6 +1590,9 @@ pub(super) async fn async_run_with_options(
                                             }
                                         }
                                     } else {
+                                        supervisor.expected_character = character
+                                            .clone()
+                                            .filter(|name| !name.trim().is_empty());
                                         supervisor.character = character;
                                         supervisor.game = None;
                                         supervisor.direct = None;
@@ -962,7 +1605,7 @@ pub(super) async fn async_run_with_options(
                             supervisor.user_disconnected = false;
                             supervisor.reconnect_attempt = 0;
                             supervisor.reconnect_at = None;
-                            supervisor.spawn(&app_core, server_tx.clone());
+                            supervisor.spawn(&mut app_core);
                             app_core.set_remote_session_state(supervisor.status(state));
                         }
                         Err(message) => {
@@ -992,6 +1635,21 @@ pub(super) async fn async_run_with_options(
                             continue;
                         }
                     };
+                    let requested = match config.resolve(&character) {
+                        Ok(requested) => requested,
+                        Err(err) => {
+                            app_core.add_system_message(&format!(
+                                "Launch rejected for this launcher-owned session: {err:#}"
+                            ));
+                            continue;
+                        }
+                    };
+                    if let Some(startup) = launch.startup_identity.as_ref() {
+                        if !owned_launch_matches_startup(&character, &requested, startup) {
+                            reject_owned_retarget(&mut app_core, &startup.character);
+                            continue;
+                        }
+                    }
                     app_core.set_remote_session_state(supervisor.status(SessionState::Connecting));
                     // Auto-pin the host key on first use: over an already-private
                     // tunnel there is no interactive prompt on this path, and a
@@ -1002,7 +1660,22 @@ pub(super) async fn async_run_with_options(
                         // callback can't borrow app_core while it's borrowed by
                         // the surrounding loop).
                         let mut messages = Vec::new();
-                        let res = crate::launcher::flow::launch(&config, &character, trust, |p| {
+                        // Launch the exact spec checked above. Re-resolving
+                        // mutable launcher config here would reopen a
+                        // retargeting window after ownership validation.
+                        let spec = crate::launcher::flow::LaunchSpec {
+                            ssh_host: config.ssh.host.clone(),
+                            ssh_port: config.ssh.port,
+                            ssh_user: config.ssh.user.clone(),
+                            remote_os: config.ssh.remote_os.into(),
+                            program: requested.program,
+                            args: requested.args,
+                            local: crate::launcher::flow::is_local_host(&requested.attach_host),
+                            attach_host: requested.attach_host,
+                            attach_port: requested.attach_port,
+                            character: character.clone(),
+                        };
+                        let res = crate::launcher::flow::launch_spec(&spec, trust, |p| {
                             messages.push(format!("{p:?}"))
                         })
                         .await;
@@ -1014,6 +1687,8 @@ pub(super) async fn async_run_with_options(
                     match launch_result {
                         Ok(target) => {
                             supervisor.character = Some(target.character.clone());
+                            supervisor.expected_character = Some(target.character.clone())
+                                .filter(|name| !name.trim().is_empty());
                             supervisor.game = None;
                             supervisor.direct = None;
                             supervisor.lich_target = Some(LichTarget {
@@ -1028,7 +1703,7 @@ pub(super) async fn async_run_with_options(
                                 "Launched {} — attaching to {}:{}.",
                                 target.character, target.host, target.port
                             ));
-                            supervisor.spawn(&app_core, server_tx.clone());
+                            supervisor.spawn(&mut app_core);
                             app_core.set_remote_session_state(
                                 supervisor.status(SessionState::Connecting),
                             );
@@ -1044,6 +1719,8 @@ pub(super) async fn async_run_with_options(
                 }
             }
         }
+
+        progress_exit_logout(&mut app_core, &mut supervisor, &mut exit_lifecycle);
 
         app_core.poll_tts_events();
         // Debounced layout autosave (layout dot-commands from web clients).
@@ -1090,12 +1767,34 @@ fn dispatch_command(
     connection: Option<&Connection>,
     command: String,
 ) -> DispatchResult {
-    use crate::data::{CommandOutcome, UiAction};
+    dispatch_command_from(app_core, connection, None, command)
+}
+
+fn dispatch_remote_command(
+    app_core: &mut AppCore,
+    connection: Option<&Connection>,
+    client_id: u64,
+    command: String,
+) -> DispatchResult {
+    dispatch_command_from(app_core, connection, Some(client_id), command)
+}
+
+fn dispatch_command_from(
+    app_core: &mut AppCore,
+    connection: Option<&Connection>,
+    remote_client_id: Option<u64>,
+    command: String,
+) -> DispatchResult {
+    use crate::data::CommandOutcome;
     let command = command.trim_end().to_string();
     if command.is_empty() {
         return DispatchResult::None;
     }
-    match app_core.send_command(command) {
+    let outcome = match remote_client_id {
+        Some(client_id) => app_core.send_remote_command(client_id, command),
+        None => app_core.send_command(command),
+    };
+    match outcome {
         Ok(CommandOutcome::Handled) => DispatchResult::None,
         // UI packs are core-side work; everything else needs a local UI.
         Ok(CommandOutcome::Ui(action)) => dispatch_ui_action(app_core, action),
@@ -1109,7 +1808,8 @@ fn dispatch_command(
                     app_core
                         .perf_stats
                         .record_bytes_sent((outbound.len() + 1) as u64);
-                    let _ = conn.command_tx.send(outbound);
+                    let sent = conn.command_tx.send(outbound.clone()).is_ok();
+                    app_core.finish_game_command_send(&outbound, sent);
                     if is_quit {
                         DispatchResult::Quit
                     } else {
@@ -1117,6 +1817,7 @@ fn dispatch_command(
                     }
                 }
                 None => {
+                    app_core.finish_game_command_send(&outbound, false);
                     app_core.add_system_message("Not connected - command not sent.");
                     DispatchResult::None
                 }
@@ -1127,6 +1828,41 @@ fn dispatch_command(
             DispatchResult::None
         }
     }
+}
+
+/// While a Lich socket is still proving which character it belongs to, keep a
+/// deliberately small local-control surface available without letting an
+/// arbitrary dot command arm travel, timers, GOALS, or another game-output
+/// path.  `.launch` is included because launcher-owned runtimes validate its
+/// immutable target before doing any work in the session-request phase.
+fn dispatch_identity_pending_command(app_core: &mut AppCore, command: String) -> DispatchResult {
+    let command_word = command
+        .trim()
+        .strip_prefix('.')
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if matches!(
+        command_word.as_str(),
+        "exit"
+            | "quit"
+            | "q"
+            | "reconnect"
+            | "launch"
+            | "launcher"
+            | "help"
+            | "h"
+            | "?"
+            | "version"
+            | "ver"
+    ) {
+        return dispatch_command(app_core, None, command);
+    }
+
+    app_core.add_system_message(
+        "Waiting for Lich to confirm the configured character; command not sent.",
+    );
+    DispatchResult::None
 }
 
 /// Translate a [`DispatchResult`] into the matching session request (if any).
@@ -1287,17 +2023,20 @@ fn dispatch_ui_action(app_core: &mut AppCore, action: crate::data::UiAction) -> 
 fn handle_remote_event(
     app_core: &mut AppCore,
     connection: Option<&Connection>,
+    game_commands_allowed: bool,
     event: crate::core::remote::RemoteEvent,
     session_requests: &mut Vec<SessionRequest>,
 ) -> bool {
     use crate::core::remote::RemoteEvent;
     match event {
-        RemoteEvent::Command(text) => {
+        RemoteEvent::Command { client_id, text } => {
             tracing::debug!("remote command: '{}'", text);
-            push_dispatch_request(
-                dispatch_command(app_core, connection, text),
-                session_requests,
-            );
+            let result = if game_commands_allowed {
+                dispatch_remote_command(app_core, connection, client_id, text)
+            } else {
+                dispatch_identity_pending_command(app_core, text)
+            };
+            push_dispatch_request(result, session_requests);
             true
         }
         RemoteEvent::LinkTap {
@@ -1308,6 +2047,12 @@ fn handle_remote_event(
             text,
             coord,
         } => {
+            if !game_commands_allowed {
+                app_core.add_system_message(
+                    "Waiting for Lich to confirm the configured character; action not sent.",
+                );
+                return true;
+            }
             let link = crate::data::LinkData {
                 exist_id,
                 noun,
@@ -1321,12 +2066,15 @@ fn handle_remote_event(
                     request_id,
                 },
             ) {
-                if let Some(conn) = connection {
+                let sent = if let Some(conn) = connection {
                     app_core
                         .perf_stats
                         .record_bytes_sent((cmd.len() + 1) as u64);
-                    let _ = conn.command_tx.send(cmd);
-                }
+                    conn.command_tx.send(cmd.clone()).is_ok()
+                } else {
+                    false
+                };
+                app_core.finish_game_command_send(&cmd, sent);
             }
             true
         }
@@ -1366,6 +2114,12 @@ fn handle_remote_event(
             false
         }
         RemoteEvent::Macro { id } => {
+            if !game_commands_allowed {
+                app_core.add_system_message(
+                    "Waiting for Lich to confirm the configured character; macro not sent.",
+                );
+                return true;
+            }
             match app_core.config.macros.resolve(&id).map(String::from) {
                 Some(command) => {
                     tracing::debug!("remote macro '{}': '{}'", id, command);
@@ -1381,6 +2135,12 @@ fn handle_remote_event(
             true
         }
         RemoteEvent::WheelPick { key, path } => {
+            if !game_commands_allowed {
+                app_core.add_system_message(
+                    "Waiting for Lich to confirm the configured character; action not sent.",
+                );
+                return true;
+            }
             match app_core.wheel_pick_command(&key, &path) {
                 Some(command) => {
                     tracing::debug!("remote wheel pick '{}' {:?}: '{}'", key, path, command);
@@ -1425,6 +2185,14 @@ fn handle_remote_event(
         }
         RemoteEvent::SessionDisconnect => {
             session_requests.push(SessionRequest::Disconnect);
+            true
+        }
+        RemoteEvent::SessionStop => {
+            session_requests.push(SessionRequest::Stop);
+            true
+        }
+        RemoteEvent::SessionExitLogout => {
+            session_requests.push(SessionRequest::ExitLogout);
             true
         }
         RemoteEvent::LauncherSshGet {
@@ -1558,6 +2326,12 @@ fn handle_remote_event(
             true
         }
         RemoteEvent::WebUiSubscribe { page } => {
+            if !game_commands_allowed {
+                app_core.add_system_message(
+                    "Waiting for Lich to confirm the configured character; WebUI action not sent.",
+                );
+                return true;
+            }
             // First subscription starts the bridge: trigger the handshake if
             // it isn't up yet (the raw `;ui handshake` drains next tick, the
             // reply starts the socket, then the subscribe replays via Hello).
@@ -1568,10 +2342,22 @@ fn handle_remote_event(
             true
         }
         RemoteEvent::WebUiUnsubscribe { page } => {
+            if !game_commands_allowed {
+                app_core.add_system_message(
+                    "Waiting for Lich to confirm the configured character; WebUI action not sent.",
+                );
+                return true;
+            }
             app_core.webui_unsubscribe(&page);
             true
         }
         RemoteEvent::WebUiEvent { page, cid, value } => {
+            if !game_commands_allowed {
+                app_core.add_system_message(
+                    "Waiting for Lich to confirm the configured character; WebUI action not sent.",
+                );
+                return true;
+            }
             app_core.webui_send_event(page, cid, value);
             true
         }
@@ -1600,6 +2386,12 @@ fn handle_remote_event(
             true
         }
         RemoteEvent::SkillTrainerOpen => {
+            if !game_commands_allowed {
+                app_core.add_system_message(
+                    "Waiting for Lich to confirm the configured character; GOALS not sent.",
+                );
+                return true;
+            }
             // Open: if a page is already loaded, just re-mirror it; otherwise
             // fetch a fresh one (arms the trainer + sends `goals` to the game).
             if app_core.ui_state.skill_trainer.data.is_some() {
@@ -1607,7 +2399,10 @@ fn handle_remote_event(
                 app_core.push_skill_trainer_remote();
             } else {
                 let cmd = app_core.skill_trainer_reload_command();
-                push_dispatch_request(dispatch_command(app_core, connection, cmd), session_requests);
+                push_dispatch_request(
+                    dispatch_command(app_core, connection, cmd),
+                    session_requests,
+                );
                 // Loading state pushes immediately; the loaded page follows
                 // via poll_skill_trainer once the worker parses it.
                 app_core.push_skill_trainer_remote();
@@ -1615,8 +2410,17 @@ fn handle_remote_event(
             true
         }
         RemoteEvent::SkillTrainerReload => {
+            if !game_commands_allowed {
+                app_core.add_system_message(
+                    "Waiting for Lich to confirm the configured character; GOALS not sent.",
+                );
+                return true;
+            }
             let cmd = app_core.skill_trainer_reload_command();
-            push_dispatch_request(dispatch_command(app_core, connection, cmd), session_requests);
+            push_dispatch_request(
+                dispatch_command(app_core, connection, cmd),
+                session_requests,
+            );
             app_core.push_skill_trainer_remote();
             true
         }
@@ -1626,6 +2430,12 @@ fn handle_remote_event(
             true
         }
         RemoteEvent::SkillTrainerApply => {
+            if !game_commands_allowed {
+                app_core.add_system_message(
+                    "Waiting for Lich to confirm the configured character; skill goals not submitted.",
+                );
+                return true;
+            }
             app_core.skill_trainer_apply();
             app_core.push_skill_trainer_remote();
             true
@@ -1699,6 +2509,7 @@ fn handle_server_message(app_core: &mut AppCore, msg: ServerMessage) -> bool {
         ServerMessage::Disconnected => {
             tracing::info!("Disconnected from game server");
             app_core.game_state.connected = false;
+            app_core.clear_pending_goals_launches();
             false
         }
     }
@@ -1709,14 +2520,62 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::data::UiAction;
+    use tokio::sync::mpsc::error::TryRecvError;
 
     fn app() -> AppCore {
         AppCore::new(Config::default()).expect("AppCore")
     }
 
+    fn lich_supervisor(expected: Option<&str>) -> Supervisor {
+        Supervisor {
+            direct: None,
+            login_key: None,
+            lich_configured: true,
+            lich_target: Some(LichTarget {
+                host: "127.0.0.1".to_string(),
+                port: 8000,
+            }),
+            connection: None,
+            reconnect_attempt: 0,
+            reconnect_at: None,
+            user_disconnected: false,
+            saw_input_since_connect: false,
+            unattended_losses: 0,
+            phase_started: None,
+            first_text_seen: false,
+            game_disconnect_seen: false,
+            character: expected.map(str::to_string),
+            expected_character: expected.map(str::to_string),
+            identity_confirmed: expected.is_none(),
+            identity_probe_sent: false,
+            post_connect_commands_sent: false,
+            terminal_connection_error: None,
+            game: None,
+        }
+    }
+
+    fn test_connection() -> (
+        Connection,
+        mpsc::UnboundedReceiver<String>,
+        mpsc::Sender<ServerMessage>,
+    ) {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (server_tx, server_rx) = mpsc::channel(8);
+        let task = tokio::spawn(std::future::pending::<Result<()>>());
+        (
+            Connection {
+                command_tx,
+                server_rx,
+                task,
+            },
+            command_rx,
+            server_tx,
+        )
+    }
+
     #[test]
     fn local_web_url_requires_the_actual_port_and_preserves_the_route() {
-        let endpoint = RemoteLaunchEndpoint::new(8041, "abc".to_string());
+        let endpoint = RemoteLaunchEndpoint::new("127.0.0.1".to_string(), 8041, "abc".to_string());
         assert_eq!(
             local_web_client_url(&endpoint, "despana"),
             "http://127.0.0.1:8041/despana#token=abc"
@@ -1725,15 +2584,21 @@ mod tests {
             local_web_client_url(&endpoint, "play"),
             "http://127.0.0.1:8041/play#token=abc"
         );
+
+        let ipv6 = RemoteLaunchEndpoint::new("::1".to_string(), 8042, "def".to_string());
+        assert_eq!(
+            local_web_client_url(&ipv6, "despana"),
+            "http://[::1]:8042/despana#token=def"
+        );
     }
 
     #[test]
     fn ordinary_headless_does_not_auto_attach_lich_or_open_a_browser() {
         let launch = super::super::HeadlessLaunchOptions::default();
 
-        assert!(!lich_session_configured(None, launch));
+        assert!(!lich_session_configured(None, &launch));
         assert_eq!(launch.web_client, None);
-        assert!(lich_session_configured(Some("one-shot-key"), launch));
+        assert!(lich_session_configured(Some("one-shot-key"), &launch));
     }
 
     #[test]
@@ -1741,14 +2606,118 @@ mod tests {
         let launch = super::super::HeadlessLaunchOptions {
             auto_connect_lich: true,
             web_client: Some(crate::config::profiles::LaunchWebClient::Despana),
+            startup_identity: None,
         };
 
-        assert!(lich_session_configured(None, launch));
+        assert!(lich_session_configured(None, &launch));
+    }
+
+    #[tokio::test]
+    async fn explicit_exit_sends_one_quit_and_waits_for_authoritative_disconnect() {
+        let mut core = app();
+        core.game_state.connected = true;
+        let mut supervisor = lich_supervisor(None);
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+        let mut lifecycle = SessionExitLifecycle::new();
+        lifecycle.request_exit();
+
+        progress_exit_logout(&mut core, &mut supervisor, &mut lifecycle);
+        assert_eq!(command_rx.try_recv().as_deref(), Ok("quit"));
+        assert!(core.running, "sending quit alone must not stop the child");
+        progress_exit_logout(&mut core, &mut supervisor, &mut lifecycle);
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Empty));
+
+        process_connection_message(&mut core, &mut supervisor, ServerMessage::Disconnected);
+        assert!(finish_exit_on_authoritative_disconnect(
+            &mut core,
+            &supervisor,
+            &lifecycle,
+        ));
+        assert!(!core.running);
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[tokio::test]
+    async fn exit_waits_for_matching_lich_identity_before_sending_quit() {
+        let mut core = app();
+        let mut supervisor = lich_supervisor(Some("Aster"));
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+        let mut lifecycle = SessionExitLifecycle::new();
+        lifecycle.request_exit();
+
+        // Merely having a connection task is not proof that the game is
+        // active or disconnected; wait for its authoritative messages.
+        progress_exit_logout(&mut core, &mut supervisor, &mut lifecycle);
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Empty));
+        assert!(core.running);
+
+        core.game_state.connected = true;
+        progress_exit_logout(&mut core, &mut supervisor, &mut lifecycle);
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Empty));
+
+        process_connection_message(
+            &mut core,
+            &mut supervisor,
+            ServerMessage::Text(r#"<app char="aster" game="GS" title="[GSIV: aster]"/>"#.into()),
+        );
+        progress_exit_logout(&mut core, &mut supervisor, &mut lifecycle);
+        assert_eq!(command_rx.try_recv().as_deref(), Ok("quit"));
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[tokio::test]
+    async fn exit_requested_after_disconnect_message_stops_without_sending_quit() {
+        let mut core = app();
+        core.game_state.connected = true;
+        let mut supervisor = lich_supervisor(None);
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+        process_connection_message(&mut core, &mut supervisor, ServerMessage::Disconnected);
+
+        let mut lifecycle = SessionExitLifecycle::new();
+        lifecycle.request_exit();
+        progress_exit_logout(&mut core, &mut supervisor, &mut lifecycle);
+
+        assert!(!core.running);
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Empty));
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[tokio::test]
+    async fn exit_then_command_in_one_batch_never_reaches_the_socket() {
+        let mut core = app();
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        let mut requests = Vec::new();
+
+        handle_remote_event(
+            &mut core,
+            Some(&connection),
+            true,
+            crate::core::remote::RemoteEvent::SessionExitLogout,
+            &mut requests,
+        );
+        assert!(session_requests_block_commands(&requests));
+        handle_remote_event(
+            &mut core,
+            None,
+            false,
+            crate::core::remote::RemoteEvent::Command {
+                client_id: 1,
+                text: "look".to_string(),
+            },
+            &mut requests,
+        );
+
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Empty));
+        connection.task.abort();
     }
 
     #[test]
     fn despana_open_uses_the_authoritative_endpoint_and_failure_is_nonfatal() {
-        let endpoint = RemoteLaunchEndpoint::new(8057, "secret".to_string());
+        let endpoint =
+            RemoteLaunchEndpoint::new("127.0.0.1".to_string(), 8057, "secret".to_string());
         let mut opened = String::new();
 
         let opened_ok = open_local_web_client_with(
@@ -1762,6 +2731,727 @@ mod tests {
 
         assert!(!opened_ok);
         assert_eq!(opened, "http://127.0.0.1:8057/despana#token=secret");
+    }
+
+    #[tokio::test]
+    async fn despana_typed_goals_launch_url_is_addressed_to_its_browser() {
+        let mut core = AppCore::new_for_test();
+        let (sink, handles, _event_rx) = crate::core::remote::RemoteSink::new(8);
+        let mut delta_rx = handles.delta_tx.subscribe();
+        core.enable_remote(sink);
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        let mut requests = Vec::new();
+
+        assert!(handle_remote_event(
+            &mut core,
+            Some(&connection),
+            true,
+            crate::core::remote::RemoteEvent::Command {
+                client_id: 41,
+                text: "GOALS".to_string(),
+            },
+            &mut requests,
+        ));
+        assert_eq!(command_rx.try_recv().as_deref(), Ok("GOALS"));
+        assert!(!core.ui_state.skill_trainer.open);
+
+        let launch_url = "/gs4/play/cm/loader.asp?ticket=despana-browser-test";
+        core.process_server_data(&format!("<LaunchURL src='{launch_url}'/>"))
+            .expect("parse game LaunchURL response");
+        assert_eq!(
+            core.message_processor
+                .pending_launch_urls
+                .front()
+                .map(String::as_str),
+            Some(launch_url),
+            "the game LaunchURL must reach the action router"
+        );
+        core.poll_skill_trainer();
+
+        let expected_url = format!("https://www.play.net{launch_url}");
+        let addressed = std::iter::from_fn(|| delta_rx.try_recv().ok()).find_map(|delta| {
+            if let crate::core::remote::RemoteDelta::OpenUrl { client_id, url } = delta {
+                Some((client_id, url))
+            } else {
+                None
+            }
+        });
+        assert_eq!(addressed, Some((41, expected_url)));
+        connection.task.abort();
+    }
+
+    #[tokio::test]
+    async fn browser_goals_web_stays_external_but_never_uses_the_host_opener() {
+        let mut core = AppCore::new_for_test();
+        let (sink, handles, _event_rx) = crate::core::remote::RemoteSink::new(8);
+        let mut delta_rx = handles.delta_tx.subscribe();
+        core.enable_remote(sink);
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        let mut requests = Vec::new();
+
+        assert!(handle_remote_event(
+            &mut core,
+            Some(&connection),
+            true,
+            crate::core::remote::RemoteEvent::Command {
+                client_id: 41,
+                text: "GOALS web".to_string(),
+            },
+            &mut requests,
+        ));
+
+        assert_eq!(command_rx.try_recv().as_deref(), Ok("goals"));
+        let launch_url = "/gs4/play/cm/loader.asp?ticket=goals-web-test";
+        core.process_server_data(&format!("<LaunchURL src='{launch_url}'/>"))
+            .expect("parse game LaunchURL response");
+        core.poll_skill_trainer();
+        let addressed = std::iter::from_fn(|| delta_rx.try_recv().ok()).find_map(|delta| {
+            if let crate::core::remote::RemoteDelta::OpenUrl { client_id, url } = delta {
+                Some((client_id, url))
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            addressed,
+            Some((41, format!("https://www.play.net{launch_url}")))
+        );
+        connection.task.abort();
+    }
+
+    #[test]
+    fn lich_feed_for_another_character_is_rejected_case_insensitively() {
+        assert_eq!(
+            character_identity_mismatch(Some("Aster"), Some("Briar")),
+            Some(("Aster".to_string(), "Briar".to_string()))
+        );
+        assert_eq!(
+            character_identity_mismatch(Some("Aster"), Some("aster")),
+            None
+        );
+        assert_eq!(character_identity_mismatch(Some("Aster"), None), None);
+    }
+
+    #[tokio::test]
+    async fn configured_lich_commands_wait_for_matching_app_identity() {
+        let mut core = app();
+        let mut supervisor = lich_supervisor(Some("Aster"));
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+
+        process_connection_message(&mut core, &mut supervisor, ServerMessage::Connected);
+        assert!(core.game_state.connected, "transport itself is connected");
+        assert!(!supervisor.identity_confirmed);
+        assert!(supervisor.command_connection().is_none());
+        assert_eq!(
+            command_rx.try_recv().as_deref(),
+            Ok("_info character"),
+            "only the identity probe may bypass verification"
+        );
+
+        dispatch_command(
+            &mut core,
+            supervisor.command_connection(),
+            "look".to_string(),
+        );
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Empty));
+
+        process_connection_message(
+            &mut core,
+            &mut supervisor,
+            ServerMessage::Text(r#"<app char="aster" game="GS" title="[GSIV: aster]"/>"#.into()),
+        );
+        assert!(supervisor.identity_confirmed);
+        assert_eq!(core.game_state.character_name.as_deref(), Some("aster"));
+
+        dispatch_command(
+            &mut core,
+            supervisor.command_connection(),
+            "look".to_string(),
+        );
+        assert_eq!(command_rx.try_recv().as_deref(), Ok("look"));
+
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[tokio::test]
+    async fn late_lich_attach_probes_once_and_accepts_character_sheet_identity() {
+        let mut core = app();
+        let mut supervisor = lich_supervisor(Some("Aster"));
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+        supervisor.phase_started = Some(Instant::now() - Duration::from_secs(60));
+
+        // A detachable client that joins an already-running Lich session gets
+        // the cached gauges/compass but no <app char=...>. Vellum must ask for
+        // identity through its one narrowly allowed pre-verification command.
+        process_connection_message(&mut core, &mut supervisor, ServerMessage::Connected);
+        assert_eq!(command_rx.try_recv().as_deref(), Ok("_info character"));
+        assert!(
+            supervisor.phase_started.unwrap().elapsed() < Duration::from_secs(1),
+            "the identity response receives a fresh timeout window"
+        );
+        process_connection_message(
+            &mut core,
+            &mut supervisor,
+            ServerMessage::Text("<progressBar id='health' value='100' text='100 / 100'/>".into()),
+        );
+        assert!(
+            connection_bootstrap_pending(&supervisor),
+            "Lich's partial detachable replay must not disable identity recovery"
+        );
+        process_connection_message(
+            &mut core,
+            &mut supervisor,
+            ServerMessage::Text(
+                "Name: Aster Moon Race: Half-Elf  Profession: Ranger (shown as: Hero)".into(),
+            ),
+        );
+        process_connection_message(
+            &mut core,
+            &mut supervisor,
+            ServerMessage::Text("<prompt time='1'>&gt;</prompt>".into()),
+        );
+
+        assert!(supervisor.identity_confirmed);
+        assert_eq!(core.game_state.character_name.as_deref(), Some("Aster"));
+        assert!(supervisor.command_connection().is_some());
+
+        // Further traffic must not emit duplicate probes.
+        process_connection_message(
+            &mut core,
+            &mut supervisor,
+            ServerMessage::Text("Gender: Male    Age: 42    Level: 90".into()),
+        );
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Empty));
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[test]
+    fn connection_reset_discards_uncommitted_identity_from_prior_transport() {
+        let mut core = app();
+        core.process_server_data(
+            "Name: Aster Moon Race: Half-Elf  Profession: Ranger (shown as: Hero)",
+        )
+        .expect("buffer prior identity line");
+
+        reset_connection_observations(&mut core);
+        core.process_server_data("<prompt time='1'>&gt;</prompt>")
+            .expect("commit next generation prompt");
+
+        assert_eq!(core.game_state.character.observed_name(), None);
+        let mut supervisor = lich_supervisor(Some("Aster"));
+        assert!(matches!(
+            check_character_identity(&mut supervisor, &mut core),
+            IdentityCheck::Pending
+        ));
+        assert!(!supervisor.identity_confirmed);
+    }
+
+    #[tokio::test]
+    async fn verified_lich_attach_quietly_bootstraps_unknown_identity_once() {
+        let mut core = app();
+        let mut supervisor = lich_supervisor(Some("Aster"));
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+
+        process_connection_message(&mut core, &mut supervisor, ServerMessage::Connected);
+        initialize_lich_session_if_ready(&mut core, &mut supervisor);
+        assert_eq!(command_rx.try_recv().as_deref(), Ok("_info character"));
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Empty));
+
+        process_connection_message(
+            &mut core,
+            &mut supervisor,
+            ServerMessage::Text(r#"<app char="aster" game="GS" title="[GSIV: aster]"/>"#.into()),
+        );
+        initialize_lich_session_if_ready(&mut core, &mut supervisor);
+
+        let commands: Vec<String> = std::iter::from_fn(|| command_rx.try_recv().ok()).collect();
+        assert_eq!(
+            commands,
+            ["look"],
+            "the pre-verification sheet probe is not duplicated; an unknown late-attach room is refreshed once"
+        );
+
+        initialize_lich_session_if_ready(&mut core, &mut supervisor);
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Empty));
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[tokio::test]
+    async fn verified_lich_attach_skips_identity_bootstrap_when_cache_is_complete() {
+        let mut core = app();
+        core.game_state
+            .character
+            .parse_line("Profession: Wizard   Level: 90");
+        let mut supervisor = lich_supervisor(None);
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+
+        process_connection_message(&mut core, &mut supervisor, ServerMessage::Connected);
+        initialize_lich_session_if_ready(&mut core, &mut supervisor);
+
+        let commands: Vec<String> = std::iter::from_fn(|| command_rx.try_recv().ok()).collect();
+        assert!(
+            commands
+                .iter()
+                .all(|command| command.trim() != "_info character"),
+            "complete cached identity must not trigger a refresh: {commands:?}"
+        );
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[tokio::test]
+    async fn verified_lich_attach_does_not_look_when_live_room_is_known() {
+        let mut core = app();
+        core.nav_room_id = Some("1234".to_string());
+        core.game_state
+            .character
+            .parse_line("Profession: Wizard   Level: 90");
+        let mut supervisor = lich_supervisor(None);
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+
+        process_connection_message(&mut core, &mut supervisor, ServerMessage::Connected);
+        initialize_lich_session_if_ready(&mut core, &mut supervisor);
+
+        let commands: Vec<String> = std::iter::from_fn(|| command_rx.try_recv().ok()).collect();
+        assert!(
+            commands.iter().all(|command| command.trim() != "look"),
+            "a known live room must not trigger a duplicate LOOK: {commands:?}"
+        );
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[tokio::test]
+    async fn new_connection_generation_refreshes_a_room_known_only_by_prior_transport() {
+        let mut core = app();
+        core.nav_room_id = Some("1234".to_string());
+        core.lich_room_id = Some("5678".to_string());
+        core.room_subtitle = Some("Prior Room".to_string());
+        reset_connection_observations(&mut core);
+
+        let mut supervisor = lich_supervisor(None);
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+        process_connection_message(&mut core, &mut supervisor, ServerMessage::Connected);
+        initialize_lich_session_if_ready(&mut core, &mut supervisor);
+
+        let commands: Vec<String> = std::iter::from_fn(|| command_rx.try_recv().ok()).collect();
+        assert!(
+            commands.iter().any(|command| command == "look"),
+            "a new transport cannot trust the previous generation's room: {commands:?}"
+        );
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[test]
+    fn live_room_gate_uses_app_core_room_identity() {
+        let mut core = app();
+        assert!(!live_room_known(&core));
+
+        // These legacy fields are not the authoritative room identity used by
+        // Vellum's headless/web state path.
+        core.game_state.room_id = Some("1234".to_string());
+        core.game_state.room_name = Some("Legacy Room".to_string());
+        assert!(!live_room_known(&core));
+
+        core.lich_room_id = Some("5678".to_string());
+        assert!(live_room_known(&core));
+        core.lich_room_id = None;
+        core.room_subtitle = Some("Known Room".to_string());
+        assert!(live_room_known(&core));
+    }
+
+    #[tokio::test]
+    async fn blocked_preverification_macro_cannot_queue_a_delayed_game_command() {
+        let mut core = app();
+        let mut requests = Vec::new();
+
+        handle_remote_event(
+            &mut core,
+            None,
+            false,
+            crate::core::remote::RemoteEvent::Command {
+                client_id: 1,
+                text: "north\rs0.001\rsouth".to_string(),
+            },
+            &mut requests,
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        assert!(core.take_outbound().is_empty());
+        assert!(requests.is_empty());
+    }
+
+    #[tokio::test]
+    async fn disconnect_then_command_in_one_batch_never_reaches_the_socket() {
+        let mut core = app();
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        let mut requests = Vec::new();
+
+        handle_remote_event(
+            &mut core,
+            Some(&connection),
+            true,
+            crate::core::remote::RemoteEvent::SessionDisconnect,
+            &mut requests,
+        );
+        assert!(session_requests_block_commands(&requests));
+        handle_remote_event(
+            &mut core,
+            None,
+            false,
+            crate::core::remote::RemoteEvent::Command {
+                client_id: 1,
+                text: "look".to_string(),
+            },
+            &mut requests,
+        );
+
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Empty));
+        connection.task.abort();
+    }
+
+    #[tokio::test]
+    async fn mismatched_app_aborts_only_the_vellum_socket_without_sending_quit() {
+        let mut core = app();
+        let mut supervisor = lich_supervisor(Some("Aster"));
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+
+        process_connection_message(&mut core, &mut supervisor, ServerMessage::Connected);
+        process_connection_message(
+            &mut core,
+            &mut supervisor,
+            ServerMessage::Text(r#"<app char="Briar" game="GS" title="[GSIV: Briar]"/>"#.into()),
+        );
+
+        assert!(supervisor.connection.is_none());
+        assert!(supervisor.user_disconnected);
+        assert!(!core.game_state.connected);
+        assert_eq!(core.game_state.character_name.as_deref(), Some("Briar"));
+        assert_eq!(command_rx.try_recv().as_deref(), Ok("_info character"));
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Disconnected));
+    }
+
+    #[tokio::test]
+    async fn mismatched_character_sheet_identity_never_sends_quit() {
+        let mut core = app();
+        let mut supervisor = lich_supervisor(Some("Aster"));
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+
+        process_connection_message(&mut core, &mut supervisor, ServerMessage::Connected);
+        assert_eq!(command_rx.try_recv().as_deref(), Ok("_info character"));
+        process_connection_message(
+            &mut core,
+            &mut supervisor,
+            ServerMessage::Text(
+                "Name: Briar Rose Race: Human  Profession: Empath (shown as: Healer)".into(),
+            ),
+        );
+        process_connection_message(
+            &mut core,
+            &mut supervisor,
+            ServerMessage::Text("<prompt time='1'>&gt;</prompt>".into()),
+        );
+
+        assert!(supervisor.connection.is_none());
+        assert!(supervisor.user_disconnected);
+        assert!(!core.game_state.connected);
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Disconnected));
+    }
+
+    #[tokio::test]
+    async fn partial_lich_replay_stays_under_the_identity_watchdog() {
+        let mut supervisor = lich_supervisor(Some("Aster"));
+        let (connection, _command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+        supervisor.first_text_seen = true;
+
+        assert!(connection_bootstrap_pending(&supervisor));
+        supervisor.identity_confirmed = true;
+        assert!(!connection_bootstrap_pending(&supervisor));
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[tokio::test]
+    async fn partial_lich_replay_times_out_even_after_receiving_text() {
+        let mut supervisor = lich_supervisor(Some("Aster"));
+        let (connection, _command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+        supervisor.first_text_seen = true;
+        supervisor.phase_started =
+            Some(Instant::now() - CONNECTION_STALL_TIMEOUT - Duration::from_secs(1));
+
+        assert!(connection_bootstrap_stalled(&supervisor));
+        supervisor.identity_confirmed = true;
+        assert!(!connection_bootstrap_stalled(&supervisor));
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[tokio::test]
+    async fn terminal_identity_timeout_cannot_enter_reconnect_loop() {
+        let mut core = app();
+        let mut supervisor = lich_supervisor(Some("Aster"));
+        let (connection, _command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+        supervisor.terminal_connection_error = Some("identity timed out".to_string());
+        let connection = supervisor.connection.take().unwrap();
+        connection.task.abort();
+        let result = connection.task.await;
+        let mut quit_deadline = None;
+
+        process_connection_end(&mut core, &mut supervisor, result, &mut quit_deadline);
+
+        assert!(supervisor.connection.is_none());
+        assert!(supervisor.reconnect_at.is_none());
+        assert_eq!(supervisor.reconnect_attempt, 0);
+        assert!(supervisor.terminal_connection_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn launcher_can_stop_identity_pending_socket_without_game_command() {
+        let mut core = app();
+        core.game_state.connected = true;
+        let mut supervisor = lich_supervisor(Some("Aster"));
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+
+        assert!(stop_inactive_session(&mut core, &mut supervisor));
+        assert!(!core.running);
+        assert!(supervisor.connection.is_none());
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Disconnected));
+    }
+
+    #[tokio::test]
+    async fn launcher_cannot_stop_verified_connection_without_exit_logout() {
+        let mut core = app();
+        core.game_state.connected = true;
+        let mut supervisor = lich_supervisor(Some("Aster"));
+        supervisor.identity_confirmed = true;
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+
+        assert!(!stop_inactive_session(&mut core, &mut supervisor));
+        assert!(core.running);
+        assert!(supervisor.connection.is_some());
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Empty));
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_replacement_connection_cannot_receive_the_old_generations_queue() {
+        let (old_connection, _old_commands, old_server_tx) = test_connection();
+        old_server_tx
+            .send(ServerMessage::Text("old generation".to_string()))
+            .await
+            .unwrap();
+
+        let (mut current, _current_commands, current_server_tx) = test_connection();
+        old_connection.task.abort();
+        drop(old_connection);
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), current.next_event())
+                .await
+                .is_err(),
+            "the old connection's queued text must not appear on the new receiver"
+        );
+
+        current_server_tx
+            .send(ServerMessage::Text("current generation".to_string()))
+            .await
+            .unwrap();
+        match current.next_event().await {
+            ConnectionEvent::Message(ServerMessage::Text(text)) => {
+                assert_eq!(text, "current generation")
+            }
+            _ => panic!("expected current-generation text"),
+        }
+        current.task.abort();
+    }
+
+    fn launcher_owned_lich_identity(
+        character: &str,
+        host: &str,
+        port: u16,
+    ) -> crate::core::session_registry::SessionLaunchIdentity {
+        crate::core::session_registry::SessionLaunchIdentity {
+            profile: character.to_string(),
+            character: character.to_string(),
+            connection: crate::core::session_registry::SessionConnectionIdentity::Lich {
+                host: crate::core::session_registry::normalize_host(host),
+                port,
+            },
+        }
+    }
+
+    fn inline_lich_connect(character: &str, host: &str, port: u16) -> SessionRequest {
+        SessionRequest::Connect {
+            profile: None,
+            account: None,
+            password: None,
+            character: Some(character.to_string()),
+            game: None,
+            save_password: false,
+            profile_name: None,
+            lich_host: Some(host.to_string()),
+            lich_port: Some(port),
+            custom_launch: None,
+        }
+    }
+
+    #[test]
+    fn launcher_owned_connect_accepts_only_its_startup_character_and_connection() {
+        let startup = launcher_owned_lich_identity("Calvix", "127.0.0.1", 8000);
+
+        assert!(owned_connect_matches_startup(
+            &inline_lich_connect("calvix", "localhost", 8000),
+            &startup,
+        )
+        .unwrap());
+        assert!(!owned_connect_matches_startup(
+            &inline_lich_connect("Rabki", "localhost", 8000),
+            &startup,
+        )
+        .unwrap());
+        assert!(!owned_connect_matches_startup(
+            &inline_lich_connect("Calvix", "localhost", 8001),
+            &startup,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn launcher_owned_connect_rechecks_the_resolved_target() {
+        use crate::core::session_registry::{SessionConnectionIdentity, SessionLaunchIdentity};
+
+        let lich_startup = launcher_owned_lich_identity("Calvix", "127.0.0.1", 8000);
+        let matching_lich = ResolvedConnect::Lich {
+            target: LichTarget {
+                host: "localhost".to_string(),
+                port: 8000,
+            },
+            character: Some("calvix".to_string()),
+            custom_launch: None,
+        };
+        let changed_lich = ResolvedConnect::Lich {
+            target: LichTarget {
+                host: "localhost".to_string(),
+                port: 8001,
+            },
+            character: Some("Calvix".to_string()),
+            custom_launch: None,
+        };
+        assert!(owned_resolved_connect_matches_startup(
+            &matching_lich,
+            &lich_startup
+        ));
+        assert!(!owned_resolved_connect_matches_startup(
+            &changed_lich,
+            &lich_startup
+        ));
+
+        let direct_startup = SessionLaunchIdentity {
+            profile: "Calvix direct".to_string(),
+            character: "Calvix".to_string(),
+            connection: SessionConnectionIdentity::Direct {
+                game: "prime".to_string(),
+                account: "calx".to_string(),
+            },
+        };
+        let matching_direct = ResolvedConnect::Direct(DirectConnectConfig {
+            account: "CALX".to_string(),
+            password: "not-used".to_string(),
+            character: "calvix".to_string(),
+            game_code: "GS3".to_string(),
+            data_dir: std::path::PathBuf::new(),
+        });
+        assert!(owned_resolved_connect_matches_startup(
+            &matching_direct,
+            &direct_startup
+        ));
+    }
+
+    #[test]
+    fn launcher_owned_dot_launch_accepts_only_its_startup_character_and_connection() {
+        let startup = launcher_owned_lich_identity("Calvix", "127.0.0.1", 8000);
+        let same = crate::launcher::config::ResolvedLaunch {
+            program: "ruby".to_string(),
+            args: Vec::new(),
+            attach_host: "localhost".to_string(),
+            attach_port: 8000,
+        };
+        let other_port = crate::launcher::config::ResolvedLaunch {
+            attach_port: 8001,
+            ..same.clone()
+        };
+
+        assert!(owned_launch_matches_startup("calvix", &same, &startup));
+        assert!(!owned_launch_matches_startup("Rabki", &same, &startup));
+        assert!(!owned_launch_matches_startup(
+            "Calvix",
+            &other_port,
+            &startup
+        ));
+    }
+
+    #[tokio::test]
+    async fn identity_pending_allows_local_exit_without_sending_or_queueing_game_output() {
+        let mut core = app();
+        let (connection, mut command_rx, _server_tx) = test_connection();
+        let mut requests = Vec::new();
+
+        handle_remote_event(
+            &mut core,
+            Some(&connection),
+            false,
+            crate::core::remote::RemoteEvent::Command {
+                client_id: 1,
+                text: ".exit".to_string(),
+            },
+            &mut requests,
+        );
+
+        assert!(!core.running);
+        assert_eq!(command_rx.try_recv(), Err(TryRecvError::Empty));
+        assert!(core.take_outbound().is_empty());
+        assert!(requests.is_empty());
+        connection.task.abort();
+    }
+
+    #[test]
+    fn identity_pending_blocks_skill_apply_and_webui_handshake_output() {
+        let mut core = app();
+        core.ui_state.skill_trainer.data = Some(crate::data::skill_trainer::SkillGoals::default());
+        let mut requests = Vec::new();
+
+        handle_remote_event(
+            &mut core,
+            None,
+            false,
+            crate::core::remote::RemoteEvent::SkillTrainerApply,
+            &mut requests,
+        );
+        handle_remote_event(
+            &mut core,
+            None,
+            false,
+            crate::core::remote::RemoteEvent::WebUiSubscribe {
+                page: "bigshot".to_string(),
+            },
+            &mut requests,
+        );
+
+        assert_eq!(
+            core.ui_state.skill_trainer.status,
+            crate::data::skill_trainer::TrainerStatus::Idle
+        );
+        assert!(core.take_webui_pending_raw().is_empty());
+        assert!(requests.is_empty());
     }
 
     /// `.reconnect` from the phone must ask the supervisor to reconnect — the

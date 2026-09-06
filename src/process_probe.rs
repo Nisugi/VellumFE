@@ -67,19 +67,47 @@ fn lich_install_dir_from_argv(args: &[String], cwd: Option<&Path>) -> Option<Pat
 /// the process table once per call; asking pid-by-pid would rescan for each.
 #[cfg(feature = "desktop")]
 pub fn live_pids(pids: &[u32]) -> std::collections::HashSet<u32> {
-    use std::sync::Mutex;
     // One System, reused: this runs on a 5-second discovery poll for the
     // app's whole lifetime, and the old shape built a fresh System and
     // walked the ENTIRE process table each call to answer "are these five
     // pids alive". refresh_process is O(asked pids) and its return value is
     // the liveness answer.
+    with_process_system(|system| {
+        pids.iter()
+            .copied()
+            .filter(|pid| system.refresh_process(sysinfo::Pid::from_u32(*pid)))
+            .collect()
+    })
+}
+
+/// Return the OS process start time for `pid`, in seconds since boot.
+///
+/// A registry entry records this alongside the PID.  Comparing both prevents
+/// a crashed session entry from becoming "live" again if the operating system
+/// later reuses its numeric PID for an unrelated process.
+#[cfg(feature = "desktop")]
+pub fn process_start_time(pid: u32) -> Option<u64> {
+    with_process_system(|system| {
+        let pid = sysinfo::Pid::from_u32(pid);
+        if system.refresh_process(pid) {
+            system.process(pid).map(sysinfo::Process::start_time)
+        } else {
+            None
+        }
+    })
+}
+
+#[cfg(feature = "desktop")]
+fn with_process_system<T>(f: impl FnOnce(&mut sysinfo::System) -> T) -> T {
+    use std::sync::Mutex;
     static SYSTEM: Mutex<Option<sysinfo::System>> = Mutex::new(None);
     let mut guard = SYSTEM.lock().expect("process probe poisoned");
-    let system = guard.get_or_insert_with(sysinfo::System::new);
-    pids.iter()
-        .copied()
-        .filter(|pid| system.refresh_process(sysinfo::Pid::from_u32(*pid)))
-        .collect()
+    f(guard.get_or_insert_with(sysinfo::System::new))
+}
+
+#[cfg(not(feature = "desktop"))]
+pub fn process_start_time(pid: u32) -> Option<u64> {
+    (pid == std::process::id()).then_some(0)
 }
 
 /// Without process inspection (Android runs as a single-process app), only

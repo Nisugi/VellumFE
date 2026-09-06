@@ -1423,6 +1423,7 @@ impl MessageProcessor {
                 // Update GS4 experience state for expr dialog elements
                 if id == "yourLvl" {
                     game_state.gs4_experience.update_level(value.clone());
+                    game_state.character.observe_level(value);
                 }
                 // Training points + conversion rates ride the same dialog.
                 game_state.gs4_experience.update_tp_label(id, value);
@@ -2342,7 +2343,7 @@ impl MessageProcessor {
                 // opens in the system browser as before.
                 self.chunk_has_silent_updates = true;
                 tracing::info!("LaunchURL received: {}", url);
-                self.pending_launch_url = Some(url.clone());
+                self.pending_launch_urls.push_back(url.clone());
             }
             ParsedElement::WindowHints { id, attrs } => {
                 // Always-ingest, like the dialog store: the latest

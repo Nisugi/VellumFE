@@ -149,9 +149,15 @@ pub struct AppCore {
     /// Native skill trainer: off-thread fetch/submit of the play.net web
     /// skill manager, polled each frame like the jinx worker.
     pub skill_trainer_worker: crate::core::skill_trainer::SkillTrainerWorker,
-    /// Set when the user sends GOALS: the next LaunchURL within the window
-    /// belongs to the trainer instead of the system browser.
-    pub skill_trainer_armed: Option<std::time::Instant>,
+    /// Ordered presentation targets for GOALS replies. The game returns one
+    /// LaunchURL per command, in command order, so preserving that order is
+    /// what keeps simultaneous browser tabs and native clients isolated.
+    pub(super) pending_goals_launches:
+        std::collections::VecDeque<super::skill_goals::PendingGoalsLaunch>,
+    /// Presentation target prepared while resolving one outbound GOALS
+    /// command. It moves into `pending_goals_launches` only after the owning
+    /// frontend confirms that exact command reached its network queue.
+    pub(super) staged_goals_launch: Option<super::skill_goals::GoalsLaunchTarget>,
     /// Auto-clear deadlines for highlight-set custom statuses (UPPERCASE
     /// id -> when it switches back off).
     pub custom_status_expiries: std::collections::HashMap<String, std::time::Instant>,
@@ -469,7 +475,8 @@ impl AppCore {
             map_updater: crate::core::mapdb_update::MapDbUpdater::new(temp.join("mapdb")),
             jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             skill_trainer_worker: Default::default(),
-            skill_trainer_armed: None,
+            pending_goals_launches: std::collections::VecDeque::new(),
+            staged_goals_launch: None,
             custom_status_expiries: std::collections::HashMap::new(),
             alerts: crate::core::alerts::AlertState::new(),
             alert_packs: Vec::new(),
@@ -679,7 +686,8 @@ impl AppCore {
             ),
             jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             skill_trainer_worker: Default::default(),
-            skill_trainer_armed: None,
+            pending_goals_launches: std::collections::VecDeque::new(),
+            staged_goals_launch: None,
             custom_status_expiries: std::collections::HashMap::new(),
             alerts: crate::core::alerts::AlertState::new(),
             alert_packs: Vec::new(),

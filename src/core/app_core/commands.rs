@@ -258,6 +258,10 @@ fn percent_encode_query(value: &str) -> String {
 impl AppCore {
     /// Send command to server
     pub fn send_command(&mut self, command: String) -> Result<CommandOutcome> {
+        // A presentation target belongs only to the command currently being
+        // resolved. Frontends either commit it after a successful network
+        // enqueue or roll it back through `finish_game_command_send`.
+        self.staged_goals_launch = None;
         // Macro sleep segments: `look\rs2.5\rhide` pauses 2.5s between the
         // commands (paused segments go out via take_outbound when due).
         // Only strings containing a sleep segment take this path — plain
@@ -286,12 +290,12 @@ impl AppCore {
 
         // A hand-typed GOALS gets the native trainer too: the reply's
         // LaunchURL is claimed by the panel instead of the system browser.
-        // `goals web` opts out — send it through disarmed to the browser.
+        // `goals web` records the host browser as its presentation target.
         let trimmed = command.trim();
         if trimmed.eq_ignore_ascii_case("goals") {
             self.arm_skill_trainer();
         } else if trimmed.eq_ignore_ascii_case("goals web") {
-            self.skill_trainer_armed = None;
+            self.arm_goals_host_browser();
             return Ok(CommandOutcome::Game("goals".to_string()));
         }
 
@@ -2393,15 +2397,13 @@ impl AppCore {
 
             // Native skill trainer: opens the cached panel, or sends GOALS
             // to the game and captures the LaunchURL reply for a fresh page.
-            // `.goals refresh` always re-fetches; `.goals web` explicitly
-            // sends GOALS WITHOUT arming, so the LaunchURL falls through to
-            // the system browser (the original play.net web manager).
+            // `.goals refresh` always re-fetches; `.goals web` records the
+            // host browser as the LaunchURL target (the original play.net
+            // web manager).
             "goals" => {
                 let arg = parts.get(1).map(|s| s.to_lowercase());
                 if arg.as_deref() == Some("web") {
-                    // Leave the trainer disarmed: the reply's LaunchURL opens
-                    // in the browser, exactly as it did before this feature.
-                    self.skill_trainer_armed = None;
+                    self.arm_goals_host_browser();
                     return Ok(CommandOutcome::Game("goals".to_string()));
                 }
                 let refresh = arg.as_deref() == Some("refresh")

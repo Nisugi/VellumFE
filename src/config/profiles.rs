@@ -18,6 +18,10 @@ use super::Config;
 /// File name inside the vellum-fe base directory.
 const LAUNCHER_FILE: &str = "launcher.toml";
 
+/// Process-private handoff preserving the launcher's data root when a saved
+/// profile selects a different root for its child session.
+pub(crate) const LAUNCHER_ROOT_ENV: &str = "VELLUM_FE_LAUNCHER_ROOT";
+
 /// Keyring service identifier (the "folder" credentials appear under).
 #[cfg(feature = "desktop")]
 const KEYRING_SERVICE: &str = "vellum-fe";
@@ -47,7 +51,7 @@ pub mod help {
          directly; any other host runs it over SSH (set the SSH user and key with .launcher). \
          Leave blank to attach only.";
     pub const FRONTEND: &str =
-        "GUI opens Vellum's native window; Terminal runs the text interface in its own console window; Despana opens the Despana browser interface";
+        "GUI opens Vellum's native window; Terminal runs the text interface in its own console window; Vellum Despana opens the Despana browser interface";
     pub const WEB_PORT: &str =
         "Enable the embedded web server on this port: serves a browser view of this session at localhost:PORT (e.g. for a phone on your LAN)";
     pub const WEB_BIND: &str =
@@ -111,7 +115,7 @@ impl LaunchWebClient {
     /// User-facing launcher label for this browser presentation.
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Despana => "Despana (Web)",
+            Self::Despana => "Vellum Despana",
         }
     }
 }
@@ -263,6 +267,10 @@ impl LauncherProfile {
 /// On-disk container: `[[profiles]]` entries in launcher.toml.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LauncherStore {
+    /// Global launcher preference: skip the confirmation shown before a Lich
+    /// endpoint is switched from one character to another.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skip_lich_switch_warning: bool,
     #[serde(default)]
     pub profiles: Vec<LauncherProfile>,
 }
@@ -339,6 +347,64 @@ impl LauncherStore {
             .iter()
             .any(|profile| profile.password_saved && profile.account.eq_ignore_ascii_case(account))
     }
+}
+
+/// Preserve the root containing the launcher store before a child applies a
+/// profile-specific `VELLUM_FE_DIR` override.
+pub(crate) fn remember_launcher_root(root: &Path) {
+    std::env::set_var(LAUNCHER_ROOT_ENV, root);
+}
+
+/// All data roots known to this process: its effective root, the root its
+/// launcher used, the normal home default, and data roots named by profiles in
+/// any of those launcher stores.
+pub(crate) fn known_data_roots() -> Vec<PathBuf> {
+    let configured = Config::base_dir().ok();
+    let launcher = std::env::var_os(LAUNCHER_ROOT_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    known_data_roots_from(
+        configured.as_deref(),
+        launcher.as_deref(),
+        dirs::home_dir().as_deref(),
+    )
+}
+
+pub(crate) fn known_data_roots_from(
+    configured: Option<&Path>,
+    launcher: Option<&Path>,
+    home: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut data_roots = Vec::new();
+    for root in [configured, launcher].into_iter().flatten() {
+        if !data_roots.iter().any(|known| known == root) {
+            data_roots.push(root.to_path_buf());
+        }
+    }
+    if let Some(home) = home {
+        let default = home.join(".vellum-fe");
+        if !data_roots.contains(&default) {
+            data_roots.push(default);
+        }
+    }
+
+    let launcher_roots = data_roots.clone();
+    for launcher_root in launcher_roots {
+        let Ok(store) = LauncherStore::load_from(&launcher_root.join(LAUNCHER_FILE)) else {
+            continue;
+        };
+        for profile in store.profiles {
+            let Some(data_dir) = profile.data_dir.filter(|dir| !dir.is_empty()) else {
+                continue;
+            };
+            let data_root = PathBuf::from(data_dir);
+            if !data_roots.contains(&data_root) {
+                data_roots.push(data_root);
+            }
+        }
+    }
+
+    data_roots
 }
 
 /// Keyring entry for an account. Keyed by account (not per-character or
@@ -589,6 +655,7 @@ mod tests {
 
         let store = LauncherStore {
             profiles: vec![sample_direct(), sample_lich()],
+            ..Default::default()
         };
         store.save_to(&path).unwrap();
         let loaded = LauncherStore::load_from(&path).unwrap();
@@ -642,6 +709,7 @@ mod tests {
     fn upsert_replaces_by_original_name_on_rename() {
         let mut store = LauncherStore {
             profiles: vec![sample_direct()],
+            ..Default::default()
         };
         let mut renamed = sample_direct();
         renamed.name = "Renamed".to_string();
@@ -659,6 +727,7 @@ mod tests {
                 second.name = "Alt".to_string();
                 second
             }],
+            ..Default::default()
         };
         assert!(store.account_password_in_use("myacct"));
         store.remove("Main");
@@ -675,6 +744,7 @@ mod tests {
         profile.select_web_client(LaunchWebClient::Despana);
         let store = LauncherStore {
             profiles: vec![profile],
+            ..Default::default()
         };
 
         store.save_to(&path).unwrap();
@@ -711,6 +781,36 @@ mod tests {
     #[test]
     fn built_in_web_client_has_stable_identity_metadata() {
         assert_eq!(LaunchWebClient::Despana.route(), "despana");
-        assert_eq!(LaunchWebClient::Despana.label(), "Despana (Web)");
+        assert_eq!(LaunchWebClient::Despana.label(), "Vellum Despana");
+    }
+
+    #[test]
+    fn old_launcher_toml_defaults_to_showing_lich_switch_warning() {
+        let store: LauncherStore =
+            toml::from_str("[[profiles]]\nname = \"Lich local\"\nmode = \"lich\"\n").unwrap();
+
+        assert!(!store.skip_lich_switch_warning);
+    }
+
+    #[test]
+    fn default_lich_switch_warning_preference_is_omitted() {
+        let text = toml::to_string_pretty(&LauncherStore::default()).unwrap();
+
+        assert!(!text.contains("skip_lich_switch_warning"));
+    }
+
+    #[test]
+    fn skipped_lich_switch_warning_round_trips() {
+        let store = LauncherStore {
+            skip_lich_switch_warning: true,
+            profiles: vec![sample_lich()],
+        };
+
+        let text = toml::to_string_pretty(&store).unwrap();
+        assert!(text.contains("skip_lich_switch_warning = true"));
+
+        let loaded: LauncherStore = toml::from_str(&text).unwrap();
+        assert!(loaded.skip_lich_switch_warning);
+        assert_eq!(loaded.profiles.len(), 1);
     }
 }

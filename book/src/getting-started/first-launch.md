@@ -19,7 +19,7 @@ Running `vellum-fe` with **no arguments at all** opens it.
 > ⚠️ **The same character, started two ways, lands in two different interfaces.**
 > A hand-typed command line defaults to the **terminal UI**; a new saved
 > Launcher connection defaults to the **GUI**. A saved connection can instead
-> select **Despana**, which opens the paired Vellum Despana browser surface
+> select **Vellum Despana**, which opens the paired Vellum Despana browser surface
 > automatically. Pass
 > `--frontend gui` (or `-f gui`) to make a manual command line match the native
 > GUI; use `--frontend headless` when you want a browser-only session.

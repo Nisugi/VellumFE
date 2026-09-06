@@ -188,21 +188,38 @@ impl VellumGuiApp {
     /// quit interception). Used by the local input bar and by commands
     /// arriving from remote web clients.
     pub(super) fn dispatch_command(&mut self, command: String) {
+        self.dispatch_command_from(None, command);
+    }
+
+    /// Run a browser-originated command while retaining the WebSocket
+    /// connection id for addressed replies such as GOALS' LaunchURL.
+    pub(super) fn dispatch_remote_command(&mut self, client_id: u64, command: String) {
+        self.dispatch_command_from(Some(client_id), command);
+    }
+
+    fn dispatch_command_from(&mut self, remote_client_id: Option<u64>, command: String) {
         let command = command.trim_end().to_string();
         if command.is_empty() {
             return;
         }
 
-        match self.app_core.send_command(command) {
+        let outcome = match remote_client_id {
+            Some(client_id) => self.app_core.send_remote_command(client_id, command),
+            None => self.app_core.send_command(command),
+        };
+        match outcome {
             Ok(crate::data::CommandOutcome::Ui(action)) => self.handle_ui_action(action),
             Ok(crate::data::CommandOutcome::Handled) => {}
             Ok(crate::data::CommandOutcome::Game(outbound)) => {
-                if Self::should_send_to_network(&outbound) {
+                let sent = if Self::should_send_to_network(&outbound) {
                     self.app_core
                         .perf_stats
                         .record_bytes_sent((outbound.len() + 1) as u64);
-                    let _ = self.command_tx.send(outbound);
-                }
+                    self.command_tx.send(outbound.clone()).is_ok()
+                } else {
+                    false
+                };
+                self.app_core.finish_game_command_send(&outbound, sent);
             }
             Err(err) => {
                 self.app_core

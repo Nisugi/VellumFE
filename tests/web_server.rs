@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 
 use vellum_fe::config::WebConfig;
 use vellum_fe::core::classic_maps::ClassicMapCatalog;
-use vellum_fe::core::remote::{RemoteEvent, RemoteSink};
+use vellum_fe::core::remote::{RemoteEvent, RemoteSessionInfo, RemoteSink, SessionState};
 use vellum_fe::core::GameState;
 use vellum_fe::data::widget::{StyledLine, TextSegment};
 use vellum_fe::frontend::web::server;
@@ -26,6 +26,7 @@ const FIXTURE_HOST_ENV: &str = "DESPANA_PROCESS_FIXTURE";
 const FIXTURE_PORT_ENV: &str = "DESPANA_PROCESS_FIXTURE_PORT";
 const WALKED_PORT_FIXTURE_ENV: &str = "DESPANA_WALKED_PORT_FIXTURE";
 const TOKEN_FAILURE_FIXTURE_ENV: &str = "DESPANA_TOKEN_FAILURE_FIXTURE";
+const REGISTRY_FAILURE_FIXTURE_ENV: &str = "DESPANA_REGISTRY_FAILURE_FIXTURE";
 
 async fn start_server(
     sink_capacity: usize,
@@ -107,7 +108,7 @@ async fn process_isolation_fixture_host() {
     // Model the real frontend/core event pump: a command received by this
     // process is acknowledged back into this process's own story stream.
     while let Some(event) = event_rx.recv().await {
-        if let RemoteEvent::Command(command) = event {
+        if let RemoteEvent::Command { text: command, .. } = event {
             sink.push_text("main", styled(&format!("{marker} ack: {command}"), "main"));
         }
     }
@@ -131,7 +132,7 @@ async fn walked_port_readiness_fixture_host() {
         .parse()
         .expect("numeric fixture port");
 
-    let (sink, handles, _event_rx) = RemoteSink::new(100);
+    let (sink, handles, mut event_rx) = RemoteSink::new(100);
     let mut launch_endpoint_rx = sink.launch_endpoint_receiver();
     let config = WebConfig {
         enabled: true,
@@ -160,6 +161,35 @@ async fn walked_port_readiness_fixture_host() {
         );
         return;
     }
+    if std::env::var_os(REGISTRY_FAILURE_FIXTURE_ENV).is_some() {
+        let result = tokio::time::timeout(Duration::from_secs(2), &mut serve_task)
+            .await
+            .expect("registry setup failure must return promptly")
+            .expect("configured server task must not panic");
+        assert!(
+            result.is_err(),
+            "an unusable registry path must fail startup"
+        );
+        assert!(
+            sink.launch_endpoint().is_none(),
+            "registry failure must not publish readiness"
+        );
+        let notice = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                match event_rx.recv().await {
+                    Some(RemoteEvent::Notice(message)) if message.contains("registry") => {
+                        break message
+                    }
+                    Some(_) => {}
+                    None => panic!("registry failure notice channel closed"),
+                }
+            }
+        })
+        .await
+        .expect("registry failure notice timed out");
+        assert!(notice.contains("registry"));
+        return;
+    }
 
     tokio::time::timeout(Duration::from_secs(5), launch_endpoint_rx.changed())
         .await
@@ -173,6 +203,27 @@ async fn walked_port_readiness_fixture_host() {
         .borrow()
         .clone()
         .expect("readiness notification must carry an authenticated endpoint");
+
+    let entry = server::registry::list_and_gc()
+        .into_iter()
+        .find(|entry| entry.pid == std::process::id())
+        .expect("configured server must publish its live registry entry");
+    let resume_url = vellum_fe::launcher::session_lifecycle::resume_url(
+        &entry,
+        vellum_fe::config::profiles::LaunchWebClient::Despana,
+    )
+    .expect("registry entry must reopen with the server's pairing token");
+    assert!(
+        resume_url.starts_with(&format!(
+            "http://127.0.0.1:{}/despana#token=",
+            endpoint.bound_port()
+        )),
+        "resume must use the actual walked port: {resume_url}"
+    );
+    assert!(
+        resume_url.ends_with(endpoint.token()),
+        "resume must pair with the same token the server installed"
+    );
 
     assert_ne!(
         endpoint.bound_port(),
@@ -289,6 +340,34 @@ fn styled(text: &str, stream: &str) -> Arc<StyledLine> {
 
 async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
     http_request(addr, &format!("GET {path}"), &[], "").await
+}
+
+async fn http_stop(addr: std::net::SocketAddr, token: &str, instance: &str) -> String {
+    let authorization = format!("Bearer {token}");
+    http_request(
+        addr,
+        "POST /api/v1/session/stop",
+        &[
+            ("Authorization", &authorization),
+            ("X-Vellum-Instance", instance),
+        ],
+        "",
+    )
+    .await
+}
+
+async fn http_exit_logout(addr: std::net::SocketAddr, token: &str, instance: &str) -> String {
+    let authorization = format!("Bearer {token}");
+    http_request(
+        addr,
+        "POST /api/v1/session/exit-logout",
+        &[
+            ("Authorization", &authorization),
+            ("X-Vellum-Instance", instance),
+        ],
+        "",
+    )
+    .await
 }
 
 async fn http_request(
@@ -465,6 +544,7 @@ fn configured_server_reports_walked_port_and_serves_health() {
         .env(WALKED_PORT_FIXTURE_ENV, "1")
         .env(FIXTURE_PORT_ENV, base_port.to_string())
         .env("VELLUM_FE_DIR", data_dir.path())
+        .env("VELLUM_FE_RUNTIME_DIR", data_dir.path().join("runtime"))
         .output()
         .expect("spawn walked-port readiness fixture");
 
@@ -504,6 +584,40 @@ fn configured_server_token_failure_never_publishes_readiness() {
     assert!(
         output.status.success(),
         "token-failure readiness fixture failed: {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
+fn configured_server_registry_failure_never_publishes_readiness() {
+    let reservation = reserve_walkable_port();
+    let base_port = reservation
+        .local_addr()
+        .expect("reservation address")
+        .port();
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let runtime_file = data_dir.path().join("not-a-runtime-directory");
+    std::fs::write(&runtime_file, b"blocks runtime directory creation")
+        .expect("create unusable runtime path");
+
+    let output = Command::new(std::env::current_exe().expect("current test executable"))
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("walked_port_readiness_fixture_host")
+        .arg("--nocapture")
+        .env(WALKED_PORT_FIXTURE_ENV, "1")
+        .env(REGISTRY_FAILURE_FIXTURE_ENV, "1")
+        .env(FIXTURE_PORT_ENV, base_port.to_string())
+        .env("VELLUM_FE_DIR", data_dir.path())
+        .env("VELLUM_FE_RUNTIME_DIR", &runtime_file)
+        .output()
+        .expect("spawn registry-failure readiness fixture");
+
+    assert!(
+        output.status.success(),
+        "registry-failure readiness fixture failed: {}\nstdout:\n{}\nstderr:\n{}",
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
@@ -563,6 +677,180 @@ async fn pinned_occupied_port_failure_never_publishes_readiness() {
 }
 
 #[tokio::test]
+async fn authenticated_stop_is_delivered_for_recoverable_but_not_connected_sessions() {
+    let (mut sink, handles, mut event_rx) = RemoteSink::new(10);
+    let instance = handles.session.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ephemeral port");
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = server::serve_listener(
+            listener,
+            handles,
+            TEST_TOKEN.to_string(),
+            server::ServeOptions::default(),
+        )
+        .await;
+    });
+    sink.set_session_control(true);
+    sink.set_session_state(RemoteSessionInfo {
+        state: SessionState::Idle,
+        ..Default::default()
+    });
+
+    let denied = http_stop(addr, "wrong-token", &instance).await;
+    assert!(denied.starts_with("HTTP/1.1 403"), "got: {denied}");
+    assert!(event_rx.try_recv().is_err());
+
+    let stale = http_stop(addr, TEST_TOKEN, "stale-instance").await;
+    assert!(stale.starts_with("HTTP/1.1 409"), "got: {stale}");
+    assert!(event_rx.try_recv().is_err());
+
+    let accepted = http_stop(addr, TEST_TOKEN, &instance).await;
+    assert!(accepted.starts_with("HTTP/1.1 202"), "got: {accepted}");
+    assert!(matches!(
+        event_rx.recv().await,
+        Some(RemoteEvent::SessionStop)
+    ));
+
+    for recoverable in [
+        SessionState::Authenticating,
+        SessionState::Connecting,
+        SessionState::Reconnecting,
+        SessionState::Disconnected,
+    ] {
+        sink.set_session_state(RemoteSessionInfo {
+            state: recoverable,
+            ..Default::default()
+        });
+        let accepted = http_stop(addr, TEST_TOKEN, &instance).await;
+        assert!(accepted.starts_with("HTTP/1.1 202"), "got: {accepted}");
+        assert!(matches!(
+            event_rx.recv().await,
+            Some(RemoteEvent::SessionStop)
+        ));
+    }
+
+    sink.set_session_state(RemoteSessionInfo {
+        state: SessionState::Connected,
+        ..Default::default()
+    });
+    let active = http_stop(addr, TEST_TOKEN, &instance).await;
+    assert!(active.starts_with("HTTP/1.1 409"), "got: {active}");
+    assert!(event_rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn authenticated_exit_logout_requires_the_exact_connected_session() {
+    let (mut sink, handles, mut event_rx) = RemoteSink::new(10);
+    let instance = handles.session.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ephemeral port");
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = server::serve_listener(
+            listener,
+            handles,
+            TEST_TOKEN.to_string(),
+            server::ServeOptions::default(),
+        )
+        .await;
+    });
+
+    sink.set_session_control(true);
+    sink.set_session_state(RemoteSessionInfo {
+        state: SessionState::Connected,
+        ..Default::default()
+    });
+
+    let denied = http_exit_logout(addr, "wrong-token", &instance).await;
+    assert!(denied.starts_with("HTTP/1.1 403"), "got: {denied}");
+    assert!(event_rx.try_recv().is_err());
+
+    let stale = http_exit_logout(addr, TEST_TOKEN, "stale-instance").await;
+    assert!(stale.starts_with("HTTP/1.1 409"), "got: {stale}");
+    assert!(event_rx.try_recv().is_err());
+
+    sink.set_session_state(RemoteSessionInfo {
+        state: SessionState::Idle,
+        ..Default::default()
+    });
+    let idle = http_exit_logout(addr, TEST_TOKEN, &instance).await;
+    assert!(idle.starts_with("HTTP/1.1 409"), "got: {idle}");
+    assert!(event_rx.try_recv().is_err());
+
+    sink.set_session_state(RemoteSessionInfo {
+        state: SessionState::Connected,
+        ..Default::default()
+    });
+    let accepted = http_exit_logout(addr, TEST_TOKEN, &instance).await;
+    assert!(accepted.starts_with("HTTP/1.1 202"), "got: {accepted}");
+    assert!(matches!(
+        event_rx.recv().await,
+        Some(RemoteEvent::SessionExitLogout)
+    ));
+}
+
+#[tokio::test]
+async fn status_only_server_accepts_authenticated_exit_logout() {
+    let (mut sink, handles, mut event_rx) = RemoteSink::new(10);
+    let instance = handles.session.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ephemeral port");
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = server::serve_listener(
+            listener,
+            handles,
+            TEST_TOKEN.to_string(),
+            server::ServeOptions {
+                status_only: true,
+                ..Default::default()
+            },
+        )
+        .await;
+    });
+    sink.set_session_control(true);
+    sink.set_session_state(RemoteSessionInfo {
+        state: SessionState::Connected,
+        ..Default::default()
+    });
+
+    let accepted = http_exit_logout(addr, TEST_TOKEN, &instance).await;
+    assert!(accepted.starts_with("HTTP/1.1 202"), "got: {accepted}");
+    assert!(matches!(
+        event_rx.recv().await,
+        Some(RemoteEvent::SessionExitLogout)
+    ));
+}
+
+#[tokio::test]
+async fn closing_a_browser_never_requests_game_disconnect_or_process_stop() {
+    let (_sink, mut event_rx, addr) = start_server(10).await;
+    let client = WsClient::connect(addr).await;
+    drop(client);
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(event_rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn explicit_exit_logout_frame_reaches_runtime_without_becoming_a_command() {
+    let (_sink, mut event_rx, addr) = start_server(10).await;
+    let (mut client, _) = connect_and_sync(addr, 0).await;
+
+    client.send_text(r#"{"t":"exit_logout","d":{}}"#).await;
+
+    assert!(matches!(
+        event_rx.recv().await,
+        Some(RemoteEvent::SessionExitLogout)
+    ));
+    assert!(event_rx.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn health_and_static_assets_are_served() {
     let (_sink, _event_rx, addr) = start_server(100).await;
 
@@ -588,6 +876,7 @@ async fn health_and_static_assets_are_served() {
     assert!(despana.contains("200"));
     assert!(despana.contains("text/html"));
     assert!(despana.contains("Vellum Despana"));
+    assert!(!despana.contains("VellumFE — Despana"));
     assert!(despana.contains("data-despana-desktop"));
     assert!(despana.contains("href=\"/despana/app.css\""));
     assert!(despana.contains("src=\"/despana/app.js\""));
@@ -612,6 +901,8 @@ async fn health_and_static_assets_are_served() {
     let despana_app = http_get(addr, "/despana/app.js").await;
     assert!(despana_app.contains("text/javascript"));
     assert!(despana_app.contains("DesktopSession"));
+    assert!(despana_app.contains("Vellum Despana workspace error"));
+    assert!(!despana_app.contains("VellumFE — Despana"));
     assert!(despana_app.contains("/api/v1/maps/classic"));
 
     let despana_session = http_get(addr, "/despana/session.js").await;
@@ -782,6 +1073,28 @@ async fn ws_client_gets_hello_snapshot_then_live_deltas() {
 }
 
 #[tokio::test]
+async fn parsed_character_sheet_identity_flows_through_snapshot_and_live_expr_wins() {
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    let mut gs = GameState::new();
+    gs.character
+        .parse_line("Name: Briar Sage Race: Human  Profession: Wizard");
+    gs.character
+        .parse_line("Gender: Female    Age: 40    Expr: 6,400,000    Level:  89");
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+
+    let (mut client, snapshot) = connect_and_sync(addr, 0).await;
+    assert_eq!(snapshot["d"]["char_info"]["profession"], "Wizard");
+    assert_eq!(snapshot["d"]["char_info"]["level"], "89");
+
+    gs.gs4_experience.update_level("Level: 90".to_string());
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
+    let delta = read_json_timeout(&mut client).await;
+    assert_eq!(delta["t"], "charinfo");
+    assert_eq!(delta["d"]["profession"], "Wizard");
+    assert_eq!(delta["d"]["level"], "90");
+}
+
+#[tokio::test]
 async fn two_clients_both_receive_broadcasts() {
     let (mut sink, _event_rx, addr) = start_server(100).await;
 
@@ -910,7 +1223,7 @@ async fn client_cmd_arrives_as_remote_event() {
         .await
         .expect("timed out waiting for remote event")
         .expect("event channel open");
-    let RemoteEvent::Command(text) = event else {
+    let RemoteEvent::Command { client_id, text } = event else {
         panic!("expected Command event")
     };
     assert_eq!(text, "look");
@@ -925,10 +1238,58 @@ async fn client_cmd_arrives_as_remote_event() {
         .await
         .expect("timed out")
         .expect("channel open");
-    let RemoteEvent::Command(text) = event else {
+    let RemoteEvent::Command {
+        client_id: second_client_id,
+        text,
+    } = event
+    else {
         panic!("expected Command event")
     };
     assert_eq!(text, "second");
+    assert_eq!(second_client_id, client_id, "one socket keeps one address");
+}
+
+#[tokio::test]
+async fn open_url_reply_routes_only_to_the_commanding_browser() {
+    let (mut sink, mut event_rx, addr) = start_server(100).await;
+    let (mut requester, _) = connect_and_sync(addr, 0).await;
+    let (mut other, _) = connect_and_sync(addr, 0).await;
+
+    requester
+        .send_text(r#"{"t":"cmd","d":{"text":"GOALS"}}"#)
+        .await;
+    let event = tokio::time::timeout(Duration::from_secs(5), event_rx.recv())
+        .await
+        .expect("timed out waiting for GOALS")
+        .expect("event channel open");
+    let RemoteEvent::Command { client_id, text } = event else {
+        panic!("expected addressed Command event")
+    };
+    assert_eq!(text, "GOALS");
+
+    sink.push_open_url(
+        client_id,
+        "https://www.play.net/gs4/play/cm/loader.asp?ticket=addressed".to_string(),
+    );
+    sink.push_text("main", styled("after-open-url", "main"));
+
+    let opened = read_json_timeout(&mut requester).await;
+    assert_eq!(opened["t"], "open_url");
+    assert_eq!(
+        opened["d"]["url"],
+        "https://www.play.net/gs4/play/cm/loader.asp?ticket=addressed"
+    );
+    assert!(opened["d"].get("client_id").is_none());
+
+    let next_for_other = read_json_timeout(&mut other).await;
+    assert_eq!(
+        next_for_other["t"], "text",
+        "other browsers and watchers must never receive the URL"
+    );
+    assert_eq!(
+        next_for_other["d"]["line"]["segments"][0]["text"],
+        "after-open-url"
+    );
 }
 
 #[tokio::test]

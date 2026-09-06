@@ -365,10 +365,10 @@ pub struct MessageProcessor {
     /// Set on parse; the frontend takes it and connects the WebUI bridge.
     pub pending_webui_handshake: Option<crate::data::webui::WebUiHandshake>,
 
-    /// Latest `<LaunchURL src=.../>` from the game, drained by AppCore each
-    /// frame: routed to the native skill trainer when it's armed (the user
-    /// just sent GOALS), otherwise opened in the system browser.
-    pub pending_launch_url: Option<String>,
+    /// Ordered `<LaunchURL src=.../>` messages from the game, drained by
+    /// AppCore each frame. Multiple GOALS replies can land in one frontend
+    /// event batch, so this must preserve every reply in wire order.
+    pub pending_launch_urls: std::collections::VecDeque<String>,
 
     /// Pending sounds from highlight processing (to be transferred to GameState)
     pub pending_sounds: Vec<super::highlight_engine::SoundTrigger>,
@@ -412,6 +412,13 @@ pub struct MessageProcessor {
 }
 
 impl MessageProcessor {
+    /// Drop character-sheet lines buffered by an earlier transport generation.
+    /// They are not authoritative until the prompt commits them, so allowing
+    /// them to survive a reconnect could authenticate the wrong Lich session.
+    pub(crate) fn discard_pending_character_state(&mut self) {
+        self.pending_character_lines.clear();
+    }
+
     pub fn new(mut config: Config, saved_dialog_positions: SavedDialogPositions) -> Self {
         // Routing consults only [streams.routes]; normalize any legacy
         // drop list on our copy in case the caller's config didn't go
@@ -501,7 +508,7 @@ impl MessageProcessor {
             seen_streams: std::collections::BTreeMap::new(),
             newly_registered_container: None,
             pending_webui_handshake: None,
-            pending_launch_url: None,
+            pending_launch_urls: std::collections::VecDeque::new(),
             pending_sounds: Vec::new(),
             pending_status_actions: Vec::new(),
             pending_alerts: Vec::new(),
