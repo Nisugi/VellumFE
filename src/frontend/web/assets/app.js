@@ -919,6 +919,12 @@ function handleMessage(msg) {
       // Answer with our resume cursor; the server replies with a
       // full/resume/gap snapshot accordingly.
       state.ws.send(JSON.stringify({ t: "resume", d: { seq: state.lastSeq } }));
+      // A reconnect gets a fresh server-side client id; the old id's WebUI
+      // subscriptions were released on disconnect, so re-subscribe every
+      // page we still have open (idempotent server-side).
+      for (const page of webuiState.subscribed) {
+        state.ws.send(JSON.stringify({ t: "webui_subscribe", d: { page } }));
+      }
       // Authenticated: pick up the skin's injury doll art (if any) and
       // any roaming prefs the character profile carries.
       fetchDollSkin();
