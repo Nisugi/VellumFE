@@ -701,6 +701,16 @@ impl StageState {
         if name.is_empty() {
             return;
         }
+        // Validate before serialization with the same limits loading uses:
+        // whatever previews is exactly what a reload will produce.
+        {
+            let fallback = FieldParams::default();
+            let live = &mut self.app_core.creature_field.params;
+            if live.sanitize_camera(&fallback) {
+                self.pending_status
+                    .push("Camera values clamped to valid range before save".to_string());
+            }
+        }
         let params = self.app_core.creature_field.params.clone();
         let mut base = FieldParams::default();
         if crate::config::scenes::matchable(&name) != "default" {
@@ -838,36 +848,103 @@ impl StageState {
             ui.separator();
             ui.heading("Camera");
             // Studio-only tuning; the game never mutates live params.
-            let params = &mut self.app_core.creature_field.params;
-            egui::Grid::new("stage_camera").num_columns(2).show(ui, |ui| {
-                ui.label("focal");
-                ui.add(egui::DragValue::new(&mut params.focal).speed(2.0));
-                ui.end_row();
-                ui.label("cam_h");
-                ui.add(egui::DragValue::new(&mut params.cam_h).speed(0.02));
-                ui.end_row();
-                ui.label("z0");
-                ui.add(egui::DragValue::new(&mut params.z0).speed(0.02));
-                ui.end_row();
-                ui.label("dz");
-                ui.add(egui::DragValue::new(&mut params.dz).speed(0.02));
-                ui.end_row();
-                ui.label("horizon");
-                ui.add(egui::DragValue::new(&mut params.horizon).speed(1.0));
-                ui.end_row();
-                ui.label("cell_w");
-                ui.add(egui::DragValue::new(&mut params.cell_w).speed(0.01));
-                ui.end_row();
-            });
-            if ui.button("Reset camera").clicked() {
-                let default = crate::core::creature_cards::solver::FieldParams::default();
-                params.focal = default.focal;
-                params.cam_h = default.cam_h;
-                params.z0 = default.z0;
-                params.dz = default.dz;
-                params.horizon = default.horizon;
-                params.cell_w = default.cell_w;
+            // Edits share the loader's bounds (`camera_limits`): the drags
+            // are ranged AND the whole camera re-sanitizes after every
+            // frame's edits, so a value that would reload differently (or
+            // a typed NaN) never reaches the renderer or a saved scene.
+            {
+                use crate::core::creature_cards::solver::camera_limits::*;
+                let params = &mut self.app_core.creature_field.params;
+                let before = params.clone();
+                egui::Grid::new("stage_camera").num_columns(2).show(ui, |ui| {
+                    ui.label("focal");
+                    ui.add(
+                        egui::DragValue::new(&mut params.focal)
+                            .speed(2.0)
+                            .range(FOCAL.0..=FOCAL.1),
+                    );
+                    ui.end_row();
+                    ui.label("cam_h");
+                    ui.add(
+                        egui::DragValue::new(&mut params.cam_h)
+                            .speed(0.02)
+                            .range(EYE_HEIGHT.0..=EYE_HEIGHT.1),
+                    );
+                    ui.end_row();
+                    ui.label("z0");
+                    ui.add(
+                        egui::DragValue::new(&mut params.z0)
+                            .speed(0.02)
+                            .range(NEAR_DEPTH.0..=NEAR_DEPTH.1),
+                    );
+                    ui.end_row();
+                    ui.label("dz");
+                    ui.add(
+                        egui::DragValue::new(&mut params.dz)
+                            .speed(0.02)
+                            .range(ROW_DEPTH.0..=ROW_DEPTH.1),
+                    );
+                    ui.end_row();
+                    ui.label("horizon");
+                    ui.add(
+                        egui::DragValue::new(&mut params.horizon)
+                            .speed(1.0)
+                            .range(HORIZON.0..=HORIZON.1),
+                    );
+                    ui.end_row();
+                    ui.label("cell_w");
+                    ui.add(
+                        egui::DragValue::new(&mut params.cell_w)
+                            .speed(0.01)
+                            .range(CELL_WIDTH.0..=CELL_WIDTH.1),
+                    );
+                    ui.end_row();
+                });
+                params.sanitize_camera(&before);
             }
+            ui.horizontal_wrapped(|ui| {
+                // Reset semantics are explicit: built-in solver defaults,
+                // or the values this scene would INHERIT from the default
+                // scene layer (only offered for a non-default scene).
+                let mut reset_to: Option<
+                    crate::core::creature_cards::solver::FieldParams,
+                > = None;
+                if ui
+                    .button("Reset camera (built-in)")
+                    .on_hover_text("The solver's built-in default camera")
+                    .clicked()
+                {
+                    reset_to = Some(Default::default());
+                }
+                let name = self.scene_name.trim();
+                if !name.is_empty()
+                    && crate::config::scenes::matchable(name) != "default"
+                    && ui
+                        .button("Reset camera (inherited)")
+                        .on_hover_text(
+                            "The camera this scene inherits from the default \
+                             scene layer — what unpinned keys resolve to",
+                        )
+                        .clicked()
+                {
+                    let mut base: crate::core::creature_cards::solver::FieldParams =
+                        Default::default();
+                    if let Some(default_scene) = load_default_scene(Some(name)) {
+                        base.apply_camera(&default_scene.camera);
+                    }
+                    reset_to = Some(base);
+                }
+                if let Some(base) = reset_to {
+                    let params = &mut self.app_core.creature_field.params;
+                    params.focal = base.focal;
+                    params.cam_h = base.cam_h;
+                    params.z0 = base.z0;
+                    params.dz = base.dz;
+                    params.horizon = base.horizon;
+                    params.cell_w = base.cell_w;
+                }
+            });
+            let params = &mut self.app_core.creature_field.params;
 
             ui.separator();
             ui.checkbox(&mut self.show_solver_tuning, "Show solver tuning (testing)");
@@ -1602,6 +1679,64 @@ mod tests {
         state.binding = SceneBinding::Location;
         state.prefill_inputs();
         assert_eq!(state.text, "Wehnimer's Landing");
+    }
+
+    #[test]
+    fn camera_saves_reproduce_valid_effective_params() {
+        use crate::core::creature_cards::solver::FieldParams;
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+
+        // Standalone default scene: an out-of-range transient (focal=20)
+        // sanitizes to the loader's bound BEFORE serialization, so the
+        // save reproduces exactly what previewed.
+        let mut params = FieldParams::default();
+        params.focal = 20.0;
+        params.horizon = 160.0;
+        assert!(params.sanitize_camera(&FieldParams::default()));
+        assert_eq!(params.focal, 60.0, "previewed value = loader's clamp");
+        let mut default_scene = scenes::StageScene::default();
+        default_scene.camera = sparse_camera(&params, &FieldParams::default());
+        default_scene.save("default").unwrap();
+        let loaded_default = scenes::StageScene::load("default").unwrap();
+        let resolved = crate::core::creature_cards::resolve_field_params(
+            None,
+            Some(&loaded_default),
+            None,
+            &crate::config::creature_field::FieldOverrides::default(),
+        );
+        assert_eq!(resolved.focal, params.focal);
+        assert_eq!(resolved.horizon, 160.0);
+
+        // Room scene over the default-scene layer: nonfinite transient
+        // falls back to the inherited value; sparse save pins only what
+        // differs, and the layered reload reproduces the effective params.
+        let mut base = FieldParams::default();
+        base.apply_camera(&loaded_default.camera);
+        let mut room_params = base.clone();
+        room_params.cam_h = f32::NAN; // invalid transient edit
+        assert!(room_params.sanitize_camera(&base));
+        assert_eq!(room_params.cam_h, base.cam_h, "NaN never reaches params");
+        room_params.focal = 300.0;
+        let mut room = scenes::StageScene::default();
+        room.camera = sparse_camera(&room_params, &base);
+        assert!(room.camera.horizon.is_none(), "inherited keys stay sparse");
+        room.save("Barley_Field").unwrap();
+        let loaded_room = scenes::StageScene::load("Barley_Field").unwrap();
+        let resolved = crate::core::creature_cards::resolve_field_params(
+            Some(&loaded_default),
+            Some(&loaded_room),
+            None,
+            &crate::config::creature_field::FieldOverrides::default(),
+        );
+        assert_eq!(resolved.focal, 300.0);
+        assert_eq!(resolved.horizon, 160.0, "unpinned key inherits live");
+        assert_eq!(resolved.cam_h, base.cam_h);
+
+        std::env::remove_var("VELLUM_FE_DIR");
     }
 }
 

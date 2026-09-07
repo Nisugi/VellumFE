@@ -278,7 +278,49 @@ impl Default for CreatureField {
     }
 }
 
+/// The one set of camera bounds every consumer shares: scene loading
+/// (`apply_camera`), Studio's live drag controls, and pre-save validation
+/// (`sanitize_camera`). An editor previewing a value outside these ranges
+/// would save something that reloads differently — so nothing may edit,
+/// preview, or serialize outside them.
+pub mod camera_limits {
+    /// (lo, hi) inclusive bounds per camera key.
+    pub const FOCAL: (f32, f32) = (60.0, 4000.0);
+    pub const EYE_HEIGHT: (f32, f32) = (0.1, 20.0);
+    pub const NEAR_DEPTH: (f32, f32) = (0.1, 50.0);
+    pub const ROW_DEPTH: (f32, f32) = (0.05, 20.0);
+    pub const HORIZON: (f32, f32) = (-500.0, 2000.0);
+    pub const CELL_WIDTH: (f32, f32) = (0.1, 10.0);
+}
+
 impl FieldParams {
+    /// Force the camera into the shared [`camera_limits`]: nonfinite
+    /// values fall back to `fallback`'s field (or the built-in default if
+    /// that is nonfinite too), everything clamps into range. Returns true
+    /// when anything changed. Editors call this after every edit — the
+    /// effective value shows immediately — and before serializing, so an
+    /// invalid transient never reaches the renderer or a scene file.
+    pub fn sanitize_camera(&mut self, fallback: &FieldParams) -> bool {
+        use camera_limits::*;
+        fn fix(slot: &mut f32, fallback: f32, default: f32, (lo, hi): (f32, f32)) -> bool {
+            let before = *slot;
+            if !slot.is_finite() {
+                *slot = if fallback.is_finite() { fallback } else { default };
+            }
+            *slot = slot.clamp(lo, hi);
+            *slot != before
+        }
+        let d = FieldParams::default();
+        let mut changed = false;
+        changed |= fix(&mut self.focal, fallback.focal, d.focal, FOCAL);
+        changed |= fix(&mut self.cam_h, fallback.cam_h, d.cam_h, EYE_HEIGHT);
+        changed |= fix(&mut self.z0, fallback.z0, d.z0, NEAR_DEPTH);
+        changed |= fix(&mut self.dz, fallback.dz, d.dz, ROW_DEPTH);
+        changed |= fix(&mut self.horizon, fallback.horizon, d.horizon, HORIZON);
+        changed |= fix(&mut self.cell_w, fallback.cell_w, d.cell_w, CELL_WIDTH);
+        changed
+    }
+
     /// Overlay a skin's `[creature_field.camera]` onto these params. Unset
     /// keys keep their current value; out-of-range values clamp to the
     /// nearest sane bound and log — a bad focal degrades the camera, it
@@ -299,12 +341,37 @@ impl FieldParams {
             }
             *slot = c;
         }
-        take(&mut self.focal, cam.focal, "focal", 60.0, 4000.0);
-        take(&mut self.cam_h, cam.eye_height, "eye_height", 0.1, 20.0);
-        take(&mut self.z0, cam.near_depth, "near_depth", 0.1, 50.0);
-        take(&mut self.dz, cam.row_depth, "row_depth", 0.05, 20.0);
-        take(&mut self.horizon, cam.horizon, "horizon", -500.0, 2000.0);
-        take(&mut self.cell_w, cam.cell_width, "cell_width", 0.1, 10.0);
+        use camera_limits::*;
+        take(&mut self.focal, cam.focal, "focal", FOCAL.0, FOCAL.1);
+        take(
+            &mut self.cam_h,
+            cam.eye_height,
+            "eye_height",
+            EYE_HEIGHT.0,
+            EYE_HEIGHT.1,
+        );
+        take(
+            &mut self.z0,
+            cam.near_depth,
+            "near_depth",
+            NEAR_DEPTH.0,
+            NEAR_DEPTH.1,
+        );
+        take(
+            &mut self.dz,
+            cam.row_depth,
+            "row_depth",
+            ROW_DEPTH.0,
+            ROW_DEPTH.1,
+        );
+        take(&mut self.horizon, cam.horizon, "horizon", HORIZON.0, HORIZON.1);
+        take(
+            &mut self.cell_w,
+            cam.cell_width,
+            "cell_width",
+            CELL_WIDTH.0,
+            CELL_WIDTH.1,
+        );
     }
 
     /// Overlay a skin's `[creature_field.solver]` onto the placement
@@ -1799,6 +1866,74 @@ mod tests {
         // Off-stage x clamps into the stage.
         let (x, _) = f.ground_from_screen(-40.0, STAGE_H - 10.0);
         assert_eq!(x, 0.0);
+    }
+
+    #[test]
+    fn sanitize_camera_shares_loader_limits() {
+        use camera_limits::*;
+        let d = FieldParams::default();
+
+        // Valid params are untouched.
+        let mut p = FieldParams::default();
+        assert!(!p.sanitize_camera(&d));
+        assert_eq!(p, d);
+
+        // Exact boundaries are valid on both ends.
+        let mut p = FieldParams::default();
+        p.focal = FOCAL.0;
+        p.cam_h = EYE_HEIGHT.1;
+        p.z0 = NEAR_DEPTH.0;
+        p.dz = ROW_DEPTH.1;
+        p.horizon = HORIZON.0;
+        p.cell_w = CELL_WIDTH.1;
+        assert!(!p.sanitize_camera(&d));
+        assert_eq!(p.focal, FOCAL.0);
+        assert_eq!(p.cell_w, CELL_WIDTH.1);
+
+        // Out-of-range clamps to the SAME bounds apply_camera uses — a
+        // previewed focal=20 becomes 60 in the editor, not on reload.
+        let mut p = FieldParams::default();
+        p.focal = 20.0;
+        p.z0 = 0.0; // zero geometry: invalid projection while editing
+        p.dz = -1.0;
+        p.cell_w = 999.0;
+        assert!(p.sanitize_camera(&d));
+        assert_eq!(p.focal, FOCAL.0);
+        assert_eq!(p.z0, NEAR_DEPTH.0);
+        assert_eq!(p.dz, ROW_DEPTH.0);
+        assert_eq!(p.cell_w, CELL_WIDTH.1);
+
+        // Nonfinite falls back to the caller's previous value...
+        let mut fallback = FieldParams::default();
+        fallback.focal = 500.0;
+        let mut p = fallback.clone();
+        p.focal = f32::NAN;
+        p.horizon = f32::INFINITY;
+        assert!(p.sanitize_camera(&fallback));
+        assert_eq!(p.focal, 500.0);
+        assert_eq!(p.horizon, fallback.horizon);
+        // ...and to the built-in default when the fallback is bad too.
+        let mut bad_fallback = FieldParams::default();
+        bad_fallback.cam_h = f32::NAN;
+        let mut p = FieldParams::default();
+        p.cam_h = f32::NAN;
+        assert!(p.sanitize_camera(&bad_fallback));
+        assert_eq!(p.cam_h, d.cam_h);
+
+        // Sanitized params round-trip: what the editor shows is exactly
+        // what serialize -> apply_camera reproduces.
+        let mut p = FieldParams::default();
+        p.focal = 20.0;
+        p.cam_h = 30.0;
+        p.sanitize_camera(&d);
+        let mut reloaded = FieldParams::default();
+        reloaded.apply_camera(&p.to_camera());
+        assert_eq!(reloaded.focal, p.focal);
+        assert_eq!(reloaded.cam_h, p.cam_h);
+        assert_eq!(reloaded.z0, p.z0);
+        assert_eq!(reloaded.dz, p.dz);
+        assert_eq!(reloaded.horizon, p.horizon);
+        assert_eq!(reloaded.cell_w, p.cell_w);
     }
 
     #[test]
