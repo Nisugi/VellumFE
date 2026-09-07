@@ -128,3 +128,88 @@ test("collectEditableCids finds nested editable components only", () => {
   assert.deepEqual([...cids].sort(), ["pw", "ta", "ti"]);
 });
 
+// ---- Item 12: notices + sequence gate --------------------------------------
+//
+// Mini-harness mirroring app.js wiring: appendText consults
+// acceptServerSeq(lastSeq, seq) and advances the cursor on accept;
+// appendLocalLine pushes straight into the buffer without touching either.
+
+function makeFeed(maxLines = 1000) {
+  const feed = { lastSeq: 0, lines: [] };
+  feed.appendServer = (seq, line) => {
+    if (!WebuiCore.acceptServerSeq(feed.lastSeq, seq)) return false;
+    feed.lastSeq = seq;
+    feed.lines.push(line);
+    if (feed.lines.length > maxLines) feed.lines.shift();
+    return true;
+  };
+  feed.appendLocal = (line) => {
+    feed.lines.push(line);
+    if (feed.lines.length > maxLines) feed.lines.shift();
+  };
+  return feed;
+}
+
+const txt = (l) => l.segments.map((s) => s.text).join("");
+
+test("notice at cursor zero renders and leaves the cursor at zero", () => {
+  const feed = makeFeed();
+  feed.appendLocal(WebuiCore.noticeLine({ level: "error", text: "boom" }));
+  assert.equal(feed.lines.length, 1);
+  assert.equal(txt(feed.lines[0]), "[WebUI error] boom");
+  assert.equal(feed.lastSeq, 0);
+});
+
+test("notice after N server lines renders; cursor unchanged; next seq still lands", () => {
+  const feed = makeFeed();
+  for (let i = 1; i <= 5; i++) feed.appendServer(i, { segments: [{ text: `line ${i}` }] });
+  feed.appendLocal(WebuiCore.noticeLine({ level: "info", text: "hi" }));
+  assert.equal(feed.lastSeq, 5);
+  assert.equal(feed.lines.length, 6);
+  // The next legitimate server sequence is not suppressed by the notice.
+  assert.ok(feed.appendServer(6, { segments: [{ text: "line 6" }] }));
+  assert.equal(txt(feed.lines.at(-1)), "line 6");
+});
+
+test("real server dedup unaffected: duplicate and stale seqs still dropped", () => {
+  const feed = makeFeed();
+  assert.ok(feed.appendServer(3, { segments: [{ text: "a" }] }));
+  feed.appendLocal(WebuiCore.noticeLine({ text: "notice" }));
+  assert.ok(!feed.appendServer(3, { segments: [{ text: "dup" }] }));
+  assert.ok(!feed.appendServer(2, { segments: [{ text: "stale" }] }));
+  assert.equal(feed.lines.length, 2);
+});
+
+test("notices share buffer limits with server lines", () => {
+  const feed = makeFeed(3);
+  for (let i = 1; i <= 3; i++) feed.appendServer(i, { segments: [{ text: `l${i}` }] });
+  feed.appendLocal(WebuiCore.noticeLine({ text: "n" }));
+  assert.equal(feed.lines.length, 3); // oldest evicted
+  assert.equal(txt(feed.lines[0]), "l2");
+});
+
+test("notice text with markup stays a plain styled segment", () => {
+  const line = WebuiCore.noticeLine({ level: "error", text: '<img src=x onerror=1> & "quotes"' });
+  // One plain-text segment; the renderer assigns it via textContent, so the
+  // markup can only ever display literally.
+  assert.equal(line.segments.length, 1);
+  assert.equal(line.segments[0].text, '[WebUI error] <img src=x onerror=1> & "quotes"');
+  assert.ok(!("html" in line.segments[0]));
+});
+
+test("notice defaults: missing level is info, missing text empty", () => {
+  assert.equal(txt(WebuiCore.noticeLine({})), "[WebUI info] ");
+  assert.equal(txt(WebuiCore.noticeLine(undefined)), "[WebUI info] ");
+});
+
+test("full-snapshot policy: clearing the buffer clears local notices with it", () => {
+  const feed = makeFeed();
+  feed.appendServer(1, { segments: [{ text: "a" }] });
+  feed.appendLocal(WebuiCore.noticeLine({ text: "n" }));
+  // app.js full-snapshot path: lastSeq = 0, buffers emptied.
+  feed.lastSeq = 0;
+  feed.lines.length = 0;
+  assert.equal(feed.lines.length, 0);
+  // Post-snapshot server text starts clean.
+  assert.ok(feed.appendServer(1, { segments: [{ text: "fresh" }] }));
+});

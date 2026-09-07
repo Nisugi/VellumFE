@@ -32,6 +32,22 @@
 
 (function () {
 
+// ---- Item 12: local notices + server-sequence gate -------------------------
+
+// Server text dedup rule (the appendText gate): accept only sequences
+// strictly above the resume cursor. Local notices never call this.
+function acceptServerSeq(lastSeq, seq) {
+  return seq > lastSeq;
+}
+
+// Build the styled line for a WebUI notice. Segments are rendered with
+// textContent downstream, so markup in `text` displays literally.
+function noticeLine(d) {
+  const level = (d && d.level) || "info";
+  const text = (d && d.text) || "";
+  return { segments: [{ text: `[WebUI ${level}] ${text}` }] };
+}
+
 // ---- Item 11: draft-edit store ---------------------------------------------
 
 function createDraftStore() {
@@ -124,7 +140,7 @@ function collectEditableCids(tree) {
   return out;
 }
 
-const WebuiCore = { createDraftStore, collectEditableCids };
+const WebuiCore = { acceptServerSeq, noticeLine, createDraftStore, collectEditableCids };
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = WebuiCore;

@@ -463,13 +463,32 @@ function scheduleRender() {
 }
 
 function appendText(seq, stream, line) {
-  if (seq <= state.lastSeq) return; // duplicate (snapshot/delta overlap)
+  // Duplicate (snapshot/delta overlap): only sequences strictly above the
+  // resume cursor render, and the cursor advances with them.
+  if (!WebuiCore.acceptServerSeq(state.lastSeq, seq)) return;
   state.lastSeq = seq;
   if (HIDDEN_STREAMS.has(stream)) return;
   // Speak before display routing: enabled streams speak even while
   // another stream is active (thoughts read out mid-hunt).
   speakLine(stream, line);
   gpRumbleLine(stream);
+  appendLine(stream, line);
+}
+
+// Client-local lines (WebUI notices) share the buffers, render path, and
+// limits of server text but carry NO server sequence: they must not consult
+// or advance the resume cursor. A fabricated seq either gets dropped by the
+// dedup gate (the old notice bug — negative seqs never rendered) or, if
+// positive, suppresses legitimate game text and corrupts resume. Because
+// these live only in the client buffers, a FULL snapshot clears them along
+// with everything else; resume/gap snapshots keep them.
+function appendLocalLine(stream, line) {
+  if (HIDDEN_STREAMS.has(stream)) return;
+  appendLine(stream, line);
+}
+
+// Shared tail of both paths: buffer with cap, paint or badge.
+function appendLine(stream, line) {
   const buf = ensureStream(stream);
   buf.lines.push(line);
   if (buf.lines.length > MAX_BUFFER_LINES) buf.lines.shift();
@@ -7227,11 +7246,12 @@ function handleWebUiClosed(d) {
 }
 
 function handleWebUiNotice(d) {
-  // Surface as a system line for now; P5b may show it inline in the panel.
-  appendText(++webuiNoticeSeq * -1, "main",
-    { segments: [{ text: `[WebUI ${d.level || "info"}] ${d.text || ""}` }] });
+  // Surface as a system line via the local-notice path: styled like server
+  // text (plain segments — the renderer uses textContent, so markup in the
+  // notice displays literally) but outside server-sequence dedup, leaving
+  // the resume cursor untouched.
+  appendLocalLine("main", WebuiCore.noticeLine(d));
 }
-let webuiNoticeSeq = 0;
 
 // Subscribe/unsubscribe a WebUI page (open/close its phone panel).
 function webuiSubscribe(page) {
