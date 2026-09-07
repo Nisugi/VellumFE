@@ -4,7 +4,7 @@ import DesktopSession, {
   shouldShowVellumIdle,
 } from "./session.js";
 import DesktopInteractionCoordinator from "./interactions.js";
-import { DesktopMapViewport } from "./map.js";
+import { DesktopMapViewport, classicRoomAtViewportPoint } from "./map.js";
 import { InventoryRefreshTracker } from "./inventory-refresh.js";
 import { projectInventoryItems } from "./inventory-tree.js";
 import { DesktopWorkspace } from "./workspace.js";
@@ -922,6 +922,8 @@ function createMapController(canvas, emptyState, options = {}) {
   let localLocations = null;
   let classicCatalog = null;
   let classicCatalogRequest = null;
+  const classicRooms = new Map();
+  const classicRoomRequests = new Map();
   let mapRequestId = 0;
   let pendingLocationsRequest = 0;
   let pendingBrowseRequest = 0;
@@ -938,6 +940,9 @@ function createMapController(canvas, emptyState, options = {}) {
   const currentClassic = () => liveFrame.state?.classic || null;
   const classicUrl = (name) => (
     `/api/v1/maps/classic/${encodeURIComponent(name)}?token=${encodeURIComponent(options.token?.() || "")}`
+  );
+  const classicRoomsUrl = (name) => (
+    `/api/v1/maps/classic/${encodeURIComponent(name)}/rooms?token=${encodeURIComponent(options.token?.() || "")}`
   );
   const setEmpty = (message = null) => {
     emptyState.textContent = message || "";
@@ -995,6 +1000,30 @@ function createMapController(canvas, emptyState, options = {}) {
       return null;
     } finally {
       classicCatalogRequest = null;
+    }
+  };
+  const loadClassicRooms = async (name) => {
+    if (!name || classicRooms.has(name)) return classicRooms.get(name) || [];
+    if (classicRoomRequests.has(name)) return classicRoomRequests.get(name);
+    const request = (async () => {
+      const response = await fetch(classicRoomsUrl(name), {
+        cache: "no-store",
+        signal: events.signal,
+      });
+      if (!response.ok) throw new Error(`classic map rooms returned ${response.status}`);
+      const value = await response.json();
+      const rooms = Array.isArray(value) ? value : [];
+      classicRooms.set(name, rooms);
+      return rooms;
+    })();
+    classicRoomRequests.set(name, request);
+    try {
+      return await request;
+    } catch (error) {
+      if (error?.name !== "AbortError") console.warn("Classic map room metadata unavailable:", error);
+      return [];
+    } finally {
+      classicRoomRequests.delete(name);
     }
   };
   const requestLocalLocations = () => {
@@ -1058,6 +1087,7 @@ function createMapController(canvas, emptyState, options = {}) {
       setEmpty("No classic map is available for this room");
       return;
     }
+    loadClassicRooms(name);
     classicRect = Array.isArray(roomRect) ? roomRect : null;
     if (classicName === name && classicLoaded) {
       if (classicNeedsFit) {
@@ -1278,6 +1308,15 @@ function createMapController(canvas, emptyState, options = {}) {
     const rect = canvas.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top, width: rect.width, height: rect.height };
   };
+  const classicEventPosition = (event) => {
+    const rect = classicStage.getBoundingClientRect();
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+  };
 
   canvas.addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || event.isPrimary === false) return;
@@ -1362,7 +1401,15 @@ function createMapController(canvas, emptyState, options = {}) {
     if (mode === "classic") setEmpty("Classic map image could not be loaded");
   }, { signal: events.signal });
   classicStage.addEventListener("pointerdown", (event) => {
-    classicDrag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    if (event.button !== 0 || event.isPrimary === false) return;
+    classicDrag = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    };
     try {
       classicStage.setPointerCapture?.(event.pointerId);
     } catch {
@@ -1373,14 +1420,30 @@ function createMapController(canvas, emptyState, options = {}) {
     if (!classicDrag || classicDrag.id !== event.pointerId || !classicLoaded) return;
     const dx = event.clientX - classicDrag.x;
     const dy = event.clientY - classicDrag.y;
-    classicDrag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    classicDrag.x = event.clientX;
+    classicDrag.y = event.clientY;
+    if (Math.hypot(event.clientX - classicDrag.startX, event.clientY - classicDrag.startY) > 4) {
+      classicDrag.moved = true;
+    }
     classicCamera.x -= dx / classicCamera.scale;
     classicCamera.y -= dy / classicCamera.scale;
     classicAutoCenter = false;
     positionClassic();
   }, { signal: events.signal });
   const endClassicDrag = (event) => {
+    const wasTap = event.type === "pointerup" &&
+      classicDrag?.id === event.pointerId &&
+      !classicDrag.moved;
     if (classicDrag?.id === event.pointerId) classicDrag = null;
+    if (!wasTap || mode !== "classic" || !classicLoaded || !classicName) return;
+    const roomId = classicRoomAtViewportPoint({
+      ...classicEventPosition(event),
+      camera: classicCamera,
+      rooms: classicRooms.get(classicName),
+    });
+    if (roomId === null) return;
+    if (event.ctrlKey || event.metaKey) options.reportRoom?.(roomId);
+    else options.travelToRoom?.(roomId);
   };
   classicStage.addEventListener("pointerup", endClassicDrag, { signal: events.signal });
   classicStage.addEventListener("pointercancel", endClassicDrag, { signal: events.signal });

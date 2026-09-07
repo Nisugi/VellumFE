@@ -270,6 +270,7 @@ fn full_router(state: Arc<WebState>) -> Router {
         .route("/", get(dashboard_html))
         .route("/play", get(index_html))
         .route("/api/v1/maps/classic", get(classic_map_catalog))
+        .route("/api/v1/maps/classic/{name}/rooms", get(classic_map_rooms))
         .route("/api/v1/maps/classic/{name}", get(classic_map_image))
         .route("/characters", get(characters_html))
         .route("/creatures", get(creatures_html))
@@ -400,6 +401,38 @@ async fn classic_map_catalog(
         StatusCode::OK,
         [(header::CONTENT_TYPE, "application/json")],
         serde_json::to_string(&maps).unwrap_or_else(|_| "[]".to_string()),
+    )
+}
+
+/// Return mapdb room rectangles for one trusted classic image. The browser
+/// uses these rectangles for click-to-move and Control-click room inspection.
+async fn classic_map_rooms(
+    axum::extract::Path(name): axum::extract::Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<Arc<WebState>>,
+) -> impl IntoResponse {
+    use axum::http::StatusCode;
+    if !params
+        .get("token")
+        .is_some_and(|t| token_matches(t, &state.auth_token))
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            [(header::CONTENT_TYPE, "application/json")],
+            "[]".to_string(),
+        );
+    }
+    let Some(rooms) = state.classic_maps.rooms(&name) else {
+        return (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "application/json")],
+            "[]".to_string(),
+        );
+    };
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::to_string(&rooms).unwrap_or_else(|_| "[]".to_string()),
     )
 }
 

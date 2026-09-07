@@ -364,6 +364,15 @@ impl MapDb {
         self.slots.len()
     }
 
+    /// Every room in deterministic mapdb order, including routable rooms
+    /// that are not part of a generated location map.
+    pub fn all_rooms(&self) -> impl Iterator<Item = &Room> {
+        self.locations
+            .values()
+            .flat_map(|rooms| rooms.iter())
+            .chain(self.unplaced.iter())
+    }
+
     pub fn locations(&self) -> impl Iterator<Item = &str> {
         self.locations.keys().map(String::as_str)
     }

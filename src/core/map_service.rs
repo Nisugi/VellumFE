@@ -593,6 +593,7 @@ impl MapService {
     /// Inject a mapdb directly (tests only — the live path loads from disk).
     #[cfg(test)]
     pub fn set_mapdb_for_test(&mut self, db: MapDb) {
+        self.classic_maps.reload_rooms(&db);
         self.mapdb = Some(Arc::new(db));
     }
 
@@ -688,6 +689,7 @@ impl MapService {
         };
         self.db_state = DbState::Loading;
         self.mapdb = None;
+        self.classic_maps.clear_rooms();
         self.membership = None;
         self.membership_pending = false;
         self.layouts.clear();
@@ -1361,6 +1363,7 @@ impl MapService {
                         Arc::new(edited)
                     };
                     self.mapdb = Some(db.clone());
+                    self.classic_maps.reload_rooms(&db);
                     self.db_state = DbState::Loaded;
                     self.revision += 1;
                     if let Some(curated) = self.effective_curated() {

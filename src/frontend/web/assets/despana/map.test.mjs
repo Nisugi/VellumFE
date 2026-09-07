@@ -5,7 +5,11 @@ import test from "node:test";
 const source = await readFile(new URL("./map.js", import.meta.url), "utf8");
 const styles = await readFile(new URL("./app.css", import.meta.url), "utf8");
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
-const { DesktopMapViewport, DesktopMapViewportError } = await import(moduleUrl);
+const {
+  DesktopMapViewport,
+  DesktopMapViewportError,
+  classicRoomAtViewportPoint,
+} = await import(moduleUrl);
 
 const SCENE = Object.freeze({
   location: "Wehnimer's Landing",
@@ -187,6 +191,37 @@ test("room hit testing uses the current camera and a bounded click target", () =
   model.endDrag();
   assert.equal(model.roomAtViewportPoint({ x: 100, y: 50, width: 200, height: 100 }), 101);
   assert.equal(model.roomAtViewportPoint({ x: Number.NaN, y: 0, width: 1, height: 1 }), null);
+});
+
+test("classic-map hit testing resolves image rectangles after pan and zoom", () => {
+  const rooms = [
+    { id: 100, rect: [10, 20, 30, 40] },
+    { id: 101, rect: [50, 20, 70, 40] },
+  ];
+  const camera = { x: 40, y: 30, scale: 2 };
+  const viewport = { width: 200, height: 100 };
+
+  assert.equal(classicRoomAtViewportPoint({
+    x: 50,
+    y: 50,
+    ...viewport,
+    camera,
+    rooms,
+  }), 100);
+  assert.equal(classicRoomAtViewportPoint({
+    x: 150,
+    y: 50,
+    ...viewport,
+    camera,
+    rooms,
+  }), 101);
+  assert.equal(classicRoomAtViewportPoint({
+    x: 100,
+    y: 5,
+    ...viewport,
+    camera,
+    rooms,
+  }), null);
 });
 
 test("rejects invalid scale configuration", () => {
