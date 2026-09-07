@@ -2700,7 +2700,13 @@ fn handle_remote_event(
             app_core.handle_remote_touch_wheel_put(client_id, request_id, scope, slices);
             true
         }
-        RemoteEvent::WebUiSubscribe { page } => {
+        RemoteEvent::WebUiClientGone { client_id } => {
+            // Always clean up — a vanished client must release its pages even
+            // while the identity gate holds other WebUI actions back.
+            app_core.webui_client_gone(client_id);
+            true
+        }
+        RemoteEvent::WebUiSubscribe { client_id, page } => {
             if !game_commands_allowed {
                 app_core.add_system_message(
                     "Waiting for Lich to confirm the configured character; WebUI action not sent.",
@@ -2713,17 +2719,23 @@ fn handle_remote_event(
             if !app_core.webui_is_active() {
                 app_core.request_webui_handshake();
             }
-            app_core.webui_subscribe(&page);
+            app_core.webui_subscribe(
+                crate::core::remote::WebUiConsumer::Remote(client_id),
+                &page,
+            );
             true
         }
-        RemoteEvent::WebUiUnsubscribe { page } => {
+        RemoteEvent::WebUiUnsubscribe { client_id, page } => {
             if !game_commands_allowed {
                 app_core.add_system_message(
                     "Waiting for Lich to confirm the configured character; WebUI action not sent.",
                 );
                 return true;
             }
-            app_core.webui_unsubscribe(&page);
+            app_core.webui_unsubscribe(
+                crate::core::remote::WebUiConsumer::Remote(client_id),
+                &page,
+            );
             true
         }
         RemoteEvent::WebUiEvent { page, cid, value } => {
@@ -4035,6 +4047,7 @@ mod tests {
             None,
             false,
             crate::core::remote::RemoteEvent::WebUiSubscribe {
+                client_id: 1,
                 page: "bigshot".to_string(),
             },
             &mut requests,

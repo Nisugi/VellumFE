@@ -69,7 +69,8 @@ pub enum WebUiEvent {
 pub struct WebUiHandle {
     pub port: u16,
     outbound_tx: mpsc::UnboundedSender<WebUiClientMessage>,
-    task: tokio::task::JoinHandle<()>,
+    /// None only for test handles (no bridge task behind them).
+    task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl WebUiHandle {
@@ -84,13 +85,33 @@ impl WebUiHandle {
     }
 
     pub fn shutdown(&self) {
-        self.task.abort();
+        if let Some(task) = &self.task {
+            task.abort();
+        }
+    }
+
+    /// Test-only handle: upstream client messages land on the returned
+    /// receiver instead of a socket, so tests can assert exactly what would
+    /// be sent to Lich.
+    #[cfg(test)]
+    pub(crate) fn test_pair() -> (WebUiHandle, mpsc::UnboundedReceiver<WebUiClientMessage>) {
+        let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
+        (
+            WebUiHandle {
+                port: 0,
+                outbound_tx,
+                task: None,
+            },
+            outbound_rx,
+        )
     }
 }
 
 impl Drop for WebUiHandle {
     fn drop(&mut self) {
-        self.task.abort();
+        if let Some(task) = &self.task {
+            task.abort();
+        }
     }
 }
 
@@ -114,7 +135,7 @@ pub fn start(
     WebUiHandle {
         port,
         outbound_tx,
-        task,
+        task: Some(task),
     }
 }
 

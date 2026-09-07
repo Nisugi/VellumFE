@@ -701,6 +701,16 @@ pub enum RemoteDelta {
     },
 }
 
+/// Identity of one WebUI page consumer. Desktop panels are `Local`; each
+/// phone/web client is `Remote` keyed by its WebSocket client id. Upstream
+/// (Lich) subscription state is the union across consumers: subscribe on the
+/// first consumer, unsubscribe only when the last one leaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WebUiConsumer {
+    Local,
+    Remote(u64),
+}
+
 /// Input from a remote client, drained by the active frontend's main loop
 /// (TUI runtime loop / GUI pump) and fed through the same command path as
 /// locally typed input.
@@ -909,10 +919,17 @@ pub enum RemoteEvent {
         slices: serde_json::Value,
     },
     /// A phone client subscribed to a Lich WebUI page (opened its panel):
-    /// core forwards a `subscribe` to Lich so renders start flowing.
-    WebUiSubscribe { page: String },
-    /// A phone client closed a WebUI panel: core `unsubscribe`s from Lich.
-    WebUiUnsubscribe { page: String },
+    /// core records the consumer and forwards a `subscribe` to Lich so
+    /// renders start flowing.
+    WebUiSubscribe { client_id: u64, page: String },
+    /// A phone client closed a WebUI panel: core drops that consumer and
+    /// `unsubscribe`s from Lich only when no other consumer still shows the
+    /// page.
+    WebUiUnsubscribe { client_id: u64, page: String },
+    /// A phone client's WebSocket ended (close or abrupt drop): core removes
+    /// every subscription that client held, releasing upstream pages whose
+    /// last consumer just left.
+    WebUiClientGone { client_id: u64 },
     /// A phone WebUI interaction (button/input/row): core forwards it to
     /// Lich as a `WebUiClientMessage::Event`. `value` is component-specific.
     WebUiEvent {

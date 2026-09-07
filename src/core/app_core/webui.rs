@@ -127,22 +127,64 @@ impl AppCore {
         self.webui_event_tx.clone()
     }
 
-    /// Subscribe to a page on the bridge (a phone opening a panel, or the
-    /// GUI's own panels). Remembered so it replays when a fresh socket's
-    /// Hello arrives (the bridge may not be up yet on the first subscribe).
-    pub fn webui_subscribe(&mut self, page: &str) {
-        self.webui_subscribed.insert(page.to_string());
+    /// Subscribe a consumer to a page on the bridge (a phone opening a
+    /// panel, or the GUI's own panels as `WebUiConsumer::Local`). Consumers
+    /// are a set, so duplicate subscribes from the same consumer are
+    /// idempotent. The upstream subscribe is always forwarded — it is
+    /// idempotent on Lich and triggers a fresh render for the joining
+    /// consumer — and the page set replays when a fresh socket's Hello
+    /// arrives (the bridge may not be up yet on the first subscribe).
+    pub fn webui_subscribe(&mut self, consumer: crate::core::remote::WebUiConsumer, page: &str) {
+        self.webui_subscribed
+            .entry(page.to_string())
+            .or_default()
+            .insert(consumer);
         if let Some(bridge) = &self.webui_bridge {
             bridge.subscribe(page);
         }
     }
 
-    pub fn webui_unsubscribe(&mut self, page: &str) {
-        self.webui_subscribed.remove(page);
+    /// Drop one consumer from a page. The upstream unsubscribe is sent only
+    /// when the LAST consumer leaves — desktop and phone (or two phones)
+    /// share pages, and closing one must not stop the other's updates.
+    pub fn webui_unsubscribe(&mut self, consumer: crate::core::remote::WebUiConsumer, page: &str) {
+        let last = match self.webui_subscribed.get_mut(page) {
+            Some(consumers) => {
+                consumers.remove(&consumer);
+                consumers.is_empty()
+            }
+            // Unknown page: nothing tracked, nothing to release upstream.
+            None => return,
+        };
+        if last {
+            self.webui_subscribed.remove(page);
+            if let Some(bridge) = &self.webui_bridge {
+                bridge.send(WebUiClientMessage::Unsubscribe {
+                    page: page.to_string(),
+                });
+            }
+        }
+    }
+
+    /// A remote client's WebSocket ended (clean close or abrupt drop):
+    /// remove every subscription it held and release upstream pages whose
+    /// last consumer just left. Other consumers' state is untouched.
+    pub fn webui_client_gone(&mut self, client_id: u64) {
+        let consumer = crate::core::remote::WebUiConsumer::Remote(client_id);
+        let mut released = Vec::new();
+        self.webui_subscribed.retain(|page, consumers| {
+            consumers.remove(&consumer);
+            if consumers.is_empty() {
+                released.push(page.clone());
+                false
+            } else {
+                true
+            }
+        });
         if let Some(bridge) = &self.webui_bridge {
-            bridge.send(WebUiClientMessage::Unsubscribe {
-                page: page.to_string(),
-            });
+            for page in released {
+                bridge.send(WebUiClientMessage::Unsubscribe { page });
+            }
         }
     }
 
@@ -193,7 +235,7 @@ impl AppCore {
                 // A fresh socket has no subscriptions; replay ours so renders
                 // resume for every page a client still has open.
                 if let Some(bridge) = &self.webui_bridge {
-                    for page in &self.webui_subscribed {
+                    for page in self.webui_subscribed.keys() {
                         bridge.subscribe(page);
                     }
                 }
@@ -242,5 +284,194 @@ impl AppCore {
         if let Some(remote) = self.message_processor.remote.as_mut() {
             remote.push_webui_connected(false);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Per-consumer WebUI subscription tracking (finding 10). These assert
+    //! the UPSTREAM message transitions (what would be sent to Lich over the
+    //! bridge socket) and delivery to remaining consumers, not just the
+    //! internal collection.
+
+    use super::*;
+    use crate::core::remote::{RemoteDelta, RemoteSink, WebUiConsumer};
+    use crate::data::webui::WebUiClientMessage;
+
+    fn app_with_bridge() -> (
+        AppCore,
+        tokio::sync::mpsc::UnboundedReceiver<WebUiClientMessage>,
+    ) {
+        let mut core = AppCore::new_for_test();
+        let (handle, upstream_rx) = crate::webui::WebUiHandle::test_pair();
+        core.webui_bridge = Some(handle);
+        (core, upstream_rx)
+    }
+
+    fn drain(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<WebUiClientMessage>,
+    ) -> Vec<WebUiClientMessage> {
+        let mut out = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            out.push(msg);
+        }
+        out
+    }
+
+    fn sub(page: &str) -> WebUiClientMessage {
+        WebUiClientMessage::Subscribe {
+            page: page.to_string(),
+        }
+    }
+
+    fn unsub(page: &str) -> WebUiClientMessage {
+        WebUiClientMessage::Unsubscribe {
+            page: page.to_string(),
+        }
+    }
+
+    /// Two remote clients share a page: the first leave sends NO upstream
+    /// unsubscribe and renders keep flowing to the remaining client; the
+    /// last leave releases the page upstream.
+    #[test]
+    fn two_remote_clients_last_consumer_releases_upstream() {
+        let (mut core, mut up) = app_with_bridge();
+        core.webui_subscribe(WebUiConsumer::Remote(1), "bigshot");
+        core.webui_subscribe(WebUiConsumer::Remote(2), "bigshot");
+        assert_eq!(drain(&mut up), vec![sub("bigshot"), sub("bigshot")]);
+
+        // Client 1 closes its panel: no upstream unsubscribe.
+        core.webui_unsubscribe(WebUiConsumer::Remote(1), "bigshot");
+        assert_eq!(drain(&mut up), vec![]);
+
+        // A render arriving now still reaches remote consumers.
+        let (sink, handles, _events) = RemoteSink::new(16);
+        core.message_processor.remote = Some(sink);
+        let mut delta_rx = handles.delta_tx.subscribe();
+        core.relay_webui_to_phone(&crate::webui::WebUiEvent::Render {
+            page: "bigshot".to_string(),
+            seq: 7,
+            tree: Default::default(),
+        });
+        match delta_rx.try_recv() {
+            Ok(RemoteDelta::WebUiRender { page, seq, .. }) => {
+                assert_eq!(page, "bigshot");
+                assert_eq!(seq, 7);
+            }
+            other => panic!("expected WebUiRender delta, got {other:?}"),
+        }
+
+        // Last consumer leaves: upstream unsubscribe fires exactly once.
+        core.webui_unsubscribe(WebUiConsumer::Remote(2), "bigshot");
+        assert_eq!(drain(&mut up), vec![unsub("bigshot")]);
+    }
+
+    /// Desktop panel + phone share a page: the phone disconnecting keeps the
+    /// desktop's upstream subscription; closing the desktop panel afterwards
+    /// releases it.
+    #[test]
+    fn local_plus_remote_share_page() {
+        let (mut core, mut up) = app_with_bridge();
+        core.webui_subscribe(WebUiConsumer::Local, "map/main");
+        core.webui_subscribe(WebUiConsumer::Remote(9), "map/main");
+        drain(&mut up);
+
+        core.webui_client_gone(9);
+        assert_eq!(
+            drain(&mut up),
+            vec![],
+            "phone drop must not unsubscribe the desktop's page"
+        );
+
+        core.webui_unsubscribe(WebUiConsumer::Local, "map/main");
+        assert_eq!(drain(&mut up), vec![unsub("map/main")]);
+    }
+
+    /// Repeated subscribes from one consumer are idempotent (a set, not a
+    /// counter): one unsubscribe still releases the page.
+    #[test]
+    fn duplicate_subscribes_do_not_leak() {
+        let (mut core, mut up) = app_with_bridge();
+        for _ in 0..3 {
+            core.webui_subscribe(WebUiConsumer::Remote(4), "bigshot");
+        }
+        drain(&mut up);
+        core.webui_unsubscribe(WebUiConsumer::Remote(4), "bigshot");
+        assert_eq!(drain(&mut up), vec![unsub("bigshot")]);
+        assert!(core.webui_subscribed.is_empty());
+    }
+
+    /// Abrupt disconnect removes only that client's subscriptions, applying
+    /// last-consumer transitions per page.
+    #[test]
+    fn abrupt_disconnect_releases_only_that_clients_pages() {
+        let (mut core, mut up) = app_with_bridge();
+        core.webui_subscribe(WebUiConsumer::Remote(1), "solo");
+        core.webui_subscribe(WebUiConsumer::Remote(1), "shared");
+        core.webui_subscribe(WebUiConsumer::Remote(2), "shared");
+        core.webui_subscribe(WebUiConsumer::Remote(2), "other");
+        drain(&mut up);
+
+        core.webui_client_gone(1);
+        let msgs = drain(&mut up);
+        assert_eq!(
+            msgs,
+            vec![unsub("solo")],
+            "only the sole-consumer page unsubscribes"
+        );
+        assert!(core.webui_subscribed.contains_key("shared"));
+        assert!(core.webui_subscribed.contains_key("other"));
+
+        // Gone again (duplicate disconnect event) is a no-op.
+        core.webui_client_gone(1);
+        assert_eq!(drain(&mut up), vec![]);
+    }
+
+    /// Unsubscribing a consumer that never subscribed, or an unknown page,
+    /// sends nothing upstream.
+    #[test]
+    fn unsubscribe_without_subscription_is_silent() {
+        let (mut core, mut up) = app_with_bridge();
+        core.webui_unsubscribe(WebUiConsumer::Remote(1), "nope");
+        core.webui_subscribe(WebUiConsumer::Remote(2), "page");
+        drain(&mut up);
+        // A different consumer unsubscribing does not release the page.
+        core.webui_unsubscribe(WebUiConsumer::Remote(3), "page");
+        assert_eq!(drain(&mut up), vec![]);
+        assert!(core.webui_subscribed.contains_key("page"));
+    }
+
+    /// After a bridge reconnect (fresh socket Hello) the UNION of active
+    /// subscriptions replays upstream, regardless of which consumer holds
+    /// each page.
+    #[test]
+    fn bridge_reconnect_replays_union() {
+        let (mut core, mut up) = app_with_bridge();
+        core.webui_subscribe(WebUiConsumer::Local, "desktop-page");
+        core.webui_subscribe(WebUiConsumer::Remote(1), "phone-page");
+        core.webui_subscribe(WebUiConsumer::Remote(2), "phone-page");
+        drain(&mut up);
+
+        // Hello relaying requires the remote sink (phone fan-out) installed.
+        let (sink, _handles, _events) = RemoteSink::new(16);
+        core.message_processor.remote = Some(sink);
+        core.relay_webui_to_phone(&crate::webui::WebUiEvent::Hello {
+            schema_version: 1,
+            session: Default::default(),
+            pages: Vec::new(),
+        });
+
+        let mut pages: Vec<String> = drain(&mut up)
+            .into_iter()
+            .map(|m| match m {
+                WebUiClientMessage::Subscribe { page } => page,
+                other => panic!("expected only Subscribe replays, got {other:?}"),
+            })
+            .collect();
+        pages.sort();
+        assert_eq!(
+            pages,
+            vec!["desktop-page".to_string(), "phone-page".to_string()]
+        );
     }
 }

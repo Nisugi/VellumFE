@@ -877,11 +877,20 @@ async fn async_run(
                         app_core
                             .handle_remote_touch_wheel_put(client_id, request_id, scope, slices);
                     }
-                    crate::core::remote::RemoteEvent::WebUiSubscribe { page } => {
-                        app_core.webui_subscribe(&page);
+                    crate::core::remote::RemoteEvent::WebUiSubscribe { client_id, page } => {
+                        app_core.webui_subscribe(
+                            crate::core::remote::WebUiConsumer::Remote(client_id),
+                            &page,
+                        );
                     }
-                    crate::core::remote::RemoteEvent::WebUiUnsubscribe { page } => {
-                        app_core.webui_unsubscribe(&page);
+                    crate::core::remote::RemoteEvent::WebUiUnsubscribe { client_id, page } => {
+                        app_core.webui_unsubscribe(
+                            crate::core::remote::WebUiConsumer::Remote(client_id),
+                            &page,
+                        );
+                    }
+                    crate::core::remote::RemoteEvent::WebUiClientGone { client_id } => {
+                        app_core.webui_client_gone(client_id);
                     }
                     crate::core::remote::RemoteEvent::WebUiEvent { page, cid, value } => {
                         app_core.webui_send_event(page, cid, value);

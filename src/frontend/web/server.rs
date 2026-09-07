@@ -277,6 +277,8 @@ fn full_router(state: Arc<WebState>) -> Router {
         .route("/app.js", get(app_js))
         .route("/wheel-core.js", get(wheel_core_js))
         .route("/char-core.js", get(char_core_js))
+        .route("/webui-core.js", get(webui_core_js))
+        .route("/pairing-core.js", get(pairing_core_js))
         .route("/app.css", get(app_css))
         .route("/manifest.webmanifest", get(manifest))
         .route("/sw.js", get(sw_js))
@@ -467,6 +469,26 @@ async fn char_core_js() -> impl IntoResponse {
             (header::CACHE_CONTROL, "no-cache"),
         ],
         include_str!("assets/char-core.js"),
+    )
+}
+
+async fn webui_core_js() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        include_str!("assets/webui-core.js"),
+    )
+}
+
+async fn pairing_core_js() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        include_str!("assets/pairing-core.js"),
     )
 }
 
@@ -1413,12 +1435,12 @@ async fn handle_client_message(
         ClientMessage::WebUiSubscribe { page } => state
             .handles
             .event_tx
-            .send(RemoteEvent::WebUiSubscribe { page })
+            .send(RemoteEvent::WebUiSubscribe { client_id, page })
             .is_ok(),
         ClientMessage::WebUiUnsubscribe { page } => state
             .handles
             .event_tx
-            .send(RemoteEvent::WebUiUnsubscribe { page })
+            .send(RemoteEvent::WebUiUnsubscribe { client_id, page })
             .is_ok(),
         ClientMessage::WebUiEvent { page, cid, value } => state
             .handles
@@ -1586,6 +1608,26 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
     }
 
     let client_id = NEXT_CLIENT_ID.fetch_add(1, Ordering::Relaxed);
+
+    // Whatever way this connection ends — clean close, protocol error, or an
+    // abrupt drop mid-handshake — tell core the client is gone so its WebUI
+    // subscriptions are released (last-consumer pages unsubscribe upstream).
+    // A Drop guard covers every exit path of this function.
+    struct WebUiGone {
+        tx: tokio::sync::mpsc::UnboundedSender<RemoteEvent>,
+        client_id: u64,
+    }
+    impl Drop for WebUiGone {
+        fn drop(&mut self) {
+            let _ = self.tx.send(RemoteEvent::WebUiClientGone {
+                client_id: self.client_id,
+            });
+        }
+    }
+    let _webui_gone = WebUiGone {
+        tx: state.handles.event_tx.clone(),
+        client_id,
+    };
 
     // Subscribe BEFORE building any snapshot so no delta can fall in the
     // gap. Deltas that overlap a snapshot are deduped client-side by seq.
