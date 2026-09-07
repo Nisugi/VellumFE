@@ -7806,13 +7806,17 @@ function webuiImageMap(page, node, emit) {
   return wrap;
 }
 
-// /files/ images fetch over the bridge (cookie-authed) on desktop; on the
-// phone the token is in the URL fragment, not a usable cookie for a
-// cross-path GET, so route through the same /sounds-style token query the
-// phone already uses. Data URIs pass through untouched.
+// /files/ images live on the separate Lich WebUI server behind its own
+// cookie the browser never holds. Vellum proxies them at /webui/files/:
+// authenticate with the pairing token (same /sounds-style token query) and
+// the server fetches upstream with the bridge cookie. Data URIs pass
+// through untouched.
 function webuiImageSrc(src) {
   if (src.startsWith("data:")) return src;
-  if (src.startsWith("/files/")) return `${src}?token=${encodeURIComponent(pairingToken)}`;
+  if (src.startsWith("/files/")) {
+    const sep = src.includes("?") ? "&" : "?";
+    return `/webui${src}${sep}token=${encodeURIComponent(pairingToken)}`;
+  }
   return src;
 }
 

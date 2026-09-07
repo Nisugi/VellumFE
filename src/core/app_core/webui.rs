@@ -109,6 +109,16 @@ impl AppCore {
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<WebUiEvent>();
         self.webui_event_tx = Some(event_tx.clone());
         self.webui_endpoint = Some((host.clone(), port, token.clone()));
+        // Publish the upstream to the web server so its /webui/files/ proxy
+        // can fetch file-backed images for phone clients. The cookie stays
+        // server-side; phones authenticate with the pairing token only.
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.set_webui_upstream(Some(crate::core::remote::WebUiUpstream::new(
+                host.clone(),
+                port,
+                token.clone(),
+            )));
+        }
         let handle = crate::webui::start(runtime, host.clone(), port, token, event_tx);
         self.webui_bridge = Some(handle);
         self.webui_rx = Some(event_rx);
@@ -283,6 +293,9 @@ impl AppCore {
         self.webui_pages.clear();
         if let Some(remote) = self.message_processor.remote.as_mut() {
             remote.push_webui_connected(false);
+            // Withdraw the image-proxy upstream: after teardown the proxy
+            // must answer "bridge unavailable", never dial the old endpoint.
+            remote.set_webui_upstream(None);
         }
     }
 }

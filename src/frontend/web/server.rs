@@ -291,6 +291,7 @@ fn full_router(state: Arc<WebState>) -> Router {
         .route("/emoji", get(emoji_list))
         .route("/emoji/{name}", get(emoji_file))
         .route("/image/{name}", get(inline_image_file))
+        .route("/webui/files/{*path}", get(webui_files_proxy))
         .route("/doll.json", get(doll_json))
         .route("/doll/image", get(doll_image))
         .route("/ws", get(ws_upgrade))
@@ -819,6 +820,152 @@ async fn inline_image_file(
             [(header::CONTENT_TYPE, "text/plain")],
             Vec::new(),
         ),
+    }
+}
+
+/// Body-size bound for one proxied WebUI image.
+const WEBUI_PROXY_MAX_BYTES: usize = 8 * 1024 * 1024;
+/// Whole-fetch deadline for one proxied WebUI image.
+const WEBUI_PROXY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Is this decoded `/files/` sub-path safe to forward upstream? Rejects
+/// traversal, absolute/scheme-ish forms, control characters, and silly
+/// lengths. The path never touches OUR filesystem — it only selects a
+/// resource on the active bridge — but it must not be able to smuggle
+/// headers or climb out of the upstream's files root either.
+fn webui_files_path_ok(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 1024
+        && !path.contains('\\')
+        && !path.starts_with('/')
+        && !path.contains("://")
+        && path.split('/').all(|seg| !seg.is_empty() && seg != "." && seg != "..")
+        && path.bytes().all(|b| (0x20..0x7f).contains(&b))
+}
+
+/// Percent-encode a decoded path for the upstream request line: keep RFC
+/// 3986 pchar-safe bytes and `/`, encode everything else (spaces included).
+fn webui_encode_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        let safe = b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'-' | b'.' | b'_' | b'~' | b'/' | b'!' | b'$' | b'&' | b'\'' | b'(' | b')'
+                    | b'*' | b'+' | b',' | b';' | b'=' | b':' | b'@'
+            );
+        if safe {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// Rebuild the forwarded query string without the Vellum `token` parameter
+/// (the pairing token must never travel upstream). Pairs stay in their
+/// original (already percent-encoded) form. Returns None to reject a query
+/// that could smuggle bytes into the request line.
+fn webui_forward_query(raw: Option<&str>) -> Option<String> {
+    let Some(raw) = raw else {
+        return Some(String::new());
+    };
+    if raw.len() > 2048 || !raw.bytes().all(|b| (0x21..0x7f).contains(&b)) {
+        return None;
+    }
+    let kept: Vec<&str> = raw
+        .split('&')
+        .filter(|pair| {
+            let key = pair.split('=').next().unwrap_or("");
+            !pair.is_empty() && key != "token"
+        })
+        .collect();
+    Some(kept.join("&"))
+}
+
+/// Proxy one file-backed Lich WebUI image (`/files/...`) for a phone client.
+///
+/// Auth is two-sided and never crosses: the browser presents the Vellum
+/// pairing token (query param, like /sounds); the upstream request carries
+/// only the bridge's `lich_webui` cookie, read from the core-owned watch
+/// channel at request time — so a bridge restart is picked up immediately
+/// and a torn-down bridge answers 503, never the old endpoint. Responses
+/// are `no-store`: these are session-private images gated by a live cookie,
+/// and a cached copy must not outlive the bridge that authorized it.
+async fn webui_files_proxy(
+    axum::extract::Path(path): axum::extract::Path<String>,
+    axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<Arc<WebState>>,
+) -> impl IntoResponse {
+    use axum::http::StatusCode;
+
+    let plain = [
+        (header::CONTENT_TYPE, "text/plain".to_string()),
+        (header::CACHE_CONTROL, "no-store".to_string()),
+    ];
+    let fail = |code: StatusCode| (code, plain.clone(), Vec::new());
+
+    if !params
+        .get("token")
+        .is_some_and(|t| token_matches(t, &state.auth_token))
+    {
+        return fail(StatusCode::FORBIDDEN);
+    }
+    let (Some(query), true) = (
+        webui_forward_query(raw_query.as_deref()),
+        webui_files_path_ok(&path),
+    ) else {
+        return fail(StatusCode::BAD_REQUEST);
+    };
+
+    // Snapshot the ACTIVE upstream now; holding no borrow across the await.
+    let Some(upstream) = state.handles.webui_upstream_rx.borrow().clone() else {
+        return fail(StatusCode::SERVICE_UNAVAILABLE);
+    };
+
+    let mut upstream_path = format!("/files/{}", webui_encode_path(&path));
+    if !query.is_empty() {
+        upstream_path.push('?');
+        upstream_path.push_str(&query);
+    }
+
+    let fetch = crate::webui::fetch_files_with_type(
+        upstream.host(),
+        upstream.port(),
+        upstream.token(),
+        &upstream_path,
+        WEBUI_PROXY_MAX_BYTES,
+    );
+    let result = tokio::time::timeout(WEBUI_PROXY_TIMEOUT, fetch).await;
+    match result {
+        Ok(Ok((content_type, bytes))) => {
+            // Preserve image content types; anything else is served opaque
+            // so a compromised/wrong upstream cannot make us serve HTML.
+            let content_type = match content_type {
+                Some(ct) if ct.starts_with("image/") => ct,
+                _ => "application/octet-stream".to_string(),
+            };
+            (
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, content_type),
+                    (header::CACHE_CONTROL, "no-store".to_string()),
+                ],
+                bytes,
+            )
+        }
+        Ok(Err(crate::webui::FilesFetchError::Status(404))) => fail(StatusCode::NOT_FOUND),
+        Ok(Err(crate::webui::FilesFetchError::Oversized)) => {
+            tracing::warn!("webui image proxy: upstream response exceeded size bound");
+            fail(StatusCode::BAD_GATEWAY)
+        }
+        Ok(Err(err)) => {
+            tracing::warn!("webui image proxy: upstream fetch failed: {err}");
+            fail(StatusCode::BAD_GATEWAY)
+        }
+        Err(_) => fail(StatusCode::GATEWAY_TIMEOUT),
     }
 }
 

@@ -1590,6 +1590,41 @@ impl RemoteLaunchEndpoint {
     }
 }
 
+/// The ACTIVE Lich WebUI HTTP endpoint plus its auth cookie, published by
+/// core when the bridge starts and cleared when it stops. The web server's
+/// `/webui/files/` proxy reads this to fetch file-backed images upstream on
+/// behalf of phone clients.
+///
+/// The token is the `lich_webui` cookie — script-level power on the Lich
+/// box. It stays server-side: the proxy authenticates the browser with the
+/// Vellum pairing token and uses this cookie only on the upstream request.
+/// Like [`RemoteLaunchEndpoint`], this deliberately omits `Debug` so a
+/// diagnostic dump cannot persist the credential.
+#[derive(Clone, PartialEq, Eq)]
+pub struct WebUiUpstream {
+    host: String,
+    port: u16,
+    token: String,
+}
+
+impl WebUiUpstream {
+    pub fn new(host: String, port: u16, token: String) -> Self {
+        Self { host, port, token }
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+}
+
 /// Everything the web server task needs; returned by [`RemoteSink::new`].
 #[derive(Clone)]
 pub struct RemoteServerHandles {
@@ -1609,6 +1644,11 @@ pub struct RemoteServerHandles {
     /// authentication token are ready. Unpinned instances may walk past the
     /// configured port.
     pub(crate) launch_endpoint_tx: watch::Sender<Option<RemoteLaunchEndpoint>>,
+    /// The ACTIVE Lich WebUI upstream (host, port, cookie) for the
+    /// `/webui/files/` image proxy. None until the bridge starts, and again
+    /// after `.webui off` or a session teardown. A bridge restart replaces
+    /// the whole value, so the proxy always dials the current endpoint.
+    pub webui_upstream_rx: watch::Receiver<Option<WebUiUpstream>>,
 }
 
 /// Core-side producer for remote clients.
@@ -1619,6 +1659,8 @@ pub struct RemoteSink {
     macros_tx: watch::Sender<Arc<RemoteMacros>>,
     wheels_tx: watch::Sender<Arc<RemoteWheels>>,
     launch_endpoint_rx: watch::Receiver<Option<RemoteLaunchEndpoint>>,
+    /// Publisher for the WebUI upstream endpoint the image proxy dials.
+    webui_upstream_tx: watch::Sender<Option<WebUiUpstream>>,
     /// State as of the previous flush, for change detection.
     last: RemoteStateSnapshot,
     /// Session status owned by the serving runtime (headless supervisor);
@@ -1655,6 +1697,7 @@ impl RemoteSink {
                 .unwrap_or(0)
         );
         let (launch_endpoint_tx, launch_endpoint_rx) = watch::channel(None);
+        let (webui_upstream_tx, webui_upstream_rx) = watch::channel(None);
         let handles = RemoteServerHandles {
             buffer: buffer.clone(),
             delta_tx: delta_tx.clone(),
@@ -1664,6 +1707,7 @@ impl RemoteSink {
             wheels_rx,
             session,
             launch_endpoint_tx,
+            webui_upstream_rx,
         };
         (
             Self {
@@ -1673,6 +1717,7 @@ impl RemoteSink {
                 macros_tx,
                 wheels_tx,
                 launch_endpoint_rx,
+                webui_upstream_tx,
                 last: RemoteStateSnapshot::default(),
                 session: RemoteSessionInfo::default(),
                 webui_pages: Vec::new(),
@@ -1691,6 +1736,15 @@ impl RemoteSink {
             self.session.session_control = enabled;
             self.publish_session();
         }
+    }
+
+    /// Publish (or clear) the ACTIVE Lich WebUI upstream for the web
+    /// server's `/webui/files/` image proxy. Core calls this when the bridge
+    /// starts (`Some`) and when it stops (`None`); a restart with a new
+    /// port/token replaces the value, so the proxy never dials a stale
+    /// endpoint or presents a stale cookie.
+    pub fn set_webui_upstream(&mut self, upstream: Option<WebUiUpstream>) {
+        self.webui_upstream_tx.send_replace(upstream);
     }
 
     /// Set whether Lich WebUI is reachable this session (the sink owns this
