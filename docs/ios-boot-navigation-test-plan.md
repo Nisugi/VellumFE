@@ -102,3 +102,55 @@ JVM-tested `CharacterWheel`). Run on simulator/device with the picker.
    Rename a saved entry (re-pair same host:port under a new name —
    `RemoteStore.add` preserves the existing `id`). A wheel built after the
    rename still connects to the same server by the same ID.
+
+## Tokenless remote pairing (proposal item 9)
+
+iOS has no test target; the pure classification/fragment rules are covered
+by `src/frontend/web/assets/pairing-core.test.mjs` (node --test) and the
+Android list edit by `RemoteTokenUpdateTest.kt`. These scenarios exercise
+`ContentView.swift`'s side: `showRemote` appending `sid=` and the
+`vellum://remote/token` handler updating the Keychain entry by stable ID.
+Run on simulator/device against a desktop VellumFE with a pairing token.
+
+1. **Tokenless manual entry leads to pairing, then sessions.**
+   Add the desktop server manually WITHOUT a token and connect. Expect: the
+   dashboard shows "Pairing required" with a token form — never "No
+   sessions running". Enter the desktop's `.webinfo` token. Expect: the
+   session list appears without reloading the page.
+
+2. **Accepted token updates the exact saved entry.**
+   After scenario 1, return to the picker and connect again. Expect: the
+   session list loads immediately (no pairing form) — `updateToken`
+   persisted the token on the entry whose `sid` rode the fragment. With two
+   saved entries sharing a display name, only the connected one gains the
+   token (verify via debugger on `RemoteStore.list()`).
+
+3. **Rejected token can be corrected without deleting the server.**
+   Save the server with a WRONG token and connect. Expect: "Access denied"
+   plus the form flagged "That pairing token was not accepted" — not an
+   empty list. Enter the right token: sessions appear, and the saved entry
+   now carries the corrected token.
+
+4. **Return to picker stays available while unpaired.**
+   In the pairing state, tap "Back to character picker"
+   (`vellum://remote/picker`). Expect: the native picker; the saved server
+   is still listed (nothing deleted).
+
+5. **Authenticated empty list still reads as empty.**
+   Pair successfully with a desktop that has no running sessions. Expect:
+   "No sessions running" (never the pairing form).
+
+6. **Network failure is not "no sessions".**
+   Connect to a saved server whose desktop is offline. Expect: "Can't reach
+   the server" with a Retry button; Retry after starting the desktop shows
+   pairing or sessions as appropriate.
+
+7. **Session navigation retains authentication.**
+   From the paired dashboard, open a session card. Expect: the /play URL
+   carries the token in the URL FRAGMENT (`#token=…`), never a `?token=`
+   query string; the game view authenticates.
+
+8. **Unknown sid is a no-op.**
+   Delete the entry on another visit, then replay a stale
+   `vellum://remote/token?id=…` (debugger). Expect: no entry changes — the
+   handler never falls back to name/host matching.

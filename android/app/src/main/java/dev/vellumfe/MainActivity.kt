@@ -258,6 +258,11 @@ class MainActivity : Activity() {
         } else {
             "token=${target.token}&app=1&nativepicker=1"
         }
+        // The saved target's stable store ID rides the fragment so a pairing
+        // token entered on the remote dashboard (a tokenless manual entry)
+        // can round-trip back through vellum://remote/token and update THIS
+        // exact entry — by ID, never by name/host guessing.
+        fragment += "&sid=" + Uri.encode(target.id)
         charsFragment()?.let { fragment += "&$it" }
         runOnUiThread {
             showWebView()
@@ -338,6 +343,16 @@ class MainActivity : Activity() {
                     } else {
                         navigate(NavDestination.Picker)
                     }
+                }
+                // A pairing token the remote dashboard accepted for a saved
+                // server that lacked one: persist it on exactly the entry
+                // named by its stable store ID. No navigation — the page
+                // already retried with the accepted token and is showing
+                // the session list.
+                "/token" -> {
+                    val id = uri.getQueryParameter("id").orEmpty()
+                    val token = uri.getQueryParameter("token").orEmpty()
+                    RemoteStore.updateToken(this, id, token)
                 }
             }
         }

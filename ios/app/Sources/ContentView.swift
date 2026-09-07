@@ -226,6 +226,11 @@ final class BootModel: ObservableObject {
         if !target.token.isEmpty {
             url += "&token=\(target.token)"
         }
+        // The saved target's stable store ID rides the fragment so a pairing
+        // token entered on the remote dashboard (a tokenless manual entry)
+        // can round-trip back through vellum://remote/token and update THIS
+        // exact entry — by ID, never by name/host guessing.
+        url += "&sid=\(Self.encode(target.id))"
         if let chars = Self.charsFragment() {
             url += "&\(chars)"
         }
@@ -290,6 +295,17 @@ final class BootModel: ObservableObject {
                     showRemote(target)
                 } else {
                     showPicker()
+                }
+            case "/token":
+                // A pairing token the remote dashboard accepted for a saved
+                // server that lacked one: persist it on exactly the entry
+                // named by its stable store ID. No navigation — the page
+                // already retried with the accepted token and is showing
+                // the session list.
+                if let id = Self.queryValue(url, "id"), !id.isEmpty,
+                   let token = Self.queryValue(url, "token"), !token.isEmpty {
+                    RemoteStore.updateToken(id: id, token: token)
+                    servers = RemoteStore.list()
                 }
             default:
                 break

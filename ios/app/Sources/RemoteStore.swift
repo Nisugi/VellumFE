@@ -84,6 +84,21 @@ enum RemoteStore {
         writeBlob(targets)
     }
 
+    /// Persist a pairing token the remote dashboard accepted for a saved
+    /// server that lacked one (vellum://remote/token round-trip). Addressed
+    /// by stable store ID — never by name or host: an unknown/blank id or a
+    /// blank token is a no-op, not a guess. Mirrors the Android shell's
+    /// `RemoteStore.updateToken`.
+    static func updateToken(id: String, token: String) {
+        guard !id.isEmpty, !token.isEmpty else { return }
+        var targets = list()
+        guard let idx = targets.firstIndex(where: { $0.id == id }),
+              targets[idx].token != token
+        else { return }
+        targets[idx].token = token
+        writeBlob(targets)
+    }
+
     /// Remove one saved server by id. Returns the remaining list.
     @discardableResult
     static func remove(id: String) -> [Target] {

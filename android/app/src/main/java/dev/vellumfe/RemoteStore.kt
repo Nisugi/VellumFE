@@ -103,6 +103,32 @@ object RemoteStore {
         writeBlob(context, current)
     }
 
+    /**
+     * Persist a pairing token the remote dashboard accepted for a saved
+     * server that lacked one (vellum://remote/token round-trip). Addressed
+     * by stable store ID; delegates the pure list edit to [withUpdatedToken].
+     */
+    fun updateToken(context: Context, id: String, token: String) {
+        val updated = withUpdatedToken(list(context), id, token) ?: return
+        writeBlob(context, updated)
+    }
+
+    /**
+     * The pure edit behind [updateToken] (JVM-testable): the same list with
+     * the entry whose id matches carrying the new token, or null when
+     * nothing changes — unknown/blank id, blank token, or token already
+     * equal. Never matches by name or host: a stale ID must be a no-op,
+     * not a guess.
+     */
+    fun withUpdatedToken(targets: List<Target>, id: String, token: String): List<Target>? {
+        if (id.isEmpty() || token.isEmpty()) return null
+        val idx = targets.indexOfFirst { it.id == id }
+        if (idx < 0 || targets[idx].token == token) return null
+        val updated = targets.toMutableList()
+        updated[idx] = targets[idx].copy(token = token)
+        return updated
+    }
+
     /** Remove one saved server by id. Returns the remaining list. */
     fun remove(context: Context, id: String): List<Target> {
         val remaining = list(context).filterNot { it.id == id }
