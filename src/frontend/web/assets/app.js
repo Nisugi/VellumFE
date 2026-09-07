@@ -1683,38 +1683,19 @@ const TOUCH_WHEEL_DEFAULT = [
 ];
 
 // ---- Character switching (app shell) ---------------------------------------
-// The native shell appends `chars=` to the boot fragment: the saved remote
-// sessions from its picker, `name@host:port` entries (name and host
-// percent-encoded), comma-separated. Names only identify picker entries —
+// The native shell appends `chars=` (display `name@host:port` entries) and
+// `charids=` (parallel stable store IDs) to the boot fragment: the saved
+// remote sessions from its picker. The ID — not the name — identifies a
+// picker entry, so duplicate labels at different servers stay distinct;
 // pairing tokens never leave native storage; a pick round-trips through
-// vellum://remote/connect?name=… and the shell connects with its own token.
-const shellChars = (() => {
-  const m = location.hash.match(/(?:^#|&)chars=([^&]+)/);
-  if (!m) return [];
-  const out = [];
-  for (const entry of m[1].split(",")) {
-    const at = entry.indexOf("@");
-    const colon = entry.lastIndexOf(":");
-    if (at <= 0 || colon <= at) continue;
-    const port = Number(entry.slice(colon + 1));
-    let host;
-    let name;
-    try {
-      name = decodeURIComponent(entry.slice(0, at));
-      host = decodeURIComponent(entry.slice(at + 1, colon));
-    } catch {
-      continue;
-    }
-    if (!name || !host || !Number.isInteger(port) || port <= 0) continue;
-    // Bracket bare IPv6 so hostPort matches location.host and parses in URLs.
-    if (host.includes(":") && !host.startsWith("[")) host = `[${host}]`;
-    out.push({ name, hostPort: `${host}:${port}` });
-  }
-  return out;
-})();
+// vellum://remote/connect?id=… (name=… for legacy shells without IDs) and
+// the shell connects with its own token. Parsing/identity rules live in
+// char-core.js (CharCore), shared with the node tests.
+const shellChars = CharCore.parseShellChars(location.hash);
 
-// Liveness per character name: "online" | "offline"; absent = unknown (drawn
-// normally — the wheel never hides an unprobed character).
+// Liveness per character key (store ID, or name@hostPort for legacy
+// shells): "online" | "offline"; absent = unknown (drawn normally — the
+// wheel never hides an unprobed character).
 const shellCharStatus = {};
 let shellCharProbeAt = 0;
 
@@ -1732,8 +1713,8 @@ function probeShellChars() {
     fetch(`http://${c.hostPort}/health`, {
       mode: "no-cors", cache: "no-store", signal: ctrl.signal,
     })
-      .then(() => { shellCharStatus[c.name] = "online"; })
-      .catch(() => { shellCharStatus[c.name] = "offline"; })
+      .then(() => { shellCharStatus[CharCore.charKey(c)] = "online"; })
+      .catch(() => { shellCharStatus[CharCore.charKey(c)] = "offline"; })
       .finally(() => {
         clearTimeout(timer);
         if (gpWheel && gpWheel.key === "touch") renderWheel();
@@ -1750,8 +1731,9 @@ function characterRingSlices() {
   const ring = [];
   for (const c of shellChars) {
     if (c.hostPort === location.host) continue;
-    const slice = { label: c.name, client: `shell:connect:${c.name}` };
-    if (shellCharStatus[c.name] === "offline") slice.color = SHELL_CHAR_OFFLINE_COLOR;
+    const key = CharCore.charKey(c);
+    const slice = { label: c.name, client: `shell:connect:${key}` };
+    if (shellCharStatus[key] === "offline") slice.color = SHELL_CHAR_OFFLINE_COLOR;
     ring.push(slice);
   }
   if (location.hostname !== "127.0.0.1") {
@@ -1874,7 +1856,7 @@ function runWheelClientAction(action) {
   if (verb === "focus") { if (arg === "input") cmdInput.focus(); return true; }
   if (verb === "shell") {
     // Character switching — handled past the 2-part split because
-    // shell:connect:<name> carries the name in the third segment.
+    // shell:connect:<key> carries the entry key in the third segment.
     runShellWheelAction(action.slice("shell:".length));
     return true;
   }
@@ -1903,13 +1885,22 @@ function runShellWheelAction(rest) {
     return;
   }
   if (rest.startsWith("connect:")) {
-    const name = rest.slice("connect:".length);
-    if (shellCharStatus[name] === "offline") {
-      // Refuse gracefully instead of reloading into a dead session.
-      shellToast(`${name} isn't reachable right now.`);
+    // The action carries the entry's stable key (store ID, or name@hostPort
+    // for legacy shells). Resolve back to the parsed entry; a stale key
+    // (entry deleted since the wheel was built) opens the picker rather
+    // than guessing at another character.
+    const key = rest.slice("connect:".length);
+    const c = CharCore.findByKey(shellChars, key);
+    if (!c) {
+      location.href = "vellum://remote/picker";
       return;
     }
-    location.href = `vellum://remote/connect?name=${encodeURIComponent(name)}`;
+    if (shellCharStatus[CharCore.charKey(c)] === "offline") {
+      // Refuse gracefully instead of reloading into a dead session.
+      shellToast(`${c.name} isn't reachable right now.`);
+      return;
+    }
+    location.href = CharCore.connectHref(c);
   }
 }
 

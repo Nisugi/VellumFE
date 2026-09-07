@@ -180,17 +180,24 @@ final class BootModel: ObservableObject {
         return URL(string: url)!
     }
 
-    /// The saved characters as a `chars=` fragment for the web client's
-    /// switch-character wheel: `name@host:port` entries (name and host
-    /// percent-encoded), comma-separated. Names only — pairing tokens stay
-    /// in the Keychain; a wheel pick round-trips through
-    /// vellum://remote/connect?name=… and this shell connects with its own
-    /// stored token. Nil when nothing is saved.
+    /// The saved characters as `chars=` + `charids=` fragment params for
+    /// the web client's switch-character wheel: display `name@host:port`
+    /// entries plus each target's stable store ID (same order). A wheel
+    /// pick round-trips through vellum://remote/connect?id=… and is
+    /// resolved BY ID — names are display only, so duplicate labels at
+    /// different servers stay distinct. Pairing tokens stay in the
+    /// Keychain; this shell connects with its own stored token. Nil when
+    /// nothing is saved. (Older web clients ignore the unknown charids=
+    /// param and keep their name-based behavior.)
     private static func charsFragment() -> String? {
-        let entries = RemoteStore.list().map { target in
+        let targets = RemoteStore.list()
+        if targets.isEmpty { return nil }
+        let entries = targets.map { target in
             "\(encode(target.name))@\(encode(target.host)):\(target.port)"
         }
-        return entries.isEmpty ? nil : "chars=" + entries.joined(separator: ",")
+        let ids = targets.map { encode($0.id) }
+        return "chars=" + entries.joined(separator: ",")
+            + "&charids=" + ids.joined(separator: ",")
     }
 
     /// Local play requested from the page (vellum://local). Routes through
@@ -269,21 +276,48 @@ final class BootModel: ObservableObject {
                 showPicker()
             case "/connect":
                 // Switch-character wheel pick: connect to a saved server by
-                // name (the token comes from the Keychain entry, never the
-                // page). An unknown or missing name lands on the picker.
-                guard let name = Self.queryValue(url, "name"), !name.isEmpty,
-                      let target = RemoteStore.list().first(where: { $0.name == name })
-                else {
+                // its stable store ID (the token comes from the Keychain
+                // entry, never the page). An explicit ID never falls back
+                // to a name match; legacy name-only requests resolve only
+                // when exactly one entry matches. Anything unknown,
+                // deleted, or ambiguous lands on the picker — never on a
+                // different entry.
+                if let target = Self.resolveConnect(
+                    RemoteStore.list(),
+                    id: Self.queryValue(url, "id"),
+                    name: Self.queryValue(url, "name")
+                ) {
+                    showRemote(target)
+                } else {
                     showPicker()
-                    return
                 }
-                showRemote(target)
             default:
                 break
             }
         default:
             break
         }
+    }
+
+    /// Resolve a vellum://remote/connect pick (proposal item 7). A
+    /// non-blank `id` matches only by ID — never falling back to a name —
+    /// so a stale selection can't be redirected to a different server
+    /// after a delete. A legacy name-only request resolves only when
+    /// exactly ONE saved entry carries that name. Nil = show the picker.
+    /// Mirrors the Android shell's `CharacterWheel.resolve`.
+    static func resolveConnect(
+        _ targets: [RemoteStore.Target],
+        id: String?,
+        name: String?
+    ) -> RemoteStore.Target? {
+        if let id, !id.isEmpty {
+            return targets.first { $0.id == id }
+        }
+        if let name, !name.isEmpty {
+            let matches = targets.filter { $0.name == name }
+            return matches.count == 1 ? matches[0] : nil
+        }
+        return nil
     }
 
     private static func queryValue(_ url: URL, _ name: String) -> String? {

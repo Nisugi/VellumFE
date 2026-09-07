@@ -204,18 +204,14 @@ class MainActivity : Activity() {
         return url
     }
 
-    /** The saved characters as a `chars=` fragment for the web client's
-     * switch-character wheel: `name@host:port` entries (name and host
-     * percent-encoded), comma-separated. Names only — pairing tokens stay in
-     * native storage; a wheel pick round-trips through
-     * vellum://remote/connect?name=… and this shell connects with its own
-     * stored token. Null when nothing is saved. */
-    private fun charsFragment(): String? {
-        val entries = RemoteStore.list(this).map { target ->
-            "${Uri.encode(target.name)}@${Uri.encode(target.host)}:${target.port}"
-        }
-        return if (entries.isEmpty()) null else "chars=" + entries.joinToString(",")
-    }
+    /** The saved characters as `chars=` + `charids=` fragment params for
+     * the web client's switch-character wheel: display labels plus each
+     * target's stable store ID (same order). A wheel pick round-trips
+     * through vellum://remote/connect?id=… and is resolved BY ID — names
+     * are display only, so duplicate labels stay distinct. Pairing tokens
+     * stay in native storage; this shell connects with its own stored
+     * token. Null when nothing is saved. */
+    private fun charsFragment(): String? = CharacterWheel.fragment(RemoteStore.list(this))
 
     /** Reload the local boot URL (embedded login page). Only called via
      * [render] once the core is ready, so port/token are published. */
@@ -321,11 +317,17 @@ class MainActivity : Activity() {
                 // native picker (which the shell owns).
                 "/picker" -> navigate(NavDestination.Picker)
                 // Switch-character wheel pick: connect to a saved server by
-                // name (the token comes from native storage, never the
-                // page). An unknown or missing name lands on the picker.
+                // its stable store ID (the token comes from native storage,
+                // never the page). Legacy name-only requests resolve only
+                // when exactly one entry matches; anything unknown,
+                // deleted, or ambiguous lands on the picker — never on a
+                // different entry.
                 "/connect" -> {
-                    val name = uri.getQueryParameter("name")?.trim().orEmpty()
-                    val target = RemoteStore.list(this).find { it.name == name }
+                    val target = CharacterWheel.resolve(
+                        RemoteStore.list(this),
+                        uri.getQueryParameter("id"),
+                        uri.getQueryParameter("name"),
+                    )
                     if (target != null) {
                         navigate(NavDestination.Remote(target))
                     } else {

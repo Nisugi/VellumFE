@@ -63,3 +63,42 @@ start; artificially extend by breakpointing in `startLocal()` if needed.
 Also verify on simulator/device: WebView actually loads each destination URL
 and fragment changes trigger a reload (WebViewContainer behavior, outside
 BootModel).
+
+## Character-wheel ID resolution (proposal item 7)
+
+iOS has no test target; these scenarios exercise `ContentView.swift`'s
+`charsFragment()` / `resolveConnect(_:id:name:)` (which mirrors Android's
+JVM-tested `CharacterWheel`). Run on simulator/device with the picker.
+
+1. **Fragment carries parallel IDs.**
+   Save two servers. Break at `bootURL` and inspect the fragment: it must
+   contain `chars=name@host:port,…&charids=id,…` with IDs in the same order
+   as the chars entries, and NO token material for other entries.
+
+2. **Duplicate labels connect to the right server.**
+   Save two entries both named "Rysk" at different host/ports. From a remote
+   session's touch wheel, pick each one in turn. Expect: each pick loads ITS
+   host:port (the wheel sends `vellum://remote/connect?id=…`), never the
+   first-saved entry both times.
+
+3. **Independent liveness.**
+   With the duplicate pair, keep one desktop reachable and one not. Open the
+   touch wheel Characters ring: only the unreachable one dims.
+
+4. **Deleted ID opens the picker.**
+   Open a remote session, then delete that duplicate's sibling entry from
+   the picker on another visit; fire a wheel pick whose ID no longer exists
+   (or call `resolveConnect` with a stale ID in a debugger). Expect: picker,
+   never a connect to a different entry — even when the stale request also
+   carries a name that still matches one.
+
+5. **Legacy name-only request.**
+   Simulate an old desktop-served web client: load
+   `vellum://remote/connect?name=Rysk` via the shell handler. With two
+   "Rysk" entries: picker (ambiguous). With exactly one match: connects.
+   Unknown name: picker.
+
+6. **Rename keeps identity.**
+   Rename a saved entry (re-pair same host:port under a new name —
+   `RemoteStore.add` preserves the existing `id`). A wheel built after the
+   rename still connects to the same server by the same ID.

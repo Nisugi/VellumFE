@@ -276,6 +276,7 @@ fn full_router(state: Arc<WebState>) -> Router {
         .route("/sessions", get(sessions_json))
         .route("/app.js", get(app_js))
         .route("/wheel-core.js", get(wheel_core_js))
+        .route("/char-core.js", get(char_core_js))
         .route("/app.css", get(app_css))
         .route("/manifest.webmanifest", get(manifest))
         .route("/sw.js", get(sw_js))
@@ -456,6 +457,16 @@ async fn wheel_core_js() -> impl IntoResponse {
             (header::CACHE_CONTROL, "no-cache"),
         ],
         include_str!("assets/wheel-core.js"),
+    )
+}
+
+async fn char_core_js() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        include_str!("assets/char-core.js"),
     )
 }
 
