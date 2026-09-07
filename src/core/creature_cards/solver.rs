@@ -6,8 +6,12 @@
 //! Contract (the prototype's readouts, promoted to invariants):
 //!
 //! - **Permanence.** A unit's square and offsets are decided once, on
-//!   arrival, and never touched again (Studio `place_at` is the one
-//!   explicit override). Arrivals fit themselves around whoever is already
+//!   arrival, and never touched again (Studio `place_at` is one explicit
+//!   override; the other is `recalibrate`'s conflict policy — late/reloaded
+//!   art metadata that enlarges a unit's envelope past the arrival hard
+//!   bound re-homes THAT unit to the nearest valid square, because a
+//!   permanent overlap is worse than one local move; see `recalibrate`).
+//!   Arrivals fit themselves around whoever is already
 //!   standing; removals free squares. Nothing else mutates placement.
 //!   (Screen positions may still shift when the floor grows — that is the
 //!   camera re-framing a wider floor, world coordinates unchanged.)
@@ -989,11 +993,33 @@ impl CreatureField {
     }
 
     /// Replace a placed unit's pose boxes in place — calibration metadata
-    /// arrived (art loaded after the creature did) or was reloaded.
-    /// Position NEVER moves (placement stability); the fall envelope
-    /// future arrivals reserve against updates, so no hidden stale
-    /// reservation lingers. Bumps the generation only when something
-    /// actually changed. Returns true on change.
+    /// arrived (art loaded after the creature did) or a sidecar reload
+    /// changed it. The fall envelope future arrivals reserve against
+    /// updates, so no hidden stale reservation lingers. Bumps the
+    /// generation only when something actually changed. Returns true on
+    /// change.
+    ///
+    /// CONFLICT-RESOLUTION POLICY (finding 8), balancing placement
+    /// stability against valid reservations:
+    ///
+    /// - **Stay if valid.** When the updated envelope still honors the
+    ///   arrival-time hard bound against every neighbour's envelope, the
+    ///   unit keeps its exact spot — the overwhelmingly common case, and
+    ///   the old permanence guarantee unchanged.
+    /// - **Re-home only the changed unit.** When the enlarged envelope
+    ///   overlaps a neighbour's beyond the unrelaxed arrival bound (the
+    ///   overlap an arrival would have been REJECTED for), the
+    ///   recalibrated unit — and only it — is re-placed through the same
+    ///   affinity search a dismounting rider uses, anchored at its old
+    ///   foot point: the nearest square satisfying all the hard rules
+    ///   (zone, occlusion, separation, envelope, obstacles), growing the
+    ///   floor if needed. Neighbours and scenery NEVER move. No overlap
+    ///   is left standing for the occupants' lifetime.
+    /// - Applies identically to first-load metadata and live sidecar
+    ///   reloads (both funnel through the CalibrationStore revision), in
+    ///   the game field and Studio alike. When `fall_reserve_hard` is
+    ///   authored off, envelopes were never a hard rule — nothing
+    ///   re-homes.
     pub fn recalibrate(
         &mut self,
         exist: &str,
@@ -1001,21 +1027,54 @@ impl CreatureField {
         prone: CardSize,
         current: CardSize,
     ) -> bool {
-        let Some(u) = self
+        let Some(idx) = self
             .units
-            .iter_mut()
-            .find(|u| u.members.first().map(String::as_str) == Some(exist))
+            .iter()
+            .position(|u| u.members.first().map(String::as_str) == Some(exist))
         else {
             return false;
         };
-        if u.standing == standing && u.prone == prone && u.size == current {
-            return false;
+        {
+            let u = &mut self.units[idx];
+            if u.standing == standing && u.prone == prone && u.size == current {
+                return false;
+            }
+            u.standing = standing;
+            u.prone = prone;
+            u.size = current;
         }
-        u.standing = standing;
-        u.prone = prone;
-        u.size = current;
         self.generation += 1;
+        if self.params.solver.fall_reserve_hard && self.envelope_conflicts(idx) {
+            let anchor = self.foot(&self.units[idx]);
+            let mut unit = self.units.remove(idx);
+            let p = self.choose_home(unit.standing, unit.prone, exist, Some(anchor));
+            unit.ci = p.ci;
+            unit.row = p.row;
+            unit.off_x = p.off_x;
+            unit.off_z = p.off_z;
+            unit.tight = p.tight;
+            self.units.push(unit);
+        }
         true
+    }
+
+    /// Does unit `idx`'s fall envelope overlap any neighbour's beyond the
+    /// unrelaxed arrival hard bound? (Obstacles are deliberately not
+    /// re-checked: recalibration never moves the foot point, and the
+    /// pinned scene-swap policy keeps units in place when an obstacle
+    /// lands on them — `choose_home` still honors obstacles for any
+    /// re-homed destination.)
+    fn envelope_conflicts(&self, idx: usize) -> bool {
+        let u = &self.units[idx];
+        let env = self.env_for(u.standing, u.prone, u.ci, u.row, u.off_x, u.off_z);
+        self.units
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != idx)
+            .any(|(_, o)| {
+                let oenv = self.env_for(o.standing, o.prone, o.ci, o.row, o.off_x, o.off_z);
+                overlap_1d(&env, &oenv) > 0.50
+            })
     }
 
     /// Remove a creature (looted / gone). If it was one member of a
@@ -1773,18 +1832,20 @@ mod tests {
     }
 
     /// Calibration arriving late (art loaded after placement) updates the
-    /// reservation WITHOUT moving anyone — placement stability — and only
-    /// dirties the generation when something changed.
+    /// reservation; while the new envelope stays valid the unit does NOT
+    /// move (placement stability), and the generation dirties only on
+    /// actual change.
     #[test]
-    fn recalibrate_updates_boxes_without_moving_units() {
+    fn recalibrate_updates_boxes_without_moving_when_valid() {
         let mut f = CreatureField::default();
         arrive(&mut f, "a", kobold());
-        arrive(&mut f, "b", troll());
+        // Alone on the floor: no envelope can conflict, so any enlargement
+        // keeps the exact spot.
         let pos = world_pos(&f, "a");
         let g = f.generation;
         let wide = CardSize::new(1.6, 0.8);
         assert!(f.recalibrate("a", wide, prone_of(wide), wide));
-        assert_eq!(world_pos(&f, "a"), pos, "recalibration must not move");
+        assert_eq!(world_pos(&f, "a"), pos, "valid recalibration must not move");
         assert!(f.generation > g);
         let u = f.unit_of("a").unwrap();
         assert_eq!(u.standing, wide);
@@ -1795,6 +1856,102 @@ mod tests {
         assert_eq!(f.generation, g);
         // Unknown creature: no-op, no panic.
         assert!(!f.recalibrate("ghost", wide, wide, wide));
+    }
+
+    /// Finding 8 conflict policy: metadata (first load or sidecar reload)
+    /// that enlarges a placed unit's envelope past the arrival hard bound
+    /// re-homes THAT unit to a valid square; neighbours never move and no
+    /// overlap outlives the update.
+    #[test]
+    fn enlarging_recalibration_resolves_conflicts_under_policy() {
+        let mut f = CreatureField::default();
+        fill(&mut f, 4);
+        let others: Vec<String> = (1..4).map(|i| format!("{}", 1000 + i)).collect();
+        let before: Vec<_> = others.iter().map(|e| world_pos(&f, e)).collect();
+        // The reloaded sidecar reveals a grossly wider creature than the
+        // cold-cache guess it was placed with.
+        let wide = CardSize::new(2.4, 1.1);
+        assert!(f.recalibrate("1000", wide, prone_of(wide), wide));
+        for (e, b) in others.iter().zip(&before) {
+            assert_eq!(world_pos(&f, e), *b, "{e} moved for someone else's reload");
+        }
+        let idx = f
+            .units
+            .iter()
+            .position(|u| u.members[0] == "1000")
+            .unwrap();
+        assert_eq!(f.units[idx].standing, wide);
+        assert!(
+            !f.envelope_conflicts(idx),
+            "policy left an envelope conflict standing"
+        );
+    }
+
+    /// Finding 8 acceptance: multiple wide creatures placed cold (fallback
+    /// guess boxes, art cache empty) beside a calibrated prop end up
+    /// satisfying the same hard constraints as a warm-cache run once
+    /// their metadata lands: no envelope overlap past the arrival bound,
+    /// nobody behind the prop's projected span.
+    #[test]
+    fn cold_cache_recalibration_matches_warm_cache_constraints() {
+        let obstacle = Obstacle {
+            x: STAGE_W / 2.0,
+            z: 3.0,
+            left_w: 0.6,
+            right_w: 0.6,
+        };
+        let wide = CardSize::new(1.8, 1.0);
+        let mut warm = CreatureField::default();
+        warm.set_obstacles(vec![obstacle]);
+        for i in 0..3 {
+            warm.arrive(&format!("w{i}"), wide, prone_of(wide));
+        }
+        let mut cold = CreatureField::default();
+        cold.set_obstacles(vec![obstacle]);
+        let guess = CardSize::default();
+        for i in 0..3 {
+            cold.arrive(&format!("w{i}"), guess, prone_of(guess));
+        }
+        for i in 0..3 {
+            cold.recalibrate(&format!("w{i}"), wide, prone_of(wide), wide);
+        }
+        for (name, f) in [("warm", &warm), ("cold", &cold)] {
+            for idx in 0..f.units.len() {
+                assert!(
+                    !f.envelope_conflicts(idx),
+                    "{name}: unit {idx} envelope conflict"
+                );
+            }
+            let (sx0, sx1) = f.obstacle_span(&obstacle);
+            let (lo, hi) = (sx0.min(sx1), sx0.max(sx1));
+            for u in f.units() {
+                let r = f.rect(u);
+                assert!(
+                    !(r.z > obstacle.z && r.center_x() >= lo && r.center_x() <= hi),
+                    "{name}: unit behind the prop"
+                );
+            }
+        }
+    }
+
+    /// A prone image substantially wider than its standing image: the
+    /// envelope reserved at arrival already contains the wide prone box,
+    /// so the FIRST pose change introduces no new hard-bound violation —
+    /// the room was reserved before the pose art was ever needed.
+    #[test]
+    fn wide_prone_envelope_reserved_before_first_pose_change() {
+        let mut f = CreatureField::default();
+        let standing = CardSize::new(0.6, 1.4);
+        let prone = CardSize::new(2.2, 0.5);
+        f.arrive("sleeper", standing, prone);
+        fill(&mut f, 5);
+        // First-ever pose flip: the envelope is untouched by resize, and
+        // every arrival since reserved against the wide prone box.
+        f.resize("sleeper", prone);
+        for idx in 0..f.units.len() {
+            assert!(!f.envelope_conflicts(idx), "unit {idx} conflict after flip");
+        }
+        assert_eq!(f.unit_of("sleeper").unwrap().size, prone);
     }
 
     #[test]

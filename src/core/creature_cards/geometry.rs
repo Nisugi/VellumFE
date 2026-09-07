@@ -28,7 +28,11 @@
 //! only reads it, with the historical boxes as the deterministic
 //! fallback for tokens without an entry. Revision handling:
 //! `revision()` bumps on any change; `sync_field` re-derives placed units'
-//! boxes through `CreatureField::recalibrate`, which never moves anyone.
+//! boxes through `CreatureField::recalibrate`, whose conflict policy is
+//! stay-if-valid / re-home-only-the-changed-unit (see its doc) — no
+//! permanent overlap survives late metadata or a sidecar reload. The
+//! frontend also prepares art for the ROSTER before placements commit, so
+//! first encounters normally never need that path at all.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};

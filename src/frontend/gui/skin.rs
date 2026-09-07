@@ -763,8 +763,6 @@ pub struct WantedCreature {
     pub name: String,
     pub noun: Option<String>,
     pub family: Option<String>,
-    /// crtr_status prone flag — loads the tier's `{token}_prone` art.
-    pub prone: bool,
     /// Per-part wound ranks — loads `{token}_{loc}{rank}` overlays.
     pub injuries: Vec<(String, u8)>,
 }
@@ -959,17 +957,17 @@ impl SkinState {
                 .and_then(|tier| load_creature_art(ctx, &tier.base, &cache.skin_name));
                 cache.bases.insert(token.clone(), art);
             }
-            // Extras for the creature's CURRENT state: the prone pose
-            // loads as full creature art (own anchors/footprint); wound
-            // overlays load as plain textures. Both keyed by absolute
-            // path so re-loads are lookups.
+            // The tier's prone pose loads as full creature art (own
+            // anchors/footprint) UNCONDITIONALLY — not on first prone —
+            // so its geometry metadata (content ratio, sidecar size,
+            // footprint) reaches the core store before the solver ever
+            // reserves this creature's standing/prone envelope (finding
+            // 8). Wound overlays stay demand-loaded from the CURRENT
+            // state. Both keyed by absolute path so re-loads are lookups.
             let Some(Some(art)) = cache.bases.get(token.as_str()) else {
                 continue;
             };
-            let prone = want
-                .prone
-                .then(|| art.extra("prone").cloned())
-                .flatten();
+            let prone = art.extra("prone").cloned();
             let wounds: Vec<PathBuf> = want
                 .injuries
                 .iter()
@@ -3560,7 +3558,6 @@ cell = 32
             name: name.to_string(),
             noun: Some(name.split(' ').next_back().unwrap_or(name).to_string()),
             family: None,
-            prone: false,
             injuries: Vec::new(),
         };
         let mut state = SkinState::default();
@@ -3621,7 +3618,6 @@ cell = 32
                 name: "a shimmering mongrel kobold".to_string(),
                 noun: Some("kobold".to_string()),
                 family: None,
-                prone: true,
                 injuries: vec![("chest".to_string(), 2)],
             }],
         );
@@ -3638,6 +3634,14 @@ cell = 32
         let wound_path = art.extra("chest2").unwrap().to_string_lossy().into_owned();
         assert!(cache.overlays.get(&wound_path).is_some_and(|t| t.is_some()));
         assert!(art.has_wound_extras());
+        // Finding 8: the prone pose loaded even though the creature has
+        // never been prone, so its calibration (fed to the core store by
+        // this same pass) is available before the solver first reserves
+        // the envelope. 8px prone content / 4px standing content = 2.
+        // (Asserted through pose_calibration directly — the global store
+        // is shared across parallel tests.)
+        let prone_cal = pose_calibration(prone, Some(art));
+        assert!((prone_cal.content_ratio.unwrap() - 2.0).abs() < 1e-4);
         // Tier locking: a creature without its own variant folder locks
         // the noun tier — mongrel art never leaks onto it.
         drop(cache);
@@ -3647,7 +3651,6 @@ cell = 32
                 name: "big ugly kobold".to_string(),
                 noun: Some("kobold".to_string()),
                 family: None,
-                prone: false,
                 injuries: Vec::new(),
             }],
         );

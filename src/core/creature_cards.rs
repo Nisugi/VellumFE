@@ -608,8 +608,11 @@ pub fn sync_field(
 ) {
     // Calibration metadata arrived or reloaded since the last sync:
     // re-derive every placed unit's boxes through the shared geometry.
-    // Positions never move (recalibrate is in-place), but the fall
-    // envelopes future arrivals reserve against stop being stale.
+    // A unit whose boxes still fit stays exactly put; one whose enlarged
+    // envelope now breaks the arrival hard bound is re-homed by
+    // `recalibrate`'s conflict policy (nearest valid square; neighbours
+    // never move) — the fall envelopes future arrivals reserve against
+    // stop being stale and no overlap outlives the reload.
     let cal_rev = geometry::calibrations()
         .lock()
         .unwrap_or_else(|e| e.into_inner())

@@ -2325,24 +2325,27 @@ impl eframe::App for VellumGuiApp {
         );
         self.skin_state
             .apply_if_changed(&ctx, self.ui_settings.doll_image.as_deref());
-        // Creature-card art: resolve + load base sprites for the field's
-        // current roster (lazy, negative-cached — a settled room is a few
-        // hash lookups). Family comes from the bundled bestiary when the
+        // Creature-card art: resolve + load base sprites for the ROOM
+        // ROSTER — not just already-placed units — so a new creature's
+        // geometry metadata (standing AND prone calibration) reaches the
+        // core store BEFORE the solver commits its initial placement
+        // (finding 8): messages ingest at the end of this frame, and next
+        // frame this prepare runs before the pump's sync_field places the
+        // arrival. Lazy and negative-cached — a settled room is a few
+        // hash lookups. Family comes from the bundled bestiary when the
         // noun maps to exactly one family, feeding the `{family}` tier of
         // the resolve cascade.
         {
             let wanted: Vec<crate::frontend::gui::skin::WantedCreature> = self
                 .app_core
-                .creature_field
-                .units()
+                .game_state
+                .room_creatures
                 .iter()
-                .flat_map(|u| u.members.iter())
-                .filter_map(|m| {
-                    self.app_core
-                        .game_state
-                        .room_creatures
-                        .iter()
-                        .find(|c| &c.id == m)
+                .filter(|c| {
+                    crate::core::creature_cards::field_member(
+                        c,
+                        &self.app_core.config.target_list.excluded_nouns,
+                    )
                 })
                 .map(|c| {
                     let family = c
@@ -2353,7 +2356,6 @@ impl eframe::App for VellumGuiApp {
                         name: c.name.clone(),
                         noun: c.noun.clone(),
                         family,
-                        prone: c.flags.as_ref().is_some_and(|f| f.has_flag("prone")),
                         injuries: c
                             .flags
                             .as_ref()

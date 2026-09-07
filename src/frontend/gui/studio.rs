@@ -227,16 +227,13 @@ impl StageState {
         })
     }
 
+    /// Mark the roster dirty. The actual sync runs in `stage_ui`'s frame
+    /// pass AFTER art prep (finding 8: a spawned creature's standing and
+    /// prone calibration must reach the geometry store before the solver
+    /// commits its placement), so a spawn lands one frame later with its
+    /// true envelope instead of immediately with a fallback guess.
     fn resync(&mut self) {
         self.app_core.game_state.room_creatures_generation += 1;
-        crate::core::creature_cards::sync_field(
-            &mut self.app_core.creature_field,
-            &mut self.app_core.creature_field_synced_gen,
-            &mut self.app_core.creature_field_synced_cal,
-            &self.app_core.game_state,
-            &[],
-        );
-        self.refresh_mounts();
     }
 
     /// First flagged rider pairs with first flagged mount; changes tear
@@ -344,7 +341,7 @@ impl StageState {
     }
 
     /// Art wanted for the current roster — same recipe as the game's
-    /// update loop (family from the bestiary, prone + wounds from flags).
+    /// update loop (family from the bestiary, wounds from flags; prone art always loads so envelopes are known up front).
     fn wanted_art(&self) -> Vec<super::skin::WantedCreature> {
         self.app_core
             .game_state
@@ -359,7 +356,6 @@ impl StageState {
                     name: c.name.clone(),
                     noun: c.noun.clone(),
                     family,
-                    prone: c.flags.as_ref().is_some_and(|f| f.has_flag("prone")),
                     injuries: c
                         .flags
                         .as_ref()
@@ -1429,8 +1425,16 @@ impl StudioApp {
             stage.app_core.creature_field.set_obstacles(obstacles);
             stage.obstacle_scene = Some(stage.scene.clone());
         }
-        // Roster sync is generation-gated (cheap when unchanged); art prep
-        // is cached, so a settled stage costs a few hash lookups.
+        // Art prep FIRST, roster sync second (finding 8): preparing the
+        // roster's art feeds standing + prone calibration into the core
+        // geometry store, so the sync's initial placements reserve true
+        // envelopes instead of fallback guesses that recalibrate would
+        // have to reconcile a frame later. Both are cached/generation-
+        // gated, so a settled stage costs a few hash lookups.
+        let wanted = stage.wanted_art();
+        if !wanted.is_empty() {
+            self.skin_state.prepare_creature_art(ctx, &wanted);
+        }
         crate::core::creature_cards::sync_field(
             &mut stage.app_core.creature_field,
             &mut stage.app_core.creature_field_synced_gen,
@@ -1438,10 +1442,7 @@ impl StudioApp {
             &stage.app_core.game_state,
             &[],
         );
-        let wanted = stage.wanted_art();
-        if !wanted.is_empty() {
-            self.skin_state.prepare_creature_art(ctx, &wanted);
-        }
+        stage.refresh_mounts();
         self.skin_state.prepare_scene_art(ctx, &stage.scene);
         let art = self.skin_state.creature_art();
         egui::Panel::right("stage_panel")
