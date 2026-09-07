@@ -41,11 +41,25 @@ object RemoteStore {
     fun list(context: Context): List<Target> {
         val file = File(context.filesDir, FILE)
         if (!file.exists()) return emptyList()
+        val bytes = file.readBytes()
+        if (!KeyBlobPolicy.blobStructurallyValid(bytes)) {
+            Log.w(TAG, "saved remote servers file truncated; preserving it aside")
+            KeyBlobPolicy.preserveAside(file)
+            return emptyList()
+        }
         val text = try {
-            String(CryptoKeys.openBlob(file.readBytes()), Charsets.UTF_8)
+            String(CryptoKeys.openBlob(bytes), Charsets.UTF_8)
         } catch (e: Exception) {
-            Log.w(TAG, "saved remote servers unreadable; forgetting them: $e")
-            file.delete()
+            when (KeyBlobPolicy.classifyDecryptFailure(e)) {
+                KeyBlobPolicy.Failure.UNUSABLE_BLOB -> {
+                    Log.w(TAG, "saved remote servers undecryptable; preserving them aside: $e")
+                    KeyBlobPolicy.preserveAside(file)
+                }
+                // Transient Keystore trouble: the blob may still be fine on a
+                // later read — never delete it for this.
+                KeyBlobPolicy.Failure.TRANSIENT ->
+                    Log.w(TAG, "saved remote servers unreadable (transient); keeping file: $e")
+            }
             return emptyList()
         }
         return try {
@@ -64,8 +78,8 @@ object RemoteStore {
                 writeBlob(context, listOf(migrated))
                 listOf(migrated)
             } catch (e: Exception) {
-                Log.w(TAG, "saved remote server unparseable; forgetting it: $e")
-                file.delete()
+                Log.w(TAG, "saved remote server unparseable; preserving it aside: $e")
+                KeyBlobPolicy.preserveAside(file)
                 emptyList()
             }
         }
@@ -134,7 +148,10 @@ object RemoteStore {
                         .put("token", t.token)
                 )
             }
-            file.writeBytes(CryptoKeys.sealBlob(array.toString().toByteArray(Charsets.UTF_8)))
+            KeyBlobPolicy.writeAtomically(
+                file,
+                CryptoKeys.sealBlob(array.toString().toByteArray(Charsets.UTF_8)),
+            )
         } catch (e: Exception) {
             Log.w(TAG, "saving remote servers failed: $e")
         }

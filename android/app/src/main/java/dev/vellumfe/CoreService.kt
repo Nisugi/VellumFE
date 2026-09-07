@@ -69,7 +69,12 @@ class CoreService : Service() {
 
         pollThread = Thread({
             // Password key first: the core seals saved passwords with it.
+            // If installation fails the core fails closed (no plaintext
+            // saves); login is session-only until the Keystore recovers.
             CryptoKeys.installPasswordKey(this)
+            if (!CryptoKeys.encryptionAvailable) {
+                Log.w(TAG, "encryption unavailable; password saving disabled: ${CryptoKeys.statusDetail}")
+            }
             // JNI boot (config load + server bind), then the status loop.
             val info = JSONObject(VellumCore.startCore(filesDir.absolutePath))
             if (info.has("error")) {

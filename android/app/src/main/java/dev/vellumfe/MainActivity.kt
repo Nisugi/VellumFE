@@ -166,6 +166,11 @@ class MainActivity : Activity() {
     private fun startBootThread() {
         Thread({
             CryptoKeys.installPasswordKey(this)
+            if (!CryptoKeys.encryptionAvailable) {
+                // Fail closed: the Rust core sees no VELLUM_PASSWORD_KEY and
+                // refuses to persist secrets; login stays session-only.
+                Log.w(TAG, "encryption unavailable; password saving disabled: ${CryptoKeys.statusDetail}")
+            }
             val info = JSONObject(VellumCore.startCore(filesDir.absolutePath))
             if (info.has("error")) {
                 runOnUiThread {
