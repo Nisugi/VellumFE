@@ -48,6 +48,34 @@ impl StageMap {
             (p.y - self.origin.y) / self.scale,
         )
     }
+
+    /// The logical scene viewport in widget space: where the full 880x470
+    /// stage lands after the fit. Everything composed on the stage —
+    /// backdrop, ground, props, creatures, overlays — lives inside this
+    /// rect; outside it is neutral fill.
+    fn stage_rect(&self) -> egui::Rect {
+        egui::Rect::from_min_max(self.pt(0.0, 0.0), self.pt(STAGE_W, STAGE_H))
+    }
+}
+
+/// Where a backdrop texture sits WITHIN the logical 880x470 stage, in
+/// stage coordinates: cover-fit to the stage (not the window), centred.
+/// This placement depends only on the texture's aspect ratio, so a given
+/// backdrop pixel always maps to the same stage point regardless of the
+/// widget size — the single transform (`StageMap`) then carries stage
+/// points to the screen for backdrop and objects alike. A stage-aspect
+/// backdrop fills the stage exactly; other aspects overflow symmetrically
+/// and are clipped at the stage edge.
+fn backdrop_stage_rect(tex_w: f32, tex_h: f32) -> Option<(f32, f32, f32, f32)> {
+    if tex_w <= 0.0 || tex_h <= 0.0 {
+        return None;
+    }
+    let cover = (STAGE_W / tex_w).max(STAGE_H / tex_h);
+    let w = tex_w * cover;
+    let h = tex_h * cover;
+    let x0 = (STAGE_W - w) / 2.0;
+    let y0 = (STAGE_H - h) / 2.0;
+    Some((x0, y0, x0 + w, y0 + h))
 }
 
 /// A scene's "#rrggbb" background color, or None for anything malformed
@@ -132,9 +160,14 @@ impl VellumGuiApp {
             .map(|a| a.lock().expect("creature art lock"));
         let art_cache = art_cache.as_deref();
 
-        // Scene backdrop under everything: color fill first, then the
-        // background image cover-fit over the widget rect (the painter
-        // clips the overflow).
+        // Scene backdrop under everything: the color fill covers the whole
+        // widget (it doubles as the neutral fill outside the stage), then
+        // the background image is placed within the LOGICAL STAGE
+        // (cover-fit to 880x470, a window-independent placement) and drawn
+        // through the same StageMap as ground/props/creatures, clipped to
+        // the stage rect. One transform for the painted scene and the
+        // objects on it — resizing the window can no longer make them
+        // drift apart.
         let scene = settings.scene.as_deref();
         if let Some(scene) = scene {
             if let Some(color) = scene.background_color.as_deref().and_then(parse_hex_rgb) {
@@ -146,11 +179,11 @@ impl VellumGuiApp {
                 .and_then(|bg| art_cache.and_then(|c| c.scene_background(bg)))
             {
                 let ts = texture.size_vec2();
-                if ts.x > 0.0 && ts.y > 0.0 {
-                    let cover = (rect.width() / ts.x).max(rect.height() / ts.y);
-                    painter.image(
+                if let Some((x0, y0, x1, y1)) = backdrop_stage_rect(ts.x, ts.y) {
+                    let stage_painter = painter.with_clip_rect(map.stage_rect());
+                    stage_painter.image(
                         texture.id(),
-                        egui::Rect::from_center_size(rect.center(), ts * cover),
+                        egui::Rect::from_min_max(map.pt(x0, y0), map.pt(x1, y1)),
                         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                         Color32::WHITE,
                     );
@@ -1151,6 +1184,124 @@ impl VellumGuiApp {
                 egui::FontId::monospace(9.0),
                 teal,
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod stage_map_tests {
+    use super::*;
+
+    // The three reference viewports from the proposal's acceptance tests:
+    // tall (the worked example), wide, and stage-aspect.
+    const TALL: (f32, f32) = (440.0, 470.0);
+    const WIDE: (f32, f32) = (1760.0, 470.0);
+    const MATCH: (f32, f32) = (880.0, 470.0);
+
+    fn map_for(size: (f32, f32)) -> StageMap {
+        StageMap::fit(egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(size.0, size.1),
+        ))
+    }
+
+    /// Where a backdrop pixel lands on screen: through the backdrop's
+    /// stage placement, then the shared StageMap — the ONE transform.
+    fn backdrop_point_on_screen(
+        map: &StageMap,
+        tex: (f32, f32),
+        px: f32,
+        py: f32,
+    ) -> egui::Pos2 {
+        let (x0, y0, x1, y1) = backdrop_stage_rect(tex.0, tex.1).unwrap();
+        map.pt(
+            x0 + px / tex.0 * (x1 - x0),
+            y0 + py / tex.1 * (y1 - y0),
+        )
+    }
+
+    /// The proposal's worked example: at 440x470, stage Y=100 previously
+    /// mapped to 167.5 while the same point in an 880x470 backdrop mapped
+    /// to 100. Now both go through StageMap and agree exactly.
+    #[test]
+    fn worked_example_backdrop_and_stage_agree() {
+        let map = map_for(TALL);
+        let stage_pt = map.pt(440.0, 100.0);
+        // Old contain-fit math still holds for stage points: scale 0.5,
+        // vertical centring offset (470 - 235) / 2 = 117.5.
+        assert!((stage_pt.y - 167.5).abs() < 1e-4, "stage y = {}", stage_pt.y);
+        // The same point on an 880x470 backdrop lands in the SAME place.
+        let bd_pt = backdrop_point_on_screen(&map, (880.0, 470.0), 440.0, 100.0);
+        assert!((bd_pt.x - stage_pt.x).abs() < 1e-4);
+        assert!((bd_pt.y - stage_pt.y).abs() < 1e-4, "backdrop y = {}", bd_pt.y);
+    }
+
+    /// A stage-aspect backdrop fills the stage exactly, at every window
+    /// aspect; every backdrop point coincides with its stage point.
+    #[test]
+    fn stage_aspect_backdrop_matches_stage_everywhere() {
+        for size in [TALL, WIDE, MATCH] {
+            let map = map_for(size);
+            for (sx, sy) in [(0.0, 0.0), (880.0, 470.0), (220.0, 400.0), (700.0, 35.0)] {
+                let a = map.pt(sx, sy);
+                let b = backdrop_point_on_screen(&map, (880.0, 470.0), sx, sy);
+                assert!((a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3,
+                    "{size:?} stage ({sx},{sy}): stage {a:?} vs backdrop {b:?}");
+            }
+        }
+    }
+
+    /// Forward -> inverse round-trips at all three aspects (pointer hit
+    /// testing inverts through stage_pos; it must recover stage coords).
+    #[test]
+    fn forward_inverse_round_trip() {
+        for size in [TALL, WIDE, MATCH] {
+            let map = map_for(size);
+            for (sx, sy) in [(0.0, 0.0), (880.0, 470.0), (123.4, 456.7), (879.0, 1.0)] {
+                let p = map.pt(sx, sy);
+                let (rx, ry) = map.stage_pos(p);
+                assert!((rx - sx).abs() < 1e-3 && (ry - sy).abs() < 1e-3,
+                    "{size:?}: ({sx},{sy}) -> {p:?} -> ({rx},{ry})");
+            }
+        }
+    }
+
+    /// Backdrop placement in stage coordinates depends only on the texture
+    /// aspect, never on the window: a wide backdrop overflows the stage
+    /// horizontally (clipped at draw time), a tall one vertically, and the
+    /// placement is symmetric about the stage centre.
+    #[test]
+    fn backdrop_placement_is_window_independent() {
+        // 2:1 backdrop against the 880:470 stage: cover on height.
+        let (x0, y0, x1, y1) = backdrop_stage_rect(1000.0, 500.0).unwrap();
+        assert!((y0 - 0.0).abs() < 1e-3 && (y1 - 470.0).abs() < 1e-3);
+        let w = 470.0 * 1000.0 / 500.0; // 940 > 880: symmetric overflow
+        assert!((x0 - (880.0 - w) / 2.0).abs() < 1e-3);
+        assert!((x1 - (880.0 + w) / 2.0).abs() < 1e-3);
+        // Tall backdrop: cover on width, vertical overflow.
+        let (x0, y0, x1, y1) = backdrop_stage_rect(880.0, 940.0).unwrap();
+        assert!((x0 - 0.0).abs() < 1e-3 && (x1 - 880.0).abs() < 1e-3);
+        assert!(y0 < 0.0 && y1 > 470.0 && ((y0 + y1) / 2.0 - 235.0).abs() < 1e-3);
+        // Degenerate textures place nothing.
+        assert!(backdrop_stage_rect(0.0, 500.0).is_none());
+        assert!(backdrop_stage_rect(500.0, -1.0).is_none());
+    }
+
+    /// The logical viewport (stage_rect) is contained in the widget and
+    /// centred — the neutral-fill margins are symmetric.
+    #[test]
+    fn stage_rect_centred_in_widget() {
+        for size in [TALL, WIDE, MATCH] {
+            let map = map_for(size);
+            let sr = map.stage_rect();
+            assert!(sr.width() <= size.0 + 1e-3 && sr.height() <= size.1 + 1e-3);
+            assert!((sr.center().x - size.0 / 2.0).abs() < 1e-3);
+            assert!((sr.center().y - size.1 / 2.0).abs() < 1e-3);
+            // At matching aspect the stage fills the widget exactly.
+            if size == MATCH {
+                assert!((sr.width() - 880.0).abs() < 1e-3);
+                assert!((sr.height() - 470.0).abs() < 1e-3);
+            }
         }
     }
 }
