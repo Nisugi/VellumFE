@@ -921,8 +921,8 @@ async fn main() {
                 local.delete_button(group.as_deref(), &label);
                 sink.set_macros(&MacrosConfig::merge(base.clone(), local.clone()));
             }
-            RemoteEvent::WebUiSubscribe { page } => {
-                println!("EVENT webui_subscribe: page={page:?}");
+            RemoteEvent::WebUiSubscribe { page, client_id } => {
+                println!("EVENT webui_subscribe: page={page:?} client={client_id}");
                 // Reply with a render tree exercising many node types so the
                 // phone renderer can be verified end to end.
                 let tree: vellum_fe::data::webui::WebUiNode = serde_json::from_value(serde_json::json!({
