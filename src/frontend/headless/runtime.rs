@@ -1564,6 +1564,29 @@ pub(super) async fn async_run_with_options(
                 match maybe_event {
                     None => {
                         tracing::warn!("Web server event channel closed");
+                        // A failing serve task consumes its handles (closing
+                        // this channel) before it sends the failure reason,
+                        // so this branch can win the select race against the
+                        // failure/readiness branches. A waiting embedder must
+                        // still receive the real reason ("pinned port taken"),
+                        // not a generic "runtime exited" message.
+                        if launch_urls_pending {
+                            launch_urls_pending = false;
+                            let message = match server_failure_rx.take() {
+                                Some(rx) => tokio::time::timeout(Duration::from_secs(2), rx)
+                                    .await
+                                    .ok()
+                                    .and_then(|sent| sent.ok()),
+                                None => None,
+                            };
+                            let message = message.unwrap_or_else(|| {
+                                "web server stopped before publishing its endpoint".to_string()
+                            });
+                            tracing::error!("Web server startup failed: {message}");
+                            if let Some(tx) = startup_reporter.take() {
+                                let _ = tx.send(Err(message));
+                            }
+                        }
                         break;
                     }
                     Some(event) => {
