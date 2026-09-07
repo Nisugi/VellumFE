@@ -352,7 +352,7 @@ impl AppCore {
             // Gate on the connection itself, NOT on WebUI reachability — WebUI
             // is an optional Lich feature, and conflating the two left the
             // fallback permanently dead on GUI/TUI.
-            lich_fallback: self.config.go2.lich_fallback && self.lich_connected(),
+            lich_fallback: self.travel_lich_fallback_permitted(),
             funding: Some(crate::core::travel::executor::FundingInputs {
                 silver: self.game_state.silver,
                 silver_line_no: self.game_state.silver_line_no,

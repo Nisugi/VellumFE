@@ -592,6 +592,26 @@ impl Supervisor {
             server_rx,
             task,
         });
+        // Capabilities come from THIS transport's mode, never the startup
+        // CLI (finding 15). Every attach path — web login, launch
+        // completion, `.reconnect`, automatic reconnect — funnels through
+        // spawn, so the flags cannot diverge from the connection being made.
+        self.derive_capabilities(app_core);
+    }
+
+    /// Derive connection-mode capabilities from the CURRENT transport and
+    /// publish them (set_webui_available pushes to remote clients on
+    /// change). Lich command delivery (`;go2` fallback) and Lich WebUI
+    /// *eligibility* exist only while a Lich-mode transport is attached;
+    /// direct eAccess and the idle login screen advertise neither.
+    /// Eligibility is not an established bridge — the WebUI handshake still
+    /// has to succeed — and `.webui off` tears down only the bridge, never
+    /// these flags. Touches capability flags ONLY: reconnect eligibility
+    /// and stored credentials are never modified here.
+    fn derive_capabilities(&self, app_core: &mut AppCore) {
+        let lich_attached = self.connection.is_some() && self.direct.is_none();
+        app_core.set_webui_available(lich_attached);
+        app_core.set_lich_connected(lich_attached);
     }
 
     /// A socket is not command-capable until its requested Lich character has
@@ -1451,13 +1471,11 @@ pub(super) async fn async_run_with_options(
         game_disconnect_seen: false,
     };
 
-    // Lich WebUI is reachable only on a Lich-attached session (a direct
-    // eAccess connection bypasses Lich). Advertise it to phone clients so
-    // they show the WebUI affordance only when it will work.
-    app_core.set_webui_available(!is_direct);
-    // Connection mode for anything that sends `;` commands (travel's ;go2
-    // fallback). Separate from WebUI: `.webui off` must not disable `;go2`.
-    app_core.set_lich_connected(!is_direct);
+    // Capabilities are derived per-transport in Supervisor::spawn (finding
+    // 15) — the startup CLI mode must not pre-commit them. With no
+    // connection yet this advertises neither Lich WebUI nor Lich command
+    // delivery: the login screen promises no active bridge.
+    supervisor.derive_capabilities(&mut app_core);
 
     // Auto-connect only when the CLI asked for a session (--direct / --key);
     // otherwise idle on the login screen.
@@ -2097,6 +2115,13 @@ pub(super) async fn async_run_with_options(
         app_core.poll_tts_events();
         // Debounced layout autosave (layout dot-commands from web clients).
         app_core.tick_layout_autosave();
+        // Withdraw connection-mode capabilities whenever the transport is
+        // gone (user disconnect, connection loss, watchdog stop, reconnect
+        // backoff): a login screen must not promise Lich WebUI or a ;go2
+        // fallback. Spawn re-derives on the next attach. This only writes
+        // capability flags — reconnect eligibility and stored credentials
+        // are untouched.
+        supervisor.derive_capabilities(&mut app_core);
         // Flush coalesced state deltas to web clients once per batch.
         app_core.flush_remote_state();
     }
@@ -4118,5 +4143,208 @@ mod tests {
         assert!(!should_send_to_network("action:bar"));
         assert!(should_send_to_network("say hello"));
         assert!(should_send_to_network("north"));
+    }
+
+    // ----- Finding 15: capabilities derive from the transport being made -----
+    //
+    // These assert the values PUBLISHED TO REMOTE CLIENTS (the sink's session
+    // snapshot that connect-time clients receive) and the travel-fallback
+    // decision, not merely supervisor fields.
+
+    fn install_remote(core: &mut AppCore) -> crate::core::remote::RemoteServerHandles {
+        let (sink, handles, _events) = crate::core::remote::RemoteSink::new(16);
+        core.message_processor.remote = Some(sink);
+        handles
+    }
+
+    /// The webui_available value a remote client sees in the session
+    /// snapshot (what a phone gets on connect and via Session deltas).
+    fn remote_webui(handles: &crate::core::remote::RemoteServerHandles) -> bool {
+        handles.state_rx.borrow().session.webui_available
+    }
+
+    fn direct_config() -> DirectConnectConfig {
+        DirectConnectConfig {
+            account: "ACCT".into(),
+            password: "secret".into(),
+            character: "Aster".into(),
+            game_code: "GS".into(),
+            data_dir: std::env::temp_dir(),
+        }
+    }
+
+    /// Idle login screen (mobile cold start, no CLI credentials): neither
+    /// Lich WebUI nor Lich command delivery is advertised, and the `;go2`
+    /// fallback is off even when its config gate is enabled.
+    #[test]
+    fn idle_start_advertises_no_lich_capabilities() {
+        let mut core = app();
+        core.config.go2.lich_fallback = true;
+        let handles = install_remote(&mut core);
+        let supervisor = lich_supervisor(None); // credential-less: no connection
+        supervisor.derive_capabilities(&mut core);
+        assert!(!core.webui_available());
+        assert!(!core.lich_connected());
+        assert!(!remote_webui(&handles));
+        assert!(!core.travel_lich_fallback_permitted());
+    }
+
+    /// Idle → direct login: the mobile bug. Even though startup had no
+    /// credentials, a direct eAccess attach must not advertise Lich WebUI
+    /// to remote clients or permit the Lich-only ;go2 fallback.
+    #[tokio::test]
+    async fn idle_to_direct_login_yields_no_lich_capabilities() {
+        let mut core = app();
+        core.config.go2.lich_fallback = true;
+        let handles = install_remote(&mut core);
+        let mut supervisor = lich_supervisor(None);
+        supervisor.direct = Some(direct_config());
+        supervisor.lich_target = None;
+        supervisor.spawn(&mut core);
+        assert!(!core.webui_available());
+        assert!(!core.lich_connected());
+        assert!(!remote_webui(&handles), "direct must not advertise WebUI");
+        assert!(!core.travel_lich_fallback_permitted());
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    /// Idle → Lich login exposes both capabilities, and `.webui off`
+    /// (bridge teardown) leaves Lich command delivery and the ;go2
+    /// fallback intact — eligibility and bridge are separate concerns.
+    #[tokio::test]
+    async fn idle_to_lich_login_enables_capabilities_and_webui_off_keeps_lich() {
+        let mut core = app();
+        core.config.go2.lich_fallback = true;
+        let handles = install_remote(&mut core);
+        let mut supervisor = lich_supervisor(None);
+        supervisor.spawn(&mut core);
+        assert!(core.webui_available());
+        assert!(core.lich_connected());
+        assert!(remote_webui(&handles));
+        assert!(core.travel_lich_fallback_permitted());
+
+        // `.webui off` tears down the bridge only.
+        core.stop_webui();
+        assert!(core.lich_connected(), ".webui off must not cut Lich delivery");
+        assert!(core.travel_lich_fallback_permitted());
+        // Eligibility survives too (mode unchanged); the next per-batch
+        // derivation would also keep it true.
+        supervisor.derive_capabilities(&mut core);
+        assert!(core.webui_available());
+        assert!(remote_webui(&handles));
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    /// Lich → direct switch withdraws the capabilities; direct → Lich
+    /// grants them. Nothing of the previous mode is retained.
+    #[tokio::test]
+    async fn mode_switches_rederive_capabilities_both_ways() {
+        let mut core = app();
+        core.config.go2.lich_fallback = true;
+        let handles = install_remote(&mut core);
+        let mut supervisor = lich_supervisor(None);
+        supervisor.spawn(&mut core);
+        assert!(remote_webui(&handles));
+        supervisor.connection.take().unwrap().task.abort();
+
+        // Lich → direct (the connect request path sets direct then spawns).
+        supervisor.direct = Some(direct_config());
+        supervisor.lich_target = None;
+        supervisor.spawn(&mut core);
+        assert!(!remote_webui(&handles), "stale Lich WebUI advertised on direct");
+        assert!(!core.lich_connected());
+        assert!(!core.travel_lich_fallback_permitted());
+        supervisor.connection.take().unwrap().task.abort();
+
+        // Direct → Lich.
+        supervisor.direct = None;
+        supervisor.lich_target = Some(LichTarget {
+            host: "127.0.0.1".to_string(),
+            port: 8000,
+        });
+        supervisor.spawn(&mut core);
+        assert!(remote_webui(&handles));
+        assert!(core.lich_connected());
+        assert!(core.travel_lich_fallback_permitted());
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    /// Connection loss: the per-batch derivation withdraws capabilities
+    /// while disconnected (login screen promises no bridge), and the
+    /// reconnect spawn re-derives them for the SAME mode. Capability
+    /// updates never touch reconnect eligibility or stored credentials.
+    #[tokio::test]
+    async fn reconnect_rederives_per_mode_without_touching_credentials() {
+        let mut core = app();
+        core.config.go2.lich_fallback = true;
+        let handles = install_remote(&mut core);
+
+        // Lich session drops...
+        let mut supervisor = lich_supervisor(None);
+        supervisor.spawn(&mut core);
+        supervisor.connection.take().unwrap().task.abort();
+        supervisor.connection = None;
+        supervisor.derive_capabilities(&mut core); // per-batch withdrawal
+        assert!(!remote_webui(&handles), "disconnected must not advertise WebUI");
+        assert!(!core.lich_connected());
+        assert!(!supervisor.user_disconnected, "capability update flipped reconnect state");
+        assert!(supervisor.can_reconnect(), "capability update broke reconnect eligibility");
+        // ...and the automatic reconnect restores Lich capabilities.
+        supervisor.spawn(&mut core);
+        assert!(remote_webui(&handles));
+        assert!(core.lich_connected());
+        supervisor.connection.take().unwrap().task.abort();
+
+        // Direct session: capabilities stay off across loss and reconnect,
+        // and the stored direct credentials survive the capability writes.
+        supervisor.direct = Some(direct_config());
+        supervisor.lich_target = None;
+        supervisor.spawn(&mut core);
+        assert!(!remote_webui(&handles));
+        supervisor.connection.take().unwrap().task.abort();
+        supervisor.connection = None;
+        supervisor.derive_capabilities(&mut core);
+        assert!(!remote_webui(&handles));
+        assert!(
+            supervisor.direct.is_some(),
+            "capability update must not drop stored credentials"
+        );
+        assert!(supervisor.can_reconnect());
+        supervisor.spawn(&mut core);
+        assert!(!remote_webui(&handles));
+        assert!(!core.lich_connected());
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    /// The asynchronous launch-completion path (LaunchDriver seam) lands in
+    /// the same shared derivation: a Lich attach produced by a finished
+    /// launch flips a previously-direct session's capabilities to Lich.
+    #[tokio::test]
+    async fn launch_completion_derives_lich_capabilities() {
+        let mut core = app();
+        core.config.go2.lich_fallback = true;
+        let handles = install_remote(&mut core);
+        let mut supervisor = lich_supervisor(None);
+        // Previous session was direct: capabilities are off.
+        supervisor.direct = Some(direct_config());
+        supervisor.connection = None;
+        supervisor.derive_capabilities(&mut core);
+        assert!(!remote_webui(&handles));
+
+        let mut driver = LaunchDriver::new();
+        let result_tx = controllable_launch(&mut driver, LaunchAttach::DotLaunch);
+        let _ = result_tx.send(Ok(flow_target("Briar", "192.168.1.4", 8010)));
+        let finished = tokio::time::timeout(Duration::from_secs(5), driver.next_finished())
+            .await
+            .expect("completed launch must resolve")
+            .expect("completed launch must deliver");
+        apply_launch_completion(&mut core, &mut supervisor, &driver, finished);
+
+        assert!(supervisor.connection.is_some());
+        assert!(core.webui_available());
+        assert!(core.lich_connected());
+        assert!(remote_webui(&handles), "launch attach must advertise WebUI");
+        assert!(core.travel_lich_fallback_permitted());
+        supervisor.connection.take().unwrap().task.abort();
     }
 }

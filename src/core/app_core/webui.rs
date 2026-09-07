@@ -61,6 +61,15 @@ impl AppCore {
         self.lich_connected
     }
 
+    /// Whether the travel executor may hand a failed walk to Lich's `;go2`:
+    /// the config gate AND a live Lich connection. A direct eAccess session
+    /// or the idle login screen has no Lich to hand off to, whatever the
+    /// config says. This is the exact expression the executor inputs use —
+    /// tests assert the fallback decision through it.
+    pub fn travel_lich_fallback_permitted(&self) -> bool {
+        self.config.go2.lich_fallback && self.lich_connected()
+    }
+
     /// Trigger the WebUI handshake (`;ui handshake`) once per session. The
     /// reply arrives on the game stream and is captured into the message
     /// processor; `take_webui_handshake` + `start_webui` complete the setup.
