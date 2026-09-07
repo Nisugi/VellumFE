@@ -48,6 +48,17 @@ pub struct PoseCalibration {
     /// Ground-contact span as a fraction of the content width (from the
     /// calibrated footprint ellipse).
     pub span: Option<f32>,
+    /// Measured pose-to-standing CONTENT ratio: this pose image's content
+    /// pixel height ÷ the standing image's content pixel height, under the
+    /// art set's common canvas-scale convention (Niffy's rule: every pose
+    /// in a set is drawn at one pixel scale). This is exactly the factor
+    /// the renderer's inherited pixel scale produces, so bounds derived
+    /// from it match the drawn pose to the pixel. A pose file authored at
+    /// a genuinely different scale must use `size` — the explicit
+    /// calibration path — because resolution can never imply thickness.
+    /// `None` for the standing pose itself and when the pose art has not
+    /// been measured.
+    pub content_ratio: Option<f32>,
 }
 
 /// Calibration of one creature's resolved art set (the locked tier).
@@ -159,16 +170,31 @@ pub fn resolve_geometry(
         span: sanitize_span(standing_cal.span),
     };
 
-    // Prone: the pose's own authored `size` wins (the renderer draws it at
-    // that height — "uses base-art pixel scale unless its own size
-    // overrides it"); otherwise the body-type derivation from the SHARED
-    // world height, so an override moves the whole envelope.
+    // Prone height, in renderer precedence (finding 7 — bounds derive
+    // from the SAME resolved pose scale the sprite draws at):
+    //   1. the pose's own authored `size`: absolute, exactly as drawn —
+    //      the explicit calibration path for pose files at a different
+    //      canvas scale; no minimum inflates it (a minimum HIT target is
+    //      an input policy, never part of visible bounds);
+    //   2. the measured pose-to-standing content ratio × the shared world
+    //      height — precisely the height the renderer's inherited pixel
+    //      scale draws the pose at (a prone image with half the standing
+    //      content height renders, reserves, and hit-tests at 50%);
+    //   3. the body-type fraction guess, floored at 0.30 — the
+    //      deterministic fallback for unmeasured art, where the floor is
+    //      part of the guess (kept for historical box compatibility), not
+    //      a policy applied to real measurements.
     let prone_cal = cal.and_then(|c| c.prone).unwrap_or_default();
-    let prone_h = prone_cal
-        .size
-        .filter(|s| s.is_finite() && *s > 0.0)
-        .unwrap_or(if quad { world_h * 0.70 } else { world_h * 0.35 })
-        .max(0.30);
+    let prone_h = if let Some(s) = prone_cal.size.filter(|s| s.is_finite() && *s > 0.0) {
+        s
+    } else if let Some(r) = prone_cal
+        .content_ratio
+        .filter(|r| r.is_finite() && *r > 0.0)
+    {
+        world_h * r
+    } else {
+        (if quad { world_h * 0.70 } else { world_h * 0.35 }).max(0.30)
+    };
     let prone_w = prone_cal
         .aspect
         .filter(|a| a.is_finite() && *a > 0.0)
@@ -306,6 +332,7 @@ mod tests {
                 size: Some(3.4), // beyond the 2.6 readability clamp
                 aspect: None,
                 span: None,
+                content_ratio: None,
             },
             prone: None,
         };
@@ -363,11 +390,13 @@ mod tests {
                 size: None,
                 aspect: Some(2.0),
                 span: Some(0.8),
+                content_ratio: None,
             },
             prone: Some(PoseCalibration {
                 size: None,
                 aspect: Some(3.0),
                 span: None,
+                content_ratio: None,
             }),
         };
         let g = resolve_geometry(&creature("agresh bear", "bear"), Some(&cal));
@@ -380,6 +409,107 @@ mod tests {
         assert_eq!(g.prone.span, 0.65);
     }
 
+    /// Finding 7's worked example: standing content 200px, prone content
+    /// 100px in one art set (common canvas scale) → the measured ratio is
+    /// 0.5, and the prone bounds resolve to HALF the standing height —
+    /// exactly what the renderer's inherited pixel scale draws — not the
+    /// 35% biped guess. Same for quadrupeds (not 70%), and the pose keeps
+    /// its own drawn width via its aspect.
+    #[test]
+    fn measured_pose_ratio_drives_prone_bounds() {
+        for (name, noun) in [("mongrel kobold", "kobold"), ("agresh bear", "bear")] {
+            let cal = ArtCalibration {
+                standing: PoseCalibration {
+                    aspect: Some(0.5),
+                    ..Default::default()
+                },
+                prone: Some(PoseCalibration {
+                    aspect: Some(2.4),
+                    content_ratio: Some(100.0 / 200.0),
+                    ..Default::default()
+                }),
+            };
+            let g = resolve_geometry(&creature(name, noun), Some(&cal));
+            assert!(
+                (g.prone.h - g.standing.h * 0.5).abs() < 1e-4,
+                "{name}: prone {} vs standing {}",
+                g.prone.h,
+                g.standing.h
+            );
+            // Visible width follows the pose's own drawn proportions.
+            assert!((g.prone.w - g.prone.h * 2.4).abs() < 1e-3);
+        }
+    }
+
+    /// The measured ratio is exact — no hidden minimum inflates real
+    /// measurements (minimum hit-target policy is separate from visible
+    /// bounds), while the unmeasured fallback keeps its historical 0.30
+    /// floor as part of the guess. An authored prone `size` (the explicit
+    /// calibration path for independently scaled pose files — resolution
+    /// never implies thickness) beats the ratio, exact too.
+    #[test]
+    fn pose_size_beats_ratio_and_no_minimum_on_measurements() {
+        // giant rat: clamps up to 0.55 standing; a 0.4 measured ratio gives
+        // 0.22 prone — BELOW the fallback's 0.30 floor, kept exact.
+        let cal = ArtCalibration {
+            standing: PoseCalibration::default(),
+            prone: Some(PoseCalibration {
+                content_ratio: Some(0.4),
+                ..Default::default()
+            }),
+        };
+        let g = resolve_geometry(&creature("giant rat", "rat"), Some(&cal));
+        assert!((g.prone.h - 0.55 * 0.4).abs() < 1e-4, "exact, no 0.30 floor");
+        // A prone image at a different resolution with authored size: the
+        // absolute size wins over the (meaningless) pixel ratio, exact.
+        let cal = ArtCalibration {
+            standing: PoseCalibration::default(),
+            prone: Some(PoseCalibration {
+                size: Some(0.25),
+                content_ratio: Some(2.0), // hi-res pose file: bogus ratio
+                ..Default::default()
+            }),
+        };
+        let g = resolve_geometry(&creature("agresh bear", "bear"), Some(&cal));
+        assert_eq!(g.prone.h, 0.25, "authored pose size is absolute");
+        // Garbage ratios fall through to the body-type guess (+floor).
+        for bad in [0.0, -1.0, f32::NAN] {
+            let cal = ArtCalibration {
+                standing: PoseCalibration::default(),
+                prone: Some(PoseCalibration {
+                    content_ratio: Some(bad),
+                    ..Default::default()
+                }),
+            };
+            let g = resolve_geometry(&creature("agresh bear", "bear"), Some(&cal));
+            assert!((g.prone.h - 0.8 * 0.70).abs() < 1e-3);
+        }
+    }
+
+    /// A sidecar `size` on the STANDING pose scales the whole envelope,
+    /// and a measured prone ratio rides on that shared height — override
+    /// and ratio compose instead of fighting.
+    #[test]
+    fn ratio_composes_with_standing_override() {
+        let cal = ArtCalibration {
+            standing: PoseCalibration {
+                size: Some(2.0),
+                ..Default::default()
+            },
+            prone: Some(PoseCalibration {
+                content_ratio: Some(0.5),
+                ..Default::default()
+            }),
+        };
+        let g = resolve_geometry(&creature("agresh bear", "bear"), Some(&cal));
+        assert_eq!(g.world_h, 2.0);
+        assert!((g.prone.h - 1.0).abs() < 1e-4);
+        // Both pose boxes sit inside the standing/prone envelope union by
+        // construction (the solver reserves max of the two per axis).
+        assert!(g.prone.h <= g.standing.h.max(g.prone.h));
+        assert!(g.standing.w <= g.standing.w.max(g.prone.w));
+    }
+
     /// Shared fallback art must not force every species to one height:
     /// shape-only calibration (aspect/span, no `size`) leaves each
     /// species' bestiary height intact.
@@ -390,6 +520,7 @@ mod tests {
                 size: None,
                 aspect: Some(1.4),
                 span: Some(0.7),
+                content_ratio: None,
             },
             prone: None,
         };
@@ -414,6 +545,7 @@ mod tests {
                 size: Some(1.5),
                 aspect: Some(1.0),
                 span: None,
+                content_ratio: None,
             },
             prone: None,
         };

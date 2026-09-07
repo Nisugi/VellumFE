@@ -724,17 +724,32 @@ pub(crate) fn content_aspect(bbox: [f32; 4], tex_w: f32, tex_h: f32) -> f32 {
     w / h
 }
 
+/// Content pixel height of decoded art from its alpha bounds. Transparent
+/// padding grows the canvas, not the content, so padding is neutral here.
+pub(crate) fn content_height_px(bbox: [f32; 4], tex_h: f32) -> f32 {
+    ((bbox[3] - bbox[1]) * tex_h).max(1.0)
+}
+
 /// One pose image's calibration for the core geometry contract: the
-/// sidecar's absolute `size`, the alpha-derived content aspect, and the
-/// footprint's contact span.
+/// sidecar's absolute `size`, the alpha-derived content aspect, the
+/// footprint's contact span, and — for pose art measured against a
+/// standing base — the pose-to-standing content ratio (finding 7): the
+/// exact factor the renderer's inherited common pixel scale draws the
+/// pose at, so core bounds match the drawn sprite. Pass `base: None` for
+/// the standing pose itself.
 fn pose_calibration(
     art: &CreatureArt,
+    base: Option<&CreatureArt>,
 ) -> crate::core::creature_cards::geometry::PoseCalibration {
     let ts = art.texture.size_vec2();
     crate::core::creature_cards::geometry::PoseCalibration {
         size: art.size.filter(|s| s.is_finite() && *s > 0.0),
         aspect: Some(content_aspect(art.bbox, ts.x, ts.y)),
         span: art.footprint.map(|fp| (fp.rx * 2.0).clamp(0.2, 1.0)),
+        content_ratio: base.map(|b| {
+            let bts = b.texture.size_vec2();
+            content_height_px(art.bbox, ts.y) / content_height_px(b.bbox, bts.y)
+        }),
     }
 }
 
@@ -981,9 +996,9 @@ impl SkinState {
                     .extra("prone")
                     .and_then(|p| cache.variant_bases.get(p.to_string_lossy().as_ref()))
                     .and_then(|a| a.as_ref())
-                    .map(pose_calibration);
+                    .map(|prone| pose_calibration(prone, Some(art)));
                 let cal = crate::core::creature_cards::geometry::ArtCalibration {
-                    standing: pose_calibration(art),
+                    standing: pose_calibration(art, None),
                     prone: prone_cal,
                 };
                 crate::core::creature_cards::geometry::calibrations()
@@ -3656,6 +3671,24 @@ cell = 32
         // Same art at 4x the resolution.
         let hires = content_aspect([0.0, 0.0, 1.0, 1.0], 400.0, 800.0);
         assert!((hires - tight).abs() < 1e-4, "resolution must be neutral");
+    }
+
+    /// Finding 7 acceptance (the worked example): standing content 200px,
+    /// prone content 100px on the same canvas convention → ratio 0.5, and
+    /// transparent padding around either image does not change it. The
+    /// ratio is deliberately measured in PIXELS (the common canvas-scale
+    /// convention the renderer inherits) — a pose file at a different
+    /// resolution is calibrated through its sidecar `size`, never by
+    /// inferring thickness from resolution.
+    #[test]
+    fn pose_content_ratio_matches_worked_example() {
+        // Full-canvas content: 200px standing, 100px prone.
+        let standing = content_height_px([0.0, 0.0, 1.0, 1.0], 200.0);
+        let prone = content_height_px([0.0, 0.0, 1.0, 1.0], 100.0);
+        assert!((prone / standing - 0.5).abs() < 1e-4);
+        // Same content padded into a 400px-tall canvas (content 100px).
+        let padded = content_height_px([0.4, 0.375, 0.6, 0.625], 400.0);
+        assert!((padded / standing - 0.5).abs() < 1e-4, "padding neutral");
     }
 
     #[test]

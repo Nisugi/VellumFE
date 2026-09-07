@@ -571,7 +571,11 @@ impl VellumGuiApp {
                 // that break it), so a prone image (content height = body
                 // thickness) isn't stretched to standing height. A pose
                 // file at a genuinely different scale is a content bug:
-                // author `size` in its sidecar to override.
+                // author `size` in its sidecar to override. The prepare
+                // pass feeds this same pose-to-standing content ratio into
+                // the core geometry store (finding 7), so the prone
+                // reservation/hit box resolves to exactly the height drawn
+                // here — bounds and pixels share one pose scale.
                 let r = art.unwrap_or(a);
                 let rts = r.texture.size_vec2();
                 let content_h = ((r.bbox[3] - r.bbox[1]) * rts.y).max(1.0);
