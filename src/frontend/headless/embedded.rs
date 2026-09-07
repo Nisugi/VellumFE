@@ -9,7 +9,10 @@
 //!   (config/paths.rs).
 //! - `VELLUM_PASSWORD_KEY` (optional): 64 lowercase hex chars (32 bytes),
 //!   set by the shell *before* [`start`] so saved passwords are sealed with
-//!   ChaCha20-Poly1305 (config/profiles.rs). Missing key = plaintext.
+//!   ChaCha20-Poly1305 (config/profiles.rs). Missing key = persistent secret
+//!   saving is DISABLED (session-only login still works; never plaintext).
+//!   Desktop headless testing may opt into plaintext explicitly with
+//!   `VELLUM_ALLOW_PLAINTEXT_SECRETS=1`.
 //! - [`start`] blocks until the web server is actually serving, then
 //!   returns `(port, token)` — the listener's real bound port (an unpinned
 //!   instance may walk past an occupied base port) and the exact pairing

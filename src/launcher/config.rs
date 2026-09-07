@@ -320,11 +320,12 @@ mod mobile_store {
     }
 
     pub fn save(key_id: &str, private_openssh: &str) -> Result<()> {
+        // Fail closed: without the encryption key the SSH private key is
+        // NOT written at all (never plaintext).
+        let sealed = crate::config::profiles::seal_value(private_openssh)
+            .context("SSH private key NOT saved")?;
         let mut map = load_map();
-        map.insert(
-            key_id.to_lowercase(),
-            crate::config::profiles::seal_value(private_openssh),
-        );
+        map.insert(key_id.to_lowercase(), sealed);
         store_map(&map)
     }
 
@@ -549,13 +550,32 @@ mod tests {
         let pem =
             "-----BEGIN OPENSSH PRIVATE KEY-----\nmobilekeydata\n-----END OPENSSH PRIVATE KEY-----";
         assert!(load_private_key(id).is_none(), "empty store starts empty");
+
+        // Without the encryption key the store fails closed: nothing saved.
+        std::env::remove_var("VELLUM_PASSWORD_KEY");
+        std::env::remove_var("VELLUM_ALLOW_PLAINTEXT_SECRETS");
+        assert!(
+            save_private_key(id, pem).is_err(),
+            "key-less save must fail, never write plaintext"
+        );
+        assert!(load_private_key(id).is_none());
+
+        std::env::set_var(
+            "VELLUM_PASSWORD_KEY",
+            "0404040404040404040404040404040404040404040404040404040404040404",
+        );
         save_private_key(id, pem).expect("save to mobile store");
         assert_eq!(load_private_key(id).as_deref(), Some(pem));
+        // The at-rest bytes are sealed, not plaintext key material.
+        let stored =
+            std::fs::read_to_string(dir.path().join("ssh-launcher-keys.toml")).unwrap();
+        assert!(!stored.contains("mobilekeydata"), "plaintext key on disk");
         // A different id must not collide.
         assert!(load_private_key("other").is_none());
         delete_private_key(id);
         assert_eq!(load_private_key(id), None);
 
+        std::env::remove_var("VELLUM_PASSWORD_KEY");
         std::env::remove_var("VELLUM_FE_DIR");
     }
 }

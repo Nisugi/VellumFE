@@ -453,9 +453,10 @@ pub fn delete_password(account: &str) {
 
 // Without the `desktop` feature there is no OS credential store. Passwords
 // live in `<VELLUM_FE_DIR>/passwords.toml` instead — on Android that resolves
-// to the app's private internal storage, which is sandboxed per-app (the same
-// trust level as Lich's config on desktop). Keystore-backed encryption at
-// rest is a planned hardening (see the Android port plan).
+// to the app's private internal storage, which is sandboxed per-app. Values
+// are sealed with the Keystore-derived key in VELLUM_PASSWORD_KEY; when that
+// key is absent, persistent secret saving is DISABLED (fail closed) rather
+// than falling back to plaintext — see the `seal` module below.
 
 #[cfg(not(feature = "desktop"))]
 fn passwords_path() -> Result<PathBuf> {
@@ -486,9 +487,19 @@ fn store_password_map(map: &std::collections::HashMap<String, String>) -> Result
 /// Sealing for stored password values (non-desktop builds). The 32-byte
 /// key arrives as hex in VELLUM_PASSWORD_KEY — on Android the Kotlin shell
 /// derives it from an Android-Keystore-wrapped master key before starting
-/// the core. Without the key (desktop headless testing), values stay
-/// plaintext; legacy plaintext entries always remain readable and are
-/// re-sealed on the next save.
+/// the core.
+///
+/// Fail-closed contract: when the key is absent or malformed, sealing
+/// returns an error and callers must NOT persist the secret — a mobile
+/// build never silently writes plaintext. The single intentional exception
+/// is desktop headless testing, which must opt in explicitly by setting
+/// `VELLUM_ALLOW_PLAINTEXT_SECRETS=1`; that path stays plaintext on disk
+/// and is never set by the mobile shells.
+///
+/// Reads stay lenient: legacy plaintext entries remain readable (and are
+/// re-sealed on the next successful save); `enc:` entries without a usable
+/// key yield `None`, i.e. the credential requires re-entry — the entry is
+/// never deleted.
 #[cfg(not(feature = "desktop"))]
 mod seal {
     use base64::Engine as _;
@@ -496,6 +507,14 @@ mod seal {
     use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 
     const PREFIX: &str = "enc:";
+
+    /// Explicit opt-in for plaintext persistence, intended ONLY for desktop
+    /// headless testing of non-desktop builds. Mobile shells never set this.
+    const ALLOW_PLAINTEXT_ENV: &str = "VELLUM_ALLOW_PLAINTEXT_SECRETS";
+
+    fn plaintext_explicitly_allowed() -> bool {
+        std::env::var(ALLOW_PLAINTEXT_ENV).is_ok_and(|v| v == "1")
+    }
 
     fn decode_hex(s: &str) -> Option<Vec<u8>> {
         if s.len() % 2 != 0 {
@@ -516,25 +535,31 @@ mod seal {
         Some(ChaCha20Poly1305::new(Key::from_slice(&bytes)))
     }
 
-    pub fn seal(value: &str) -> String {
+    /// Seal a secret for persistence. `Err` means the value must NOT be
+    /// written to disk — there is no silent plaintext fallback.
+    pub fn seal(value: &str) -> anyhow::Result<String> {
         let Some(c) = cipher() else {
-            return value.to_string();
+            if plaintext_explicitly_allowed() {
+                // Desktop headless testing only (see ALLOW_PLAINTEXT_ENV).
+                return Ok(value.to_string());
+            }
+            anyhow::bail!(
+                "encryption key unavailable (VELLUM_PASSWORD_KEY not set or invalid); \
+                 refusing to save this secret as plaintext"
+            );
         };
         let mut nonce = [0u8; 12];
-        if getrandom::fill(&mut nonce).is_err() {
-            return value.to_string();
-        }
-        match c.encrypt(Nonce::from_slice(&nonce), value.as_bytes()) {
-            Ok(ct) => {
-                let mut blob = nonce.to_vec();
-                blob.extend(ct);
-                format!(
-                    "{PREFIX}{}",
-                    base64::engine::general_purpose::STANDARD.encode(blob)
-                )
-            }
-            Err(_) => value.to_string(),
-        }
+        getrandom::fill(&mut nonce)
+            .map_err(|e| anyhow::anyhow!("secure nonce generation failed: {e}"))?;
+        let ct = c
+            .encrypt(Nonce::from_slice(&nonce), value.as_bytes())
+            .map_err(|e| anyhow::anyhow!("sealing secret failed: {e}"))?;
+        let mut blob = nonce.to_vec();
+        blob.extend(ct);
+        Ok(format!(
+            "{PREFIX}{}",
+            base64::engine::general_purpose::STANDARD.encode(blob)
+        ))
     }
 
     pub fn open(value: &str) -> Option<String> {
@@ -553,26 +578,101 @@ mod seal {
 
     #[cfg(test)]
     mod tests {
+        /// Serialize tests that mutate process-global secret env vars.
+        /// Reuses the repo-wide env lock so password-key tests cannot race
+        /// VELLUM_FE_DIR tests either.
+        fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+            crate::config::VELLUM_FE_DIR_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        }
+
         #[test]
         fn seal_roundtrip_with_key() {
+            let _guard = env_lock();
             std::env::set_var(
                 "VELLUM_PASSWORD_KEY",
                 "0101010101010101010101010101010101010101010101010101010101010101",
             );
-            let sealed = super::seal("hunter2 with spaces");
+            let sealed = super::seal("hunter2 with spaces").expect("seal with key present");
             assert!(sealed.starts_with("enc:"));
             assert_eq!(super::open(&sealed).as_deref(), Some("hunter2 with spaces"));
             // Legacy plaintext passes through.
             assert_eq!(super::open("plain").as_deref(), Some("plain"));
             std::env::remove_var("VELLUM_PASSWORD_KEY");
         }
+
+        #[test]
+        fn seal_without_key_refuses_plaintext() {
+            let _guard = env_lock();
+            std::env::remove_var("VELLUM_PASSWORD_KEY");
+            std::env::remove_var("VELLUM_ALLOW_PLAINTEXT_SECRETS");
+            let err = super::seal("hunter2").expect_err("sealing must fail without a key");
+            assert!(err.to_string().contains("refusing to save"), "{err}");
+        }
+
+        #[test]
+        fn seal_wrong_length_key_refuses_plaintext() {
+            let _guard = env_lock();
+            // 16 bytes, not 32 — a truncated key must not enable sealing
+            // and must not fall back to plaintext.
+            std::env::set_var("VELLUM_PASSWORD_KEY", "01010101010101010101010101010101");
+            std::env::remove_var("VELLUM_ALLOW_PLAINTEXT_SECRETS");
+            assert!(super::seal("hunter2").is_err());
+            std::env::remove_var("VELLUM_PASSWORD_KEY");
+        }
+
+        #[test]
+        fn explicit_plaintext_opt_in_is_honored() {
+            let _guard = env_lock();
+            std::env::remove_var("VELLUM_PASSWORD_KEY");
+            std::env::set_var("VELLUM_ALLOW_PLAINTEXT_SECRETS", "1");
+            assert_eq!(super::seal("plainok").unwrap(), "plainok");
+            std::env::remove_var("VELLUM_ALLOW_PLAINTEXT_SECRETS");
+        }
+
+        #[test]
+        fn sealed_value_without_key_requires_reentry() {
+            let _guard = env_lock();
+            std::env::set_var(
+                "VELLUM_PASSWORD_KEY",
+                "0202020202020202020202020202020202020202020202020202020202020202",
+            );
+            let sealed = super::seal("secret").unwrap();
+            std::env::remove_var("VELLUM_PASSWORD_KEY");
+            // Key gone: the value is unreadable (re-entry required) but
+            // still tagged `enc:` on disk — never plaintext, never deleted.
+            assert_eq!(super::open(&sealed), None);
+            // Truncated/corrupt blobs are also unreadable, not plaintext.
+            assert_eq!(super::open("enc:AAAA"), None);
+            assert_eq!(super::open("enc:%%%"), None);
+        }
     }
 }
 
+/// Shared lock for tests that mutate process-global secret env vars
+/// (VELLUM_PASSWORD_KEY, VELLUM_ALLOW_PLAINTEXT_SECRETS, VELLUM_FE_DIR).
+#[cfg(all(test, not(feature = "desktop")))]
+pub(crate) mod secret_env_tests {
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    pub fn lock() -> MutexGuard<'static, ()> {
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// Save a password to the sealed file store. Fails (without touching the
+/// store) when the encryption key is unavailable — the caller should treat
+/// this as "session-only login: password NOT saved" and tell the user.
 #[cfg(not(feature = "desktop"))]
 pub fn save_password(account: &str, password: &str) -> Result<()> {
+    let sealed = seal::seal(password).context("Password NOT saved")?;
     let mut map = load_password_map();
-    map.insert(account.to_lowercase(), seal::seal(password));
+    map.insert(account.to_lowercase(), sealed);
     store_password_map(&map)
 }
 
@@ -597,8 +697,11 @@ pub fn delete_password(account: &str) {
 /// store uses (non-desktop builds). Exposed so the SSH launcher can store its
 /// private key sealed-at-rest without duplicating the crypto. On desktop the
 /// launcher uses the OS keyring instead, so these are non-desktop only.
+///
+/// Same fail-closed rule as passwords: `Err` when the key is unavailable —
+/// callers must not persist the plaintext value.
 #[cfg(not(feature = "desktop"))]
-pub fn seal_value(value: &str) -> String {
+pub fn seal_value(value: &str) -> Result<String> {
     seal::seal(value)
 }
 
@@ -797,6 +900,126 @@ mod tests {
         let text = toml::to_string_pretty(&LauncherStore::default()).unwrap();
 
         assert!(!text.contains("skip_lich_switch_warning"));
+    }
+
+    /// Non-desktop password store: fail-closed persistence rules.
+    #[cfg(not(feature = "desktop"))]
+    mod mobile_secret_store {
+        use super::super::*;
+
+        const KEY_HEX: &str = "0303030303030303030303030303030303030303030303030303030303030303";
+
+        /// Env guard: serializes the global env mutations and restores
+        /// VELLUM_FE_DIR / key vars afterward.
+        struct EnvFixture {
+            _guard: std::sync::MutexGuard<'static, ()>,
+            prev_dir: Option<std::ffi::OsString>,
+            _tmp: tempfile::TempDir,
+        }
+
+        impl EnvFixture {
+            fn new() -> Self {
+                let guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let tmp = tempfile::tempdir().unwrap();
+                let prev_dir = std::env::var_os("VELLUM_FE_DIR");
+                std::env::set_var("VELLUM_FE_DIR", tmp.path());
+                std::env::remove_var("VELLUM_PASSWORD_KEY");
+                std::env::remove_var("VELLUM_ALLOW_PLAINTEXT_SECRETS");
+                Self {
+                    _guard: guard,
+                    prev_dir,
+                    _tmp: tmp,
+                }
+            }
+
+            fn passwords_file(&self) -> PathBuf {
+                passwords_path().unwrap()
+            }
+        }
+
+        impl Drop for EnvFixture {
+            fn drop(&mut self) {
+                match self.prev_dir.take() {
+                    Some(path) => std::env::set_var("VELLUM_FE_DIR", path),
+                    None => std::env::remove_var("VELLUM_FE_DIR"),
+                }
+                std::env::remove_var("VELLUM_PASSWORD_KEY");
+                std::env::remove_var("VELLUM_ALLOW_PLAINTEXT_SECRETS");
+            }
+        }
+
+        #[test]
+        fn save_without_key_errors_and_writes_nothing() {
+            let fixture = EnvFixture::new();
+            let err = save_password("acct", "supersecretpw").expect_err("must fail closed");
+            assert!(format!("{err:#}").contains("Password NOT saved"), "{err:#}");
+            assert!(
+                !fixture.passwords_file().exists(),
+                "no store file may be created on a refused save"
+            );
+        }
+
+        #[test]
+        fn saved_bytes_contain_no_plaintext_password() {
+            let fixture = EnvFixture::new();
+            std::env::set_var("VELLUM_PASSWORD_KEY", KEY_HEX);
+            save_password("acct", "supersecretpw").unwrap();
+            let bytes = std::fs::read(fixture.passwords_file()).unwrap();
+            let haystack = String::from_utf8_lossy(&bytes);
+            assert!(
+                !haystack.contains("supersecretpw"),
+                "stored bytes leaked the plaintext password"
+            );
+            assert!(haystack.contains("enc:"), "value should be sealed");
+            assert_eq!(load_password("ACCT").as_deref(), Some("supersecretpw"));
+        }
+
+        #[test]
+        fn sealed_entry_requires_reentry_but_unrelated_entries_survive() {
+            let fixture = EnvFixture::new();
+            std::env::set_var("VELLUM_PASSWORD_KEY", KEY_HEX);
+            save_password("sealedacct", "sealedpw").unwrap();
+            std::env::remove_var("VELLUM_PASSWORD_KEY");
+
+            // Simulate a legacy plaintext entry alongside the sealed one.
+            let text = std::fs::read_to_string(fixture.passwords_file()).unwrap();
+            std::fs::write(
+                fixture.passwords_file(),
+                format!("{text}legacyacct = \"legacypw\"\n"),
+            )
+            .unwrap();
+
+            // Key gone: sealed value requires re-entry; legacy stays readable.
+            assert_eq!(load_password("sealedacct"), None);
+            assert_eq!(load_password("legacyacct").as_deref(), Some("legacypw"));
+
+            // Deleting one credential must not delete the unreadable one.
+            delete_password("legacyacct");
+            let remaining = std::fs::read_to_string(fixture.passwords_file()).unwrap();
+            assert!(remaining.contains("sealedacct"));
+            assert!(!remaining.contains("legacyacct"));
+
+            // Key restored: the sealed entry is readable again (nothing was
+            // destroyed while the key was unavailable).
+            std::env::set_var("VELLUM_PASSWORD_KEY", KEY_HEX);
+            assert_eq!(load_password("sealedacct").as_deref(), Some("sealedpw"));
+        }
+
+        #[test]
+        fn seal_value_fails_closed_for_ssh_key_material() {
+            let _fixture = EnvFixture::new();
+            assert!(seal_value("-----BEGIN OPENSSH PRIVATE KEY-----").is_err());
+            std::env::set_var("VELLUM_PASSWORD_KEY", KEY_HEX);
+            let sealed = seal_value("-----BEGIN OPENSSH PRIVATE KEY-----").unwrap();
+            assert!(sealed.starts_with("enc:"));
+            assert!(!sealed.contains("PRIVATE KEY"));
+            assert_eq!(
+                open_value(&sealed).as_deref(),
+                Some("-----BEGIN OPENSSH PRIVATE KEY-----")
+            );
+        }
     }
 
     #[test]
