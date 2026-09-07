@@ -7222,6 +7222,7 @@ function handleWebUiRender(d) {
 function handleWebUiClosed(d) {
   webuiState.trees.delete(d.page);
   webuiState.seqs.delete(d.page);
+  webuiDrafts.dropPage(d.page); // page gone server-side: drop its drafts
   renderWebUiIfOpen(d.page);
 }
 
@@ -7240,6 +7241,7 @@ function webuiSubscribe(page) {
 function webuiUnsubscribe(page) {
   webuiState.subscribed.delete(page);
   webuiState.trees.delete(page);
+  webuiDrafts.dropPage(page); // closed page: its unsent edits go with it
   sendJson("webui_unsubscribe", { page });
 }
 // Send a component interaction back to Lich (button/input/row).
@@ -7251,7 +7253,8 @@ function webuiSendEvent(page, cid, value) {
 // One page is shown at a time in a full-screen overlay (phone real estate).
 // A picker lists registered pages; opening one subscribes, closing
 // unsubscribes. The node renderer reproduces the desktop widget set; edit
-// state (in-progress input text) lives naturally in the DOM elements.
+// state (in-progress input text) lives in webuiDrafts so it survives the
+// full-DOM rebuild every server render performs.
 
 const webuiOverlay = document.createElement("div");
 webuiOverlay.id = "webui-overlay";
@@ -7269,6 +7272,20 @@ document.body.appendChild(webuiOverlay);
 const webuiBody = webuiOverlay.querySelector("#webui-body");
 const webuiTitle = webuiOverlay.querySelector("#webui-title");
 let webuiOpenPage = null; // page id currently shown, or null = picker
+
+// In-progress edits survive renders here, not in the DOM: renderWebUi
+// rebuilds the panel from the server tree, so typed-but-unsent text and
+// pending commits live in this store keyed by page + component id
+// (WebuiCore.createDraftStore — memory only, passwords included).
+const webuiDrafts = WebuiCore.createDraftStore();
+// True while renderWebUi tears down / rebuilds the panel: the teardown
+// blurs a focused input, and the blur-commit must not fire for it (the
+// draft store carries the text across; focus is restored after).
+let webuiRenderInProgress = false;
+// IME composition in flight on this element: rebuilding the DOM would tear
+// the composition, so renders are deferred until compositionend.
+let webuiComposeEl = null;
+let webuiRenderDeferred = false;
 
 webuiOverlay.querySelector("#webui-close").addEventListener("click", closeWebUi);
 webuiOverlay.querySelector("#webui-back").addEventListener("click", () => {
@@ -7302,6 +7319,45 @@ function renderWebUiIfOpen(page) {
 }
 
 function renderWebUi() {
+  // Never rebuild mid-IME-composition: keep the active DOM node alive and
+  // repaint once the composition commits.
+  if (webuiComposeEl && webuiBody.contains(webuiComposeEl)) {
+    webuiRenderDeferred = true;
+    return;
+  }
+  // Capture focus + caret of an editable field so the rebuild can restore
+  // them; the field's text itself rides in webuiDrafts.
+  let restoreFocus = null;
+  const active = document.activeElement;
+  if (active && webuiBody.contains(active) && active.dataset && active.dataset.webuiCid !== undefined) {
+    restoreFocus = {
+      cid: active.dataset.webuiCid,
+      selStart: active.selectionStart,
+      selEnd: active.selectionEnd,
+      selDir: active.selectionDirection || "none",
+    };
+  }
+  webuiRenderInProgress = true;
+  try {
+    renderWebUiInner();
+  } finally {
+    webuiRenderInProgress = false;
+  }
+  if (restoreFocus) {
+    const el = webuiBody.querySelector(
+      `[data-webui-cid="${CSS.escape(restoreFocus.cid)}"]`);
+    if (el) {
+      el.focus({ preventScroll: true });
+      try {
+        if (restoreFocus.selStart != null) {
+          el.setSelectionRange(restoreFocus.selStart, restoreFocus.selEnd, restoreFocus.selDir);
+        }
+      } catch { /* non-text input types reject setSelectionRange */ }
+    }
+  }
+}
+
+function renderWebUiInner() {
   webuiBody.replaceChildren();
   const backBtn = webuiOverlay.querySelector("#webui-back");
   if (!webuiState.connected && !webuiOpenPage) {
@@ -7344,6 +7400,8 @@ function renderWebUi() {
     }));
     return;
   }
+  // Components gone from the fresh tree take their drafts with them.
+  webuiDrafts.retainComponents(webuiOpenPage, WebuiCore.collectEditableCids(entry.tree));
   webuiBody.appendChild(renderWebUiNode(webuiOpenPage, entry.tree));
 }
 
@@ -7440,20 +7498,40 @@ function webuiButton(page, node, emit) {
   return btn;
 }
 
-// text/password: the DOM element IS the edit buffer. Adopt a changed server
-// value only when NOT focused; commit on blur or Enter.
+// Shared edit wiring for text/password/textarea: the draft store (not the
+// DOM) is the edit buffer, so a re-render can rebuild this element without
+// losing typing. Commit on blur or Enter goes through the store, which
+// only emits for a dirty (user-typed) field — a render tearing down the
+// focused node fires blur too, and must neither commit early nor twice.
+function webuiWireEditable(el, page, node, emit, alwaysEmit) {
+  const cid = node.cid || "";
+  const serverValue = webuiValueStr(node);
+  const renderSeq = webuiState.seqs.get(page) || 0;
+  el.value = webuiDrafts.displayValue(page, cid, serverValue, renderSeq);
+  el.dataset.webuiCid = cid; // focus/caret restore hook for renderWebUi
+  el.addEventListener("input", () => webuiDrafts.setDraft(page, cid, el.value));
+  el.addEventListener("compositionstart", () => { webuiComposeEl = el; });
+  el.addEventListener("compositionend", () => {
+    webuiComposeEl = null;
+    if (webuiRenderDeferred) { webuiRenderDeferred = false; renderWebUi(); }
+  });
+  el.addEventListener("blur", () => {
+    if (webuiRenderInProgress) return; // teardown blur, not a user commit
+    const v = webuiDrafts.commit(page, cid, el.value,
+      serverValue, webuiState.seqs.get(page) || 0, alwaysEmit);
+    if (v !== null) emit(v);
+  });
+}
+
+// text/password: commit on blur or Enter.
 function webuiTextInput(page, node, emit, isPassword) {
   const wrap = document.createElement("label");
   wrap.className = "webui-field";
   if (node.label) wrap.append(Object.assign(document.createElement("span"), { textContent: node.label }));
   const input = document.createElement("input");
   input.type = isPassword ? "password" : "text";
-  input.value = webuiValueStr(node);
   if (node.placeholder) input.placeholder = node.placeholder;
-  const commit = () => {
-    if (isPassword || input.value !== webuiValueStr(node)) emit(input.value);
-  };
-  input.addEventListener("blur", commit);
+  webuiWireEditable(input, page, node, emit, isPassword);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); input.blur(); } });
   wrap.appendChild(input);
   return wrap;
@@ -7464,10 +7542,9 @@ function webuiTextarea(page, node, emit) {
   wrap.className = "webui-field webui-field-col";
   if (node.label) wrap.append(Object.assign(document.createElement("span"), { textContent: node.label }));
   const ta = document.createElement("textarea");
-  ta.value = webuiValueStr(node);
   if (node.placeholder) ta.placeholder = node.placeholder;
   if (node.rows_hint) ta.rows = node.rows_hint;
-  ta.addEventListener("blur", () => { if (ta.value !== webuiValueStr(node)) emit(ta.value); });
+  webuiWireEditable(ta, page, node, emit, false);
   wrap.appendChild(ta);
   return wrap;
 }
