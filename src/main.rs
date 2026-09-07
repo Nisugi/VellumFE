@@ -172,7 +172,17 @@ impl DirectGameArg {
 enum Commands {
     /// Vellum Studio: standalone art authoring — calibrate pool frames and
     /// creature sprites without launching the game
-    Studio,
+    Studio {
+        /// Room uid to prefill new-scene naming with (client launch)
+        #[arg(long)]
+        room_uid: Option<i64>,
+        /// Room title to prefill new-scene naming with
+        #[arg(long)]
+        room_title: Option<String>,
+        /// Mapdb location to prefill new-scene naming with
+        #[arg(long)]
+        room_location: Option<String>,
+    },
 
     /// Validate layout configuration
     ValidateLayout {
@@ -338,15 +348,25 @@ fn main() -> Result<()> {
     // Handle subcommands
     if let Some(command) = cli.command {
         match command {
-            Commands::Studio => {
+            Commands::Studio {
+                room_uid,
+                room_title,
+                room_location,
+            } => {
                 #[cfg(feature = "gui")]
                 {
                     #[cfg(windows)]
                     detach_exclusive_console();
-                    return frontend::gui::studio::run_studio();
+                    let context = frontend::gui::studio::StudioRoomContext {
+                        uid: room_uid,
+                        title: room_title,
+                        location: room_location,
+                    };
+                    return frontend::gui::studio::run_studio(Some(context));
                 }
                 #[cfg(not(feature = "gui"))]
                 {
+                    let _ = (room_uid, room_title, room_location);
                     eprintln!(
                         "✗ This build has no GUI support; Vellum Studio needs the gui feature"
                     );

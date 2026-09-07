@@ -19,6 +19,84 @@ use super::skin;
 /// Oldest status lines drop past this.
 const STATUS_CAP: usize = 50;
 
+/// Room facts handed over when the client launches Studio — prefill for
+/// the new-scene inputs, never applied to anything on its own. Standalone
+/// Studio runs with `None` everywhere and stays fully usable.
+#[derive(Debug, Clone, Default)]
+pub struct StudioRoomContext {
+    pub uid: Option<i64>,
+    pub title: Option<String>,
+    pub location: Option<String>,
+}
+
+impl StudioRoomContext {
+    fn is_empty(&self) -> bool {
+        self.uid.is_none() && self.title.is_none() && self.location.is_none()
+    }
+}
+
+/// New-scene naming state: an explicit binding choice plus typed inputs,
+/// composed into a filename stem through the scene path rules and
+/// previewed BEFORE anything is saved. egui-free so tests drive it.
+struct NewSceneState {
+    binding: crate::config::scenes::SceneBinding,
+    /// Room uid input (RoomUid binding), typed or prefilled.
+    uid_text: String,
+    /// Name input: uid garnish for RoomUid, the matched text otherwise.
+    text: String,
+    /// Launch-time room facts, kept so switching bindings can re-prefill.
+    context: StudioRoomContext,
+}
+
+impl NewSceneState {
+    /// Prefill the INPUTS from the room context (uid binding when a uid is
+    /// known, else title, else location, else default). Only inputs: the
+    /// loaded scene and its name are untouched, so launching with room
+    /// context never silently overwrites a saved scene.
+    fn new(context: StudioRoomContext) -> Self {
+        use crate::config::scenes::SceneBinding;
+        let binding = if context.uid.is_some() {
+            SceneBinding::RoomUid
+        } else if context.title.is_some() {
+            SceneBinding::RoomTitle
+        } else if context.location.is_some() {
+            SceneBinding::Location
+        } else {
+            SceneBinding::Default
+        };
+        let mut state = Self {
+            binding,
+            uid_text: String::new(),
+            text: String::new(),
+            context,
+        };
+        state.prefill_inputs();
+        state
+    }
+
+    /// Seed the inputs for the current binding from the room context.
+    fn prefill_inputs(&mut self) {
+        use crate::config::scenes::SceneBinding;
+        self.uid_text = self
+            .context
+            .uid
+            .map(|u| u.to_string())
+            .unwrap_or_default();
+        self.text = match self.binding {
+            SceneBinding::RoomUid | SceneBinding::RoomTitle => {
+                self.context.title.clone().unwrap_or_default()
+            }
+            SceneBinding::Location => self.context.location.clone().unwrap_or_default(),
+            SceneBinding::Default => String::new(),
+        };
+    }
+
+    /// The filename stem these inputs compose to, or why they don't.
+    fn preview(&self) -> Result<String, String> {
+        crate::config::scenes::compose_stem(self.binding, &self.uid_text, &self.text)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StudioMode {
     Anchorer,
@@ -46,6 +124,8 @@ pub struct StudioApp {
     styled: bool,
     /// Built lazily on first Stage entry (AppCore::new is FS-only here).
     stage: Option<StageState>,
+    /// Room facts from the launching client (new-scene prefill only).
+    room_context: StudioRoomContext,
 }
 
 /// One castable pool-art entry: a base image's token, humanized.
@@ -95,15 +175,32 @@ struct StageState {
     open_scenery_cal: bool,
     /// Status lines raised inside panel closures, drained by stage_ui.
     pending_status: Vec<String>,
+    /// New-scene naming inputs (manual binding + name, room prefill).
+    new_scene: NewSceneState,
 }
 
 /// Fabricated layout window carrying the Stage's grid/order toggles.
 const STAGE_WINDOW: &str = "studio-stage";
 
 impl StageState {
-    fn new() -> anyhow::Result<Self> {
+    fn new(context: StudioRoomContext) -> anyhow::Result<Self> {
         let config = crate::config::Config::load()?;
         let mut app_core = AppCore::new(config)?;
+        // Launch context wins; a fabricated AppCore that somehow carries
+        // room facts (it never does standalone) is the fallback.
+        let context = if context.is_empty() {
+            StudioRoomContext {
+                uid: app_core
+                    .nav_room_id
+                    .as_deref()
+                    .and_then(|s| s.trim().parse::<i64>().ok())
+                    .filter(|&u| u != 0),
+                title: app_core.current_room_title(),
+                location: app_core.current_room_scope().location,
+            }
+        } else {
+            context
+        };
         // In-memory only: the def carries show_grid/show_order for the
         // renderer's per-window lookup. Never saved.
         if let Some(mut def) = crate::core::local_catalog::seed("creaturefield") {
@@ -130,6 +227,7 @@ impl StageState {
             obstacle_params: None,
             open_scenery_cal: false,
             pending_status: Vec::new(),
+            new_scene: NewSceneState::new(context),
         })
     }
 
@@ -295,79 +393,118 @@ impl StageState {
             if !self.scene_name.trim().is_empty() && ui.button("Save").clicked() {
                 self.save_current_scene();
             }
-            ui.menu_button("New…", |ui| {
-                let uid = self
-                    .app_core
-                    .nav_room_id
-                    .as_deref()
-                    .and_then(|s| s.trim().parse::<i64>().ok())
-                    .filter(|&u| u != 0);
-                let title = self.app_core.current_room_title();
-                let location = self.app_core.current_room_scope().location;
-                let mut target: Option<String> = None;
-                match (uid, &title) {
-                    (Some(uid), Some(title)) => {
-                        let stem = scenes::filename_stem(&format!("{uid} - {title}"));
-                        if ui
-                            .button(format!("This room ({})", scenes::display_name(&stem)))
-                            .clicked()
-                        {
-                            target = Some(stem);
-                        }
-                    }
-                    (Some(uid), None) => {
-                        if ui.button(format!("This room ({uid})")).clicked() {
-                            target = Some(uid.to_string());
-                        }
-                    }
-                    _ => {
-                        ui.weak("(no room id yet — connect and move once)");
-                    }
-                }
-                match &title {
-                    Some(title) => {
-                        let stem = scenes::filename_stem(title);
-                        if ui
-                            .button(format!("Room name ({})", scenes::display_name(&stem)))
-                            .clicked()
-                        {
-                            target = Some(stem);
-                        }
-                    }
-                    None => {
-                        ui.weak("(no room title yet)");
-                    }
-                }
-                match &location {
-                    Some(location) if !location.trim().is_empty() => {
-                        let stem = scenes::filename_stem(location);
-                        if ui
-                            .button(format!("Location ({})", scenes::display_name(&stem)))
-                            .clicked()
-                        {
-                            target = Some(stem);
-                        }
-                    }
-                    _ => {
-                        ui.weak("(room not in the mapdb — no location)");
-                    }
-                }
-                if ui.button("Default (fallback scene)").clicked() {
-                    target = Some("default".to_string());
-                }
-                if let Some(stem) = target {
-                    // Save-as semantics: the stage contents carry over so a
-                    // tuned stage can be captured for the room you're in.
-                    self.scene_name = stem;
-                    ui.close();
-                }
-            });
             if ui.button("Clear stage scene").clicked() {
                 self.scene = Arc::new(StageScene::default());
                 self.scene_name.clear();
                 self.selected_prop = None;
             }
         });
+        // New-scene naming: explicit binding + typed name, previewed and
+        // validated before it becomes the save target. Room facts (when
+        // Studio was launched from the client) only PREFILL the inputs.
+        egui::CollapsingHeader::new("New scene…")
+            .default_open(false)
+            .show(ui, |ui| {
+                use crate::config::scenes::SceneBinding;
+                let ns = &mut self.new_scene;
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Bind by");
+                    for (binding, label) in [
+                        (SceneBinding::RoomUid, "Room uid"),
+                        (SceneBinding::RoomTitle, "Room title"),
+                        (SceneBinding::Location, "Location"),
+                        (SceneBinding::Default, "Default"),
+                    ] {
+                        if ui
+                            .selectable_label(ns.binding == binding, label)
+                            .clicked()
+                            && ns.binding != binding
+                        {
+                            ns.binding = binding;
+                            ns.prefill_inputs();
+                        }
+                    }
+                });
+                match ns.binding {
+                    SceneBinding::RoomUid => {
+                        ui.horizontal(|ui| {
+                            ui.label("Room uid");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut ns.uid_text)
+                                    .hint_text("e.g. 47009")
+                                    .desired_width(80.0),
+                            );
+                            ui.label("garnish");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut ns.text)
+                                    .hint_text("optional room name")
+                                    .desired_width(160.0),
+                            );
+                        });
+                    }
+                    SceneBinding::RoomTitle | SceneBinding::Location => {
+                        ui.horizontal(|ui| {
+                            ui.label(if ns.binding == SceneBinding::RoomTitle {
+                                "Room title"
+                            } else {
+                                "Location"
+                            });
+                            ui.add(
+                                egui::TextEdit::singleline(&mut ns.text)
+                                    .hint_text("exact in-game text")
+                                    .desired_width(220.0),
+                            );
+                        });
+                    }
+                    SceneBinding::Default => {
+                        ui.weak("The fallback scene every unbound room uses.");
+                    }
+                }
+                match ns.preview() {
+                    Ok(stem) => {
+                        ui.label(format!("File: global/scenes/{stem}.toml"));
+                        let exists = scenes::scene_exists(&stem);
+                        let mut adopt = false;
+                        let mut load_existing = false;
+                        if exists {
+                            ui.colored_label(
+                                ui.visuals().warn_fg_color,
+                                format!(
+                                    "Scene '{}' already exists — Save will REPLACE it.",
+                                    scenes::display_name(&stem)
+                                ),
+                            );
+                            ui.horizontal(|ui| {
+                                adopt = ui
+                                    .button("Use name (replace on save)")
+                                    .on_hover_text(
+                                        "The stage carries over; the next Save overwrites \
+                                         the existing scene file",
+                                    )
+                                    .clicked();
+                                load_existing = ui
+                                    .button("Load existing instead")
+                                    .clicked();
+                            });
+                        } else {
+                            adopt = ui
+                                .button("Use name (save-as)")
+                                .on_hover_text(
+                                    "The stage carries over; Save writes a new scene file",
+                                )
+                                .clicked();
+                        }
+                        if adopt {
+                            self.scene_name = stem;
+                        } else if load_existing {
+                            self.load_scene_by_name(&stem);
+                        }
+                    }
+                    Err(err) => {
+                        ui.colored_label(ui.visuals().error_fg_color, err);
+                    }
+                }
+            });
         let saved = scenes::list_scenes();
         if !saved.is_empty() {
             ui.horizontal(|ui| {
@@ -1072,6 +1209,7 @@ impl Default for StudioApp {
             status: Vec::new(),
             styled: false,
             stage: None,
+            room_context: StudioRoomContext::default(),
         }
     }
 }
@@ -1186,7 +1324,7 @@ impl StudioApp {
 
     fn stage_ui(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         if self.stage.is_none() {
-            match StageState::new() {
+            match StageState::new(self.room_context.clone()) {
                 Ok(stage) => {
                     self.push_status(format!("Stage ready: {} castable bases", stage.cast.len()));
                     self.stage = Some(stage);
@@ -1388,8 +1526,88 @@ fn sparse_solver(
     }
 }
 
-/// Boot the Studio window.
-pub fn run_studio() -> anyhow::Result<()> {
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::scenes::{self, SceneBinding};
+
+    #[test]
+    fn new_scene_prefill_fills_inputs_and_never_touches_saved_scenes() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+
+        // A saved scene for the room the client is standing in.
+        let saved = scenes::StageScene {
+            background: Some("scenes/desert.png".into()),
+            ..Default::default()
+        };
+        saved.save("47009_-_Kitchen_Garden").unwrap();
+        let on_disk = std::fs::read_to_string(
+            scenes::StageScene::path("47009_-_Kitchen_Garden").unwrap(),
+        )
+        .unwrap();
+
+        let state = NewSceneState::new(StudioRoomContext {
+            uid: Some(47009),
+            title: Some("Kitchen Garden".into()),
+            location: Some("Castle Anwyn".into()),
+        });
+        // Prefill picked the uid binding and seeded the inputs.
+        assert_eq!(state.binding, SceneBinding::RoomUid);
+        assert_eq!(state.uid_text, "47009");
+        assert_eq!(state.text, "Kitchen Garden");
+        // The preview names the EXISTING scene, flagged as a replace...
+        let stem = state.preview().unwrap();
+        assert_eq!(stem, "47009_-_Kitchen_Garden");
+        assert!(scenes::scene_exists(&stem));
+        // ...and nothing was written: prefill never silently overwrites.
+        let after = std::fs::read_to_string(
+            scenes::StageScene::path("47009_-_Kitchen_Garden").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(on_disk, after);
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    #[test]
+    fn new_scene_standalone_defaults_and_rebinding_reprefills() {
+        // Standalone (no context): default binding, empty inputs, valid
+        // "default" preview out of the box.
+        let mut state = NewSceneState::new(StudioRoomContext::default());
+        assert_eq!(state.binding, SceneBinding::Default);
+        assert_eq!(state.preview().unwrap(), "default");
+        // Typed inputs compose without any game connection.
+        state.binding = SceneBinding::RoomTitle;
+        state.text = "Barley Field".into();
+        assert_eq!(state.preview().unwrap(), "Barley_Field");
+        state.binding = SceneBinding::RoomUid;
+        state.uid_text = "12".into();
+        state.text.clear();
+        assert_eq!(state.preview().unwrap(), "12");
+        // Unsafe input is rejected at preview, before any save exists.
+        state.uid_text = "../evil".into();
+        assert!(state.preview().is_err());
+        // Context-driven rebinding re-prefills the matching input.
+        let mut state = NewSceneState::new(StudioRoomContext {
+            uid: None,
+            title: Some("Barley Field".into()),
+            location: Some("Wehnimer's Landing".into()),
+        });
+        assert_eq!(state.binding, SceneBinding::RoomTitle);
+        assert_eq!(state.text, "Barley Field");
+        state.binding = SceneBinding::Location;
+        state.prefill_inputs();
+        assert_eq!(state.text, "Wehnimer's Landing");
+    }
+}
+
+/// Boot the Studio window. `context` carries the launching client's room
+/// facts (new-scene prefill); standalone launches pass `None`.
+pub fn run_studio(context: Option<StudioRoomContext>) -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Vellum Studio")
@@ -1397,10 +1615,16 @@ pub fn run_studio() -> anyhow::Result<()> {
             .with_min_inner_size([720.0, 480.0]),
         ..Default::default()
     };
+    let context = context.unwrap_or_default();
     eframe::run_native(
         "Vellum Studio",
         options,
-        Box::new(|_cc| Ok(Box::new(StudioApp::default()))),
+        Box::new(move |_cc| {
+            Ok(Box::new(StudioApp {
+                room_context: context,
+                ..Default::default()
+            }))
+        }),
     )
     .map_err(|err| anyhow!("Failed to run Vellum Studio: {}", err))
 }

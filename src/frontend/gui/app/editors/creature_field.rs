@@ -87,7 +87,25 @@ impl VellumGuiApp {
         let mut cmd = std::process::Command::new(exe);
         // Dead std handles from a consoleless parent break Stdio::inherit
         // (os error 50); Studio logs to file, so null them all.
-        cmd.arg("studio")
+        cmd.arg("studio");
+        // Snapshot the current room so Studio can prefill new-scene naming
+        // (prefill only — Studio never saves anything from these).
+        if let Some(uid) = self
+            .app_core
+            .nav_room_id
+            .as_deref()
+            .and_then(|s| s.trim().parse::<i64>().ok())
+            .filter(|&u| u > 0)
+        {
+            cmd.arg("--room-uid").arg(uid.to_string());
+        }
+        if let Some(title) = self.app_core.current_room_title() {
+            cmd.arg("--room-title").arg(title);
+        }
+        if let Some(location) = self.app_core.current_room_scope().location {
+            cmd.arg("--room-location").arg(location);
+        }
+        cmd
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
