@@ -107,13 +107,12 @@ impl AppCore {
             // repositions every drawn card.
             self.creature_field.generation = self.creature_field.generation.wrapping_add(1);
         }
-        // Prop exclusion spans project through the camera, so rebuild them
-        // whenever the params were re-resolved (scene changes land here
-        // too — a scene change always resets field_params_inputs).
-        let obstacles = crate::core::creature_cards::scene_obstacles(
-            self.stage_scene.as_deref(),
-            &self.creature_field,
-        );
+        // Prop exclusion metadata is authored (world units); the solver
+        // projects it per placement decision, so this rebuild only needs
+        // to track the scene/sidecar data itself (scene changes always
+        // reset field_params_inputs and land here).
+        let obstacles =
+            crate::core::creature_cards::scene_obstacles(self.stage_scene.as_deref());
         self.creature_field.set_obstacles(obstacles);
         self.field_params_inputs =
             Some((self.stage_scene_name.clone(), self.field_overrides.clone()));
@@ -126,6 +125,13 @@ impl AppCore {
     /// those.
     pub fn reload_creature_field_files(&mut self) {
         self.field_overrides = crate::config::creature_field::FieldOverrides::load();
+        // Sidecar calibration may have changed with the files; drop the
+        // shared store so geometry re-seeds (placed units recalibrate in
+        // place on the next sync — nobody moves).
+        crate::core::creature_cards::geometry::calibrations()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .invalidate();
         self.stage_scene = None;
         self.stage_scene_name = None;
         self.default_stage_scene = None;

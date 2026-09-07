@@ -167,9 +167,6 @@ struct StageState {
     /// re-points the Arc on every edit, so pointer identity is the dirty
     /// bit — sidecars are only re-read when the scene actually changed).
     obstacle_scene: Option<std::sync::Arc<crate::config::scenes::StageScene>>,
-    /// Params the obstacles were projected with (camera drags move the
-    /// spans too).
-    obstacle_params: Option<crate::core::creature_cards::solver::FieldParams>,
     /// Props-section request to open the scenery calibrator (hosted by
     /// StudioApp, which owns the calibrator states).
     open_scenery_cal: bool,
@@ -224,7 +221,6 @@ impl StageState {
             selected_prop: None,
             dragging_creature: None,
             obstacle_scene: None,
-            obstacle_params: None,
             open_scenery_cal: false,
             pending_status: Vec::new(),
             new_scene: NewSceneState::new(context),
@@ -236,6 +232,7 @@ impl StageState {
         crate::core::creature_cards::sync_field(
             &mut self.app_core.creature_field,
             &mut self.app_core.creature_field_synced_gen,
+            &mut self.app_core.creature_field_synced_cal,
             &self.app_core.game_state,
             &[],
         );
@@ -1419,27 +1416,25 @@ impl StudioApp {
             return;
         };
         // Scene edits re-point the Arc (make_mut); rebuild the solver's
-        // prop exclusion spans only then.
+        // AUTHORED exclusion metadata only then. Camera edits need no
+        // rebuild at all any more — the solver projects the spans with
+        // whatever the current geometry is, per placement decision.
         let scene_changed = stage
             .obstacle_scene
             .as_ref()
             .is_none_or(|prev| !std::sync::Arc::ptr_eq(prev, &stage.scene));
-        let params_changed = stage.obstacle_params.as_ref()
-            != Some(&stage.app_core.creature_field.params);
-        if scene_changed || params_changed {
-            let obstacles = crate::core::creature_cards::scene_obstacles(
-                Some(&stage.scene),
-                &stage.app_core.creature_field,
-            );
+        if scene_changed {
+            let obstacles =
+                crate::core::creature_cards::scene_obstacles(Some(&stage.scene));
             stage.app_core.creature_field.set_obstacles(obstacles);
             stage.obstacle_scene = Some(stage.scene.clone());
-            stage.obstacle_params = Some(stage.app_core.creature_field.params.clone());
         }
         // Roster sync is generation-gated (cheap when unchanged); art prep
         // is cached, so a settled stage costs a few hash lookups.
         crate::core::creature_cards::sync_field(
             &mut stage.app_core.creature_field,
             &mut stage.app_core.creature_field_synced_gen,
+            &mut stage.app_core.creature_field_synced_cal,
             &stage.app_core.game_state,
             &[],
         );

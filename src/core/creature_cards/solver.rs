@@ -243,18 +243,32 @@ impl ScreenRect {
     }
 }
 
-/// A static exclusion span from a scene prop: no creature is ever PLACED
-/// behind it (deeper than `z`, foot screen-x inside [x0, x1]) — in front
-/// and beside stay open, the span never moves or grows with the grid, and
-/// permanence still holds (placed units are never relocated, even when a
-/// scene swap drops an obstacle on top of them).
+/// AUTHORED exclusion metadata from a scene prop: no creature is ever
+/// PLACED behind it (deeper than `z`, card centre inside the projected
+/// span) — in front and beside stay open, and permanence still holds
+/// (placed units are never relocated, even when a scene swap drops an
+/// obstacle on top of them).
+///
+/// The stored extents are WORLD units, not screen pixels: the screen span
+/// depends on the effective projection (`mscale`/`f_eff`, both functions
+/// of the column count), so the solver projects the span fresh via
+/// [`CreatureField::obstacle_span`] before every placement decision —
+/// including mid-search floor growth. A cached pixel span would go stale
+/// the moment the floor grew or contracted (105px vs 38.89px for a
+/// unit-height prop at depth 4 with 3 vs 11 columns).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Obstacle {
-    /// Stage-space screen-x span of the prop's calibrated exclusion edges.
-    pub x0: f32,
-    pub x1: f32,
+    /// Stage-space screen x of the prop's ground/foot point (props author
+    /// their lateral position directly on the stage; the camera never
+    /// re-aims at them — see `project_ground`).
+    pub x: f32,
     /// The prop's world depth: only candidates deeper than this block.
     pub z: f32,
+    /// Exclusion extent left/right of the foot point, in world units at
+    /// depth `z` (either may be negative when the calibrated span sits
+    /// entirely to one side of the foot).
+    pub left_w: f32,
+    pub right_w: f32,
 }
 
 /// One creature field: the floor plus every placed unit. All mutation goes
@@ -644,10 +658,38 @@ impl CreatureField {
         STAGE_W / 2.0 + (wx * self.f_eff()) / z
     }
 
-    /// Replace the scene-prop exclusion spans. Placement input only:
+    /// Replace the scene-prop exclusion metadata. Placement input only:
     /// nobody moves, nothing redraws, so the generation stays put.
     pub fn set_obstacles(&mut self, obstacles: Vec<Obstacle>) {
         self.obstacles = obstacles;
+    }
+
+    /// The authored exclusion metadata (for overlays/tests).
+    pub fn obstacles(&self) -> &[Obstacle] {
+        &self.obstacles
+    }
+
+    /// An obstacle's screen-x exclusion span under the CURRENT effective
+    /// projection — the same `mscale * f_eff / z` scale cards and props
+    /// draw through, so the span always matches the rendered prop no
+    /// matter how the floor has grown or contracted since authoring.
+    pub fn obstacle_span(&self, ob: &Obstacle) -> (f32, f32) {
+        let (_, px_per_unit) = self.project_ground(ob.x, ob.z);
+        (ob.x - ob.left_w * px_per_unit, ob.x + ob.right_w * px_per_unit)
+    }
+
+    /// All obstacle spans projected with the current geometry, as
+    /// (x0, x1, z) triples. Recomputed before every placement decision —
+    /// cheap (a handful of props), and the only way the spans can track
+    /// candidate floor expansion inside the solver's own search loop.
+    fn projected_obstacles(&self) -> Vec<(f32, f32, f32)> {
+        self.obstacles
+            .iter()
+            .map(|ob| {
+                let (x0, x1) = self.obstacle_span(ob);
+                (x0.min(x1), x0.max(x1), ob.z)
+            })
+            .collect()
     }
 
     /// A unit's ground depth: the depth-sort and targeting key.
@@ -946,6 +988,36 @@ impl CreatureField {
         }
     }
 
+    /// Replace a placed unit's pose boxes in place — calibration metadata
+    /// arrived (art loaded after the creature did) or was reloaded.
+    /// Position NEVER moves (placement stability); the fall envelope
+    /// future arrivals reserve against updates, so no hidden stale
+    /// reservation lingers. Bumps the generation only when something
+    /// actually changed. Returns true on change.
+    pub fn recalibrate(
+        &mut self,
+        exist: &str,
+        standing: CardSize,
+        prone: CardSize,
+        current: CardSize,
+    ) -> bool {
+        let Some(u) = self
+            .units
+            .iter_mut()
+            .find(|u| u.members.first().map(String::as_str) == Some(exist))
+        else {
+            return false;
+        };
+        if u.standing == standing && u.prone == prone && u.size == current {
+            return false;
+        }
+        u.standing = standing;
+        u.prone = prone;
+        u.size = current;
+        self.generation += 1;
+        true
+    }
+
     /// Remove a creature (looted / gone). If it was one member of a
     /// mounted pair, the pair splits first and the survivor keeps the
     /// unit's square — the dismount-before-death ordering, enforced here
@@ -1147,11 +1219,12 @@ impl CreatureField {
                 .unwrap_or(0);
             // The shortcut still honors scene-prop exclusion: a centre
             // seed inside a blocked span falls through to the search.
+            // Spans project with the current geometry, same as the search.
             let r = self.rect_for(standing, mid, 0, 0.0, 0.0);
             let blocked = self
-                .obstacles
+                .projected_obstacles()
                 .iter()
-                .any(|ob| r.z > ob.z && r.center_x() >= ob.x0 && r.center_x() <= ob.x1);
+                .any(|&(x0, x1, z)| r.z > z && r.center_x() >= x0 && r.center_x() <= x1);
             if !blocked {
                 return Placement {
                     ci: mid,
@@ -1176,6 +1249,13 @@ impl CreatureField {
         for _attempt in 0..(self.params.max_cols + s.relax_steps + 2) {
             let env_thr = 0.50 + relax as f32 * 0.15;
             let cap_thr = (s.occlusion_cap * (1.0 + relax as f32 * 0.40)).min(0.95);
+            // Obstacle spans under THIS attempt's projection: `grow_floor`
+            // between attempts changes `mscale`/`f_eff`, so the spans are
+            // re-projected here rather than cached — a placement decision
+            // made during candidate floor expansion still uses current
+            // geometry. Pure arithmetic from authored metadata: no texture
+            // decoding or filesystem reads in the candidate loop.
+            let obstacle_spans = self.projected_obstacles();
             // Each neighbour carries its fall envelope, not just its
             // current pose, so an arrival reserves against the room they
             // will need when they go down.
@@ -1207,10 +1287,9 @@ impl CreatureField {
                 // prop's calibrated span. Hard at every relaxation notch
                 // (a creature inside a boulder is never the least-bad
                 // answer); in-front and beside candidates pass untouched.
-                if self
-                    .obstacles
+                if obstacle_spans
                     .iter()
-                    .any(|ob| r.z > ob.z && r.center_x() >= ob.x0 && r.center_x() <= ob.x1)
+                    .any(|&(x0, x1, z)| r.z > z && r.center_x() >= x0 && r.center_x() <= x1)
                 {
                     continue;
                 }
@@ -1547,27 +1626,31 @@ mod tests {
 
     #[test]
     fn obstacles_block_placement_behind_never_in_front() {
-        // Block the left half of the stage behind z = 3.0.
+        // A prop at stage-left quarter, depth 3, excluding ~1.57 world
+        // units each side (≈ the left half of the stage at 3 columns).
         let obstacle = Obstacle {
-            x0: 0.0,
-            x1: STAGE_W / 2.0,
+            x: STAGE_W / 4.0,
             z: 3.0,
+            left_w: 1.6,
+            right_w: 1.6,
         };
         let mut f = CreatureField::default();
         f.set_obstacles(vec![obstacle]);
         fill(&mut f, 10);
+        // Spans are checked against CURRENT geometry: growth shrinks the
+        // projected span, so units placed under an earlier (wider) span
+        // still satisfy the current one.
+        let (x0, x1) = f.obstacle_span(&obstacle);
         for u in f.units() {
             let r = f.rect(u);
-            let behind = r.z > obstacle.z && r.center_x() >= obstacle.x0 && r.center_x() <= obstacle.x1;
+            let behind = r.z > obstacle.z && r.center_x() >= x0 && r.center_x() <= x1;
             assert!(
                 !behind,
-                "unit at center_x {} z {} placed behind the obstacle",
+                "unit at center_x {} z {} placed behind the obstacle span {x0}..{x1}",
                 r.center_x(),
                 r.z
             );
         }
-        // In front / beside must remain reachable: at least one unit lands
-        // on the blocked side's lateral half (in front) or the open half.
         assert_eq!(f.units().len(), 10, "everyone still got placed");
     }
 
@@ -1576,9 +1659,10 @@ mod tests {
         // Whole stage blocked behind z = 0: the centre seed would violate
         // it, so the first arrival must land through the search instead.
         let obstacle = Obstacle {
-            x0: 0.0,
-            x1: STAGE_W,
+            x: STAGE_W / 2.0,
             z: 0.0,
+            left_w: 50.0,
+            right_w: 50.0,
         };
         let mut f = CreatureField::default();
         f.set_obstacles(vec![obstacle]);
@@ -1587,6 +1671,130 @@ mod tests {
         // not panic and must still place the unit.
         f.arrive("#1", CardSize::default(), CardSize::default());
         assert_eq!(f.units().len(), 1);
+    }
+
+    /// The proposal's worked example (finding 3): a unit-height prop at
+    /// depth 4 projects to 105px at 3 columns and 38.89px at 11 — the
+    /// exclusion span must follow the effective projection, not a cached
+    /// pixel width.
+    #[test]
+    fn obstacle_span_tracks_floor_growth_and_contraction() {
+        let ob = Obstacle {
+            x: STAGE_W / 2.0,
+            z: 4.0,
+            left_w: 0.5,
+            right_w: 0.5,
+        };
+        let mut f = CreatureField::default();
+        f.set_obstacles(vec![ob]);
+        let width = |f: &CreatureField| {
+            let (x0, x1) = f.obstacle_span(&ob);
+            x1 - x0
+        };
+        assert!((width(&f) - 105.0).abs() < 1e-3, "3 cols: {}", width(&f));
+        while f.columns().len() < 11 {
+            assert!(f.grow_floor());
+        }
+        assert!(
+            (width(&f) - 38.89).abs() < 0.05,
+            "11 cols: {}",
+            width(&f)
+        );
+        // Contraction restores the original projection exactly.
+        f.contract_floor();
+        assert_eq!(f.columns().len(), 3);
+        assert!((width(&f) - 105.0).abs() < 1e-3);
+    }
+
+    /// A new arrival AFTER floor growth/contraction is validated against
+    /// the current projected span — including growth triggered while its
+    /// own placement search runs — and departures that contract the floor
+    /// keep later arrivals honest too.
+    #[test]
+    fn arrivals_use_current_obstacle_projection_across_growth() {
+        let ob = Obstacle {
+            x: STAGE_W / 2.0,
+            z: 3.2,
+            left_w: 1.2,
+            right_w: 1.2,
+        };
+        let mut f = CreatureField::default();
+        f.set_obstacles(vec![ob]);
+        // Enough arrivals to force growth (search-loop growth included).
+        fill(&mut f, 14);
+        assert!(f.columns().len() > 3, "population must have grown the floor");
+        let check = |f: &CreatureField, who: &str| {
+            let (x0, x1) = f.obstacle_span(&ob);
+            for u in f.units() {
+                let r = f.rect(u);
+                assert!(
+                    !(r.z > ob.z && r.center_x() >= x0 && r.center_x() <= x1),
+                    "{who}: unit behind current span {x0}..{x1} (cx {}, z {})",
+                    r.center_x(),
+                    r.z
+                );
+            }
+        };
+        check(&f, "after growth");
+        // Loot most of the room: the floor contracts, the span widens back
+        // out, and the next arrival must be checked against the WIDE span.
+        for i in 3..14 {
+            f.depart(&format!("{}", 1000 + i));
+        }
+        assert_eq!(f.columns().len(), 3, "floor contracted");
+        arrive(&mut f, "latecomer", kobold());
+        let r = f.rect(f.unit_of("latecomer").unwrap());
+        let (x0, x1) = f.obstacle_span(&ob);
+        assert!(
+            !(r.z > ob.z && r.center_x() >= x0 && r.center_x() <= x1),
+            "latecomer placed behind the re-widened span"
+        );
+    }
+
+    /// Fixed camera, fixed crowd scale: equal creatures at depths 3 and 6
+    /// project at a 2:1 apparent-height ratio, and doubling the world
+    /// height exactly compensates doubling the depth (finding 6's
+    /// calibration invariants).
+    #[test]
+    fn depth_ratio_and_inverse_compensation_hold() {
+        let f = CreatureField::default();
+        let h_at = |size: CardSize, oz: f32| {
+            // rect_for at ci 0 row 0 with off_z chosen to hit the depth.
+            let r = f.rect_for(size, 0, 0, 0.0, oz);
+            r.y1 - r.y0
+        };
+        let unit = CardSize::new(0.5, 1.0);
+        let z_row = f.depth_at(0.5); // rect_for's base depth
+        let near = h_at(unit, 3.0 - z_row);
+        let far = h_at(unit, 6.0 - z_row);
+        assert!((near / far - 2.0).abs() < 1e-4, "ratio {}", near / far);
+        let tall_far = h_at(CardSize::new(0.5, 2.0), 6.0 - z_row);
+        assert!((tall_far - near).abs() < 1e-3, "{tall_far} vs {near}");
+    }
+
+    /// Calibration arriving late (art loaded after placement) updates the
+    /// reservation WITHOUT moving anyone — placement stability — and only
+    /// dirties the generation when something changed.
+    #[test]
+    fn recalibrate_updates_boxes_without_moving_units() {
+        let mut f = CreatureField::default();
+        arrive(&mut f, "a", kobold());
+        arrive(&mut f, "b", troll());
+        let pos = world_pos(&f, "a");
+        let g = f.generation;
+        let wide = CardSize::new(1.6, 0.8);
+        assert!(f.recalibrate("a", wide, prone_of(wide), wide));
+        assert_eq!(world_pos(&f, "a"), pos, "recalibration must not move");
+        assert!(f.generation > g);
+        let u = f.unit_of("a").unwrap();
+        assert_eq!(u.standing, wide);
+        assert_eq!(u.size, wide);
+        // Idempotent: same boxes again is a no-op.
+        let g = f.generation;
+        assert!(!f.recalibrate("a", wide, prone_of(wide), wide));
+        assert_eq!(f.generation, g);
+        // Unknown creature: no-op, no panic.
+        assert!(!f.recalibrate("ghost", wide, wide, wide));
     }
 
     #[test]

@@ -575,8 +575,11 @@ impl VellumGuiApp {
                 let r = art.unwrap_or(a);
                 let rts = r.texture.size_vec2();
                 let content_h = ((r.bbox[3] - r.bbox[1]) * rts.y).max(1.0);
-                let standing =
-                    crate::core::creature_cards::standing_height_for(creature);
+                // The unit's RESERVED standing height — the shared
+                // geometry the solver placed with — so the drawn sprite,
+                // the reservation, and the click rect agree on world
+                // scale (finding 6: one geometry contract).
+                let standing = unit.standing.h;
                 let s = standing * px_per_unit / content_h;
                 tracing::debug!(
                     "[field-scale] {} pose_art={} standing={standing:.2} content_h={content_h:.0} authored_size=None scale={s:.4}",
