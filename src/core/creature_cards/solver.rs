@@ -6,8 +6,12 @@
 //! Contract (the prototype's readouts, promoted to invariants):
 //!
 //! - **Permanence.** A unit's square and offsets are decided once, on
-//!   arrival, and never touched again (Studio `place_at` is the one
-//!   explicit override). Arrivals fit themselves around whoever is already
+//!   arrival, and never touched again (Studio `place_at` is one explicit
+//!   override; the other is `recalibrate`'s conflict policy — late/reloaded
+//!   art metadata that enlarges a unit's envelope past the arrival hard
+//!   bound re-homes THAT unit to the nearest valid square, because a
+//!   permanent overlap is worse than one local move; see `recalibrate`).
+//!   Arrivals fit themselves around whoever is already
 //!   standing; removals free squares. Nothing else mutates placement.
 //!   (Screen positions may still shift when the floor grows — that is the
 //!   camera re-framing a wider floor, world coordinates unchanged.)
@@ -243,18 +247,32 @@ impl ScreenRect {
     }
 }
 
-/// A static exclusion span from a scene prop: no creature is ever PLACED
-/// behind it (deeper than `z`, foot screen-x inside [x0, x1]) — in front
-/// and beside stay open, the span never moves or grows with the grid, and
-/// permanence still holds (placed units are never relocated, even when a
-/// scene swap drops an obstacle on top of them).
+/// AUTHORED exclusion metadata from a scene prop: no creature is ever
+/// PLACED behind it (deeper than `z`, card centre inside the projected
+/// span) — in front and beside stay open, and permanence still holds
+/// (placed units are never relocated, even when a scene swap drops an
+/// obstacle on top of them).
+///
+/// The stored extents are WORLD units, not screen pixels: the screen span
+/// depends on the effective projection (`mscale`/`f_eff`, both functions
+/// of the column count), so the solver projects the span fresh via
+/// [`CreatureField::obstacle_span`] before every placement decision —
+/// including mid-search floor growth. A cached pixel span would go stale
+/// the moment the floor grew or contracted (105px vs 38.89px for a
+/// unit-height prop at depth 4 with 3 vs 11 columns).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Obstacle {
-    /// Stage-space screen-x span of the prop's calibrated exclusion edges.
-    pub x0: f32,
-    pub x1: f32,
+    /// Stage-space screen x of the prop's ground/foot point (props author
+    /// their lateral position directly on the stage; the camera never
+    /// re-aims at them — see `project_ground`).
+    pub x: f32,
     /// The prop's world depth: only candidates deeper than this block.
     pub z: f32,
+    /// Exclusion extent left/right of the foot point, in world units at
+    /// depth `z` (either may be negative when the calibrated span sits
+    /// entirely to one side of the foot).
+    pub left_w: f32,
+    pub right_w: f32,
 }
 
 /// One creature field: the floor plus every placed unit. All mutation goes
@@ -278,7 +296,49 @@ impl Default for CreatureField {
     }
 }
 
+/// The one set of camera bounds every consumer shares: scene loading
+/// (`apply_camera`), Studio's live drag controls, and pre-save validation
+/// (`sanitize_camera`). An editor previewing a value outside these ranges
+/// would save something that reloads differently — so nothing may edit,
+/// preview, or serialize outside them.
+pub mod camera_limits {
+    /// (lo, hi) inclusive bounds per camera key.
+    pub const FOCAL: (f32, f32) = (60.0, 4000.0);
+    pub const EYE_HEIGHT: (f32, f32) = (0.1, 20.0);
+    pub const NEAR_DEPTH: (f32, f32) = (0.1, 50.0);
+    pub const ROW_DEPTH: (f32, f32) = (0.05, 20.0);
+    pub const HORIZON: (f32, f32) = (-500.0, 2000.0);
+    pub const CELL_WIDTH: (f32, f32) = (0.1, 10.0);
+}
+
 impl FieldParams {
+    /// Force the camera into the shared [`camera_limits`]: nonfinite
+    /// values fall back to `fallback`'s field (or the built-in default if
+    /// that is nonfinite too), everything clamps into range. Returns true
+    /// when anything changed. Editors call this after every edit — the
+    /// effective value shows immediately — and before serializing, so an
+    /// invalid transient never reaches the renderer or a scene file.
+    pub fn sanitize_camera(&mut self, fallback: &FieldParams) -> bool {
+        use camera_limits::*;
+        fn fix(slot: &mut f32, fallback: f32, default: f32, (lo, hi): (f32, f32)) -> bool {
+            let before = *slot;
+            if !slot.is_finite() {
+                *slot = if fallback.is_finite() { fallback } else { default };
+            }
+            *slot = slot.clamp(lo, hi);
+            *slot != before
+        }
+        let d = FieldParams::default();
+        let mut changed = false;
+        changed |= fix(&mut self.focal, fallback.focal, d.focal, FOCAL);
+        changed |= fix(&mut self.cam_h, fallback.cam_h, d.cam_h, EYE_HEIGHT);
+        changed |= fix(&mut self.z0, fallback.z0, d.z0, NEAR_DEPTH);
+        changed |= fix(&mut self.dz, fallback.dz, d.dz, ROW_DEPTH);
+        changed |= fix(&mut self.horizon, fallback.horizon, d.horizon, HORIZON);
+        changed |= fix(&mut self.cell_w, fallback.cell_w, d.cell_w, CELL_WIDTH);
+        changed
+    }
+
     /// Overlay a skin's `[creature_field.camera]` onto these params. Unset
     /// keys keep their current value; out-of-range values clamp to the
     /// nearest sane bound and log — a bad focal degrades the camera, it
@@ -299,12 +359,37 @@ impl FieldParams {
             }
             *slot = c;
         }
-        take(&mut self.focal, cam.focal, "focal", 60.0, 4000.0);
-        take(&mut self.cam_h, cam.eye_height, "eye_height", 0.1, 20.0);
-        take(&mut self.z0, cam.near_depth, "near_depth", 0.1, 50.0);
-        take(&mut self.dz, cam.row_depth, "row_depth", 0.05, 20.0);
-        take(&mut self.horizon, cam.horizon, "horizon", -500.0, 2000.0);
-        take(&mut self.cell_w, cam.cell_width, "cell_width", 0.1, 10.0);
+        use camera_limits::*;
+        take(&mut self.focal, cam.focal, "focal", FOCAL.0, FOCAL.1);
+        take(
+            &mut self.cam_h,
+            cam.eye_height,
+            "eye_height",
+            EYE_HEIGHT.0,
+            EYE_HEIGHT.1,
+        );
+        take(
+            &mut self.z0,
+            cam.near_depth,
+            "near_depth",
+            NEAR_DEPTH.0,
+            NEAR_DEPTH.1,
+        );
+        take(
+            &mut self.dz,
+            cam.row_depth,
+            "row_depth",
+            ROW_DEPTH.0,
+            ROW_DEPTH.1,
+        );
+        take(&mut self.horizon, cam.horizon, "horizon", HORIZON.0, HORIZON.1);
+        take(
+            &mut self.cell_w,
+            cam.cell_width,
+            "cell_width",
+            CELL_WIDTH.0,
+            CELL_WIDTH.1,
+        );
     }
 
     /// Overlay a skin's `[creature_field.solver]` onto the placement
@@ -577,10 +662,38 @@ impl CreatureField {
         STAGE_W / 2.0 + (wx * self.f_eff()) / z
     }
 
-    /// Replace the scene-prop exclusion spans. Placement input only:
+    /// Replace the scene-prop exclusion metadata. Placement input only:
     /// nobody moves, nothing redraws, so the generation stays put.
     pub fn set_obstacles(&mut self, obstacles: Vec<Obstacle>) {
         self.obstacles = obstacles;
+    }
+
+    /// The authored exclusion metadata (for overlays/tests).
+    pub fn obstacles(&self) -> &[Obstacle] {
+        &self.obstacles
+    }
+
+    /// An obstacle's screen-x exclusion span under the CURRENT effective
+    /// projection — the same `mscale * f_eff / z` scale cards and props
+    /// draw through, so the span always matches the rendered prop no
+    /// matter how the floor has grown or contracted since authoring.
+    pub fn obstacle_span(&self, ob: &Obstacle) -> (f32, f32) {
+        let (_, px_per_unit) = self.project_ground(ob.x, ob.z);
+        (ob.x - ob.left_w * px_per_unit, ob.x + ob.right_w * px_per_unit)
+    }
+
+    /// All obstacle spans projected with the current geometry, as
+    /// (x0, x1, z) triples. Recomputed before every placement decision —
+    /// cheap (a handful of props), and the only way the spans can track
+    /// candidate floor expansion inside the solver's own search loop.
+    fn projected_obstacles(&self) -> Vec<(f32, f32, f32)> {
+        self.obstacles
+            .iter()
+            .map(|ob| {
+                let (x0, x1) = self.obstacle_span(ob);
+                (x0.min(x1), x0.max(x1), ob.z)
+            })
+            .collect()
     }
 
     /// A unit's ground depth: the depth-sort and targeting key.
@@ -879,6 +992,91 @@ impl CreatureField {
         }
     }
 
+    /// Replace a placed unit's pose boxes in place — calibration metadata
+    /// arrived (art loaded after the creature did) or a sidecar reload
+    /// changed it. The fall envelope future arrivals reserve against
+    /// updates, so no hidden stale reservation lingers. Bumps the
+    /// generation only when something actually changed. Returns true on
+    /// change.
+    ///
+    /// CONFLICT-RESOLUTION POLICY (finding 8), balancing placement
+    /// stability against valid reservations:
+    ///
+    /// - **Stay if valid.** When the updated envelope still honors the
+    ///   arrival-time hard bound against every neighbour's envelope, the
+    ///   unit keeps its exact spot — the overwhelmingly common case, and
+    ///   the old permanence guarantee unchanged.
+    /// - **Re-home only the changed unit.** When the enlarged envelope
+    ///   overlaps a neighbour's beyond the unrelaxed arrival bound (the
+    ///   overlap an arrival would have been REJECTED for), the
+    ///   recalibrated unit — and only it — is re-placed through the same
+    ///   affinity search a dismounting rider uses, anchored at its old
+    ///   foot point: the nearest square satisfying all the hard rules
+    ///   (zone, occlusion, separation, envelope, obstacles), growing the
+    ///   floor if needed. Neighbours and scenery NEVER move. No overlap
+    ///   is left standing for the occupants' lifetime.
+    /// - Applies identically to first-load metadata and live sidecar
+    ///   reloads (both funnel through the CalibrationStore revision), in
+    ///   the game field and Studio alike. When `fall_reserve_hard` is
+    ///   authored off, envelopes were never a hard rule — nothing
+    ///   re-homes.
+    pub fn recalibrate(
+        &mut self,
+        exist: &str,
+        standing: CardSize,
+        prone: CardSize,
+        current: CardSize,
+    ) -> bool {
+        let Some(idx) = self
+            .units
+            .iter()
+            .position(|u| u.members.first().map(String::as_str) == Some(exist))
+        else {
+            return false;
+        };
+        {
+            let u = &mut self.units[idx];
+            if u.standing == standing && u.prone == prone && u.size == current {
+                return false;
+            }
+            u.standing = standing;
+            u.prone = prone;
+            u.size = current;
+        }
+        self.generation += 1;
+        if self.params.solver.fall_reserve_hard && self.envelope_conflicts(idx) {
+            let anchor = self.foot(&self.units[idx]);
+            let mut unit = self.units.remove(idx);
+            let p = self.choose_home(unit.standing, unit.prone, exist, Some(anchor));
+            unit.ci = p.ci;
+            unit.row = p.row;
+            unit.off_x = p.off_x;
+            unit.off_z = p.off_z;
+            unit.tight = p.tight;
+            self.units.push(unit);
+        }
+        true
+    }
+
+    /// Does unit `idx`'s fall envelope overlap any neighbour's beyond the
+    /// unrelaxed arrival hard bound? (Obstacles are deliberately not
+    /// re-checked: recalibration never moves the foot point, and the
+    /// pinned scene-swap policy keeps units in place when an obstacle
+    /// lands on them — `choose_home` still honors obstacles for any
+    /// re-homed destination.)
+    fn envelope_conflicts(&self, idx: usize) -> bool {
+        let u = &self.units[idx];
+        let env = self.env_for(u.standing, u.prone, u.ci, u.row, u.off_x, u.off_z);
+        self.units
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != idx)
+            .any(|(_, o)| {
+                let oenv = self.env_for(o.standing, o.prone, o.ci, o.row, o.off_x, o.off_z);
+                overlap_1d(&env, &oenv) > 0.50
+            })
+    }
+
     /// Remove a creature (looted / gone). If it was one member of a
     /// mounted pair, the pair splits first and the survivor keeps the
     /// unit's square — the dismount-before-death ordering, enforced here
@@ -1080,11 +1278,12 @@ impl CreatureField {
                 .unwrap_or(0);
             // The shortcut still honors scene-prop exclusion: a centre
             // seed inside a blocked span falls through to the search.
+            // Spans project with the current geometry, same as the search.
             let r = self.rect_for(standing, mid, 0, 0.0, 0.0);
             let blocked = self
-                .obstacles
+                .projected_obstacles()
                 .iter()
-                .any(|ob| r.z > ob.z && r.center_x() >= ob.x0 && r.center_x() <= ob.x1);
+                .any(|&(x0, x1, z)| r.z > z && r.center_x() >= x0 && r.center_x() <= x1);
             if !blocked {
                 return Placement {
                     ci: mid,
@@ -1109,6 +1308,13 @@ impl CreatureField {
         for _attempt in 0..(self.params.max_cols + s.relax_steps + 2) {
             let env_thr = 0.50 + relax as f32 * 0.15;
             let cap_thr = (s.occlusion_cap * (1.0 + relax as f32 * 0.40)).min(0.95);
+            // Obstacle spans under THIS attempt's projection: `grow_floor`
+            // between attempts changes `mscale`/`f_eff`, so the spans are
+            // re-projected here rather than cached — a placement decision
+            // made during candidate floor expansion still uses current
+            // geometry. Pure arithmetic from authored metadata: no texture
+            // decoding or filesystem reads in the candidate loop.
+            let obstacle_spans = self.projected_obstacles();
             // Each neighbour carries its fall envelope, not just its
             // current pose, so an arrival reserves against the room they
             // will need when they go down.
@@ -1140,10 +1346,9 @@ impl CreatureField {
                 // prop's calibrated span. Hard at every relaxation notch
                 // (a creature inside a boulder is never the least-bad
                 // answer); in-front and beside candidates pass untouched.
-                if self
-                    .obstacles
+                if obstacle_spans
                     .iter()
-                    .any(|ob| r.z > ob.z && r.center_x() >= ob.x0 && r.center_x() <= ob.x1)
+                    .any(|&(x0, x1, z)| r.z > z && r.center_x() >= x0 && r.center_x() <= x1)
                 {
                     continue;
                 }
@@ -1480,27 +1685,31 @@ mod tests {
 
     #[test]
     fn obstacles_block_placement_behind_never_in_front() {
-        // Block the left half of the stage behind z = 3.0.
+        // A prop at stage-left quarter, depth 3, excluding ~1.57 world
+        // units each side (≈ the left half of the stage at 3 columns).
         let obstacle = Obstacle {
-            x0: 0.0,
-            x1: STAGE_W / 2.0,
+            x: STAGE_W / 4.0,
             z: 3.0,
+            left_w: 1.6,
+            right_w: 1.6,
         };
         let mut f = CreatureField::default();
         f.set_obstacles(vec![obstacle]);
         fill(&mut f, 10);
+        // Spans are checked against CURRENT geometry: growth shrinks the
+        // projected span, so units placed under an earlier (wider) span
+        // still satisfy the current one.
+        let (x0, x1) = f.obstacle_span(&obstacle);
         for u in f.units() {
             let r = f.rect(u);
-            let behind = r.z > obstacle.z && r.center_x() >= obstacle.x0 && r.center_x() <= obstacle.x1;
+            let behind = r.z > obstacle.z && r.center_x() >= x0 && r.center_x() <= x1;
             assert!(
                 !behind,
-                "unit at center_x {} z {} placed behind the obstacle",
+                "unit at center_x {} z {} placed behind the obstacle span {x0}..{x1}",
                 r.center_x(),
                 r.z
             );
         }
-        // In front / beside must remain reachable: at least one unit lands
-        // on the blocked side's lateral half (in front) or the open half.
         assert_eq!(f.units().len(), 10, "everyone still got placed");
     }
 
@@ -1509,9 +1718,10 @@ mod tests {
         // Whole stage blocked behind z = 0: the centre seed would violate
         // it, so the first arrival must land through the search instead.
         let obstacle = Obstacle {
-            x0: 0.0,
-            x1: STAGE_W,
+            x: STAGE_W / 2.0,
             z: 0.0,
+            left_w: 50.0,
+            right_w: 50.0,
         };
         let mut f = CreatureField::default();
         f.set_obstacles(vec![obstacle]);
@@ -1520,6 +1730,228 @@ mod tests {
         // not panic and must still place the unit.
         f.arrive("#1", CardSize::default(), CardSize::default());
         assert_eq!(f.units().len(), 1);
+    }
+
+    /// The proposal's worked example (finding 3): a unit-height prop at
+    /// depth 4 projects to 105px at 3 columns and 38.89px at 11 — the
+    /// exclusion span must follow the effective projection, not a cached
+    /// pixel width.
+    #[test]
+    fn obstacle_span_tracks_floor_growth_and_contraction() {
+        let ob = Obstacle {
+            x: STAGE_W / 2.0,
+            z: 4.0,
+            left_w: 0.5,
+            right_w: 0.5,
+        };
+        let mut f = CreatureField::default();
+        f.set_obstacles(vec![ob]);
+        let width = |f: &CreatureField| {
+            let (x0, x1) = f.obstacle_span(&ob);
+            x1 - x0
+        };
+        assert!((width(&f) - 105.0).abs() < 1e-3, "3 cols: {}", width(&f));
+        while f.columns().len() < 11 {
+            assert!(f.grow_floor());
+        }
+        assert!(
+            (width(&f) - 38.89).abs() < 0.05,
+            "11 cols: {}",
+            width(&f)
+        );
+        // Contraction restores the original projection exactly.
+        f.contract_floor();
+        assert_eq!(f.columns().len(), 3);
+        assert!((width(&f) - 105.0).abs() < 1e-3);
+    }
+
+    /// A new arrival AFTER floor growth/contraction is validated against
+    /// the current projected span — including growth triggered while its
+    /// own placement search runs — and departures that contract the floor
+    /// keep later arrivals honest too.
+    #[test]
+    fn arrivals_use_current_obstacle_projection_across_growth() {
+        let ob = Obstacle {
+            x: STAGE_W / 2.0,
+            z: 3.2,
+            left_w: 1.2,
+            right_w: 1.2,
+        };
+        let mut f = CreatureField::default();
+        f.set_obstacles(vec![ob]);
+        // Enough arrivals to force growth (search-loop growth included).
+        fill(&mut f, 14);
+        assert!(f.columns().len() > 3, "population must have grown the floor");
+        let check = |f: &CreatureField, who: &str| {
+            let (x0, x1) = f.obstacle_span(&ob);
+            for u in f.units() {
+                let r = f.rect(u);
+                assert!(
+                    !(r.z > ob.z && r.center_x() >= x0 && r.center_x() <= x1),
+                    "{who}: unit behind current span {x0}..{x1} (cx {}, z {})",
+                    r.center_x(),
+                    r.z
+                );
+            }
+        };
+        check(&f, "after growth");
+        // Loot most of the room: the floor contracts, the span widens back
+        // out, and the next arrival must be checked against the WIDE span.
+        for i in 3..14 {
+            f.depart(&format!("{}", 1000 + i));
+        }
+        assert_eq!(f.columns().len(), 3, "floor contracted");
+        arrive(&mut f, "latecomer", kobold());
+        let r = f.rect(f.unit_of("latecomer").unwrap());
+        let (x0, x1) = f.obstacle_span(&ob);
+        assert!(
+            !(r.z > ob.z && r.center_x() >= x0 && r.center_x() <= x1),
+            "latecomer placed behind the re-widened span"
+        );
+    }
+
+    /// Fixed camera, fixed crowd scale: equal creatures at depths 3 and 6
+    /// project at a 2:1 apparent-height ratio, and doubling the world
+    /// height exactly compensates doubling the depth (finding 6's
+    /// calibration invariants).
+    #[test]
+    fn depth_ratio_and_inverse_compensation_hold() {
+        let f = CreatureField::default();
+        let h_at = |size: CardSize, oz: f32| {
+            // rect_for at ci 0 row 0 with off_z chosen to hit the depth.
+            let r = f.rect_for(size, 0, 0, 0.0, oz);
+            r.y1 - r.y0
+        };
+        let unit = CardSize::new(0.5, 1.0);
+        let z_row = f.depth_at(0.5); // rect_for's base depth
+        let near = h_at(unit, 3.0 - z_row);
+        let far = h_at(unit, 6.0 - z_row);
+        assert!((near / far - 2.0).abs() < 1e-4, "ratio {}", near / far);
+        let tall_far = h_at(CardSize::new(0.5, 2.0), 6.0 - z_row);
+        assert!((tall_far - near).abs() < 1e-3, "{tall_far} vs {near}");
+    }
+
+    /// Calibration arriving late (art loaded after placement) updates the
+    /// reservation; while the new envelope stays valid the unit does NOT
+    /// move (placement stability), and the generation dirties only on
+    /// actual change.
+    #[test]
+    fn recalibrate_updates_boxes_without_moving_when_valid() {
+        let mut f = CreatureField::default();
+        arrive(&mut f, "a", kobold());
+        // Alone on the floor: no envelope can conflict, so any enlargement
+        // keeps the exact spot.
+        let pos = world_pos(&f, "a");
+        let g = f.generation;
+        let wide = CardSize::new(1.6, 0.8);
+        assert!(f.recalibrate("a", wide, prone_of(wide), wide));
+        assert_eq!(world_pos(&f, "a"), pos, "valid recalibration must not move");
+        assert!(f.generation > g);
+        let u = f.unit_of("a").unwrap();
+        assert_eq!(u.standing, wide);
+        assert_eq!(u.size, wide);
+        // Idempotent: same boxes again is a no-op.
+        let g = f.generation;
+        assert!(!f.recalibrate("a", wide, prone_of(wide), wide));
+        assert_eq!(f.generation, g);
+        // Unknown creature: no-op, no panic.
+        assert!(!f.recalibrate("ghost", wide, wide, wide));
+    }
+
+    /// Finding 8 conflict policy: metadata (first load or sidecar reload)
+    /// that enlarges a placed unit's envelope past the arrival hard bound
+    /// re-homes THAT unit to a valid square; neighbours never move and no
+    /// overlap outlives the update.
+    #[test]
+    fn enlarging_recalibration_resolves_conflicts_under_policy() {
+        let mut f = CreatureField::default();
+        fill(&mut f, 4);
+        let others: Vec<String> = (1..4).map(|i| format!("{}", 1000 + i)).collect();
+        let before: Vec<_> = others.iter().map(|e| world_pos(&f, e)).collect();
+        // The reloaded sidecar reveals a grossly wider creature than the
+        // cold-cache guess it was placed with.
+        let wide = CardSize::new(2.4, 1.1);
+        assert!(f.recalibrate("1000", wide, prone_of(wide), wide));
+        for (e, b) in others.iter().zip(&before) {
+            assert_eq!(world_pos(&f, e), *b, "{e} moved for someone else's reload");
+        }
+        let idx = f
+            .units
+            .iter()
+            .position(|u| u.members[0] == "1000")
+            .unwrap();
+        assert_eq!(f.units[idx].standing, wide);
+        assert!(
+            !f.envelope_conflicts(idx),
+            "policy left an envelope conflict standing"
+        );
+    }
+
+    /// Finding 8 acceptance: multiple wide creatures placed cold (fallback
+    /// guess boxes, art cache empty) beside a calibrated prop end up
+    /// satisfying the same hard constraints as a warm-cache run once
+    /// their metadata lands: no envelope overlap past the arrival bound,
+    /// nobody behind the prop's projected span.
+    #[test]
+    fn cold_cache_recalibration_matches_warm_cache_constraints() {
+        let obstacle = Obstacle {
+            x: STAGE_W / 2.0,
+            z: 3.0,
+            left_w: 0.6,
+            right_w: 0.6,
+        };
+        let wide = CardSize::new(1.8, 1.0);
+        let mut warm = CreatureField::default();
+        warm.set_obstacles(vec![obstacle]);
+        for i in 0..3 {
+            warm.arrive(&format!("w{i}"), wide, prone_of(wide));
+        }
+        let mut cold = CreatureField::default();
+        cold.set_obstacles(vec![obstacle]);
+        let guess = CardSize::default();
+        for i in 0..3 {
+            cold.arrive(&format!("w{i}"), guess, prone_of(guess));
+        }
+        for i in 0..3 {
+            cold.recalibrate(&format!("w{i}"), wide, prone_of(wide), wide);
+        }
+        for (name, f) in [("warm", &warm), ("cold", &cold)] {
+            for idx in 0..f.units.len() {
+                assert!(
+                    !f.envelope_conflicts(idx),
+                    "{name}: unit {idx} envelope conflict"
+                );
+            }
+            let (sx0, sx1) = f.obstacle_span(&obstacle);
+            let (lo, hi) = (sx0.min(sx1), sx0.max(sx1));
+            for u in f.units() {
+                let r = f.rect(u);
+                assert!(
+                    !(r.z > obstacle.z && r.center_x() >= lo && r.center_x() <= hi),
+                    "{name}: unit behind the prop"
+                );
+            }
+        }
+    }
+
+    /// A prone image substantially wider than its standing image: the
+    /// envelope reserved at arrival already contains the wide prone box,
+    /// so the FIRST pose change introduces no new hard-bound violation —
+    /// the room was reserved before the pose art was ever needed.
+    #[test]
+    fn wide_prone_envelope_reserved_before_first_pose_change() {
+        let mut f = CreatureField::default();
+        let standing = CardSize::new(0.6, 1.4);
+        let prone = CardSize::new(2.2, 0.5);
+        f.arrive("sleeper", standing, prone);
+        fill(&mut f, 5);
+        // First-ever pose flip: the envelope is untouched by resize, and
+        // every arrival since reserved against the wide prone box.
+        f.resize("sleeper", prone);
+        for idx in 0..f.units.len() {
+            assert!(!f.envelope_conflicts(idx), "unit {idx} conflict after flip");
+        }
+        assert_eq!(f.unit_of("sleeper").unwrap().size, prone);
     }
 
     #[test]
@@ -1799,6 +2231,74 @@ mod tests {
         // Off-stage x clamps into the stage.
         let (x, _) = f.ground_from_screen(-40.0, STAGE_H - 10.0);
         assert_eq!(x, 0.0);
+    }
+
+    #[test]
+    fn sanitize_camera_shares_loader_limits() {
+        use camera_limits::*;
+        let d = FieldParams::default();
+
+        // Valid params are untouched.
+        let mut p = FieldParams::default();
+        assert!(!p.sanitize_camera(&d));
+        assert_eq!(p, d);
+
+        // Exact boundaries are valid on both ends.
+        let mut p = FieldParams::default();
+        p.focal = FOCAL.0;
+        p.cam_h = EYE_HEIGHT.1;
+        p.z0 = NEAR_DEPTH.0;
+        p.dz = ROW_DEPTH.1;
+        p.horizon = HORIZON.0;
+        p.cell_w = CELL_WIDTH.1;
+        assert!(!p.sanitize_camera(&d));
+        assert_eq!(p.focal, FOCAL.0);
+        assert_eq!(p.cell_w, CELL_WIDTH.1);
+
+        // Out-of-range clamps to the SAME bounds apply_camera uses — a
+        // previewed focal=20 becomes 60 in the editor, not on reload.
+        let mut p = FieldParams::default();
+        p.focal = 20.0;
+        p.z0 = 0.0; // zero geometry: invalid projection while editing
+        p.dz = -1.0;
+        p.cell_w = 999.0;
+        assert!(p.sanitize_camera(&d));
+        assert_eq!(p.focal, FOCAL.0);
+        assert_eq!(p.z0, NEAR_DEPTH.0);
+        assert_eq!(p.dz, ROW_DEPTH.0);
+        assert_eq!(p.cell_w, CELL_WIDTH.1);
+
+        // Nonfinite falls back to the caller's previous value...
+        let mut fallback = FieldParams::default();
+        fallback.focal = 500.0;
+        let mut p = fallback.clone();
+        p.focal = f32::NAN;
+        p.horizon = f32::INFINITY;
+        assert!(p.sanitize_camera(&fallback));
+        assert_eq!(p.focal, 500.0);
+        assert_eq!(p.horizon, fallback.horizon);
+        // ...and to the built-in default when the fallback is bad too.
+        let mut bad_fallback = FieldParams::default();
+        bad_fallback.cam_h = f32::NAN;
+        let mut p = FieldParams::default();
+        p.cam_h = f32::NAN;
+        assert!(p.sanitize_camera(&bad_fallback));
+        assert_eq!(p.cam_h, d.cam_h);
+
+        // Sanitized params round-trip: what the editor shows is exactly
+        // what serialize -> apply_camera reproduces.
+        let mut p = FieldParams::default();
+        p.focal = 20.0;
+        p.cam_h = 30.0;
+        p.sanitize_camera(&d);
+        let mut reloaded = FieldParams::default();
+        reloaded.apply_camera(&p.to_camera());
+        assert_eq!(reloaded.focal, p.focal);
+        assert_eq!(reloaded.cam_h, p.cam_h);
+        assert_eq!(reloaded.z0, p.z0);
+        assert_eq!(reloaded.dz, p.dz);
+        assert_eq!(reloaded.horizon, p.horizon);
+        assert_eq!(reloaded.cell_w, p.cell_w);
     }
 
     #[test]

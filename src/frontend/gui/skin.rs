@@ -714,6 +714,45 @@ impl CreatureArtCache {
     }
 }
 
+/// Content aspect (width/height) of decoded art from its alpha bounds:
+/// transparent padding changes `bbox` and the canvas together, so the
+/// content aspect — and every geometry derived from it — is unaffected;
+/// the same art at a different resolution yields the same value.
+pub(crate) fn content_aspect(bbox: [f32; 4], tex_w: f32, tex_h: f32) -> f32 {
+    let w = ((bbox[2] - bbox[0]) * tex_w).max(1.0);
+    let h = ((bbox[3] - bbox[1]) * tex_h).max(1.0);
+    w / h
+}
+
+/// Content pixel height of decoded art from its alpha bounds. Transparent
+/// padding grows the canvas, not the content, so padding is neutral here.
+pub(crate) fn content_height_px(bbox: [f32; 4], tex_h: f32) -> f32 {
+    ((bbox[3] - bbox[1]) * tex_h).max(1.0)
+}
+
+/// One pose image's calibration for the core geometry contract: the
+/// sidecar's absolute `size`, the alpha-derived content aspect, the
+/// footprint's contact span, and — for pose art measured against a
+/// standing base — the pose-to-standing content ratio (finding 7): the
+/// exact factor the renderer's inherited common pixel scale draws the
+/// pose at, so core bounds match the drawn sprite. Pass `base: None` for
+/// the standing pose itself.
+fn pose_calibration(
+    art: &CreatureArt,
+    base: Option<&CreatureArt>,
+) -> crate::core::creature_cards::geometry::PoseCalibration {
+    let ts = art.texture.size_vec2();
+    crate::core::creature_cards::geometry::PoseCalibration {
+        size: art.size.filter(|s| s.is_finite() && *s > 0.0),
+        aspect: Some(content_aspect(art.bbox, ts.x, ts.y)),
+        span: art.footprint.map(|fp| (fp.rx * 2.0).clamp(0.2, 1.0)),
+        content_ratio: base.map(|b| {
+            let bts = b.texture.size_vec2();
+            content_height_px(art.bbox, ts.y) / content_height_px(b.bbox, bts.y)
+        }),
+    }
+}
+
 /// One creature the field wants art for this frame: the identity keys
 /// for tier resolution plus the current state that decides which extras
 /// (pose, wound overlays) must be loaded.
@@ -724,8 +763,6 @@ pub struct WantedCreature {
     pub name: String,
     pub noun: Option<String>,
     pub family: Option<String>,
-    /// crtr_status prone flag — loads the tier's `{token}_prone` art.
-    pub prone: bool,
     /// Per-part wound ranks — loads `{token}_{loc}{rank}` overlays.
     pub injuries: Vec<(String, u8)>,
 }
@@ -878,6 +915,13 @@ impl SkinState {
                 ..Default::default()
             };
         }
+        // Art (and its sidecars) may have changed on disk: drop the core
+        // geometry-calibration store so it re-seeds; placed units
+        // recalibrate in place on the revision bump (nobody moves).
+        crate::core::creature_cards::geometry::calibrations()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .invalidate();
     }
 
     /// Shared handle to the creature-card art cache for renderers.
@@ -913,17 +957,17 @@ impl SkinState {
                 .and_then(|tier| load_creature_art(ctx, &tier.base, &cache.skin_name));
                 cache.bases.insert(token.clone(), art);
             }
-            // Extras for the creature's CURRENT state: the prone pose
-            // loads as full creature art (own anchors/footprint); wound
-            // overlays load as plain textures. Both keyed by absolute
-            // path so re-loads are lookups.
+            // The tier's prone pose loads as full creature art (own
+            // anchors/footprint) UNCONDITIONALLY — not on first prone —
+            // so its geometry metadata (content ratio, sidecar size,
+            // footprint) reaches the core store before the solver ever
+            // reserves this creature's standing/prone envelope (finding
+            // 8). Wound overlays stay demand-loaded from the CURRENT
+            // state. Both keyed by absolute path so re-loads are lookups.
             let Some(Some(art)) = cache.bases.get(token.as_str()) else {
                 continue;
             };
-            let prone = want
-                .prone
-                .then(|| art.extra("prone").cloned())
-                .flatten();
+            let prone = art.extra("prone").cloned();
             let wounds: Vec<PathBuf> = want
                 .injuries
                 .iter()
@@ -938,6 +982,27 @@ impl SkinState {
                     let art = load_creature_art(ctx, &path, &cache.skin_name);
                     cache.variant_bases.insert(key, art);
                 }
+            }
+            // Refine the core geometry-calibration store with the decoded
+            // art's content data: alpha-bounds aspect (transparent padding
+            // and art resolution both neutral), sidecar size/footprint,
+            // and the prone pose's own calibration once its art loads.
+            // `refine` bumps the store revision only on actual change;
+            // `sync_field` recalibrates placed units in place on the bump.
+            if let Some(Some(art)) = cache.bases.get(token.as_str()) {
+                let prone_cal = art
+                    .extra("prone")
+                    .and_then(|p| cache.variant_bases.get(p.to_string_lossy().as_ref()))
+                    .and_then(|a| a.as_ref())
+                    .map(|prone| pose_calibration(prone, Some(art)));
+                let cal = crate::core::creature_cards::geometry::ArtCalibration {
+                    standing: pose_calibration(art, None),
+                    prone: prone_cal,
+                };
+                crate::core::creature_cards::geometry::calibrations()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .refine(&token, cal);
             }
             for path in wounds {
                 let key = path.to_string_lossy().into_owned();
@@ -3493,7 +3558,6 @@ cell = 32
             name: name.to_string(),
             noun: Some(name.split(' ').next_back().unwrap_or(name).to_string()),
             family: None,
-            prone: false,
             injuries: Vec::new(),
         };
         let mut state = SkinState::default();
@@ -3531,7 +3595,14 @@ cell = 32
         let env = test_env();
         // Variant tier for the mongrel kobold: base + prone pose + a
         // chest wound overlay, token-prefixed per the tier scheme.
-        let variant = pool_dir().join("creatures/kobold/mongrel_kobold");
+        // Full-name tiers live FLAT under creatures/<name>/ since
+        // dfe758a2 (full-name art is the primary tier) — this fixture
+        // still wrote the older creatures/<noun>/<name>/ nesting, which
+        // resolve_tier_art no longer probes, so the noun tier's 2px art
+        // won and the assertion below read [2,2]. The core tier-order
+        // test (resolve_tier_art_prefers_full_name_over_noun) pins the
+        // flat layout; this fixture now matches it.
+        let variant = pool_dir().join("creatures/mongrel_kobold");
         write_png(&variant.join("mongrel_kobold.png"), 4);
         write_png(&variant.join("mongrel_kobold_prone.png"), 8);
         write_png(&variant.join("mongrel_kobold_chest2.png"), 2);
@@ -3547,7 +3618,6 @@ cell = 32
                 name: "a shimmering mongrel kobold".to_string(),
                 noun: Some("kobold".to_string()),
                 family: None,
-                prone: true,
                 injuries: vec![("chest".to_string(), 2)],
             }],
         );
@@ -3564,6 +3634,14 @@ cell = 32
         let wound_path = art.extra("chest2").unwrap().to_string_lossy().into_owned();
         assert!(cache.overlays.get(&wound_path).is_some_and(|t| t.is_some()));
         assert!(art.has_wound_extras());
+        // Finding 8: the prone pose loaded even though the creature has
+        // never been prone, so its calibration (fed to the core store by
+        // this same pass) is available before the solver first reserves
+        // the envelope. 8px prone content / 4px standing content = 2.
+        // (Asserted through pose_calibration directly — the global store
+        // is shared across parallel tests.)
+        let prone_cal = pose_calibration(prone, Some(art));
+        assert!((prone_cal.content_ratio.unwrap() - 2.0).abs() < 1e-4);
         // Tier locking: a creature without its own variant folder locks
         // the noun tier — mongrel art never leaks onto it.
         drop(cache);
@@ -3573,7 +3651,6 @@ cell = 32
                 name: "big ugly kobold".to_string(),
                 noun: Some("kobold".to_string()),
                 family: None,
-                prone: false,
                 injuries: Vec::new(),
             }],
         );
@@ -3581,6 +3658,40 @@ cell = 32
         let art = cache.base("big_ugly_kobold").expect("noun tier resolves");
         assert_eq!(art.texture.size_vec2(), egui::vec2(2.0, 2.0));
         assert!(art.extra("prone").is_none(), "no cross-tier borrowing");
+    }
+
+    /// Finding 6 acceptance: transparent padding and art resolution are
+    /// both neutral for the geometry contract — the content aspect fed to
+    /// the core store depends only on the opaque content.
+    #[test]
+    fn content_aspect_ignores_padding_and_resolution() {
+        // 100x200 canvas, content filling it exactly: aspect 0.5.
+        let tight = content_aspect([0.0, 0.0, 1.0, 1.0], 100.0, 200.0);
+        assert!((tight - 0.5).abs() < 1e-4);
+        // Same content centred in a padded 200x400 canvas.
+        let padded = content_aspect([0.25, 0.25, 0.75, 0.75], 200.0, 400.0);
+        assert!((padded - tight).abs() < 1e-4, "padding must be neutral");
+        // Same art at 4x the resolution.
+        let hires = content_aspect([0.0, 0.0, 1.0, 1.0], 400.0, 800.0);
+        assert!((hires - tight).abs() < 1e-4, "resolution must be neutral");
+    }
+
+    /// Finding 7 acceptance (the worked example): standing content 200px,
+    /// prone content 100px on the same canvas convention → ratio 0.5, and
+    /// transparent padding around either image does not change it. The
+    /// ratio is deliberately measured in PIXELS (the common canvas-scale
+    /// convention the renderer inherits) — a pose file at a different
+    /// resolution is calibrated through its sidecar `size`, never by
+    /// inferring thickness from resolution.
+    #[test]
+    fn pose_content_ratio_matches_worked_example() {
+        // Full-canvas content: 200px standing, 100px prone.
+        let standing = content_height_px([0.0, 0.0, 1.0, 1.0], 200.0);
+        let prone = content_height_px([0.0, 0.0, 1.0, 1.0], 100.0);
+        assert!((prone / standing - 0.5).abs() < 1e-4);
+        // Same content padded into a 400px-tall canvas (content 100px).
+        let padded = content_height_px([0.4, 0.375, 0.6, 0.625], 400.0);
+        assert!((padded / standing - 0.5).abs() < 1e-4, "padding neutral");
     }
 
     #[test]

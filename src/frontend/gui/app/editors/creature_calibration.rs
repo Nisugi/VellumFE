@@ -44,6 +44,11 @@ pub(crate) struct CreatureCalibrationState {
     rx: f32,
     ry_auto: bool,
     ry: f32,
+    /// Authored footprint centre (image fractions), round-tripped from the
+    /// sidecar. Only X affects rendering (the shadow lies on the ground
+    /// line); the stored Y is preserved verbatim, never repurposed. None =
+    /// feet-centred, the renderer's default.
+    footprint_center: Option<[f32; 2]>,
     size_on: bool,
     size: f32,
     lift_on: bool,
@@ -90,6 +95,7 @@ impl CreatureCalibrationState {
             rx: 0.35,
             ry_auto: true,
             ry: 0.35 * 0.24,
+            footprint_center: None,
             size_on: false,
             size: 1.0,
             lift_on: false,
@@ -276,6 +282,11 @@ impl CreatureCalibrationState {
 
                     // Ground line through the feet anchor.
                     let ground_y = at(feet).y;
+                    // Shadow centre X: authored centre wins, else feet.
+                    let shadow_cx = state
+                        .footprint_center
+                        .map(|[x, _]| at([x, 0.0]).x)
+                        .unwrap_or_else(|| at(feet).x);
                     painter.line_segment(
                         [
                             egui::pos2(dest.min.x, ground_y),
@@ -294,7 +305,7 @@ impl CreatureCalibrationState {
                         } else {
                             state.ry
                         } * dest.width();
-                        let center = egui::pos2(at(feet).x, ground_y);
+                        let center = egui::pos2(shadow_cx, ground_y);
                         paint_ellipse(
                             &painter,
                             center,
@@ -384,6 +395,52 @@ impl CreatureCalibrationState {
                         }
                     }
                 });
+                if state.footprint_on {
+                    ui.horizontal(|ui| {
+                        match state.footprint_center.as_mut() {
+                            Some(center) => {
+                                ui.label("Center x");
+                                ui.add(
+                                    egui::Slider::new(&mut center[0], 0.0..=1.0)
+                                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                                )
+                                .on_hover_text(
+                                    "Shadow ellipse centre, as a fraction of the image \
+                                     width. Only X affects rendering; the shadow stays \
+                                     on the ground line.",
+                                );
+                                if ui
+                                    .button("Reset to feet")
+                                    .on_hover_text(
+                                        "Drop the custom centre — the shadow re-centres \
+                                         on the feet anchor",
+                                    )
+                                    .clicked()
+                                {
+                                    state.footprint_center = None;
+                                }
+                            }
+                            None => {
+                                if ui
+                                    .button("Offset center\u{2026}")
+                                    .on_hover_text(
+                                        "Author a shadow centre offset from the feet \
+                                         anchor (wide or leaning poses)",
+                                    )
+                                    .clicked()
+                                {
+                                    let feet = state
+                                        .anchors
+                                        .get("feet")
+                                        .copied()
+                                        .unwrap_or([0.5, 0.95]);
+                                    state.footprint_center = Some(feet);
+                                }
+                                ui.weak("centered on the feet anchor");
+                            }
+                        }
+                    });
+                }
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut state.size_on, "World size").on_hover_text(
                         "This creature's height in world units, overriding the family \
@@ -461,20 +518,7 @@ impl CreatureCalibrationState {
                 // the same sidecar; carry it through untouched.
                 let existing: CreatureSidecar =
                     pool::read_sidecar(&state.choices[index].abs_path).unwrap_or_default();
-                let sidecar = CreatureSidecar {
-                    kind: None, // the writer stamps it
-                    anchors: state.anchors.clone(),
-                    footprint: state.footprint_on.then(|| CreatureFootprint {
-                        rx: state.rx,
-                        ry: (!state.ry_auto).then_some(state.ry),
-                        center: None, // feet-centered; the renderer's default
-                    }),
-                    size: state.size_on.then_some(state.size),
-                    lift: state.lift_on.then_some(state.lift),
-                    overlay_scale: state.overlay_scale_on.then_some(state.overlay_scale),
-                    exclude: existing.exclude,
-                    aspect: existing.aspect,
-                };
+                let sidecar = state.to_sidecar(&existing);
                 match pool::write_creature_sidecar(&state.choices[index].abs_path, &sidecar) {
                     Ok(()) => {
                         state.error = None;
@@ -532,28 +576,59 @@ fn load_creature_choice(state: &mut CreatureCalibrationState, index: usize) {
     // The texture reloads lazily from render (`ensure_texture` needs ctx).
     state.texture = None;
     let sidecar: CreatureSidecar = pool::read_sidecar(&choice.abs_path).unwrap_or_default();
-    state.anchors = sidecar
-        .anchors
-        .iter()
-        .map(|(name, anchor)| (name.to_ascii_lowercase(), *anchor))
-        .collect();
-    state.footprint_on = sidecar.footprint.is_some();
-    if let Some(fp) = sidecar.footprint {
-        state.rx = fp.rx;
-        state.ry_auto = fp.ry.is_none();
-        state.ry = fp.effective_ry();
+    state.apply_sidecar(&sidecar);
+}
+
+impl CreatureCalibrationState {
+    /// Adopt a loaded sidecar into the editor state. Everything authored —
+    /// including the footprint centre — is retained for round-tripping.
+    fn apply_sidecar(&mut self, sidecar: &CreatureSidecar) {
+        self.anchors = sidecar
+            .anchors
+            .iter()
+            .map(|(name, anchor)| (name.to_ascii_lowercase(), *anchor))
+            .collect();
+        self.footprint_on = sidecar.footprint.is_some();
+        self.footprint_center = None;
+        if let Some(fp) = sidecar.footprint {
+            self.rx = fp.rx;
+            self.ry_auto = fp.ry.is_none();
+            self.ry = fp.effective_ry();
+            self.footprint_center = fp.center;
+        }
+        self.size_on = sidecar.size.is_some();
+        if let Some(size) = sidecar.size {
+            self.size = size;
+        }
+        self.lift_on = sidecar.lift.is_some();
+        if let Some(lift) = sidecar.lift {
+            self.lift = lift;
+        }
+        self.overlay_scale_on = sidecar.overlay_scale.is_some();
+        if let Some(scale) = sidecar.overlay_scale {
+            self.overlay_scale = scale;
+        }
     }
-    state.size_on = sidecar.size.is_some();
-    if let Some(size) = sidecar.size {
-        state.size = size;
-    }
-    state.lift_on = sidecar.lift.is_some();
-    if let Some(lift) = sidecar.lift {
-        state.lift = lift;
-    }
-    state.overlay_scale_on = sidecar.overlay_scale.is_some();
-    if let Some(scale) = sidecar.overlay_scale {
-        state.overlay_scale = scale;
+
+    /// The sidecar this editor state saves. `existing` carries through the
+    /// scenery-calibration fields (exclude/aspect) that live in the same
+    /// file; the footprint centre round-trips unless the user explicitly
+    /// reset it to the feet anchor.
+    fn to_sidecar(&self, existing: &CreatureSidecar) -> CreatureSidecar {
+        CreatureSidecar {
+            kind: None, // the writer stamps it
+            anchors: self.anchors.clone(),
+            footprint: self.footprint_on.then(|| CreatureFootprint {
+                rx: self.rx,
+                ry: (!self.ry_auto).then_some(self.ry),
+                center: self.footprint_center,
+            }),
+            size: self.size_on.then_some(self.size),
+            lift: self.lift_on.then_some(self.lift),
+            overlay_scale: self.overlay_scale_on.then_some(self.overlay_scale),
+            exclude: existing.exclude,
+            aspect: existing.aspect,
+        }
     }
 }
 
@@ -575,6 +650,98 @@ impl CreatureCalibrationState {
         if self.texture.is_none() {
             self.error = Some(format!("Cannot load {}", choice.pool_path));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn blank_state() -> CreatureCalibrationState {
+        CreatureCalibrationState {
+            choices: Vec::new(),
+            selected: None,
+            texture: None,
+            anchors: HashMap::new(),
+            selected_anchor: "feet".to_owned(),
+            new_anchor_name: String::new(),
+            footprint_on: false,
+            rx: 0.35,
+            ry_auto: true,
+            ry: 0.35 * 0.24,
+            footprint_center: None,
+            size_on: false,
+            size: 1.0,
+            lift_on: false,
+            lift: 0.1,
+            overlay_scale_on: false,
+            overlay_scale: 1.0,
+            error: None,
+        }
+    }
+
+    fn authored_sidecar() -> CreatureSidecar {
+        let mut sidecar = CreatureSidecar {
+            footprint: Some(CreatureFootprint {
+                rx: 0.46,
+                ry: Some(0.12),
+                center: Some([0.3, 0.6]),
+            }),
+            ..Default::default()
+        };
+        sidecar.anchors.insert("feet".to_string(), [0.48, 0.9]);
+        sidecar.anchors.insert("head".to_string(), [0.5, 0.1]);
+        sidecar
+    }
+
+    #[test]
+    fn footprint_center_roundtrips_through_unrelated_edits() {
+        let mut state = blank_state();
+        state.apply_sidecar(&authored_sidecar());
+        assert_eq!(state.footprint_center, Some([0.3, 0.6]));
+        // Change only the head anchor — the authored centre (X and the
+        // stored, unrendered Y) must survive the save untouched.
+        state.anchors.insert("head".to_string(), [0.55, 0.05]);
+        let saved = state.to_sidecar(&CreatureSidecar::default());
+        let fp = saved.footprint.unwrap();
+        assert_eq!(fp.center, Some([0.3, 0.6]));
+        assert_eq!(fp.rx, 0.46);
+        assert_eq!(fp.ry, Some(0.12));
+        assert_eq!(saved.anchors["head"], [0.55, 0.05]);
+        // Explicit reset to the feet anchor drops the authored centre.
+        state.footprint_center = None;
+        let reset = state.to_sidecar(&CreatureSidecar::default());
+        assert_eq!(reset.footprint.unwrap().center, None);
+    }
+
+    #[test]
+    fn footprint_center_survives_external_and_png_embedded_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let image_path = dir.path().join("coyote.png");
+        // A real PNG so the writer can embed metadata in it.
+        image::RgbaImage::new(2, 2).save(&image_path).unwrap();
+
+        pool::write_creature_sidecar(&image_path, &authored_sidecar()).unwrap();
+
+        // Load -> edit an anchor -> save, through the editor state.
+        let mut state = blank_state();
+        let loaded: CreatureSidecar = pool::read_sidecar(&image_path).unwrap();
+        state.apply_sidecar(&loaded);
+        state.anchors.insert("head".to_string(), [0.6, 0.08]);
+        pool::write_creature_sidecar(&image_path, &state.to_sidecar(&loaded)).unwrap();
+
+        // External sidecar keeps the authored centre.
+        let external: CreatureSidecar = pool::read_sidecar(&image_path).unwrap();
+        assert_eq!(external.footprint.unwrap().center, Some([0.3, 0.6]));
+        assert_eq!(external.anchors["head"], [0.6, 0.08]);
+
+        // PNG-embedded copy keeps it too: delete the sidecar file and let
+        // the reader re-hydrate from the image.
+        std::fs::remove_file(image_path.with_extension("toml")).unwrap();
+        let embedded: CreatureSidecar = pool::read_sidecar(&image_path)
+            .expect("embedded metadata should hydrate a sidecar");
+        assert_eq!(embedded.footprint.unwrap().center, Some([0.3, 0.6]));
+        assert_eq!(embedded.anchors["head"], [0.6, 0.08]);
     }
 }
 

@@ -11,6 +11,7 @@
 //!   adapter rather than rippling foot parts and a `nerves` rename into the
 //!   player-doll ecosystem and its published assets.
 
+pub mod geometry;
 pub mod naming;
 pub mod solver;
 
@@ -359,33 +360,38 @@ pub fn card_size_for(c: &crate::core::state::Creature) -> solver::CardSize {
 /// Both pose boxes for one creature, pose-agnostic: (standing, prone).
 /// The solver reserves the union of the two (the fall envelope) at
 /// arrival, so a later pose swap never needs to move anyone.
+///
+/// Resolved through the SHARED geometry contract (`geometry` module):
+/// bestiary reference height + the art's cached calibration (sidecar
+/// `size` absolute override, content aspect, footprint span), so the
+/// reservation and hit rectangle agree with what the renderer draws.
+/// Calibration comes from the process-wide store, fed by the frontend's
+/// art prepare pass (sidecar TOML + alpha bounds, read there — never
+/// inside placement loops); tokens without an entry get the historical
+/// deterministic fallback, and the store revision recalibrates placed
+/// units in place when metadata arrives later.
 pub fn card_boxes_for(
     c: &crate::core::state::Creature,
 ) -> (solver::CardSize, solver::CardSize) {
-    let h = standing_height_for(c);
-    // Prone box from the bestiary body type: a downed biped is roughly a
-    // third of its standing height and as long as it was tall; a
-    // quadruped is already low, so it keeps more of its height.
-    let quad =
-        bestiary_body_type(&c.name, c.noun.as_deref()).is_some_and(|t| t == "quadruped");
-    let ph = if quad { h * 0.70 } else { h * 0.35 };
-    (
-        solver::CardSize::new(h * 0.5, h),
-        solver::CardSize::new((h * 0.90).max(0.35), ph.max(0.30)),
-    )
+    let g = geometry_for(c);
+    (g.standing, g.prone)
 }
 
-/// Standing card height in world units, pose-agnostic — the anchor for
-/// sprite pixel scale even while the card box is a prone one.
+/// The full shared geometry for one creature, calibration included.
+pub fn geometry_for(c: &crate::core::state::Creature) -> geometry::CreatureGeometry {
+    let token = naming::name_token(&c.name);
+    let cal = geometry::calibrations()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .resolve(&token);
+    geometry::resolve_geometry(c, cal.as_ref())
+}
+
+/// Standing card height in world units from bestiary policy alone (no art
+/// calibration), pose-agnostic. Renderers should prefer the placed unit's
+/// `standing.h` — the calibrated shared geometry — over this.
 pub fn standing_height_for(c: &crate::core::state::Creature) -> f32 {
-    let boss = c.flags.as_ref().is_some_and(|f| f.is_boss());
-    match (bestiary_height_units(&c.name, c.noun.as_deref()), boss) {
-        (Some(h), true) => (h * 1.15).max(1.52),
-        (Some(h), false) => h,
-        (None, true) => 1.52,
-        (None, false) => solver::CardSize::default().h,
-    }
-    .clamp(0.55, 2.6)
+    geometry::resolve_geometry(c, None).world_h
 }
 
 /// Bestiary body type (`biped`/`quadruped`/`avian`/`ooze`…), lowercased,
@@ -416,12 +422,13 @@ fn bestiary_body_type(name: &str, noun: Option<&str>) -> Option<String> {
     types.all(|t| t == first).then_some(first)
 }
 
-/// World-unit height for a creature from the bundled bestiary. Matching
-/// keys on the boon-stripped canonical name (the wire name may carry a
-/// boon adjective the templates never do), falling back to the noun when
-/// every entry sharing it agrees — the same discipline as
-/// [`family_for_noun`], so an ambiguous noun never guesses.
-fn bestiary_height_units(name: &str, noun: Option<&str>) -> Option<f32> {
+/// World-unit height for a creature from the bundled bestiary, plus
+/// whether it came from the `height` field (true) or the size bucket
+/// (false). Matching keys on the boon-stripped canonical name (the wire
+/// name may carry a boon adjective the templates never do), falling back
+/// to the noun when every entry sharing it agrees — the same discipline
+/// as [`family_for_noun`], so an ambiguous noun never guesses.
+fn bestiary_height_units(name: &str, noun: Option<&str>) -> Option<(f32, bool)> {
     let canonical = naming::canonical_name(name);
     let noun = noun
         .filter(|n| !n.trim().is_empty())
@@ -429,17 +436,17 @@ fn bestiary_height_units(name: &str, noun: Option<&str>) -> Option<f32> {
         .or_else(|| canonical.split_whitespace().last().map(str::to_string))?;
     let db = crate::core::bestiary::format::shared();
     let entries = db.by_noun(&noun);
-    let of = |e: &crate::core::bestiary::CreatureEntry| -> Option<f32> {
+    let of = |e: &crate::core::bestiary::CreatureEntry| -> Option<(f32, bool)> {
         if let Some(feet) = e.height {
             // 6 ft ≡ the 1.2-unit default card.
-            return Some(feet as f32 * 0.2);
+            return Some((feet as f32 * 0.2, true));
         }
         match e.size.as_deref().map(str::trim) {
-            Some(s) if s.eq_ignore_ascii_case("tiny") => Some(0.55),
-            Some(s) if s.eq_ignore_ascii_case("small") => Some(0.85),
-            Some(s) if s.eq_ignore_ascii_case("medium") => Some(1.2),
-            Some(s) if s.eq_ignore_ascii_case("large") => Some(1.6),
-            Some(s) if s.eq_ignore_ascii_case("huge") => Some(2.1),
+            Some(s) if s.eq_ignore_ascii_case("tiny") => Some((0.55, false)),
+            Some(s) if s.eq_ignore_ascii_case("small") => Some((0.85, false)),
+            Some(s) if s.eq_ignore_ascii_case("medium") => Some((1.2, false)),
+            Some(s) if s.eq_ignore_ascii_case("large") => Some((1.6, false)),
+            Some(s) if s.eq_ignore_ascii_case("huge") => Some((2.1, false)),
             _ => None,
         }
     };
@@ -453,7 +460,7 @@ fn bestiary_height_units(name: &str, noun: Option<&str>) -> Option<f32> {
     let mut heights = entries.iter().filter_map(|e| of(e));
     let first = heights.next()?;
     heights
-        .all(|h| (h - first).abs() < 0.05)
+        .all(|(h, _)| (h - first.0).abs() < 0.05)
         .then_some(first)
 }
 
@@ -545,15 +552,16 @@ pub fn convention_wound_parts(
     }
 }
 
-/// Exclusion spans for a scene's props, from each prop image's sidecar:
-/// calibrated `exclude` edges + recorded `aspect` size the span through
-/// the same ground projection the renderer draws the prop with. Props
-/// without calibration (or without a sidecar at all) exclude nothing —
-/// the calibrator IS the data. Call AFTER the field's params are set:
-/// the projection depends on the camera.
+/// AUTHORED exclusion metadata for a scene's props, from each prop
+/// image's sidecar: calibrated `exclude` edges + recorded `aspect` give
+/// the exclusion extents in WORLD units around the prop's foot point.
+/// Projection-free by design (finding 3): the solver projects these
+/// through the CURRENT placement geometry — column growth included — via
+/// `CreatureField::obstacle_span`, so spans can never go stale against
+/// the camera or the floor. Props without calibration (or without a
+/// sidecar at all) exclude nothing — the calibrator IS the data.
 pub fn scene_obstacles(
     scene: Option<&crate::config::scenes::StageScene>,
-    field: &solver::CreatureField,
 ) -> Vec<solver::Obstacle> {
     let Some(scene) = scene else {
         return Vec::new();
@@ -571,18 +579,21 @@ pub fn scene_obstacles(
             let [left, right] = sidecar.exclude?;
             let aspect = sidecar.aspect?;
             let world_h = sidecar.size.unwrap_or(1.0) * prop.scale.max(0.01);
-            let ((fx, _), px_per_unit) = field.project_ground(prop.x, prop.z);
-            let draw_w = world_h * px_per_unit * aspect.max(0.01);
+            // The prop's drawn width in world units; exclusion edges are
+            // fractions of it, measured from the feet anchor.
+            let world_w = world_h * aspect.max(0.01);
             let feet_x = sidecar
                 .anchors
                 .get("feet")
                 .map(|anchor| anchor[0])
                 .unwrap_or(0.5);
-            let image_left = fx - feet_x * draw_w;
+            let lo = left.min(right).clamp(0.0, 1.0);
+            let hi = left.max(right).clamp(0.0, 1.0);
             Some(solver::Obstacle {
-                x0: image_left + left.min(right).clamp(0.0, 1.0) * draw_w,
-                x1: image_left + left.max(right).clamp(0.0, 1.0) * draw_w,
+                x: prop.x,
                 z: prop.z,
+                left_w: (feet_x - lo) * world_w,
+                right_w: (hi - feet_x) * world_w,
             })
         })
         .collect()
@@ -591,9 +602,38 @@ pub fn scene_obstacles(
 pub fn sync_field(
     field: &mut solver::CreatureField,
     synced_gen: &mut u64,
+    synced_cal: &mut u64,
     gs: &GameState,
     excluded_nouns: &[String],
 ) {
+    // Calibration metadata arrived or reloaded since the last sync:
+    // re-derive every placed unit's boxes through the shared geometry.
+    // A unit whose boxes still fit stays exactly put; one whose enlarged
+    // envelope now breaks the arrival hard bound is re-homed by
+    // `recalibrate`'s conflict policy (nearest valid square; neighbours
+    // never move) — the fall envelopes future arrivals reserve against
+    // stop being stale and no overlap outlives the reload.
+    let cal_rev = geometry::calibrations()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .revision();
+    let recalibrate = *synced_cal != cal_rev;
+    *synced_cal = cal_rev;
+    if recalibrate {
+        for c in gs
+            .room_creatures
+            .iter()
+            .filter(|c| field_member(c, excluded_nouns))
+        {
+            let primary = field
+                .unit_of(&c.id)
+                .is_some_and(|u| u.members.first().map(String::as_str) == Some(c.id.as_str()));
+            if primary {
+                let (standing, prone) = card_boxes_for(c);
+                field.recalibrate(&c.id, standing, prone, card_size_for(c));
+            }
+        }
+    }
     if *synced_gen == gs.room_creatures_generation {
         return;
     }

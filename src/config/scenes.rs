@@ -208,6 +208,78 @@ pub fn resolve_scene<'a>(
         })
 }
 
+/// What a new scene's filename binds to. The four tiers mirror
+/// [`resolve_scene`]: a uid stem wins for that room, a text stem matches
+/// the room title then the mapdb location, and "default" is the fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SceneBinding {
+    /// Stem leads with the room uid; the rest is human garnish.
+    RoomUid,
+    /// Stem text-matches the room title (sanitized, case-insensitive).
+    RoomTitle,
+    /// Stem text-matches the mapdb location.
+    Location,
+    /// The literal "default" fallback scene.
+    Default,
+}
+
+/// Compose a scene filename stem from explicit binding inputs — the
+/// standalone-Studio path, where no fabricated room state exists. Returns
+/// the stem or a human-readable rejection. The result always passes
+/// [`StageScene::path`]'s rules and resolves through [`resolve_scene`] to
+/// the intended tier:
+/// - `RoomUid`: `uid_text` must parse to a positive integer; `text` is
+///   optional garnish appended after " - ".
+/// - `RoomTitle`/`Location`: `text` sanitizes to a nonempty stem that does
+///   NOT lead with a digit (leading digits would rebind it as a uid stem).
+/// - `Default`: the literal "default"; inputs are ignored.
+pub fn compose_stem(
+    binding: SceneBinding,
+    uid_text: &str,
+    text: &str,
+) -> Result<String, String> {
+    let stem = match binding {
+        SceneBinding::Default => "default".to_string(),
+        SceneBinding::RoomUid => {
+            let uid: i64 = uid_text
+                .trim()
+                .parse()
+                .map_err(|_| format!("room uid '{}' is not a number", uid_text.trim()))?;
+            if uid <= 0 {
+                return Err(format!("room uid {uid} must be positive"));
+            }
+            let garnish = filename_stem(text);
+            if garnish.is_empty() {
+                uid.to_string()
+            } else {
+                format!("{uid}_-_{garnish}")
+            }
+        }
+        SceneBinding::RoomTitle | SceneBinding::Location => {
+            let stem = filename_stem(text);
+            if stem.is_empty() {
+                return Err("name is empty after removing filename-illegal characters".into());
+            }
+            if stem.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                return Err(format!(
+                    "'{stem}' starts with a digit — it would bind room uid {} instead; \
+                     add a leading word or use a room-uid binding",
+                    stem_uid(&stem).unwrap_or_default()
+                ));
+            }
+            stem
+        }
+    };
+    // Belt and braces: the stem must satisfy the path rules too.
+    StageScene::path(&stem).map_err(|err| err.to_string())?;
+    Ok(stem)
+}
+
+/// Whether a scene file already exists for this stem (replace vs create).
+pub fn scene_exists(stem: &str) -> bool {
+    StageScene::path(stem).map(|p| p.exists()).unwrap_or(false)
+}
+
 /// Saved scene names (file stems), sorted. A missing folder is an empty
 /// list, not an error.
 pub fn list_scenes() -> Vec<String> {
@@ -299,6 +371,75 @@ mod tests {
         assert!(StageScene::path("  ").is_err());
 
         std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    #[test]
+    fn compose_stem_binds_each_tier_without_a_game_connection() {
+        use SceneBinding::*;
+        // From an empty scenes dir, create + reload room/location/default
+        // scenes with nothing but typed inputs.
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+        assert!(list_scenes().is_empty());
+
+        let room = compose_stem(RoomUid, "47009", "Kitchen Garden").unwrap();
+        assert_eq!(room, "47009_-_Kitchen_Garden");
+        let title = compose_stem(RoomTitle, "", "Barley Field").unwrap();
+        assert_eq!(title, "Barley_Field");
+        let location = compose_stem(Location, "", "Wehnimer's Landing").unwrap();
+        let default = compose_stem(Default, "ignored", "ignored").unwrap();
+        assert_eq!(default, "default");
+
+        for stem in [&room, &title, &location, &default] {
+            assert!(!scene_exists(stem));
+            StageScene::default().save(stem).unwrap();
+            assert!(scene_exists(stem));
+            StageScene::load(stem).unwrap();
+        }
+
+        // Each filename resolves to the intended room facts.
+        let names = list_scenes();
+        assert_eq!(
+            resolve_scene(&names, Some(47009), None, None),
+            Some(room.as_str())
+        );
+        assert_eq!(
+            resolve_scene(&names, None, Some("Barley Field"), None),
+            Some(title.as_str())
+        );
+        assert_eq!(
+            resolve_scene(&names, None, Some("Elsewhere"), Some("Wehnimer's Landing")),
+            Some(location.as_str())
+        );
+        assert_eq!(resolve_scene(&names, None, None, None), Some("default"));
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    #[test]
+    fn compose_stem_rejects_unsafe_and_ambiguous_names() {
+        use SceneBinding::*;
+        // Non-numeric / non-positive uids.
+        assert!(compose_stem(RoomUid, "", "x").is_err());
+        assert!(compose_stem(RoomUid, "abc", "x").is_err());
+        assert!(compose_stem(RoomUid, "-3", "x").is_err());
+        assert!(compose_stem(RoomUid, "0", "x").is_err());
+        // Uid garnish with path separators is stripped, never traversed.
+        let stem = compose_stem(RoomUid, "12", "a/b\\c").unwrap();
+        assert!(!stem.contains(['/', '\\']));
+        // Text names that vanish under sanitization.
+        assert!(compose_stem(RoomTitle, "", "").is_err());
+        assert!(compose_stem(RoomTitle, "", "  /\\:  ").is_err());
+        // Digit-leading text would silently rebind as a uid stem.
+        assert!(compose_stem(RoomTitle, "", "42nd Street").is_err());
+        assert!(compose_stem(Location, "", "7 Hills").is_err());
+        // Sanitized survivors still pass the path rules.
+        let stem = compose_stem(RoomTitle, "", "Sewers: Junction \"North\"").unwrap();
+        assert!(StageScene::path(&stem).is_ok());
+        assert_eq!(matchable(&stem), matchable("Sewers: Junction \"North\""));
     }
 
     #[test]

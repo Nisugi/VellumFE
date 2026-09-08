@@ -19,6 +19,84 @@ use super::skin;
 /// Oldest status lines drop past this.
 const STATUS_CAP: usize = 50;
 
+/// Room facts handed over when the client launches Studio — prefill for
+/// the new-scene inputs, never applied to anything on its own. Standalone
+/// Studio runs with `None` everywhere and stays fully usable.
+#[derive(Debug, Clone, Default)]
+pub struct StudioRoomContext {
+    pub uid: Option<i64>,
+    pub title: Option<String>,
+    pub location: Option<String>,
+}
+
+impl StudioRoomContext {
+    fn is_empty(&self) -> bool {
+        self.uid.is_none() && self.title.is_none() && self.location.is_none()
+    }
+}
+
+/// New-scene naming state: an explicit binding choice plus typed inputs,
+/// composed into a filename stem through the scene path rules and
+/// previewed BEFORE anything is saved. egui-free so tests drive it.
+struct NewSceneState {
+    binding: crate::config::scenes::SceneBinding,
+    /// Room uid input (RoomUid binding), typed or prefilled.
+    uid_text: String,
+    /// Name input: uid garnish for RoomUid, the matched text otherwise.
+    text: String,
+    /// Launch-time room facts, kept so switching bindings can re-prefill.
+    context: StudioRoomContext,
+}
+
+impl NewSceneState {
+    /// Prefill the INPUTS from the room context (uid binding when a uid is
+    /// known, else title, else location, else default). Only inputs: the
+    /// loaded scene and its name are untouched, so launching with room
+    /// context never silently overwrites a saved scene.
+    fn new(context: StudioRoomContext) -> Self {
+        use crate::config::scenes::SceneBinding;
+        let binding = if context.uid.is_some() {
+            SceneBinding::RoomUid
+        } else if context.title.is_some() {
+            SceneBinding::RoomTitle
+        } else if context.location.is_some() {
+            SceneBinding::Location
+        } else {
+            SceneBinding::Default
+        };
+        let mut state = Self {
+            binding,
+            uid_text: String::new(),
+            text: String::new(),
+            context,
+        };
+        state.prefill_inputs();
+        state
+    }
+
+    /// Seed the inputs for the current binding from the room context.
+    fn prefill_inputs(&mut self) {
+        use crate::config::scenes::SceneBinding;
+        self.uid_text = self
+            .context
+            .uid
+            .map(|u| u.to_string())
+            .unwrap_or_default();
+        self.text = match self.binding {
+            SceneBinding::RoomUid | SceneBinding::RoomTitle => {
+                self.context.title.clone().unwrap_or_default()
+            }
+            SceneBinding::Location => self.context.location.clone().unwrap_or_default(),
+            SceneBinding::Default => String::new(),
+        };
+    }
+
+    /// The filename stem these inputs compose to, or why they don't.
+    fn preview(&self) -> Result<String, String> {
+        crate::config::scenes::compose_stem(self.binding, &self.uid_text, &self.text)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StudioMode {
     Anchorer,
@@ -46,6 +124,8 @@ pub struct StudioApp {
     styled: bool,
     /// Built lazily on first Stage entry (AppCore::new is FS-only here).
     stage: Option<StageState>,
+    /// Room facts from the launching client (new-scene prefill only).
+    room_context: StudioRoomContext,
 }
 
 /// One castable pool-art entry: a base image's token, humanized.
@@ -87,23 +167,37 @@ struct StageState {
     /// re-points the Arc on every edit, so pointer identity is the dirty
     /// bit — sidecars are only re-read when the scene actually changed).
     obstacle_scene: Option<std::sync::Arc<crate::config::scenes::StageScene>>,
-    /// Params the obstacles were projected with (camera drags move the
-    /// spans too).
-    obstacle_params: Option<crate::core::creature_cards::solver::FieldParams>,
     /// Props-section request to open the scenery calibrator (hosted by
     /// StudioApp, which owns the calibrator states).
     open_scenery_cal: bool,
     /// Status lines raised inside panel closures, drained by stage_ui.
     pending_status: Vec<String>,
+    /// New-scene naming inputs (manual binding + name, room prefill).
+    new_scene: NewSceneState,
 }
 
 /// Fabricated layout window carrying the Stage's grid/order toggles.
 const STAGE_WINDOW: &str = "studio-stage";
 
 impl StageState {
-    fn new() -> anyhow::Result<Self> {
+    fn new(context: StudioRoomContext) -> anyhow::Result<Self> {
         let config = crate::config::Config::load()?;
         let mut app_core = AppCore::new(config)?;
+        // Launch context wins; a fabricated AppCore that somehow carries
+        // room facts (it never does standalone) is the fallback.
+        let context = if context.is_empty() {
+            StudioRoomContext {
+                uid: app_core
+                    .nav_room_id
+                    .as_deref()
+                    .and_then(|s| s.trim().parse::<i64>().ok())
+                    .filter(|&u| u != 0),
+                title: app_core.current_room_title(),
+                location: app_core.current_room_scope().location,
+            }
+        } else {
+            context
+        };
         // In-memory only: the def carries show_grid/show_order for the
         // renderer's per-window lookup. Never saved.
         if let Some(mut def) = crate::core::local_catalog::seed("creaturefield") {
@@ -127,21 +221,19 @@ impl StageState {
             selected_prop: None,
             dragging_creature: None,
             obstacle_scene: None,
-            obstacle_params: None,
             open_scenery_cal: false,
             pending_status: Vec::new(),
+            new_scene: NewSceneState::new(context),
         })
     }
 
+    /// Mark the roster dirty. The actual sync runs in `stage_ui`'s frame
+    /// pass AFTER art prep (finding 8: a spawned creature's standing and
+    /// prone calibration must reach the geometry store before the solver
+    /// commits its placement), so a spawn lands one frame later with its
+    /// true envelope instead of immediately with a fallback guess.
     fn resync(&mut self) {
         self.app_core.game_state.room_creatures_generation += 1;
-        crate::core::creature_cards::sync_field(
-            &mut self.app_core.creature_field,
-            &mut self.app_core.creature_field_synced_gen,
-            &self.app_core.game_state,
-            &[],
-        );
-        self.refresh_mounts();
     }
 
     /// First flagged rider pairs with first flagged mount; changes tear
@@ -249,7 +341,7 @@ impl StageState {
     }
 
     /// Art wanted for the current roster — same recipe as the game's
-    /// update loop (family from the bestiary, prone + wounds from flags).
+    /// update loop (family from the bestiary, wounds from flags; prone art always loads so envelopes are known up front).
     fn wanted_art(&self) -> Vec<super::skin::WantedCreature> {
         self.app_core
             .game_state
@@ -264,7 +356,6 @@ impl StageState {
                     name: c.name.clone(),
                     noun: c.noun.clone(),
                     family,
-                    prone: c.flags.as_ref().is_some_and(|f| f.has_flag("prone")),
                     injuries: c
                         .flags
                         .as_ref()
@@ -295,79 +386,118 @@ impl StageState {
             if !self.scene_name.trim().is_empty() && ui.button("Save").clicked() {
                 self.save_current_scene();
             }
-            ui.menu_button("New…", |ui| {
-                let uid = self
-                    .app_core
-                    .nav_room_id
-                    .as_deref()
-                    .and_then(|s| s.trim().parse::<i64>().ok())
-                    .filter(|&u| u != 0);
-                let title = self.app_core.current_room_title();
-                let location = self.app_core.current_room_scope().location;
-                let mut target: Option<String> = None;
-                match (uid, &title) {
-                    (Some(uid), Some(title)) => {
-                        let stem = scenes::filename_stem(&format!("{uid} - {title}"));
-                        if ui
-                            .button(format!("This room ({})", scenes::display_name(&stem)))
-                            .clicked()
-                        {
-                            target = Some(stem);
-                        }
-                    }
-                    (Some(uid), None) => {
-                        if ui.button(format!("This room ({uid})")).clicked() {
-                            target = Some(uid.to_string());
-                        }
-                    }
-                    _ => {
-                        ui.weak("(no room id yet — connect and move once)");
-                    }
-                }
-                match &title {
-                    Some(title) => {
-                        let stem = scenes::filename_stem(title);
-                        if ui
-                            .button(format!("Room name ({})", scenes::display_name(&stem)))
-                            .clicked()
-                        {
-                            target = Some(stem);
-                        }
-                    }
-                    None => {
-                        ui.weak("(no room title yet)");
-                    }
-                }
-                match &location {
-                    Some(location) if !location.trim().is_empty() => {
-                        let stem = scenes::filename_stem(location);
-                        if ui
-                            .button(format!("Location ({})", scenes::display_name(&stem)))
-                            .clicked()
-                        {
-                            target = Some(stem);
-                        }
-                    }
-                    _ => {
-                        ui.weak("(room not in the mapdb — no location)");
-                    }
-                }
-                if ui.button("Default (fallback scene)").clicked() {
-                    target = Some("default".to_string());
-                }
-                if let Some(stem) = target {
-                    // Save-as semantics: the stage contents carry over so a
-                    // tuned stage can be captured for the room you're in.
-                    self.scene_name = stem;
-                    ui.close();
-                }
-            });
             if ui.button("Clear stage scene").clicked() {
                 self.scene = Arc::new(StageScene::default());
                 self.scene_name.clear();
                 self.selected_prop = None;
             }
         });
+        // New-scene naming: explicit binding + typed name, previewed and
+        // validated before it becomes the save target. Room facts (when
+        // Studio was launched from the client) only PREFILL the inputs.
+        egui::CollapsingHeader::new("New scene…")
+            .default_open(false)
+            .show(ui, |ui| {
+                use crate::config::scenes::SceneBinding;
+                let ns = &mut self.new_scene;
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Bind by");
+                    for (binding, label) in [
+                        (SceneBinding::RoomUid, "Room uid"),
+                        (SceneBinding::RoomTitle, "Room title"),
+                        (SceneBinding::Location, "Location"),
+                        (SceneBinding::Default, "Default"),
+                    ] {
+                        if ui
+                            .selectable_label(ns.binding == binding, label)
+                            .clicked()
+                            && ns.binding != binding
+                        {
+                            ns.binding = binding;
+                            ns.prefill_inputs();
+                        }
+                    }
+                });
+                match ns.binding {
+                    SceneBinding::RoomUid => {
+                        ui.horizontal(|ui| {
+                            ui.label("Room uid");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut ns.uid_text)
+                                    .hint_text("e.g. 47009")
+                                    .desired_width(80.0),
+                            );
+                            ui.label("garnish");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut ns.text)
+                                    .hint_text("optional room name")
+                                    .desired_width(160.0),
+                            );
+                        });
+                    }
+                    SceneBinding::RoomTitle | SceneBinding::Location => {
+                        ui.horizontal(|ui| {
+                            ui.label(if ns.binding == SceneBinding::RoomTitle {
+                                "Room title"
+                            } else {
+                                "Location"
+                            });
+                            ui.add(
+                                egui::TextEdit::singleline(&mut ns.text)
+                                    .hint_text("exact in-game text")
+                                    .desired_width(220.0),
+                            );
+                        });
+                    }
+                    SceneBinding::Default => {
+                        ui.weak("The fallback scene every unbound room uses.");
+                    }
+                }
+                match ns.preview() {
+                    Ok(stem) => {
+                        ui.label(format!("File: global/scenes/{stem}.toml"));
+                        let exists = scenes::scene_exists(&stem);
+                        let mut adopt = false;
+                        let mut load_existing = false;
+                        if exists {
+                            ui.colored_label(
+                                ui.visuals().warn_fg_color,
+                                format!(
+                                    "Scene '{}' already exists — Save will REPLACE it.",
+                                    scenes::display_name(&stem)
+                                ),
+                            );
+                            ui.horizontal(|ui| {
+                                adopt = ui
+                                    .button("Use name (replace on save)")
+                                    .on_hover_text(
+                                        "The stage carries over; the next Save overwrites \
+                                         the existing scene file",
+                                    )
+                                    .clicked();
+                                load_existing = ui
+                                    .button("Load existing instead")
+                                    .clicked();
+                            });
+                        } else {
+                            adopt = ui
+                                .button("Use name (save-as)")
+                                .on_hover_text(
+                                    "The stage carries over; Save writes a new scene file",
+                                )
+                                .clicked();
+                        }
+                        if adopt {
+                            self.scene_name = stem;
+                        } else if load_existing {
+                            self.load_scene_by_name(&stem);
+                        }
+                    }
+                    Err(err) => {
+                        ui.colored_label(ui.visuals().error_fg_color, err);
+                    }
+                }
+            });
         let saved = scenes::list_scenes();
         if !saved.is_empty() {
             ui.horizontal(|ui| {
@@ -564,6 +694,16 @@ impl StageState {
         if name.is_empty() {
             return;
         }
+        // Validate before serialization with the same limits loading uses:
+        // whatever previews is exactly what a reload will produce.
+        {
+            let fallback = FieldParams::default();
+            let live = &mut self.app_core.creature_field.params;
+            if live.sanitize_camera(&fallback) {
+                self.pending_status
+                    .push("Camera values clamped to valid range before save".to_string());
+            }
+        }
         let params = self.app_core.creature_field.params.clone();
         let mut base = FieldParams::default();
         if crate::config::scenes::matchable(&name) != "default" {
@@ -701,36 +841,103 @@ impl StageState {
             ui.separator();
             ui.heading("Camera");
             // Studio-only tuning; the game never mutates live params.
-            let params = &mut self.app_core.creature_field.params;
-            egui::Grid::new("stage_camera").num_columns(2).show(ui, |ui| {
-                ui.label("focal");
-                ui.add(egui::DragValue::new(&mut params.focal).speed(2.0));
-                ui.end_row();
-                ui.label("cam_h");
-                ui.add(egui::DragValue::new(&mut params.cam_h).speed(0.02));
-                ui.end_row();
-                ui.label("z0");
-                ui.add(egui::DragValue::new(&mut params.z0).speed(0.02));
-                ui.end_row();
-                ui.label("dz");
-                ui.add(egui::DragValue::new(&mut params.dz).speed(0.02));
-                ui.end_row();
-                ui.label("horizon");
-                ui.add(egui::DragValue::new(&mut params.horizon).speed(1.0));
-                ui.end_row();
-                ui.label("cell_w");
-                ui.add(egui::DragValue::new(&mut params.cell_w).speed(0.01));
-                ui.end_row();
-            });
-            if ui.button("Reset camera").clicked() {
-                let default = crate::core::creature_cards::solver::FieldParams::default();
-                params.focal = default.focal;
-                params.cam_h = default.cam_h;
-                params.z0 = default.z0;
-                params.dz = default.dz;
-                params.horizon = default.horizon;
-                params.cell_w = default.cell_w;
+            // Edits share the loader's bounds (`camera_limits`): the drags
+            // are ranged AND the whole camera re-sanitizes after every
+            // frame's edits, so a value that would reload differently (or
+            // a typed NaN) never reaches the renderer or a saved scene.
+            {
+                use crate::core::creature_cards::solver::camera_limits::*;
+                let params = &mut self.app_core.creature_field.params;
+                let before = params.clone();
+                egui::Grid::new("stage_camera").num_columns(2).show(ui, |ui| {
+                    ui.label("focal");
+                    ui.add(
+                        egui::DragValue::new(&mut params.focal)
+                            .speed(2.0)
+                            .range(FOCAL.0..=FOCAL.1),
+                    );
+                    ui.end_row();
+                    ui.label("cam_h");
+                    ui.add(
+                        egui::DragValue::new(&mut params.cam_h)
+                            .speed(0.02)
+                            .range(EYE_HEIGHT.0..=EYE_HEIGHT.1),
+                    );
+                    ui.end_row();
+                    ui.label("z0");
+                    ui.add(
+                        egui::DragValue::new(&mut params.z0)
+                            .speed(0.02)
+                            .range(NEAR_DEPTH.0..=NEAR_DEPTH.1),
+                    );
+                    ui.end_row();
+                    ui.label("dz");
+                    ui.add(
+                        egui::DragValue::new(&mut params.dz)
+                            .speed(0.02)
+                            .range(ROW_DEPTH.0..=ROW_DEPTH.1),
+                    );
+                    ui.end_row();
+                    ui.label("horizon");
+                    ui.add(
+                        egui::DragValue::new(&mut params.horizon)
+                            .speed(1.0)
+                            .range(HORIZON.0..=HORIZON.1),
+                    );
+                    ui.end_row();
+                    ui.label("cell_w");
+                    ui.add(
+                        egui::DragValue::new(&mut params.cell_w)
+                            .speed(0.01)
+                            .range(CELL_WIDTH.0..=CELL_WIDTH.1),
+                    );
+                    ui.end_row();
+                });
+                params.sanitize_camera(&before);
             }
+            ui.horizontal_wrapped(|ui| {
+                // Reset semantics are explicit: built-in solver defaults,
+                // or the values this scene would INHERIT from the default
+                // scene layer (only offered for a non-default scene).
+                let mut reset_to: Option<
+                    crate::core::creature_cards::solver::FieldParams,
+                > = None;
+                if ui
+                    .button("Reset camera (built-in)")
+                    .on_hover_text("The solver's built-in default camera")
+                    .clicked()
+                {
+                    reset_to = Some(Default::default());
+                }
+                let name = self.scene_name.trim();
+                if !name.is_empty()
+                    && crate::config::scenes::matchable(name) != "default"
+                    && ui
+                        .button("Reset camera (inherited)")
+                        .on_hover_text(
+                            "The camera this scene inherits from the default \
+                             scene layer — what unpinned keys resolve to",
+                        )
+                        .clicked()
+                {
+                    let mut base: crate::core::creature_cards::solver::FieldParams =
+                        Default::default();
+                    if let Some(default_scene) = load_default_scene(Some(name)) {
+                        base.apply_camera(&default_scene.camera);
+                    }
+                    reset_to = Some(base);
+                }
+                if let Some(base) = reset_to {
+                    let params = &mut self.app_core.creature_field.params;
+                    params.focal = base.focal;
+                    params.cam_h = base.cam_h;
+                    params.z0 = base.z0;
+                    params.dz = base.dz;
+                    params.horizon = base.horizon;
+                    params.cell_w = base.cell_w;
+                }
+            });
+            let params = &mut self.app_core.creature_field.params;
 
             ui.separator();
             ui.checkbox(&mut self.show_solver_tuning, "Show solver tuning (testing)");
@@ -1072,6 +1279,7 @@ impl Default for StudioApp {
             status: Vec::new(),
             styled: false,
             stage: None,
+            room_context: StudioRoomContext::default(),
         }
     }
 }
@@ -1186,7 +1394,7 @@ impl StudioApp {
 
     fn stage_ui(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         if self.stage.is_none() {
-            match StageState::new() {
+            match StageState::new(self.room_context.clone()) {
                 Ok(stage) => {
                     self.push_status(format!("Stage ready: {} castable bases", stage.cast.len()));
                     self.stage = Some(stage);
@@ -1204,34 +1412,37 @@ impl StudioApp {
             return;
         };
         // Scene edits re-point the Arc (make_mut); rebuild the solver's
-        // prop exclusion spans only then.
+        // AUTHORED exclusion metadata only then. Camera edits need no
+        // rebuild at all any more — the solver projects the spans with
+        // whatever the current geometry is, per placement decision.
         let scene_changed = stage
             .obstacle_scene
             .as_ref()
             .is_none_or(|prev| !std::sync::Arc::ptr_eq(prev, &stage.scene));
-        let params_changed = stage.obstacle_params.as_ref()
-            != Some(&stage.app_core.creature_field.params);
-        if scene_changed || params_changed {
-            let obstacles = crate::core::creature_cards::scene_obstacles(
-                Some(&stage.scene),
-                &stage.app_core.creature_field,
-            );
+        if scene_changed {
+            let obstacles =
+                crate::core::creature_cards::scene_obstacles(Some(&stage.scene));
             stage.app_core.creature_field.set_obstacles(obstacles);
             stage.obstacle_scene = Some(stage.scene.clone());
-            stage.obstacle_params = Some(stage.app_core.creature_field.params.clone());
         }
-        // Roster sync is generation-gated (cheap when unchanged); art prep
-        // is cached, so a settled stage costs a few hash lookups.
-        crate::core::creature_cards::sync_field(
-            &mut stage.app_core.creature_field,
-            &mut stage.app_core.creature_field_synced_gen,
-            &stage.app_core.game_state,
-            &[],
-        );
+        // Art prep FIRST, roster sync second (finding 8): preparing the
+        // roster's art feeds standing + prone calibration into the core
+        // geometry store, so the sync's initial placements reserve true
+        // envelopes instead of fallback guesses that recalibrate would
+        // have to reconcile a frame later. Both are cached/generation-
+        // gated, so a settled stage costs a few hash lookups.
         let wanted = stage.wanted_art();
         if !wanted.is_empty() {
             self.skin_state.prepare_creature_art(ctx, &wanted);
         }
+        crate::core::creature_cards::sync_field(
+            &mut stage.app_core.creature_field,
+            &mut stage.app_core.creature_field_synced_gen,
+            &mut stage.app_core.creature_field_synced_cal,
+            &stage.app_core.game_state,
+            &[],
+        );
+        stage.refresh_mounts();
         self.skin_state.prepare_scene_art(ctx, &stage.scene);
         let art = self.skin_state.creature_art();
         egui::Panel::right("stage_panel")
@@ -1388,8 +1599,146 @@ fn sparse_solver(
     }
 }
 
-/// Boot the Studio window.
-pub fn run_studio() -> anyhow::Result<()> {
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::scenes::{self, SceneBinding};
+
+    #[test]
+    fn new_scene_prefill_fills_inputs_and_never_touches_saved_scenes() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+
+        // A saved scene for the room the client is standing in.
+        let saved = scenes::StageScene {
+            background: Some("scenes/desert.png".into()),
+            ..Default::default()
+        };
+        saved.save("47009_-_Kitchen_Garden").unwrap();
+        let on_disk = std::fs::read_to_string(
+            scenes::StageScene::path("47009_-_Kitchen_Garden").unwrap(),
+        )
+        .unwrap();
+
+        let state = NewSceneState::new(StudioRoomContext {
+            uid: Some(47009),
+            title: Some("Kitchen Garden".into()),
+            location: Some("Castle Anwyn".into()),
+        });
+        // Prefill picked the uid binding and seeded the inputs.
+        assert_eq!(state.binding, SceneBinding::RoomUid);
+        assert_eq!(state.uid_text, "47009");
+        assert_eq!(state.text, "Kitchen Garden");
+        // The preview names the EXISTING scene, flagged as a replace...
+        let stem = state.preview().unwrap();
+        assert_eq!(stem, "47009_-_Kitchen_Garden");
+        assert!(scenes::scene_exists(&stem));
+        // ...and nothing was written: prefill never silently overwrites.
+        let after = std::fs::read_to_string(
+            scenes::StageScene::path("47009_-_Kitchen_Garden").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(on_disk, after);
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    #[test]
+    fn new_scene_standalone_defaults_and_rebinding_reprefills() {
+        // Standalone (no context): default binding, empty inputs, valid
+        // "default" preview out of the box.
+        let mut state = NewSceneState::new(StudioRoomContext::default());
+        assert_eq!(state.binding, SceneBinding::Default);
+        assert_eq!(state.preview().unwrap(), "default");
+        // Typed inputs compose without any game connection.
+        state.binding = SceneBinding::RoomTitle;
+        state.text = "Barley Field".into();
+        assert_eq!(state.preview().unwrap(), "Barley_Field");
+        state.binding = SceneBinding::RoomUid;
+        state.uid_text = "12".into();
+        state.text.clear();
+        assert_eq!(state.preview().unwrap(), "12");
+        // Unsafe input is rejected at preview, before any save exists.
+        state.uid_text = "../evil".into();
+        assert!(state.preview().is_err());
+        // Context-driven rebinding re-prefills the matching input.
+        let mut state = NewSceneState::new(StudioRoomContext {
+            uid: None,
+            title: Some("Barley Field".into()),
+            location: Some("Wehnimer's Landing".into()),
+        });
+        assert_eq!(state.binding, SceneBinding::RoomTitle);
+        assert_eq!(state.text, "Barley Field");
+        state.binding = SceneBinding::Location;
+        state.prefill_inputs();
+        assert_eq!(state.text, "Wehnimer's Landing");
+    }
+
+    #[test]
+    fn camera_saves_reproduce_valid_effective_params() {
+        use crate::core::creature_cards::solver::FieldParams;
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+
+        // Standalone default scene: an out-of-range transient (focal=20)
+        // sanitizes to the loader's bound BEFORE serialization, so the
+        // save reproduces exactly what previewed.
+        let mut params = FieldParams::default();
+        params.focal = 20.0;
+        params.horizon = 160.0;
+        assert!(params.sanitize_camera(&FieldParams::default()));
+        assert_eq!(params.focal, 60.0, "previewed value = loader's clamp");
+        let mut default_scene = scenes::StageScene::default();
+        default_scene.camera = sparse_camera(&params, &FieldParams::default());
+        default_scene.save("default").unwrap();
+        let loaded_default = scenes::StageScene::load("default").unwrap();
+        let resolved = crate::core::creature_cards::resolve_field_params(
+            None,
+            Some(&loaded_default),
+            None,
+            &crate::config::creature_field::FieldOverrides::default(),
+        );
+        assert_eq!(resolved.focal, params.focal);
+        assert_eq!(resolved.horizon, 160.0);
+
+        // Room scene over the default-scene layer: nonfinite transient
+        // falls back to the inherited value; sparse save pins only what
+        // differs, and the layered reload reproduces the effective params.
+        let mut base = FieldParams::default();
+        base.apply_camera(&loaded_default.camera);
+        let mut room_params = base.clone();
+        room_params.cam_h = f32::NAN; // invalid transient edit
+        assert!(room_params.sanitize_camera(&base));
+        assert_eq!(room_params.cam_h, base.cam_h, "NaN never reaches params");
+        room_params.focal = 300.0;
+        let mut room = scenes::StageScene::default();
+        room.camera = sparse_camera(&room_params, &base);
+        assert!(room.camera.horizon.is_none(), "inherited keys stay sparse");
+        room.save("Barley_Field").unwrap();
+        let loaded_room = scenes::StageScene::load("Barley_Field").unwrap();
+        let resolved = crate::core::creature_cards::resolve_field_params(
+            Some(&loaded_default),
+            Some(&loaded_room),
+            None,
+            &crate::config::creature_field::FieldOverrides::default(),
+        );
+        assert_eq!(resolved.focal, 300.0);
+        assert_eq!(resolved.horizon, 160.0, "unpinned key inherits live");
+        assert_eq!(resolved.cam_h, base.cam_h);
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+}
+
+/// Boot the Studio window. `context` carries the launching client's room
+/// facts (new-scene prefill); standalone launches pass `None`.
+pub fn run_studio(context: Option<StudioRoomContext>) -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Vellum Studio")
@@ -1397,10 +1746,16 @@ pub fn run_studio() -> anyhow::Result<()> {
             .with_min_inner_size([720.0, 480.0]),
         ..Default::default()
     };
+    let context = context.unwrap_or_default();
     eframe::run_native(
         "Vellum Studio",
         options,
-        Box::new(|_cc| Ok(Box::new(StudioApp::default()))),
+        Box::new(move |_cc| {
+            Ok(Box::new(StudioApp {
+                room_context: context,
+                ..Default::default()
+            }))
+        }),
     )
     .map_err(|err| anyhow!("Failed to run Vellum Studio: {}", err))
 }

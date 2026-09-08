@@ -103,6 +103,8 @@ pub struct AppCore {
     pub creature_field: crate::core::creature_cards::solver::CreatureField,
     /// Roster generation the field was last synced against.
     pub creature_field_synced_gen: u64,
+    /// Geometry-calibration revision the field was last synced against.
+    pub creature_field_synced_cal: u64,
     /// Creature-field stage scene state; documented in `state/stage_scene.rs`.
     pub stage_scene: Option<std::sync::Arc<crate::config::scenes::StageScene>>,
     pub stage_scene_name: Option<String>,
@@ -521,6 +523,7 @@ impl AppCore {
             last_link_click_pos: None,
             creature_field: Default::default(),
             creature_field_synced_gen: 0,
+            creature_field_synced_cal: 0,
             stage_scene: None,
             stage_scene_name: None,
             default_stage_scene: None,
@@ -732,6 +735,7 @@ impl AppCore {
             last_link_click_pos: None,
             creature_field: Default::default(),
             creature_field_synced_gen: 0,
+            creature_field_synced_cal: 0,
             stage_scene: None,
             stage_scene_name: None,
             default_stage_scene: None,
@@ -1054,6 +1058,7 @@ impl AppCore {
         crate::core::creature_cards::sync_field(
             &mut self.creature_field,
             &mut self.creature_field_synced_gen,
+            &mut self.creature_field_synced_cal,
             &self.game_state,
             &self.config.target_list.excluded_nouns,
         );
