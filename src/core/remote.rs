@@ -77,6 +77,8 @@ pub struct RemoteMacroButton {
     pub id: String,
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub hotkey: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     pub confirm: bool,
     /// Type-in button: the client inserts `command` into its input box
@@ -305,6 +307,7 @@ impl RemoteMacros {
                     .collect(),
                 id,
                 label: button.label.clone(),
+                hotkey: button.hotkey.clone(),
                 color: button.color.clone(),
                 confirm: button.confirm,
                 insert: button.insert,
@@ -757,6 +760,7 @@ pub enum RemoteEvent {
         /// Target rail group by name; None = floating.
         group: Option<String>,
         label: String,
+        hotkey: Option<String>,
         /// Empty when the button is a menu (options-only) button.
         command: String,
         color: Option<String>,

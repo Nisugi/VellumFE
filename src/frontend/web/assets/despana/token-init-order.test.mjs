@@ -27,6 +27,7 @@ function makeClassList() {
 const documentRef = { current: null };
 
 function makeStubElement(id = "") {
+  const formFields = new Map();
   const el = {
     id,
     get ownerDocument() { return documentRef.current; },
@@ -36,6 +37,14 @@ function makeStubElement(id = "") {
     textContent: "",
     innerHTML: "",
     disabled: false,
+    open: false,
+    checked: false,
+    elements: {
+      namedItem(name) {
+        if (!formFields.has(name)) formFields.set(name, makeStubElement(name));
+        return formFields.get(name);
+      },
+    },
     scrollTop: 0,
     scrollHeight: 0,
     clientHeight: 0,
@@ -55,6 +64,9 @@ function makeStubElement(id = "") {
     removeAttribute() {},
     getAttribute: () => null,
     appendChild(child) { return child; },
+    append() {},
+    showModal() { this.open = true; },
+    close() { this.open = false; },
     removeChild(child) { return child; },
     replaceChildren() {},
     contains: () => false,

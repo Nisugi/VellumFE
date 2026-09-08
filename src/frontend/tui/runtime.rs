@@ -728,6 +728,7 @@ async fn async_run(
                     crate::core::remote::RemoteEvent::MacroSave {
                         group,
                         label,
+                        hotkey,
                         command,
                         color,
                         confirm,
@@ -738,6 +739,7 @@ async fn async_run(
                     } => {
                         let button = crate::config::MacroButton {
                             label,
+                            hotkey,
                             // A client-action button carries no game command.
                             command: Some(command)
                                 .filter(|c| !c.is_empty())

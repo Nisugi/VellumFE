@@ -2008,7 +2008,7 @@ async fn macro_save_and_delete_arrive_as_events() {
 
     client
         .send_text(
-            r##"{"t":"macro_save","d":{"group":"Couch","label":"Nap","command":"sleep","color":"#d9b44f","confirm":true,"original":{"group":null,"label":"Old nap"}}}"##,
+            r##"{"t":"macro_save","d":{"group":"Couch","label":"Nap","hotkey":"f7","command":"sleep","color":"#d9b44f","confirm":true,"original":{"group":null,"label":"Old nap"}}}"##,
         )
         .await;
     let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
@@ -2018,6 +2018,7 @@ async fn macro_save_and_delete_arrive_as_events() {
     let RemoteEvent::MacroSave {
         group,
         label,
+        hotkey,
         command,
         color,
         confirm,
@@ -2031,6 +2032,7 @@ async fn macro_save_and_delete_arrive_as_events() {
     };
     assert_eq!(group.as_deref(), Some("Couch"));
     assert_eq!(label, "Nap");
+    assert_eq!(hotkey.as_deref(), Some("f7"));
     assert_eq!(command, "sleep");
     assert_eq!(color.as_deref(), Some("#d9b44f"));
     assert!(confirm);

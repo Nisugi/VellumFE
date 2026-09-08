@@ -570,6 +570,7 @@ function initialSlices() {
     inventory: Object.freeze([]),
     inventoryReceived: false,
     inventoryTree: null,
+    macros: null,
     injuries: Object.freeze({}),
     doll: normalizeDoll(null),
     targets: Object.freeze([]),
@@ -778,6 +779,19 @@ export class DesktopSession {
         kind: "command",
         label: intent.text,
       });
+    } else if (kind === "macro") {
+      if (typeof intent.id !== "string" || !/^(g:\d+:b:\d+|f:\d+)(:o:\d+)?$/.test(intent.id)) {
+        throw new DesktopSessionError("intent", "macro id is malformed");
+      }
+      id = `macro-${++this._dispatchId}`;
+      frame = { t: "macro", d: { id: intent.id } };
+      unconfirmedDispatch = Object.freeze({ id, kind: "action", label: intent.label || "macro" });
+    } else if (kind === "macro-save" || kind === "macro-delete") {
+      if (!isRecord(intent.data) || typeof intent.data.label !== "string" || !intent.data.label.trim()) {
+        throw new DesktopSessionError("intent", "macro edit is malformed");
+      }
+      id = `macro-edit-${++this._dispatchId}`;
+      frame = { t: kind === "macro-save" ? "macro_save" : "macro_delete", d: intent.data };
     } else if (kind === "link-tap") {
       const link = intent.link;
       if (
@@ -1134,6 +1148,15 @@ export class DesktopSession {
   }
 
   _handleDelta(type, seq, payload) {
+    if (type === "macros") {
+      if (!isRecord(payload) || !Array.isArray(payload.groups) || !Array.isArray(payload.floating)) {
+        this._surfaceError("malformed-macros", new Error("invalid macro definitions"), true);
+        return;
+      }
+      this._replaceState({ macros: payload });
+      this._emit("state", { changed: Object.freeze(["macros"]) });
+      return;
+    }
     if (type === "text") {
       if (!isRecord(payload)) {
         this._surfaceError("malformed-text", new Error("invalid text delta"), true);

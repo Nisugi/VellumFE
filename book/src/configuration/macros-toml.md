@@ -1,7 +1,14 @@
 # macros.toml
 
+Despana also consumes these shared macro definitions. Its **Macros & Hotkeys**
+editor creates command macros in `macros-local.toml`; an optional
+`hotkey = "ctrl+shift+h"` on a button binds it in Despana. Other web
+presentations preserve the field without binding it. See
+[Despana macros](../frontends/despana.md#macros-and-hotkeys) for the
+editor, key restrictions, and file-edit/reload workflow.
+
 Macro buttons for the [mobile web frontend](../frontends/web.md). These are
-the buttons shown on your phone — the desktop client doesn't use this file
+the buttons shown on your phone — the native desktop client doesn't use this file
 (desktop macros live in [keybinds.toml](./keybinds-toml.md)).
 
 You never *need* to edit this file: everything here can be created and
