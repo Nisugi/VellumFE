@@ -645,15 +645,22 @@ impl MessageProcessor {
             // Extract plain text from segments
             let plain_text: String = line.segments.iter().map(|s| s.text.as_str()).collect();
 
-            // Always parse to compact form and buffer both raw and compact
-            let compact_lines = if let Some(compact) = bounty_parser::parse_bounty(&plain_text) {
-                compact.lines
-            } else {
-                vec![plain_text.clone()] // Fallback to raw text if parsing fails
-            };
+            // Blank lines are presentation separators, not bounty state.
+            // Once another stream has emitted text in the current chunk,
+            // flush_one_line intentionally preserves these blanks for text
+            // windows; do not let a trailing separator erase the actual task
+            // that was buffered immediately before it.
+            if !plain_text.trim().is_empty() {
+                let compact_lines =
+                    if let Some(compact) = bounty_parser::parse_bounty(&plain_text) {
+                        compact.lines
+                    } else {
+                        vec![plain_text.clone()] // Fallback to raw text if parsing fails
+                    };
 
-            self.bounty_buffer = Some((plain_text, compact_lines));
-            tracing::debug!("Buffered bounty data for later use");
+                self.bounty_buffer = Some((plain_text, compact_lines));
+                tracing::debug!("Buffered bounty data for later use");
+            }
             // Continue processing - don't return here, still send to windows
         }
 

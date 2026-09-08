@@ -1410,6 +1410,35 @@ fn test_note_seen_stream_skips_main_and_blank() {
 }
 
 #[test]
+fn trailing_blank_bounty_line_does_not_replace_current_task() {
+    let mut processor = create_test_processor();
+    let mut ui_state = UiState::default();
+
+    // Command echo makes later blank lines "interior" to the overall message
+    // chunk, even though they are empty within the bounty stream itself.
+    processor.current_stream = "main".to_string();
+    processor.current_segments = vec![TextSegment::plain(">bounty")];
+    processor.flush_current_stream(&mut ui_state);
+
+    processor.current_stream = "bounty".to_string();
+    processor.current_segments = vec![TextSegment::plain(
+        "You have been tasked to recover a carved malachite bracelet that an unfortunate citizen lost after being attacked by an Illoke elder in the bowels of Thanatoph near Wehnimer's Landing.  The heirloom can be identified by the initials MZ engraved upon it.  Hunt down the creature and LOOT the item from its corpse.",
+    )];
+    processor.flush_current_stream(&mut ui_state);
+    let (_, compact) = processor.take_bounty_buffer().expect("task buffered");
+    assert_eq!(compact[0], "LOOT Heirloom");
+
+    // A formatting line after the task must not become the authoritative
+    // bounty merely because another stream already emitted visible text.
+    processor.current_segments = vec![TextSegment::plain("")];
+    processor.flush_current_stream(&mut ui_state);
+    assert!(
+        processor.take_bounty_buffer().is_none(),
+        "blank formatting replaced the current bounty"
+    );
+}
+
+#[test]
 fn test_note_seen_stream_label_fills_without_clobber() {
     let mut processor = create_test_processor();
     // First seen with no label, then a title arrives -> label fills in.

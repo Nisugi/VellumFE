@@ -454,6 +454,21 @@ mod tests {
     }
 
     #[test]
+    fn test_heirloom_loot_with_nested_area_qualifier() {
+        let text = "You have been tasked to recover a carved malachite bracelet that an unfortunate citizen lost after being attacked by an Illoke elder in the bowels of Thanatoph near Wehnimer's Landing.  The heirloom can be identified by the initials MZ engraved upon it.  Hunt down the creature and LOOT the item from its corpse.";
+        let result = parse_bounty(text).unwrap();
+        assert_eq!(
+            result.lines,
+            vec![
+                "LOOT Heirloom",
+                "Illoke elder",
+                "bracelet (MZ)",
+                "bowels of Thanatoph",
+            ]
+        );
+    }
+
+    #[test]
     fn test_longname_shortening() {
         let text = "You have been tasked to suppress athletic dark-eyed incubus activity in the Rift. You need to kill 10 of them to complete your task.";
         let result = parse_bounty(text).unwrap();
