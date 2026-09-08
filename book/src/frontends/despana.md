@@ -49,6 +49,73 @@ login. The saved Launcher connection remains authoritative.
 
 ## The workspace
 
+### Macros and hotkeys
+
+Open **Macros & Hotkeys** in the menu bar to create, edit, delete, or run
+named command macros. Enter one command per line. A line such as `s1.5`
+waits 1.5 seconds before the next command, using Vellum's existing macro
+dispatcher. Lich commands such as `;bigshot` are supported when connected
+through Lich. Saving does **not** execute the macro; the editor reports
+confirmation only after Vellum publishes the saved definition.
+
+Multiline blocks can be pasted directly, including Windows-style line endings;
+blank lines are ignored. Without explicit sleep segments, commands are sent
+together, not paced by roundtime or game responses. This is a command-block
+editor, not an importer for Wrayth control codes or a full script language.
+
+Assign a shortcut such as `ctrl+shift+h`, `f7`, or `num_8`, or leave
+Hotkey blank for a manually run macro. These bindings are Despana-specific,
+not replacements for desktop `keybinds.toml`. Commands still execute in
+Vellum, not in JavaScript. Duplicate hotkeys loaded from files are disabled
+and explained in the editor rather than choosing an arbitrary macro.
+
+Hotkeys work while the Story command input is focused. They do not fire
+while editing other fields, during text composition, with a menu/dialog
+open, or while disconnected. Holding a key does not repeatedly execute its
+macro. Browser/clipboard shortcuts are reserved; additional shortcuts may be
+claimed by the operating system. For a clean test, use F7. Optional
+**Confirm before running** applies to both hotkeys and the Run button.
+
+#### Editing together without rebuilding
+
+Macros created here use Vellum's existing per-character overlay:
+
+```text
+<Vellum data directory>/profiles/<character>/macros-local.toml
+```
+
+The default data directory is `~/.vellum-fe`; a custom data directory
+changes that root. For example:
+
+```toml
+[[group]]
+name = "Testing"
+
+[[group.button]]
+label = "Look after a pause"
+hotkey = "f7"
+command = "look\rs1.5\rlook"
+confirm = false
+```
+
+This is ordinary TOML, suitable for hand editing or help from a coding
+agent. After external edits, choose **Reload from disk** in the editor or
+enter `.reloadmacros` in Story. Reload before making further editor changes,
+so Vellum has the latest on-disk definitions. Successful reloads update
+connected clients immediately; no rebuild, relogin, or browser refresh is
+required. Vellum owns file persistence and error reporting in Story.
+
+Hand-authored base `macros.toml` entries remain file-editable, not rewritten
+by Despana. The current editor handles command macros; menu, type-in, and
+client-action macros remain available through Vellum's play-page editor.
+Use Lich scripts for branching, loops, matching output, or roundtime-aware
+automation. Macro sleep segments are fixed delays, not those features.
+
+Implementation: `macros.js` handles browser shortcuts and activation;
+`macro-editor.js` handles authoring; `session.js` adapts the existing
+`macros`, `macro`, `macro_save`, and `macro_delete` protocol. There is no
+second script runtime or browser-local macro database.
+
 The workspace is made from modules arranged in top, bottom, left, right, and
 center zones. Use a module's menu to move or hide it, change a zone's split
 direction, or restore hidden modules. Resize handles adjust neighboring zones

@@ -769,6 +769,7 @@ pub enum ClientMessage {
     MacroSave {
         group: Option<String>,
         label: String,
+        hotkey: Option<String>,
         command: String,
         color: Option<String>,
         confirm: bool,
@@ -1074,6 +1075,7 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
             Some(ClientMessage::MacroSave {
                 group: opt_str(msg.d.get("group")),
                 label,
+                hotkey: opt_str(msg.d.get("hotkey")),
                 command,
                 color: opt_str(msg.d.get("color")),
                 confirm: msg
@@ -1360,6 +1362,23 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
 mod tests {
     use super::*;
     use crate::data::widget::TextSegment;
+
+    #[test]
+    fn macro_save_carries_optional_despana_hotkey() {
+        let Some(ClientMessage::MacroSave { hotkey, command, .. }) = parse_client_message(
+            r#"{"t":"macro_save","d":{"group":"Tests","label":"Look","command":"stand\rs1.5\rlook","hotkey":"ctrl+shift+h"}}"#
+        ) else {
+            panic!("expected macro save");
+        };
+        assert_eq!(hotkey.as_deref(), Some("ctrl+shift+h"));
+        assert_eq!(command, "stand\rs1.5\rlook");
+        let Some(ClientMessage::MacroSave { hotkey, .. }) = parse_client_message(
+            r#"{"t":"macro_save","d":{"label":"Look","command":"look"}}"#
+        ) else {
+            panic!("expected legacy macro save");
+        };
+        assert!(hotkey.is_none());
+    }
 
     fn snap_json(sub: SubscribeMode, state: &RemoteStateSnapshot) -> serde_json::Value {
         let lines = vec![RemoteLine {

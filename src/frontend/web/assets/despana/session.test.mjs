@@ -331,6 +331,31 @@ function connectAndHello(harness, epoch = "epoch-1", character = "Briar") {
   return socket;
 }
 
+test("macro definitions and edits use shared protocol without replaying actions", () => {
+  const h = makeHarness();
+  const socket = connectAndHello(h);
+  socket.receive(frame("snapshot", fullSnapshot(), 1));
+  const definitions = { groups: [{ name: "Test", buttons: [
+    { id: "g:0:b:0", label: "Look", hotkey: "f7", command: "look", editable: true },
+  ] }], floating: [] };
+  socket.receive(frame("macros", definitions, 1));
+  assert.deepEqual(h.events.at(-1).state.macros, definitions);
+  assert.deepEqual(h.events.at(-1).changed, ["macros"]);
+  h.session.dispatch({ kind: "macro", id: "g:0:b:0", label: "Look" });
+  const data = { group: "Test", label: "Look", command: "look", hotkey: "f7" };
+  h.session.dispatch({ kind: "macro-save", data });
+  h.session.dispatch({ kind: "macro-delete", data: { group: "Test", label: "Look" } });
+  assert.deepEqual(socket.sent.slice(-3), [
+    { t: "macro", d: { id: "g:0:b:0" } },
+    { t: "macro_save", d: data },
+    { t: "macro_delete", d: { group: "Test", label: "Look" } },
+  ]);
+  assert.throws(() => h.session.dispatch({ kind: "macro", id: "look" }), /malformed/);
+  socket.receive(frame("session", { state: "disconnected", session_control: true, character: "Briar" }, 1));
+  assert.throws(() => h.session.dispatch({ kind: "macro", id: "g:0:b:0" }), /not connected/);
+  h.session.close();
+});
+
 test("character title renders profession and level independently", () => {
   const base = { character: "Briar", session: {}, charInfo: {} };
   assert.equal(characterTitleText(base), "Vellum Despana - Briar");

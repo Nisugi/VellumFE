@@ -1540,3 +1540,30 @@ input:focus-visible {
     height: auto;
   }
 }
+/* The editor is deliberately separate from the Story layout and only opens
+   on request. Definitions and execution remain Vellum-owned. */
+.macro-editor {
+  color: var(--text, #d6d9da);
+  background: #182026;
+  border: 1px solid #a28b58;
+  width: min(900px, 92vw);
+  max-height: 88vh;
+  overflow: auto;
+  padding: 1rem;
+}
+.macro-editor::backdrop { background: #0008; }
+.macro-editor header, .macro-toolbar { display: flex; gap: .6rem; align-items: center; }
+.macro-editor header { justify-content: space-between; }
+.macro-editor-columns { display: grid; grid-template-columns: 1fr 1.4fr; gap: 1rem; margin: 1rem 0; }
+.macro-editor label { display: grid; gap: .25rem; margin: .5rem 0; }
+.macro-editor input, .macro-editor textarea { width: 100%; box-sizing: border-box; }
+.macro-editor textarea { font-family: monospace; resize: vertical; }
+.macro-editor p, .macro-editor small { font-size: .85em; }
+.macro-editor .macro-confirm { display: flex; align-items: center; }
+.macro-editor input[type=checkbox] { width: auto; }
+.macro-list { max-height: 55vh; overflow: auto; }
+.macro-list > div { padding: .6rem; border-bottom: 1px solid #4c5355; }
+.macro-list span, .macro-list small { display: block; margin-bottom: .4rem; overflow-wrap: anywhere; }
+.macro-list button { margin-right: .4rem; }
+.macro-editor [data-problems] { color: #edc978; }
+@media (max-width: 650px) { .macro-editor-columns { grid-template-columns: 1fr; } }

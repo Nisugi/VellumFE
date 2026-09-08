@@ -4,6 +4,8 @@ import DesktopSession, {
   shouldShowVellumIdle,
 } from "./session.js";
 import DesktopInteractionCoordinator from "./interactions.js";
+import { DesktopMacros } from "./macros.js";
+import { DesktopMacroEditor } from "./macro-editor.js";
 import { DesktopMapViewport, classicRoomAtViewportPoint } from "./map.js";
 import { InventoryRefreshTracker } from "./inventory-refresh.js";
 import { projectInventoryItems } from "./inventory-tree.js";
@@ -1902,6 +1904,22 @@ const session = new DesktopSession({
   location: window.location,
   storage: window.localStorage,
 });
+const macros = new DesktopMacros({
+  dispatch: (intent) => session.dispatch(intent),
+  isOnline: () => Boolean(latestView && isPlayable(latestView)),
+  confirm: (message) => window.confirm(message),
+  status: (message) => { commandStatus.textContent = message; },
+});
+const macroEditor = new DesktopMacroEditor({
+  document, macros,
+  dispatch: (intent) => session.dispatch(intent),
+  isOnline: () => Boolean(latestView && isPlayable(latestView)),
+});
+document.getElementById("macro-editor-button").addEventListener("click", () => macroEditor.open());
+document.addEventListener("keydown", (event) => {
+  const blocked = Boolean(document.querySelector("dialog[open], .module-menu:not([hidden]), [role=menu]:not([hidden])"));
+  macros.handleKey(event, { commandInput, blocked });
+}, true);
 
 function adoptVellumPairingToken(event) {
   if (event.key !== VELLUM_TOKEN_STORAGE_KEY || !event.newValue) return;
@@ -1954,6 +1972,7 @@ document.addEventListener("keydown", (event) => {
 session.subscribe((event) => {
   const view = event.state;
   latestView = view;
+  macroEditor.update(view, event.type === "state" && event.changed?.includes("macros"));
   renderIdleSurface(view);
   workspace.setCharacter(view.character || view.session?.character);
   if (event.type === "state" && event.changed?.includes("inventoryTree")) {

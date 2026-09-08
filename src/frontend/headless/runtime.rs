@@ -2504,6 +2504,7 @@ fn handle_remote_event(
         RemoteEvent::MacroSave {
             group,
             label,
+            hotkey,
             command,
             color,
             confirm,
@@ -2514,6 +2515,7 @@ fn handle_remote_event(
         } => {
             let button = crate::config::MacroButton {
                 label,
+                hotkey,
                 // A client-action button carries no game command.
                 command: Some(command)
                     .filter(|c| !c.is_empty())

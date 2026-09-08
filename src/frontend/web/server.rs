@@ -1383,6 +1383,7 @@ async fn handle_client_message(
         ClientMessage::MacroSave {
             group,
             label,
+            hotkey,
             command,
             color,
             confirm,
@@ -1396,6 +1397,7 @@ async fn handle_client_message(
             .send(RemoteEvent::MacroSave {
                 group,
                 label,
+                hotkey,
                 command,
                 color,
                 confirm,

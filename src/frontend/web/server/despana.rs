@@ -32,6 +32,8 @@ pub(super) fn router() -> Router<Arc<WebState>> {
         .route("/despana", get(index_html))
         .route("/despana/", get(index_html))
         .route("/despana/app.js", get(app_js))
+        .route("/despana/macros.js", get(macros_js))
+        .route("/despana/macro-editor.js", get(macro_editor_js))
         .route("/despana/font-scale.js", get(font_scale_js))
         .route("/despana/session.js", get(session_js))
         .route("/despana/inventory-refresh.js", get(inventory_refresh_js))
@@ -80,6 +82,16 @@ embedded_asset!(
     app_js,
     "text/javascript; charset=utf-8",
     "../assets/despana/app.js"
+);
+embedded_asset!(
+    macros_js,
+    "text/javascript; charset=utf-8",
+    "../assets/despana/macros.js"
+);
+embedded_asset!(
+    macro_editor_js,
+    "text/javascript; charset=utf-8",
+    "../assets/despana/macro-editor.js"
 );
 embedded_asset!(
     font_scale_js,

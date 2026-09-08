@@ -48,6 +48,7 @@ impl VellumGuiApp {
                 crate::core::remote::RemoteEvent::MacroSave {
                     group,
                     label,
+                    hotkey,
                     command,
                     color,
                     confirm,
@@ -58,6 +59,7 @@ impl VellumGuiApp {
                 } => {
                     let button = crate::config::MacroButton {
                         label,
+                        hotkey,
                         // A client-action button carries no game command.
                         command: Some(command)
                             .filter(|c| !c.is_empty())

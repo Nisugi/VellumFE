@@ -45,6 +45,7 @@ jobs:
         run: >-
           node --test
           src/frontend/web/assets/despana/session.test.mjs
+          src/frontend/web/assets/despana/macros.test.mjs
           src/frontend/web/assets/despana/layout.test.mjs
           src/frontend/web/assets/despana/layout-storage.test.mjs
           src/frontend/web/assets/despana/interactions.test.mjs

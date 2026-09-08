@@ -4934,6 +4934,7 @@ function openMacroEditor(existing) {
         color: chosenColor,
         confirm: confirmToggle.checked,
         original: existing ? { group: existing.group, label: existing.btn.label } : null,
+        hotkey: existing?.btn.hotkey || null,
       },
     }));
     closeSheet();

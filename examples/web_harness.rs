@@ -888,6 +888,7 @@ async fn main() {
             RemoteEvent::MacroSave {
                 group,
                 label,
+                hotkey,
                 command,
                 color,
                 confirm,
@@ -901,6 +902,7 @@ async fn main() {
                 );
                 let button = MacroButton {
                     label,
+                    hotkey,
                     // A client-action button carries no game command.
                     command: Some(command)
                         .filter(|c| !c.is_empty())

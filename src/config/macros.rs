@@ -43,6 +43,10 @@ pub struct MacroOption {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MacroButton {
     pub label: String,
+    /// Optional Despana keyboard shortcut (e.g. "ctrl+shift+h").
+    /// Other presentations preserve this field without binding it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hotkey: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     /// Client-side action instead of a game command (`open:map`,
@@ -264,6 +268,33 @@ impl MacrosConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn despana_hotkey_survives_toml_round_trip_and_remote_projection() {
+        let config: MacrosConfig = toml::from_str(
+            r#"
+            [[group]]
+            name = "Tests"
+            [[group.button]]
+            label = "Look"
+            command = "stand\rs1.5\rlook"
+            hotkey = "ctrl+shift+h"
+        "#,
+        )
+        .unwrap();
+        let restored: MacrosConfig =
+            toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(
+            restored.groups[0].buttons[0].hotkey.as_deref(),
+            Some("ctrl+shift+h")
+        );
+        assert_eq!(restored.resolve("g:0:b:0"), Some("stand\rs1.5\rlook"));
+        let remote = crate::core::remote::RemoteMacros::from_config(&restored);
+        assert_eq!(
+            remote.groups[0].buttons[0].hotkey.as_deref(),
+            Some("ctrl+shift+h")
+        );
+    }
 
     fn sample() -> MacrosConfig {
         toml::from_str(

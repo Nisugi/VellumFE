@@ -421,6 +421,77 @@ test("Despana desktop composes state, interactions, and persistent workspace in 
     `),
     "rendered connected snapshot and workspace",
   );
+  const macroSmoke = await driver.execute(`
+    const socket = window.__desktopTest.sockets[0];
+    const definitions = { groups: [{ name: 'Tests', buttons: [{
+      id: 'g:0:b:0', label: 'Look', command: 'look', hotkey: 'f7', editable: true,
+      confirm: false, insert: false,
+    }] }], floating: [] };
+    socket.receive({ v: 1, t: 'macros', seq: 1, d: definitions });
+    const input = document.querySelector('#command-input');
+    input.focus();
+    const before = socket.sent.length;
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'F7', code: 'F7', bubbles: true, cancelable: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'F7', code: 'F7', repeat: true, bubbles: true, cancelable: true }));
+    const fired = socket.sent.slice(before);
+    document.querySelector('#macro-editor-button').click();
+    const dialog = document.querySelector('.macro-editor');
+    const pausedBefore = socket.sent.length;
+    dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'F7', code: 'F7', bubbles: true }));
+    const paused = socket.sent.length === pausedBefore;
+    const form = dialog.querySelector('form');
+    form.elements.label.value = 'Inspect';
+    form.elements.group.value = 'Tests';
+    form.elements.hotkey.value = 'ctrl+shift+h';
+    form.elements.command.value = 'stand\\ns1.5\\nlook';
+    form.requestSubmit();
+    const saved = socket.sent.at(-1);
+    const pending = dialog.querySelector('[data-status]').textContent;
+    socket.receive({ v: 1, t: 'macros', seq: 1, d: {
+      groups: [{ name: 'Tests', buttons: [...definitions.groups[0].buttons, {
+        id: 'g:0:b:1', label: 'Inspect', command: 'stand\\rs1.5\\rlook',
+        hotkey: 'ctrl+shift+h', editable: true, confirm: false, insert: false,
+      }] }], floating: [],
+    } });
+    const acknowledged = dialog.querySelector('[data-status]').textContent;
+    const editButton = [...dialog.querySelectorAll('.macro-list > div')]
+      .find(row => row.textContent.includes('Inspect')).querySelectorAll('button')[1];
+    editButton.click();
+    const editedCommand = form.elements.command.value;
+    // A large pasted block must survive save/reload intact without executing.
+    const blockLines = Array.from({ length: 1000 }, (_, i) =>
+      i % 2 ? 's1.5' : ';alias set test' + i + ' look in my pack');
+    const blockBefore = socket.sent.length;
+    form.elements.command.value = blockLines.join('\\r\\n');
+    form.requestSubmit();
+    const blockSaved = socket.sent.at(-1);
+    socket.receive({ v: 1, t: 'macros', seq: 1, d: {
+      groups: [{ name: 'Tests', buttons: [{
+        ...blockSaved.d, id: 'g:0:b:0', editable: true,
+      }] }], floating: [],
+    } });
+    const blockRoundTrip = form.elements.command.value === blockLines.join('\\n');
+    const blockIntact = blockSaved.d.command === blockLines.join('\\r');
+    const blockOnlySaved = socket.sent.slice(blockBefore).every(message => message.t === 'macro_save');
+    dialog.querySelector('[data-close]').click();
+    // Leave the fixture's session free of test macros for the remaining smoke.
+    socket.receive({ v: 1, t: 'macros', seq: 1, d: { groups: [], floating: [] } });
+    return { fired, paused, saved, pending, acknowledged, editedCommand,
+      blockRoundTrip, blockIntact, blockOnlySaved, closed: !dialog.open };
+  `);
+  assert.deepEqual(macroSmoke.fired, [{ t: "macro", d: { id: "g:0:b:0" } }]);
+  assert.equal(macroSmoke.paused, true);
+  assert.equal(macroSmoke.saved.t, "macro_save");
+  assert.equal(macroSmoke.saved.d.hotkey, "ctrl+shift+h");
+  assert.equal(macroSmoke.saved.d.command, "stand\rs1.5\rlook");
+  assert.match(macroSmoke.pending, /waiting for Vellum/);
+  assert.match(macroSmoke.acknowledged, /Saved by Vellum/);
+  assert.equal(macroSmoke.editedCommand, "stand\ns1.5\nlook");
+  assert.equal(macroSmoke.blockRoundTrip, true);
+  assert.equal(macroSmoke.blockIntact, true);
+  assert.equal(macroSmoke.blockOnlySaved, true);
+  assert.equal(macroSmoke.closed, true);
+
   const composition = await driver.execute(`
     return {
       modules: document.querySelectorAll('[data-module]').length,
