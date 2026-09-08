@@ -833,7 +833,15 @@ async fn closing_a_browser_never_requests_game_disconnect_or_process_stop() {
     let client = WsClient::connect(addr).await;
     drop(client);
     tokio::time::sleep(Duration::from_millis(25)).await;
-    assert!(event_rx.try_recv().is_err());
+    // A closing client DOES emit WebUiClientGone (its subscriptions must be
+    // released — finding 10); what it must never emit is anything that
+    // touches the game session or the process.
+    while let Ok(event) = event_rx.try_recv() {
+        assert!(
+            matches!(event, RemoteEvent::WebUiClientGone { .. }),
+            "browser close leaked a session-affecting event: {event:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1191,11 +1199,13 @@ async fn two_server_processes_keep_sessions_state_and_commands_isolated() {
     // Losing one character runtime cannot take the other server, socket, or
     // command loop down with it.
     aster.stop();
+    // Refused OR timed out both prove nothing is accepting there any more
+    // (Windows may black-hole a just-freed port instead of refusing).
     assert!(
-        tokio::time::timeout(Duration::from_secs(1), TcpStream::connect(aster.addr))
-            .await
-            .expect("closed fixture connection check timed out")
-            .is_err(),
+        !matches!(
+            tokio::time::timeout(Duration::from_secs(1), TcpStream::connect(aster.addr)).await,
+            Ok(Ok(_))
+        ),
         "stopped Aster fixture still accepts connections"
     );
 
@@ -1766,7 +1776,7 @@ async fn webui_subscribe_and_event_arrive_as_remote_events() {
         .await
         .expect("timed out")
         .expect("channel open");
-    let RemoteEvent::WebUiSubscribe { page } = event else {
+    let RemoteEvent::WebUiSubscribe { page, .. } = event else {
         panic!("expected WebUiSubscribe, got {event:?}");
     };
     assert_eq!(page, "creaturebar/main");
@@ -2582,4 +2592,283 @@ async fn watchers_receive_room_changes_without_the_prose() {
     vellum_fe::core::multiaccount::hub::apply_frame_for_test(&mut peer, &frame);
     assert_eq!(peer.room_id.as_deref(), Some("12345"));
     assert_eq!(peer.room_name.as_deref(), Some("Town Square"));
+}
+
+// ---------------------------------------------------------------------------
+// /webui/files/ image proxy (finding 14): Vellum authenticates the browser
+// with the pairing token, then fetches upstream from the ACTIVE Lich WebUI
+// endpoint using the lich_webui cookie. The cookie never reaches the
+// browser; the pairing token never travels upstream.
+// ---------------------------------------------------------------------------
+
+const LICH_COOKIE_TOKEN: &str = "lich-cookie-secret";
+
+fn lich_files_response(status: u16, content_type: &str, body: &[u8]) -> Vec<u8> {
+    let mut resp = format!(
+        "HTTP/1.1 {status} X\r\nContent-Type: {content_type}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    resp.extend_from_slice(body);
+    resp
+}
+
+/// Mock Lich WebUI HTTP endpoint: one request per connection, cookie-gated
+/// like the real server. `handler` maps the request head onto a raw
+/// response; a request without the expected cookie gets 403 regardless.
+async fn spawn_mock_lich(
+    handler: impl Fn(&str) -> Vec<u8> + Send + Sync + 'static,
+    hits: Arc<std::sync::atomic::AtomicUsize>,
+) -> std::net::SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock lich");
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") {
+                match stream.read(&mut byte).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => head.extend_from_slice(&byte),
+                }
+            }
+            let head = String::from_utf8_lossy(&head).into_owned();
+            let resp = if head.contains(&format!("lich_webui={LICH_COOKIE_TOKEN}")) {
+                handler(&head)
+            } else {
+                lich_files_response(403, "text/plain", b"forbidden")
+            };
+            let _ = stream.write_all(&resp).await;
+        }
+    });
+    addr
+}
+
+fn upstream_for(addr: std::net::SocketAddr) -> vellum_fe::core::remote::WebUiUpstream {
+    vellum_fe::core::remote::WebUiUpstream::new(
+        addr.ip().to_string(),
+        addr.port(),
+        LICH_COOKIE_TOKEN.to_string(),
+    )
+}
+
+/// Happy path: token-authed request proxies upstream with the cookie, the
+/// image content type is preserved, spaces re-encode, the client query is
+/// forwarded, the pairing token is stripped, and the reply is no-store.
+#[tokio::test]
+async fn webui_files_proxy_serves_image_with_cookie_auth() {
+    let (mut sink, _events, addr) = start_server(100).await;
+    let seen = Arc::new(std::sync::Mutex::new(String::new()));
+    let seen_in = seen.clone();
+    let lich = spawn_mock_lich(
+        move |head| {
+            *seen_in.lock().unwrap() = head.to_string();
+            lich_files_response(200, "image/png", b"PNGDATA")
+        },
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    )
+    .await;
+    sink.set_webui_upstream(Some(upstream_for(lich)));
+
+    let resp = http_get(
+        addr,
+        "/webui/files/maps/town%20map.png?x=1&token=test-token",
+    )
+    .await;
+    assert!(resp.contains("200"), "got: {resp}");
+    assert!(
+        resp.to_ascii_lowercase().contains("image/png"),
+        "got: {resp}"
+    );
+    assert!(
+        resp.to_ascii_lowercase().contains("no-store"),
+        "got: {resp}"
+    );
+    assert!(resp.ends_with("PNGDATA"), "got: {resp}");
+
+    let head = seen.lock().unwrap().clone();
+    assert!(
+        head.starts_with("GET /files/maps/town%20map.png?x=1 "),
+        "upstream request line wrong: {head}"
+    );
+    assert!(
+        !head.contains("test-token"),
+        "pairing token must never travel upstream: {head}"
+    );
+}
+
+/// A request without a valid pairing token is rejected before any upstream
+/// contact.
+#[tokio::test]
+async fn webui_files_proxy_rejects_bad_client_auth() {
+    let (mut sink, _events, addr) = start_server(100).await;
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let lich = spawn_mock_lich(
+        |_| lich_files_response(200, "image/png", b"PNGDATA"),
+        hits.clone(),
+    )
+    .await;
+    sink.set_webui_upstream(Some(upstream_for(lich)));
+
+    let resp = http_get(addr, "/webui/files/a.png?token=wrong").await;
+    assert!(resp.contains("403"), "got: {resp}");
+    let resp = http_get(addr, "/webui/files/a.png").await;
+    assert!(resp.contains("403"), "got: {resp}");
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "unauthenticated requests must never reach the upstream"
+    );
+}
+
+/// No bridge (never started, or torn down): clean 503, no dial.
+#[tokio::test]
+async fn webui_files_proxy_absent_bridge_is_503() {
+    let (_sink, _events, addr) = start_server(100).await;
+    let resp = http_get(addr, "/webui/files/a.png?token=test-token").await;
+    assert!(resp.contains("503"), "got: {resp}");
+}
+
+/// Traversal and malformed paths are rejected without an upstream dial.
+#[tokio::test]
+async fn webui_files_proxy_rejects_invalid_paths() {
+    let (mut sink, _events, addr) = start_server(100).await;
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let lich = spawn_mock_lich(
+        |_| lich_files_response(200, "image/png", b"PNGDATA"),
+        hits.clone(),
+    )
+    .await;
+    sink.set_webui_upstream(Some(upstream_for(lich)));
+
+    for path in [
+        "/webui/files/..%2Fsecret.txt?token=test-token",
+        "/webui/files/maps%2F..%2F..%2Fetc?token=test-token",
+        "/webui/files/a%5Cb.png?token=test-token",
+        "/webui/files/a%0D%0AHeader:x?token=test-token",
+        "/webui/files/http:%2F%2Fevil%2Fx.png?token=test-token",
+    ] {
+        let resp = http_get(addr, path).await;
+        assert!(
+            resp.contains("400"),
+            "path {path} must be rejected, got: {resp}"
+        );
+    }
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "invalid paths must never reach the upstream"
+    );
+}
+
+/// Upstream failures map cleanly: 404 for a missing file, 502 for other
+/// upstream errors or an unreachable endpoint.
+#[tokio::test]
+async fn webui_files_proxy_maps_upstream_failures() {
+    let (mut sink, _events, addr) = start_server(100).await;
+    let lich = spawn_mock_lich(
+        |head| {
+            if head.contains("missing.png") {
+                lich_files_response(404, "text/plain", b"nope")
+            } else {
+                lich_files_response(500, "text/plain", b"boom")
+            }
+        },
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    )
+    .await;
+    sink.set_webui_upstream(Some(upstream_for(lich)));
+
+    let resp = http_get(addr, "/webui/files/missing.png?token=test-token").await;
+    assert!(resp.contains("404"), "got: {resp}");
+    let resp = http_get(addr, "/webui/files/broken.png?token=test-token").await;
+    assert!(resp.contains("502"), "got: {resp}");
+
+    // Unreachable upstream: bind then drop a port so nothing listens.
+    let dead = {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let a = l.local_addr().unwrap();
+        drop(l);
+        a
+    };
+    sink.set_webui_upstream(Some(upstream_for(dead)));
+    let resp = http_get(addr, "/webui/files/a.png?token=test-token").await;
+    assert!(resp.contains("502"), "got: {resp}");
+}
+
+/// A response past the size bound is refused, not relayed.
+#[tokio::test]
+async fn webui_files_proxy_rejects_oversized_response() {
+    let (mut sink, _events, addr) = start_server(100).await;
+    let lich = spawn_mock_lich(
+        |_| lich_files_response(200, "image/png", &vec![b'x'; 8 * 1024 * 1024 + 64 * 1024]),
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    )
+    .await;
+    sink.set_webui_upstream(Some(upstream_for(lich)));
+
+    let resp = http_get(addr, "/webui/files/huge.png?token=test-token").await;
+    assert!(resp.contains("502"), "got: {resp}");
+}
+
+/// An upstream that accepts but never answers times out with 504 instead of
+/// hanging the client forever.
+#[tokio::test]
+async fn webui_files_proxy_times_out_stalled_upstream() {
+    let (mut sink, _events, addr) = start_server(100).await;
+    // Accepts connections, reads nothing, answers nothing, never closes.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let stall = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+        }
+    });
+    sink.set_webui_upstream(Some(upstream_for(stall)));
+
+    let resp = http_get(addr, "/webui/files/slow.png?token=test-token").await;
+    assert!(resp.contains("504"), "got: {resp}");
+}
+
+/// Replacing the bridge (Lich restart: new port, new cookie) redirects the
+/// very next request to the new endpoint; tearing it down returns 503,
+/// never the old endpoint's data.
+#[tokio::test]
+async fn webui_files_proxy_follows_bridge_replacement() {
+    let (mut sink, _events, addr) = start_server(100).await;
+    let lich_a = spawn_mock_lich(
+        |_| lich_files_response(200, "image/png", b"GEN-A"),
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    )
+    .await;
+    let lich_b = spawn_mock_lich(
+        |_| lich_files_response(200, "image/png", b"GEN-B"),
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    )
+    .await;
+
+    sink.set_webui_upstream(Some(upstream_for(lich_a)));
+    let resp = http_get(addr, "/webui/files/pic.png?token=test-token").await;
+    assert!(resp.ends_with("GEN-A"), "got: {resp}");
+    // Every proxied image is no-store so a browser cannot show session A's
+    // private image under session B's auth.
+    assert!(
+        resp.to_ascii_lowercase().contains("no-store"),
+        "got: {resp}"
+    );
+
+    sink.set_webui_upstream(Some(upstream_for(lich_b)));
+    let resp = http_get(addr, "/webui/files/pic.png?token=test-token").await;
+    assert!(resp.ends_with("GEN-B"), "got: {resp}");
+
+    sink.set_webui_upstream(None);
+    let resp = http_get(addr, "/webui/files/pic.png?token=test-token").await;
+    assert!(resp.contains("503"), "got: {resp}");
 }

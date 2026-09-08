@@ -207,11 +207,20 @@ impl VellumGuiApp {
                     self.app_core
                         .handle_remote_touch_wheel_put(client_id, request_id, scope, slices);
                 }
-                crate::core::remote::RemoteEvent::WebUiSubscribe { page } => {
-                    self.app_core.webui_subscribe(&page);
+                crate::core::remote::RemoteEvent::WebUiSubscribe { client_id, page } => {
+                    self.app_core.webui_subscribe(
+                        crate::core::remote::WebUiConsumer::Remote(client_id),
+                        &page,
+                    );
                 }
-                crate::core::remote::RemoteEvent::WebUiUnsubscribe { page } => {
-                    self.app_core.webui_unsubscribe(&page);
+                crate::core::remote::RemoteEvent::WebUiUnsubscribe { client_id, page } => {
+                    self.app_core.webui_unsubscribe(
+                        crate::core::remote::WebUiConsumer::Remote(client_id),
+                        &page,
+                    );
+                }
+                crate::core::remote::RemoteEvent::WebUiClientGone { client_id } => {
+                    self.app_core.webui_client_gone(client_id);
                 }
                 crate::core::remote::RemoteEvent::WebUiEvent { page, cid, value } => {
                     self.app_core.webui_send_event(page, cid, value);

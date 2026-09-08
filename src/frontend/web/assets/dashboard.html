@@ -69,14 +69,87 @@
       text-decoration: none;
     }
     a.wall:hover { color: #d6d6d6; }
+    #pair {
+      width: 100%;
+      max-width: 420px;
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      padding: 16px;
+      background: #1a1d24;
+      border: 1px solid #2a2e37;
+      border-radius: 10px;
+    }
+    #pair.visible { display: flex; }
+    #pair p { font-size: 13px; color: #8a8f98; }
+    #pair p.reject { color: #d9534f; }
+    #pair input {
+      padding: 12px;
+      background: #111318;
+      color: #d6d6d6;
+      border: 1px solid #2a2e37;
+      border-radius: 8px;
+      font: inherit;
+      font-size: 16px;
+    }
+    #pair button, #retry-net {
+      padding: 12px;
+      background: #2a2e37;
+      color: #d9b44f;
+      border: none;
+      border-radius: 8px;
+      font: inherit;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    #retry-net { display: none; width: 100%; max-width: 420px; margin-top: 10px; }
+    #retry-net.visible { display: block; }
+    a.picker-link {
+      display: none;
+      text-align: center;
+      color: #8a8f98;
+      font-size: 13px;
+      text-decoration: none;
+      padding: 6px 0;
+    }
+    a.picker-link.visible { display: block; }
   </style>
 </head>
 <body>
   <h1>VellumFE</h1>
   <p class="sub">Pick a session — this page never connects to a game.</p>
   <div id="sessions"><div class="empty">Looking for sessions&hellip;</div></div>
+  <form id="pair">
+    <p id="pair-msg">This server requires a pairing token. Enter the token
+    shown by the desktop client's <b>.webinfo</b> command.</p>
+    <input id="pair-token" type="password" autocomplete="off"
+           autocapitalize="off" spellcheck="false" placeholder="Pairing token">
+    <button type="submit">Connect</button>
+  </form>
+  <button id="retry-net" type="button">Retry</button>
+  <a id="picker-link" class="picker-link" href="vellum://remote/picker">&larr; Back to character picker</a>
   <a id="wall-link" class="wall" href="/characters">All characters at a glance &rarr;</a>
+  <script src="/pairing-core.js"></script>
   <script>
+    // Session listing + in-page pairing (proposal item 9). All the
+    // classification/fragment rules live in PairingCore (pairing-core.js,
+    // node-tested); this script is DOM glue only.
+    //
+    // Token ownership (see pairing-core.js header): a native shell sends
+    // sid=<stable store ID>; a token accepted here rides
+    // vellum://remote/token?id=…&token=… back to the shell, which updates
+    // exactly that saved entry. Plain browsers persist the token in
+    // localStorage instead. Navigation always carries it via the URL
+    // fragment — never ordinary query strings.
+    const TOKEN_KEY = "vellum-dashboard-token";
+    let token = PairingCore.pairingToken(location.hash);
+    if (!token) {
+      try { token = localStorage.getItem(TOKEN_KEY) || ""; } catch {}
+    }
+    // Whether the pairing form is up; the periodic refresh stands down so
+    // it can't clobber a token mid-typing.
+    let pairingOpen = false;
+
     // The registry can hold stale entries (crashes, other machines'
     // leftovers); only sessions that answer /health get a card.
     async function alive(port) {
@@ -93,38 +166,93 @@
       }
     }
 
-    // The pairing token rides the URL fragment (#token=... from the .webinfo
-    // QR). /sessions is token-gated, so forward it on the fetch.
-    function pairingToken() {
-      const m = location.hash.match(/token=([^&]+)/);
-      return m ? decodeURIComponent(m[1]) : "";
+    function setEmpty(box, text) {
+      box.replaceChildren();
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = text;
+      box.appendChild(empty);
     }
-    // Forward the token fragment so the wall can auth its watch sockets.
-    document.getElementById("wall-link").href = "/characters" + location.hash;
 
-    async function load() {
+    function showPairing(rejected) {
+      pairingOpen = true;
+      const msg = document.getElementById("pair-msg");
+      if (rejected) {
+        msg.textContent = "That pairing token was not accepted. Check the " +
+          "token shown by the desktop client's .webinfo command and try again.";
+        msg.className = "reject";
+      }
+      document.getElementById("pair").classList.add("visible");
+      // Native shells get a way back to their character picker without
+      // deleting the saved server; a plain browser has no picker.
+      if (PairingCore.isAppShell(location.hash)) {
+        document.getElementById("picker-link").classList.add("visible");
+      }
+      document.getElementById("pair-token").focus();
+    }
+
+    function hidePairing() {
+      pairingOpen = false;
+      document.getElementById("pair").classList.remove("visible");
+      document.getElementById("picker-link").classList.remove("visible");
+    }
+
+    // An accepted token: persist for reuse and thread it through every
+    // navigation via the existing fragment mechanism.
+    function adoptToken(accepted) {
+      if (!accepted) return;
+      const fromFragment = PairingCore.pairingToken(location.hash);
+      if (fromFragment !== accepted) {
+        // The shell/QR didn't supply this token — it was entered (or
+        // recalled) here. Thread it into the fragment, and hand it back
+        // to the native shell's saved entry (by stable ID) so the next
+        // connect from the picker is already paired. The vellum://
+        // navigation is intercepted by the shell; the page stays put.
+        const hash = PairingCore.withToken(location.hash, accepted);
+        history.replaceState(null, "", location.pathname + location.search + hash);
+        const sid = PairingCore.shellSid(location.hash);
+        const update = PairingCore.tokenUpdateUrl(sid, accepted);
+        if (update && PairingCore.isAppShell(location.hash)) {
+          location.href = update;
+        }
+      }
+      try { localStorage.setItem(TOKEN_KEY, accepted); } catch {}
+    }
+
+    async function load(attempted) {
       const box = document.getElementById("sessions");
-      let sessions = [];
-      try {
-        const token = encodeURIComponent(pairingToken());
-        sessions = await (await fetch(`/sessions?token=${token}`)).json();
-        if (!Array.isArray(sessions)) sessions = []; // e.g. {"error":"forbidden"}
-      } catch { /* fall through to empty state */ }
+      const retry = document.getElementById("retry-net");
+      const { state, sessions } =
+        await PairingCore.loadSessions((u) => fetch(u), token);
+      retry.classList.remove("visible");
+      if (state === "forbidden") {
+        setEmpty(box, token ? "Access denied" : "Pairing required");
+        showPairing(attempted || !!token);
+        return;
+      }
+      if (state === "network") {
+        setEmpty(box, "Can't reach the server");
+        retry.classList.add("visible");
+        return;
+      }
+      // Authenticated ("empty" or "sessions"): pairing is done.
+      hidePairing();
+      adoptToken(token);
+      // Forward the (token-bearing) fragment so the wall can auth its
+      // watch sockets.
+      document.getElementById("wall-link").href = "/characters" + location.hash;
       const checks = await Promise.all(sessions.map(s => alive(s.port)));
       const live = sessions.filter((_, i) => checks[i]);
       box.replaceChildren();
       if (!live.length) {
-        const empty = document.createElement("div");
-        empty.className = "empty";
-        empty.textContent = "No sessions running";
-        box.appendChild(empty);
+        setEmpty(box, "No sessions running");
         return;
       }
       for (const s of live) {
         const a = document.createElement("a");
         a.className = "session";
-        // Forward the pairing token fragment (from a .webinfo QR) so the
-        // session page can store it.
+        // Forward the pairing token fragment so the session page can
+        // store it (fragment-based navigation, never query strings).
         a.href = `http://${location.hostname}:${s.port}/play${location.hash}`;
         const name = document.createElement("span");
         name.textContent = s.character || "(unnamed)";
@@ -136,8 +264,19 @@
       }
     }
 
+    document.getElementById("pair").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const entered = document.getElementById("pair-token").value.trim();
+      if (!entered) return;
+      token = entered;
+      load(true);
+    });
+    document.getElementById("retry-net").addEventListener("click", () => load());
+
+    document.getElementById("wall-link").href = "/characters" + location.hash;
     load();
-    setInterval(load, 10000);
+    // Keep refreshing, but never while the pairing form is up.
+    setInterval(() => { if (!pairingOpen) load(); }, 10000);
   </script>
 </body>
 </html>

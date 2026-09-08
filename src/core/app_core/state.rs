@@ -397,9 +397,12 @@ pub struct AppCore {
     /// Raw game commands core queued for the frontend to send (the WebUI
     /// `;ui handshake` — core has no game socket). Drained each tick.
     pub(crate) webui_pending_raw: Vec<String>,
-    /// Pages any client has subscribed to; replayed on a fresh socket's Hello
-    /// so renders resume after a reconnect.
-    pub(crate) webui_subscribed: std::collections::HashSet<String>,
+    /// Consumers per subscribed page (desktop panels + each remote client).
+    /// Upstream state is the union: the key set is replayed on a fresh
+    /// socket's Hello so renders resume after a bridge reconnect, and Lich
+    /// is unsubscribed only when a page's last consumer leaves.
+    pub(crate) webui_subscribed:
+        std::collections::HashMap<String, std::collections::HashSet<crate::core::remote::WebUiConsumer>>,
 }
 
 impl AppCore {
@@ -571,7 +574,7 @@ impl AppCore {
             lich_connected: false,
             webui_gui_tx: None,
             webui_pending_raw: Vec::new(),
-            webui_subscribed: std::collections::HashSet::new(),
+            webui_subscribed: std::collections::HashMap::new(),
         }
     }
 
@@ -782,7 +785,7 @@ impl AppCore {
             lich_connected: false,
             webui_gui_tx: None,
             webui_pending_raw: Vec::new(),
-            webui_subscribed: std::collections::HashSet::new(),
+            webui_subscribed: std::collections::HashMap::new(),
         };
 
         for conflict in &app.hotbar_key_conflicts.clone() {

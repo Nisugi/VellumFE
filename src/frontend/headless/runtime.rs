@@ -178,6 +178,300 @@ struct LichTarget {
     port: u16,
 }
 
+/// What to attach when an in-flight launch flow succeeds.
+enum LaunchAttach {
+    /// Web `connect` on a launch-capable Lich profile: attach the resolved
+    /// profile target (the flow result only confirms the port opened).
+    Connect {
+        target: LichTarget,
+        character: Option<String>,
+    },
+    /// `.launch <character>`: attach the target the flow returned.
+    DotLaunch,
+}
+
+/// A completed (or failed) launch flow, tagged with the generation that
+/// started it. Only the driver's current generation may attach.
+struct FinishedLaunch {
+    generation: u64,
+    attach: LaunchAttach,
+    result: Result<crate::launcher::flow::LaunchTarget>,
+}
+
+struct PendingLaunch {
+    generation: u64,
+    attach: LaunchAttach,
+    /// Resolves with the flow's result; an error means the worker died
+    /// without reporting. Held here (not on the runtime) so a discarded
+    /// launch can never deliver into a newer one.
+    result_rx: tokio::sync::oneshot::Receiver<Result<crate::launcher::flow::LaunchTarget>>,
+    /// Dropping this cancels the worker's flow future at its next await
+    /// point (closing probe sockets and the SSH handle).
+    _cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Launch progress, routed out of the worker as text instead of
+    /// borrowing `AppCore` from inside it; the runtime loop drains and
+    /// logs it.
+    progress_rx: mpsc::UnboundedReceiver<String>,
+}
+
+/// Runtime-owned SSH/Lich launch flow.
+///
+/// The flow (preflight probe, SSH connect, detached spawn, up-to-60s port
+/// wait) used to be awaited inline in the main loop, which made disconnect
+/// and shutdown wait out the full launch timeout. It now runs as a
+/// runtime-owned worker whose completion the `tokio::select!` loop polls;
+/// disconnect/shutdown cancel it, and a completion from an invalidated
+/// generation can never attach a session.
+///
+/// The worker is a dedicated thread with its own current-thread runtime
+/// (not `tokio::spawn`): russh's `Handle` isn't provably `Send` across
+/// awaits — the same constraint the GUI launcher documents in
+/// `frontend/gui/launcher.rs`.
+///
+/// Cancellation cleanup audit of the awaited flow (`launcher::flow`):
+/// dropping the cancel sender makes the worker's `select!` drop the flow
+/// future at its next await point, which closes its probe sockets,
+/// `wait_for_port` timers, and the russh `SshLauncher` handle (ending the
+/// SSH session); the worker thread then exits. Deliberately NOT cleaned
+/// up: a Lich process already spawned on the destination survives — it is
+/// launched detached by design (local reaper thread included) and a later
+/// launch re-discovers it through the preflight probe.
+struct LaunchDriver {
+    generation: u64,
+    pending: Option<PendingLaunch>,
+}
+
+impl LaunchDriver {
+    fn new() -> Self {
+        Self {
+            generation: 0,
+            pending: None,
+        }
+    }
+
+    /// Launching counts as an occupied connection phase.
+    fn in_flight(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// Start the real launch flow on its worker thread. Callers must have
+    /// rejected the request while [`Self::in_flight`].
+    fn begin_spec(
+        &mut self,
+        spec: crate::launcher::flow::LaunchSpec,
+        trust: crate::launcher::flow::HostKeyTrust,
+        attach: LaunchAttach,
+    ) {
+        let (progress_tx, progress_rx) = mpsc::unbounded_channel();
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        let worker = std::thread::Builder::new()
+            .name("lich-launch".into())
+            .spawn(move || {
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(error) => {
+                        let _ = result_tx.send(Err(anyhow::anyhow!(
+                            "could not start the launch worker runtime: {error}"
+                        )));
+                        return;
+                    }
+                };
+                rt.block_on(async move {
+                    let flow = run_launch_flow(spec, trust, progress_tx);
+                    tokio::select! {
+                        result = flow => {
+                            let _ = result_tx.send(result);
+                        }
+                        // Fires on cancel (sender dropped): the flow future
+                        // is dropped at its await point, closing sockets
+                        // and the SSH handle, and the worker exits.
+                        _ = &mut cancel_rx => {}
+                    }
+                });
+            });
+        match worker {
+            Ok(_) => self.begin_parts(result_rx, Some(cancel_tx), progress_rx, attach),
+            Err(error) => {
+                // Deliver the spawn failure through the ordinary completion
+                // path so callers see one consistent lifecycle.
+                let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+                let _ = result_tx.send(Err(anyhow::anyhow!(
+                    "could not start the launch worker thread: {error}"
+                )));
+                self.begin_parts(result_rx, None, progress_rx, attach);
+            }
+        }
+    }
+
+    /// Test seam: drive the launch lifecycle with a controllable result.
+    #[cfg(test)]
+    fn begin_result(
+        &mut self,
+        result_rx: tokio::sync::oneshot::Receiver<Result<crate::launcher::flow::LaunchTarget>>,
+        attach: LaunchAttach,
+    ) {
+        let (_progress_tx, progress_rx) = mpsc::unbounded_channel();
+        self.begin_parts(result_rx, None, progress_rx, attach);
+    }
+
+    fn begin_parts(
+        &mut self,
+        result_rx: tokio::sync::oneshot::Receiver<Result<crate::launcher::flow::LaunchTarget>>,
+        cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
+        progress_rx: mpsc::UnboundedReceiver<String>,
+        attach: LaunchAttach,
+    ) {
+        debug_assert!(self.pending.is_none(), "reject launches while in flight");
+        self.generation += 1;
+        self.pending = Some(PendingLaunch {
+            generation: self.generation,
+            attach,
+            result_rx,
+            _cancel_tx: cancel_tx,
+            progress_rx,
+        });
+    }
+
+    /// Cancel and discard the in-flight launch (disconnect/shutdown).
+    /// Dropping the pending entry drops its cancel sender, which stops the
+    /// worker; the generation is invalidated so a completion already
+    /// extracted from the old launch can never attach. Returns whether one
+    /// was in flight.
+    fn cancel(&mut self) -> bool {
+        let Some(pending) = self.pending.take() else {
+            return false;
+        };
+        drop(pending);
+        // Invalidate: any FinishedLaunch carrying the old generation is
+        // stale even if its result won the race against the cancel.
+        self.generation += 1;
+        true
+    }
+
+    /// Surface progress the launch task reported since the last batch.
+    fn drain_progress(&mut self) {
+        if let Some(pending) = self.pending.as_mut() {
+            while let Ok(message) = pending.progress_rx.try_recv() {
+                tracing::debug!("launch progress: {message}");
+            }
+        }
+    }
+
+    /// Await the in-flight flow's completion — the `tokio::select!` arm,
+    /// gated on [`Self::in_flight`]. Cancellation-safe: the pending entry
+    /// is only consumed once the result has arrived.
+    async fn next_finished(&mut self) -> Option<FinishedLaunch> {
+        let received = {
+            let pending = self.pending.as_mut()?;
+            (&mut pending.result_rx).await
+        };
+        let mut pending = self.pending.take()?;
+        while let Ok(message) = pending.progress_rx.try_recv() {
+            tracing::debug!("launch progress: {message}");
+        }
+        let result = received.unwrap_or_else(|_| {
+            Err(anyhow::anyhow!(
+                "the launch worker ended without reporting a result"
+            ))
+        });
+        Some(FinishedLaunch {
+            generation: pending.generation,
+            attach: pending.attach,
+            result,
+        })
+    }
+}
+
+/// The launch flow as a spawnable task: owns its spec and reports progress
+/// over a channel (never borrowing runtime state). A concrete fn (not an
+/// inline generic-closure async block) so the compiler can prove the
+/// spawned future `Send`.
+async fn run_launch_flow(
+    spec: crate::launcher::flow::LaunchSpec,
+    trust: crate::launcher::flow::HostKeyTrust,
+    progress_tx: mpsc::UnboundedSender<String>,
+) -> Result<crate::launcher::flow::LaunchTarget> {
+    // Concrete boxed callback: instantiating the flow's generic `P` with a
+    // closure type trips a rustc higher-ranked-lifetime Send-inference bug
+    // when the resulting future is spawned.
+    let progress: Box<dyn FnMut(crate::launcher::flow::LaunchProgress) + Send> =
+        Box::new(move |progress| {
+            let _ = progress_tx.send(format!("{progress:?}"));
+        });
+    crate::launcher::flow::launch_spec(&spec, trust, progress).await
+}
+
+/// Message for connect/launch/reconnect requests that arrive while a launch
+/// flow is already running: launching is an occupied phase, and the way out
+/// is an explicit cancel (disconnect) first.
+const LAUNCH_IN_PROGRESS: &str =
+    "A launch is already in progress - disconnect to cancel it before starting another session.";
+
+/// Apply a finished launch flow from the runtime loop (never from the task
+/// itself). A stale generation — cancelled or superseded — is discarded
+/// without touching supervisor or session state.
+fn apply_launch_completion(
+    app_core: &mut AppCore,
+    supervisor: &mut Supervisor,
+    driver: &LaunchDriver,
+    finished: FinishedLaunch,
+) {
+    if finished.generation != driver.generation {
+        tracing::debug!("discarding launch completion from an invalidated generation");
+        return;
+    }
+    if supervisor.connection.is_some() {
+        // Defensive: requests are rejected while launching, so a live
+        // connection here means something newer owns the session. Never
+        // overwrite it.
+        tracing::warn!("discarding launch completion: a session is already attached");
+        return;
+    }
+    match finished.result {
+        Ok(flow_target) => {
+            let (target, character) = match finished.attach {
+                LaunchAttach::Connect { target, character } => (target, character),
+                LaunchAttach::DotLaunch => {
+                    app_core.add_system_message(&format!(
+                        "Launched {} — attaching to {}:{}.",
+                        flow_target.character, flow_target.host, flow_target.port
+                    ));
+                    (
+                        LichTarget {
+                            host: flow_target.host.clone(),
+                            port: flow_target.port,
+                        },
+                        Some(flow_target.character.clone()),
+                    )
+                }
+            };
+            supervisor.expected_character =
+                character.clone().filter(|name| !name.trim().is_empty());
+            supervisor.character = character;
+            supervisor.game = None;
+            supervisor.direct = None;
+            supervisor.lich_target = Some(target);
+            supervisor.login_key = None;
+            supervisor.user_disconnected = false;
+            supervisor.reconnect_attempt = 0;
+            supervisor.reconnect_at = None;
+            supervisor.spawn(app_core);
+            app_core.set_remote_session_state(supervisor.status(SessionState::Connecting));
+        }
+        Err(error) => {
+            let message = format!("Launch failed: {error:#}");
+            app_core.add_system_message(&message);
+            let mut info = supervisor.status(SessionState::Idle);
+            info.error = Some(message);
+            app_core.set_remote_session_state(info);
+        }
+    }
+}
+
 /// Everything the supervisor tracks about the desired/current session.
 struct Supervisor {
     /// Credentials for the current/last direct session; None = Lich mode.
@@ -298,6 +592,26 @@ impl Supervisor {
             server_rx,
             task,
         });
+        // Capabilities come from THIS transport's mode, never the startup
+        // CLI (finding 15). Every attach path — web login, launch
+        // completion, `.reconnect`, automatic reconnect — funnels through
+        // spawn, so the flags cannot diverge from the connection being made.
+        self.derive_capabilities(app_core);
+    }
+
+    /// Derive connection-mode capabilities from the CURRENT transport and
+    /// publish them (set_webui_available pushes to remote clients on
+    /// change). Lich command delivery (`;go2` fallback) and Lich WebUI
+    /// *eligibility* exist only while a Lich-mode transport is attached;
+    /// direct eAccess and the idle login screen advertise neither.
+    /// Eligibility is not an established bridge — the WebUI handshake still
+    /// has to succeed — and `.webui off` tears down only the bridge, never
+    /// these flags. Touches capability flags ONLY: reconnect eligibility
+    /// and stored credentials are never modified here.
+    fn derive_capabilities(&self, app_core: &mut AppCore) {
+        let lich_attached = self.connection.is_some() && self.direct.is_none();
+        app_core.set_webui_available(lich_attached);
+        app_core.set_lich_connected(lich_attached);
     }
 
     /// A socket is not command-capable until its requested Lich character has
@@ -1017,6 +1331,14 @@ fn reject_owned_retarget(app_core: &mut AppCore, startup_character: &str) {
     ));
 }
 
+/// Where the embedded startup result is delivered: the actual authenticated
+/// endpoint the web server installed (bound port + the token that listener
+/// authenticates with), or the startup failure. A std (not tokio) sender so
+/// the blocking embedder thread can wait on it with a timeout; sending from
+/// async context is non-blocking.
+pub type StartupReporter =
+    std::sync::mpsc::Sender<std::result::Result<RemoteLaunchEndpoint, String>>;
+
 pub async fn async_run(
     config: crate::config::Config,
     character: Option<String>,
@@ -1031,6 +1353,32 @@ pub async fn async_run(
         login_key,
         shutdown,
         super::HeadlessLaunchOptions::default(),
+        None,
+    )
+    .await
+}
+
+/// Embedded (mobile shell) entry point: identical to [`async_run`] but
+/// reports startup completion — the server's actual endpoint or the failure
+/// that prevented one — exactly once on `startup`. Dropping the sender
+/// without a report (runtime ended first) is itself an observable failure
+/// for the waiting embedder.
+pub async fn async_run_embedded(
+    config: crate::config::Config,
+    character: Option<String>,
+    direct: Option<DirectConnectConfig>,
+    login_key: Option<String>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+    startup: StartupReporter,
+) -> Result<()> {
+    async_run_with_options(
+        config,
+        character,
+        direct,
+        login_key,
+        shutdown,
+        super::HeadlessLaunchOptions::default(),
+        Some(startup),
     )
     .await
 }
@@ -1042,9 +1390,15 @@ pub(super) async fn async_run_with_options(
     login_key: Option<String>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     launch: super::HeadlessLaunchOptions,
+    startup: Option<StartupReporter>,
 ) -> Result<()> {
     // The web frontend is the only interface — it is not optional here.
     config.web.enabled = true;
+
+    // Reported exactly once: endpoint on readiness, message on server
+    // startup failure. Early `?` returns drop it; the embedder treats a
+    // dropped reporter as a failed start (see embedded.rs).
+    let mut startup_reporter = startup;
 
     let mut app_core = AppCore::new(config)?;
     // This runtime drains disconnect_requested (below) into
@@ -1058,10 +1412,16 @@ pub(super) async fn async_run_with_options(
         .clone()
         .or_else(|| app_core.config.connection.character.clone())
         .unwrap_or_else(|| "default".to_string());
-    let (sink, mut remote_rx) = crate::frontend::web::start_with_classic_maps(
+    // Server startup failure surfaces here (bind/token/registry errors).
+    // Success is signalled separately via the launch-endpoint watch channel;
+    // on success this receiver stays pending for the server's lifetime.
+    let (server_failure_tx, server_failure_rx) = tokio::sync::oneshot::channel::<String>();
+    let mut server_failure_rx = Some(server_failure_rx);
+    let (sink, mut remote_rx) = crate::frontend::web::start_with_startup_failure(
         &app_core.config.web,
         session_label,
         app_core.map.classic_maps(),
+        Some(server_failure_tx),
     );
     let mut launch_endpoint_rx = sink.launch_endpoint_receiver();
     app_core.enable_remote(sink);
@@ -1111,13 +1471,11 @@ pub(super) async fn async_run_with_options(
         game_disconnect_seen: false,
     };
 
-    // Lich WebUI is reachable only on a Lich-attached session (a direct
-    // eAccess connection bypasses Lich). Advertise it to phone clients so
-    // they show the WebUI affordance only when it will work.
-    app_core.set_webui_available(!is_direct);
-    // Connection mode for anything that sends `;` commands (travel's ;go2
-    // fallback). Separate from WebUI: `.webui off` must not disable `;go2`.
-    app_core.set_lich_connected(!is_direct);
+    // Capabilities are derived per-transport in Supervisor::spawn (finding
+    // 15) — the startup CLI mode must not pre-commit them. With no
+    // connection yet this advertises neither Lich WebUI nor Lich command
+    // delivery: the login screen promises no active bridge.
+    supervisor.derive_capabilities(&mut app_core);
 
     // Auto-connect only when the CLI asked for a session (--direct / --key);
     // otherwise idle on the login screen.
@@ -1139,6 +1497,7 @@ pub(super) async fn async_run_with_options(
     // playtests saw quits that needed a follow-up command to complete).
     let mut quit_deadline: Option<Instant> = None;
     let mut exit_lifecycle = SessionExitLifecycle::new();
+    let mut launch_driver = LaunchDriver::new();
     let mut stall_watchdog = tokio::time::interval(CONNECTION_WATCHDOG_INTERVAL);
     stall_watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -1154,6 +1513,45 @@ pub(super) async fn async_run_with_options(
                 if readiness.is_err() {
                     tracing::warn!("Web server readiness channel closed before startup completed");
                     launch_urls_pending = false;
+                    // The failing serve task drops its channel ends before it
+                    // sends the failure reason, so the watch closing can be
+                    // observed first. Give the reason a moment to arrive so
+                    // the embedder sees "pinned port taken", not a generic
+                    // closure message.
+                    let message = match server_failure_rx.take() {
+                        Some(rx) => tokio::time::timeout(Duration::from_secs(2), rx)
+                            .await
+                            .ok()
+                            .and_then(|sent| sent.ok()),
+                        None => None,
+                    };
+                    let message = message.unwrap_or_else(|| {
+                        "web server stopped before publishing its endpoint".to_string()
+                    });
+                    tracing::error!("Web server startup failed: {message}");
+                    if let Some(tx) = startup_reporter.take() {
+                        let _ = tx.send(Err(message));
+                    }
+                }
+            }
+            // Server startup failed (bind conflict on a pinned port, token or
+            // registry setup error). Deliver the reason to a waiting embedder
+            // and stop expecting readiness — the game session continues
+            // without the web server on desktop headless.
+            failure = async {
+                match server_failure_rx.as_mut() {
+                    Some(rx) => rx.await,
+                    None => std::future::pending().await,
+                }
+            }, if launch_urls_pending => {
+                server_failure_rx = None;
+                launch_urls_pending = false;
+                let message = failure.unwrap_or_else(|_| {
+                    "web server exited before startup completed".to_string()
+                });
+                tracing::error!("Web server startup failed: {message}");
+                if let Some(tx) = startup_reporter.take() {
+                    let _ = tx.send(Err(message));
                 }
             }
             _ = shutdown.changed() => {
@@ -1166,6 +1564,29 @@ pub(super) async fn async_run_with_options(
                 match maybe_event {
                     None => {
                         tracing::warn!("Web server event channel closed");
+                        // A failing serve task consumes its handles (closing
+                        // this channel) before it sends the failure reason,
+                        // so this branch can win the select race against the
+                        // failure/readiness branches. A waiting embedder must
+                        // still receive the real reason ("pinned port taken"),
+                        // not a generic "runtime exited" message.
+                        if launch_urls_pending {
+                            launch_urls_pending = false;
+                            let message = match server_failure_rx.take() {
+                                Some(rx) => tokio::time::timeout(Duration::from_secs(2), rx)
+                                    .await
+                                    .ok()
+                                    .and_then(|sent| sent.ok()),
+                                None => None,
+                            };
+                            let message = message.unwrap_or_else(|| {
+                                "web server stopped before publishing its endpoint".to_string()
+                            });
+                            tracing::error!("Web server startup failed: {message}");
+                            if let Some(tx) = startup_reporter.take() {
+                                let _ = tx.send(Err(message));
+                            }
+                        }
                         break;
                     }
                     Some(event) => {
@@ -1216,6 +1637,19 @@ pub(super) async fn async_run_with_options(
                             app_core.running = false;
                         }
                     }
+                }
+            }
+            // An in-flight Lich launch finished. Applying it here (not in
+            // the task) keeps every AppCore/supervisor mutation on the
+            // loop, and the generation check discards anything cancelled.
+            finished = launch_driver.next_finished(), if launch_driver.in_flight() => {
+                if let Some(finished) = finished {
+                    apply_launch_completion(
+                        &mut app_core,
+                        &mut supervisor,
+                        &launch_driver,
+                        finished,
+                    );
                 }
             }
             // Stall watchdog: a connection that has produced no game text
@@ -1341,6 +1775,14 @@ pub(super) async fn async_run_with_options(
 
         if launch_urls_pending {
             if let Some(endpoint) = launch_endpoint_rx.borrow().clone() {
+                // The server is ready: listener bound, token installed,
+                // registry entry published. This is the startup-success
+                // moment for a waiting embedder — the endpoint carries the
+                // actual bound port (an unpinned instance may have walked)
+                // and the exact token that listener authenticates.
+                if let Some(tx) = startup_reporter.take() {
+                    let _ = tx.send(Ok(endpoint.clone()));
+                }
                 if let Some(client) = launch.web_client {
                     if !open_local_web_client_with(&endpoint, client, crate::platform::open_url) {
                         // Do not include the authenticated URL or opener error:
@@ -1363,6 +1805,10 @@ pub(super) async fn async_run_with_options(
                 launch_urls_pending = false;
             }
         }
+
+        // Launch progress is only diagnostic today; log it from the loop so
+        // the task itself never needs AppCore.
+        launch_driver.drain_progress();
 
         // Map worker, mapdb updater, and walk executor tick once per batch;
         // travel commands go out through the same path as typed ones.
@@ -1443,9 +1889,17 @@ pub(super) async fn async_run_with_options(
         for request in session_requests {
             match request {
                 SessionRequest::Stop => {
+                    if launch_driver.cancel() {
+                        app_core.add_system_message("Launch cancelled.");
+                    }
                     stop_inactive_session(&mut app_core, &mut supervisor);
                 }
                 SessionRequest::ExitLogout => {
+                    // Nothing has attached yet during a launch; exit means
+                    // abandon it rather than wait out the port timeout.
+                    if launch_driver.cancel() {
+                        app_core.add_system_message("Launch cancelled.");
+                    }
                     // This orderly path deliberately disables the legacy
                     // typed-quit timeout: no timeout may abort the socket or
                     // claim logout before the game actually disconnects.
@@ -1453,6 +1907,12 @@ pub(super) async fn async_run_with_options(
                     exit_lifecycle.request_exit();
                 }
                 SessionRequest::Disconnect => {
+                    // Cancel an in-flight launch immediately: the user must
+                    // never wait out the launch timeout to get back to idle,
+                    // and a late success must never re-attach.
+                    if launch_driver.cancel() {
+                        app_core.add_system_message("Launch cancelled.");
+                    }
                     supervisor.user_disconnected = true;
                     supervisor.reconnect_at = None;
                     supervisor.reconnect_attempt = 0;
@@ -1481,7 +1941,9 @@ pub(super) async fn async_run_with_options(
                     // intentional-disconnect / backoff state and re-establish
                     // using the stored credentials (direct re-auths for a
                     // fresh ticket; detachable Lich re-attaches).
-                    if supervisor.connection.is_some() {
+                    if launch_driver.in_flight() {
+                        app_core.add_system_message(LAUNCH_IN_PROGRESS);
+                    } else if supervisor.connection.is_some() {
                         app_core.add_system_message("Already connected.");
                     } else if !supervisor.can_reconnect_after_clear() {
                         app_core
@@ -1501,6 +1963,10 @@ pub(super) async fn async_run_with_options(
                     }
                 }
                 connect @ SessionRequest::Connect { .. } => {
+                    if launch_driver.in_flight() {
+                        app_core.add_system_message(LAUNCH_IN_PROGRESS);
+                        continue;
+                    }
                     if supervisor.connection.is_some() {
                         app_core.add_system_message(
                             "Already connected - disconnect before starting a new session.",
@@ -1548,7 +2014,10 @@ pub(super) async fn async_run_with_options(
                                     // cold-start flow: probe the port, and if
                                     // it's down, SSH-launch then poll every 5s
                                     // until it's up. If already up (or no
-                                    // launch command), attach directly.
+                                    // launch command), attach directly. The
+                                    // flow runs as a runtime-owned task so
+                                    // disconnect/shutdown stay responsive;
+                                    // attach happens on its completion.
                                     if let Some(command) = custom_launch {
                                         let ssh = launcher_ssh_settings();
                                         let spec = crate::launcher::flow::LaunchSpec::from_command(
@@ -1561,34 +2030,16 @@ pub(super) async fn async_run_with_options(
                                         app_core.set_remote_session_state(
                                             supervisor.status(SessionState::Connecting),
                                         );
-                                        let trust =
-                                            crate::launcher::flow::HostKeyTrust::AutoPinFirstUse;
-                                        let outcome =
-                                            crate::launcher::flow::launch_spec(&spec, trust, |p| {
-                                                tracing::debug!("launch progress: {p:?}")
-                                            })
-                                            .await;
-                                        match outcome {
-                                            Ok(_) => {
-                                                supervisor.expected_character = character
-                                                    .clone()
-                                                    .filter(|name| !name.trim().is_empty());
-                                                supervisor.character = character;
-                                                supervisor.game = None;
-                                                supervisor.direct = None;
-                                                supervisor.lich_target = Some(target);
-                                                SessionState::Connecting
-                                            }
-                                            Err(err) => {
-                                                let message = format!("Launch failed: {err:#}");
-                                                app_core.add_system_message(&message);
-                                                let mut info =
-                                                    supervisor.status(SessionState::Idle);
-                                                info.error = Some(message);
-                                                app_core.set_remote_session_state(info);
-                                                continue;
-                                            }
-                                        }
+                                        // A stale backoff timer must not spawn
+                                        // an old-credential connection under a
+                                        // pending launch.
+                                        supervisor.reconnect_at = None;
+                                        launch_driver.begin_spec(
+                                            spec,
+                                            crate::launcher::flow::HostKeyTrust::AutoPinFirstUse,
+                                            LaunchAttach::Connect { target, character },
+                                        );
+                                        continue;
                                     } else {
                                         supervisor.expected_character = character
                                             .clone()
@@ -1620,8 +2071,12 @@ pub(super) async fn async_run_with_options(
                     // `.launch <character>` from a phone/web client: SSH into the
                     // home PC, cold-start its headless Lich, then attach to the
                     // resulting detachable-client target exactly like a Lich
-                    // connect. The flow runs inline here (we're already async);
-                    // progress is surfaced as system messages.
+                    // connect. The flow runs as a runtime-owned task so the
+                    // loop keeps servicing disconnect/shutdown while it waits.
+                    if launch_driver.in_flight() {
+                        app_core.add_system_message(LAUNCH_IN_PROGRESS);
+                        continue;
+                    }
                     if supervisor.connection.is_some() {
                         app_core.add_system_message(
                             "Already connected - disconnect before launching a session.",
@@ -1655,67 +2110,25 @@ pub(super) async fn async_run_with_options(
                     // tunnel there is no interactive prompt on this path, and a
                     // changed key is still hard-rejected inside the flow.
                     let trust = crate::launcher::flow::HostKeyTrust::AutoPinFirstUse;
-                    let launch_result = {
-                        // Collect progress into messages after the flow (the
-                        // callback can't borrow app_core while it's borrowed by
-                        // the surrounding loop).
-                        let mut messages = Vec::new();
-                        // Launch the exact spec checked above. Re-resolving
-                        // mutable launcher config here would reopen a
-                        // retargeting window after ownership validation.
-                        let spec = crate::launcher::flow::LaunchSpec {
-                            ssh_host: config.ssh.host.clone(),
-                            ssh_port: config.ssh.port,
-                            ssh_user: config.ssh.user.clone(),
-                            remote_os: config.ssh.remote_os.into(),
-                            program: requested.program,
-                            args: requested.args,
-                            local: crate::launcher::flow::is_local_host(&requested.attach_host),
-                            attach_host: requested.attach_host,
-                            attach_port: requested.attach_port,
-                            character: character.clone(),
-                        };
-                        let res = crate::launcher::flow::launch_spec(&spec, trust, |p| {
-                            messages.push(format!("{p:?}"))
-                        })
-                        .await;
-                        for m in messages {
-                            tracing::debug!("launch progress: {m}");
-                        }
-                        res
+                    // Launch the exact spec checked above. Re-resolving
+                    // mutable launcher config later would reopen a
+                    // retargeting window after ownership validation.
+                    let spec = crate::launcher::flow::LaunchSpec {
+                        ssh_host: config.ssh.host.clone(),
+                        ssh_port: config.ssh.port,
+                        ssh_user: config.ssh.user.clone(),
+                        remote_os: config.ssh.remote_os.into(),
+                        program: requested.program,
+                        args: requested.args,
+                        local: crate::launcher::flow::is_local_host(&requested.attach_host),
+                        attach_host: requested.attach_host,
+                        attach_port: requested.attach_port,
+                        character: character.clone(),
                     };
-                    match launch_result {
-                        Ok(target) => {
-                            supervisor.character = Some(target.character.clone());
-                            supervisor.expected_character = Some(target.character.clone())
-                                .filter(|name| !name.trim().is_empty());
-                            supervisor.game = None;
-                            supervisor.direct = None;
-                            supervisor.lich_target = Some(LichTarget {
-                                host: target.host.clone(),
-                                port: target.port,
-                            });
-                            supervisor.login_key = None;
-                            supervisor.user_disconnected = false;
-                            supervisor.reconnect_attempt = 0;
-                            supervisor.reconnect_at = None;
-                            app_core.add_system_message(&format!(
-                                "Launched {} — attaching to {}:{}.",
-                                target.character, target.host, target.port
-                            ));
-                            supervisor.spawn(&mut app_core);
-                            app_core.set_remote_session_state(
-                                supervisor.status(SessionState::Connecting),
-                            );
-                        }
-                        Err(err) => {
-                            let message = format!("Launch failed: {err:#}");
-                            app_core.add_system_message(&message);
-                            let mut info = supervisor.status(SessionState::Idle);
-                            info.error = Some(message);
-                            app_core.set_remote_session_state(info);
-                        }
-                    }
+                    // A stale backoff timer must not spawn an old-credential
+                    // connection under a pending launch.
+                    supervisor.reconnect_at = None;
+                    launch_driver.begin_spec(spec, trust, LaunchAttach::DotLaunch);
                 }
             }
         }
@@ -1725,10 +2138,20 @@ pub(super) async fn async_run_with_options(
         app_core.poll_tts_events();
         // Debounced layout autosave (layout dot-commands from web clients).
         app_core.tick_layout_autosave();
+        // Withdraw connection-mode capabilities whenever the transport is
+        // gone (user disconnect, connection loss, watchdog stop, reconnect
+        // backoff): a login screen must not promise Lich WebUI or a ;go2
+        // fallback. Spawn re-derives on the next attach. This only writes
+        // capability flags — reconnect eligibility and stored credentials
+        // are untouched.
+        supervisor.derive_capabilities(&mut app_core);
         // Flush coalesced state deltas to web clients once per batch.
         app_core.flush_remote_state();
     }
 
+    // Shutdown never waits out a pending launch: cancel and discard it (the
+    // detached Lich it may already have spawned survives by design).
+    launch_driver.cancel();
     if let Some(conn) = supervisor.connection.take() {
         conn.task.abort();
     }
@@ -2325,7 +2748,13 @@ fn handle_remote_event(
             app_core.handle_remote_touch_wheel_put(client_id, request_id, scope, slices);
             true
         }
-        RemoteEvent::WebUiSubscribe { page } => {
+        RemoteEvent::WebUiClientGone { client_id } => {
+            // Always clean up — a vanished client must release its pages even
+            // while the identity gate holds other WebUI actions back.
+            app_core.webui_client_gone(client_id);
+            true
+        }
+        RemoteEvent::WebUiSubscribe { client_id, page } => {
             if !game_commands_allowed {
                 app_core.add_system_message(
                     "Waiting for Lich to confirm the configured character; WebUI action not sent.",
@@ -2338,17 +2767,23 @@ fn handle_remote_event(
             if !app_core.webui_is_active() {
                 app_core.request_webui_handshake();
             }
-            app_core.webui_subscribe(&page);
+            app_core.webui_subscribe(
+                crate::core::remote::WebUiConsumer::Remote(client_id),
+                &page,
+            );
             true
         }
-        RemoteEvent::WebUiUnsubscribe { page } => {
+        RemoteEvent::WebUiUnsubscribe { client_id, page } => {
             if !game_commands_allowed {
                 app_core.add_system_message(
                     "Waiting for Lich to confirm the configured character; WebUI action not sent.",
                 );
                 return true;
             }
-            app_core.webui_unsubscribe(&page);
+            app_core.webui_unsubscribe(
+                crate::core::remote::WebUiConsumer::Remote(client_id),
+                &page,
+            );
             true
         }
         RemoteEvent::WebUiEvent { page, cid, value } => {
@@ -2571,6 +3006,225 @@ mod tests {
             command_rx,
             server_tx,
         )
+    }
+
+    fn flow_target(character: &str, host: &str, port: u16) -> crate::launcher::flow::LaunchTarget {
+        crate::launcher::flow::LaunchTarget {
+            host: host.to_string(),
+            port,
+            character: character.to_string(),
+        }
+    }
+
+    /// A controllable launch: the test decides when and how the "flow"
+    /// completes, standing in for the up-to-60s SSH/port-wait future.
+    fn controllable_launch(
+        driver: &mut LaunchDriver,
+        attach: LaunchAttach,
+    ) -> tokio::sync::oneshot::Sender<Result<crate::launcher::flow::LaunchTarget>> {
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        driver.begin_result(result_rx, attach);
+        result_tx
+    }
+
+    #[tokio::test]
+    async fn pending_launch_never_blocks_the_loop_and_counts_as_occupied() {
+        let mut driver = LaunchDriver::new();
+        let _result_tx = controllable_launch(&mut driver, LaunchAttach::DotLaunch);
+
+        // Launching is an occupied phase: duplicate connect/launch/reconnect
+        // requests are rejected on this flag by the request loop.
+        assert!(driver.in_flight());
+
+        // The completion arm must stay pending (not block or resolve) while
+        // the flow runs, so other select! arms keep the runtime responsive.
+        tokio::select! {
+            _ = driver.next_finished() => panic!("unfinished launch must not resolve"),
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+        }
+        assert!(driver.in_flight(), "a cancelled poll must not consume the launch");
+    }
+
+    #[tokio::test]
+    async fn disconnect_style_cancel_discards_the_pending_launch() {
+        let mut driver = LaunchDriver::new();
+        let result_tx = controllable_launch(&mut driver, LaunchAttach::DotLaunch);
+
+        assert!(driver.cancel(), "cancel reports the discarded launch");
+        assert!(!driver.in_flight(), "idle immediately, not after the timeout");
+        assert!(!driver.cancel(), "nothing left to cancel");
+        assert!(
+            result_tx.is_closed(),
+            "cancel must drop the worker-facing channel so the flow stops"
+        );
+    }
+
+    #[tokio::test]
+    async fn late_success_of_a_cancelled_generation_never_attaches() {
+        let mut core = app();
+        let mut supervisor = lich_supervisor(None);
+        supervisor.lich_target = None;
+        let mut driver = LaunchDriver::new();
+        let result_tx = controllable_launch(
+            &mut driver,
+            LaunchAttach::Connect {
+                target: LichTarget {
+                    host: "127.0.0.1".to_string(),
+                    port: 8003,
+                },
+                character: Some("Aster".to_string()),
+            },
+        );
+        let stale_generation = driver.generation;
+
+        // The flow succeeds and the user cancels before the loop applies the
+        // completion — the same race as a disconnect landing first.
+        let _ = result_tx.send(Ok(flow_target("Aster", "127.0.0.1", 8003)));
+        assert!(driver.cancel());
+
+        // Whatever the loop had already extracted from the old launch is
+        // stale by generation and must be discarded without attaching.
+        let stale = FinishedLaunch {
+            generation: stale_generation,
+            attach: LaunchAttach::Connect {
+                target: LichTarget {
+                    host: "127.0.0.1".to_string(),
+                    port: 8003,
+                },
+                character: Some("Aster".to_string()),
+            },
+            result: Ok(flow_target("Aster", "127.0.0.1", 8003)),
+        };
+        apply_launch_completion(&mut core, &mut supervisor, &driver, stale);
+        assert!(supervisor.connection.is_none(), "cancelled launch attached");
+        assert!(supervisor.lich_target.is_none());
+
+        // And the driver itself has nothing left to deliver.
+        tokio::select! {
+            finished = driver.next_finished() => {
+                assert!(finished.is_none(), "cancelled launch still delivered a completion");
+            }
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_path_success_attaches_the_resolved_profile_target() {
+        let mut core = app();
+        let mut supervisor = lich_supervisor(None);
+        supervisor.lich_target = None;
+        let mut driver = LaunchDriver::new();
+        let result_tx = controllable_launch(
+            &mut driver,
+            LaunchAttach::Connect {
+                target: LichTarget {
+                    host: "10.0.0.9".to_string(),
+                    port: 8004,
+                },
+                character: Some("Aster".to_string()),
+            },
+        );
+
+        let _ = result_tx.send(Ok(flow_target("Aster", "10.0.0.9", 8004)));
+        let finished = tokio::time::timeout(Duration::from_secs(5), driver.next_finished())
+            .await
+            .expect("completed launch must resolve")
+            .expect("completed launch must deliver");
+        apply_launch_completion(&mut core, &mut supervisor, &driver, finished);
+
+        assert!(supervisor.connection.is_some(), "success must attach");
+        assert_eq!(supervisor.expected_character.as_deref(), Some("Aster"));
+        assert_eq!(supervisor.character.as_deref(), Some("Aster"));
+        let target = supervisor.lich_target.as_ref().expect("lich target");
+        assert_eq!((target.host.as_str(), target.port), ("10.0.0.9", 8004));
+        assert!(!supervisor.user_disconnected);
+        assert!(!driver.in_flight());
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[tokio::test]
+    async fn dot_launch_success_attaches_the_flow_reported_target() {
+        let mut core = app();
+        let mut supervisor = lich_supervisor(None);
+        supervisor.lich_target = None;
+        let mut driver = LaunchDriver::new();
+        let result_tx = controllable_launch(&mut driver, LaunchAttach::DotLaunch);
+
+        let _ = result_tx.send(Ok(flow_target("Briar", "192.168.1.4", 8010)));
+        let finished = tokio::time::timeout(Duration::from_secs(5), driver.next_finished())
+            .await
+            .expect("completed launch must resolve")
+            .expect("completed launch must deliver");
+        apply_launch_completion(&mut core, &mut supervisor, &driver, finished);
+
+        assert!(supervisor.connection.is_some());
+        assert_eq!(supervisor.expected_character.as_deref(), Some("Briar"));
+        let target = supervisor.lich_target.as_ref().expect("lich target");
+        assert_eq!((target.host.as_str(), target.port), ("192.168.1.4", 8010));
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    #[tokio::test]
+    async fn launch_failure_reports_without_attaching() {
+        let mut core = app();
+        let mut supervisor = lich_supervisor(None);
+        supervisor.lich_target = None;
+        let mut driver = LaunchDriver::new();
+        let result_tx = controllable_launch(&mut driver, LaunchAttach::DotLaunch);
+
+        let _ = result_tx.send(Err(anyhow::anyhow!("port never opened")));
+        let finished = tokio::time::timeout(Duration::from_secs(5), driver.next_finished())
+            .await
+            .expect("failed launch must resolve")
+            .expect("failed launch must deliver");
+        apply_launch_completion(&mut core, &mut supervisor, &driver, finished);
+
+        assert!(supervisor.connection.is_none(), "failure must not attach");
+        assert!(supervisor.lich_target.is_none());
+        assert!(!driver.in_flight(), "failure returns the driver to idle");
+    }
+
+    #[tokio::test]
+    async fn dropped_launch_worker_is_reported_as_a_failure() {
+        let mut core = app();
+        let mut supervisor = lich_supervisor(None);
+        let mut driver = LaunchDriver::new();
+        let result_tx = controllable_launch(&mut driver, LaunchAttach::DotLaunch);
+
+        // Worker died without reporting (panicked thread): the runtime must
+        // still get a terminal completion instead of hanging in "launching".
+        drop(result_tx);
+        let finished = tokio::time::timeout(Duration::from_secs(5), driver.next_finished())
+            .await
+            .expect("dead worker must resolve")
+            .expect("dead worker must deliver a failure");
+        assert!(finished.result.is_err());
+        apply_launch_completion(&mut core, &mut supervisor, &driver, finished);
+        assert!(supervisor.connection.is_none());
+    }
+
+    #[tokio::test]
+    async fn launch_completion_never_overwrites_an_attached_session() {
+        let mut core = app();
+        let mut supervisor = lich_supervisor(None);
+        let (connection, _command_rx, _server_tx) = test_connection();
+        supervisor.connection = Some(connection);
+        let original_target = supervisor.lich_target.clone();
+        let driver = LaunchDriver::new();
+
+        let finished = FinishedLaunch {
+            generation: driver.generation,
+            attach: LaunchAttach::DotLaunch,
+            result: Ok(flow_target("Intruder", "10.9.9.9", 9999)),
+        };
+        apply_launch_completion(&mut core, &mut supervisor, &driver, finished);
+
+        let target = supervisor.lich_target.as_ref().expect("lich target");
+        let original = original_target.as_ref().expect("original target");
+        assert_eq!(target.host, original.host, "newer session state overwritten");
+        assert_eq!(target.port, original.port);
+        assert_ne!(supervisor.character.as_deref(), Some("Intruder"));
+        supervisor.connection.take().unwrap().task.abort();
     }
 
     #[test]
@@ -3441,6 +4095,7 @@ mod tests {
             None,
             false,
             crate::core::remote::RemoteEvent::WebUiSubscribe {
+                client_id: 1,
                 page: "bigshot".to_string(),
             },
             &mut requests,
@@ -3511,5 +4166,208 @@ mod tests {
         assert!(!should_send_to_network("action:bar"));
         assert!(should_send_to_network("say hello"));
         assert!(should_send_to_network("north"));
+    }
+
+    // ----- Finding 15: capabilities derive from the transport being made -----
+    //
+    // These assert the values PUBLISHED TO REMOTE CLIENTS (the sink's session
+    // snapshot that connect-time clients receive) and the travel-fallback
+    // decision, not merely supervisor fields.
+
+    fn install_remote(core: &mut AppCore) -> crate::core::remote::RemoteServerHandles {
+        let (sink, handles, _events) = crate::core::remote::RemoteSink::new(16);
+        core.message_processor.remote = Some(sink);
+        handles
+    }
+
+    /// The webui_available value a remote client sees in the session
+    /// snapshot (what a phone gets on connect and via Session deltas).
+    fn remote_webui(handles: &crate::core::remote::RemoteServerHandles) -> bool {
+        handles.state_rx.borrow().session.webui_available
+    }
+
+    fn direct_config() -> DirectConnectConfig {
+        DirectConnectConfig {
+            account: "ACCT".into(),
+            password: "secret".into(),
+            character: "Aster".into(),
+            game_code: "GS".into(),
+            data_dir: std::env::temp_dir(),
+        }
+    }
+
+    /// Idle login screen (mobile cold start, no CLI credentials): neither
+    /// Lich WebUI nor Lich command delivery is advertised, and the `;go2`
+    /// fallback is off even when its config gate is enabled.
+    #[test]
+    fn idle_start_advertises_no_lich_capabilities() {
+        let mut core = app();
+        core.config.go2.lich_fallback = true;
+        let handles = install_remote(&mut core);
+        let supervisor = lich_supervisor(None); // credential-less: no connection
+        supervisor.derive_capabilities(&mut core);
+        assert!(!core.webui_available());
+        assert!(!core.lich_connected());
+        assert!(!remote_webui(&handles));
+        assert!(!core.travel_lich_fallback_permitted());
+    }
+
+    /// Idle → direct login: the mobile bug. Even though startup had no
+    /// credentials, a direct eAccess attach must not advertise Lich WebUI
+    /// to remote clients or permit the Lich-only ;go2 fallback.
+    #[tokio::test]
+    async fn idle_to_direct_login_yields_no_lich_capabilities() {
+        let mut core = app();
+        core.config.go2.lich_fallback = true;
+        let handles = install_remote(&mut core);
+        let mut supervisor = lich_supervisor(None);
+        supervisor.direct = Some(direct_config());
+        supervisor.lich_target = None;
+        supervisor.spawn(&mut core);
+        assert!(!core.webui_available());
+        assert!(!core.lich_connected());
+        assert!(!remote_webui(&handles), "direct must not advertise WebUI");
+        assert!(!core.travel_lich_fallback_permitted());
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    /// Idle → Lich login exposes both capabilities, and `.webui off`
+    /// (bridge teardown) leaves Lich command delivery and the ;go2
+    /// fallback intact — eligibility and bridge are separate concerns.
+    #[tokio::test]
+    async fn idle_to_lich_login_enables_capabilities_and_webui_off_keeps_lich() {
+        let mut core = app();
+        core.config.go2.lich_fallback = true;
+        let handles = install_remote(&mut core);
+        let mut supervisor = lich_supervisor(None);
+        supervisor.spawn(&mut core);
+        assert!(core.webui_available());
+        assert!(core.lich_connected());
+        assert!(remote_webui(&handles));
+        assert!(core.travel_lich_fallback_permitted());
+
+        // `.webui off` tears down the bridge only.
+        core.stop_webui();
+        assert!(core.lich_connected(), ".webui off must not cut Lich delivery");
+        assert!(core.travel_lich_fallback_permitted());
+        // Eligibility survives too (mode unchanged); the next per-batch
+        // derivation would also keep it true.
+        supervisor.derive_capabilities(&mut core);
+        assert!(core.webui_available());
+        assert!(remote_webui(&handles));
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    /// Lich → direct switch withdraws the capabilities; direct → Lich
+    /// grants them. Nothing of the previous mode is retained.
+    #[tokio::test]
+    async fn mode_switches_rederive_capabilities_both_ways() {
+        let mut core = app();
+        core.config.go2.lich_fallback = true;
+        let handles = install_remote(&mut core);
+        let mut supervisor = lich_supervisor(None);
+        supervisor.spawn(&mut core);
+        assert!(remote_webui(&handles));
+        supervisor.connection.take().unwrap().task.abort();
+
+        // Lich → direct (the connect request path sets direct then spawns).
+        supervisor.direct = Some(direct_config());
+        supervisor.lich_target = None;
+        supervisor.spawn(&mut core);
+        assert!(!remote_webui(&handles), "stale Lich WebUI advertised on direct");
+        assert!(!core.lich_connected());
+        assert!(!core.travel_lich_fallback_permitted());
+        supervisor.connection.take().unwrap().task.abort();
+
+        // Direct → Lich.
+        supervisor.direct = None;
+        supervisor.lich_target = Some(LichTarget {
+            host: "127.0.0.1".to_string(),
+            port: 8000,
+        });
+        supervisor.spawn(&mut core);
+        assert!(remote_webui(&handles));
+        assert!(core.lich_connected());
+        assert!(core.travel_lich_fallback_permitted());
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    /// Connection loss: the per-batch derivation withdraws capabilities
+    /// while disconnected (login screen promises no bridge), and the
+    /// reconnect spawn re-derives them for the SAME mode. Capability
+    /// updates never touch reconnect eligibility or stored credentials.
+    #[tokio::test]
+    async fn reconnect_rederives_per_mode_without_touching_credentials() {
+        let mut core = app();
+        core.config.go2.lich_fallback = true;
+        let handles = install_remote(&mut core);
+
+        // Lich session drops...
+        let mut supervisor = lich_supervisor(None);
+        supervisor.spawn(&mut core);
+        supervisor.connection.take().unwrap().task.abort();
+        supervisor.connection = None;
+        supervisor.derive_capabilities(&mut core); // per-batch withdrawal
+        assert!(!remote_webui(&handles), "disconnected must not advertise WebUI");
+        assert!(!core.lich_connected());
+        assert!(!supervisor.user_disconnected, "capability update flipped reconnect state");
+        assert!(supervisor.can_reconnect(), "capability update broke reconnect eligibility");
+        // ...and the automatic reconnect restores Lich capabilities.
+        supervisor.spawn(&mut core);
+        assert!(remote_webui(&handles));
+        assert!(core.lich_connected());
+        supervisor.connection.take().unwrap().task.abort();
+
+        // Direct session: capabilities stay off across loss and reconnect,
+        // and the stored direct credentials survive the capability writes.
+        supervisor.direct = Some(direct_config());
+        supervisor.lich_target = None;
+        supervisor.spawn(&mut core);
+        assert!(!remote_webui(&handles));
+        supervisor.connection.take().unwrap().task.abort();
+        supervisor.connection = None;
+        supervisor.derive_capabilities(&mut core);
+        assert!(!remote_webui(&handles));
+        assert!(
+            supervisor.direct.is_some(),
+            "capability update must not drop stored credentials"
+        );
+        assert!(supervisor.can_reconnect());
+        supervisor.spawn(&mut core);
+        assert!(!remote_webui(&handles));
+        assert!(!core.lich_connected());
+        supervisor.connection.take().unwrap().task.abort();
+    }
+
+    /// The asynchronous launch-completion path (LaunchDriver seam) lands in
+    /// the same shared derivation: a Lich attach produced by a finished
+    /// launch flips a previously-direct session's capabilities to Lich.
+    #[tokio::test]
+    async fn launch_completion_derives_lich_capabilities() {
+        let mut core = app();
+        core.config.go2.lich_fallback = true;
+        let handles = install_remote(&mut core);
+        let mut supervisor = lich_supervisor(None);
+        // Previous session was direct: capabilities are off.
+        supervisor.direct = Some(direct_config());
+        supervisor.connection = None;
+        supervisor.derive_capabilities(&mut core);
+        assert!(!remote_webui(&handles));
+
+        let mut driver = LaunchDriver::new();
+        let result_tx = controllable_launch(&mut driver, LaunchAttach::DotLaunch);
+        let _ = result_tx.send(Ok(flow_target("Briar", "192.168.1.4", 8010)));
+        let finished = tokio::time::timeout(Duration::from_secs(5), driver.next_finished())
+            .await
+            .expect("completed launch must resolve")
+            .expect("completed launch must deliver");
+        apply_launch_completion(&mut core, &mut supervisor, &driver, finished);
+
+        assert!(supervisor.connection.is_some());
+        assert!(core.webui_available());
+        assert!(core.lich_connected());
+        assert!(remote_webui(&handles), "launch attach must advertise WebUI");
+        assert!(core.travel_lich_fallback_permitted());
+        supervisor.connection.take().unwrap().task.abort();
     }
 }

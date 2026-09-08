@@ -69,7 +69,8 @@ pub enum WebUiEvent {
 pub struct WebUiHandle {
     pub port: u16,
     outbound_tx: mpsc::UnboundedSender<WebUiClientMessage>,
-    task: tokio::task::JoinHandle<()>,
+    /// None only for test handles (no bridge task behind them).
+    task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl WebUiHandle {
@@ -84,13 +85,33 @@ impl WebUiHandle {
     }
 
     pub fn shutdown(&self) {
-        self.task.abort();
+        if let Some(task) = &self.task {
+            task.abort();
+        }
+    }
+
+    /// Test-only handle: upstream client messages land on the returned
+    /// receiver instead of a socket, so tests can assert exactly what would
+    /// be sent to Lich.
+    #[cfg(test)]
+    pub(crate) fn test_pair() -> (WebUiHandle, mpsc::UnboundedReceiver<WebUiClientMessage>) {
+        let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
+        (
+            WebUiHandle {
+                port: 0,
+                outbound_tx,
+                task: None,
+            },
+            outbound_rx,
+        )
     }
 }
 
 impl Drop for WebUiHandle {
     fn drop(&mut self) {
-        self.task.abort();
+        if let Some(task) = &self.task {
+            task.abort();
+        }
     }
 }
 
@@ -114,7 +135,7 @@ pub fn start(
     WebUiHandle {
         port,
         outbound_tx,
-        task,
+        task: Some(task),
     }
 }
 
@@ -323,6 +344,105 @@ async fn http_get_files(host: &str, port: u16, token: &str, path: &str) -> anyho
         status_line
     );
     Ok(response[header_end + 4..].to_vec())
+}
+
+/// Failure modes of a `/files/` fetch, split so the web image proxy can map
+/// each onto a clean client-facing status without parsing error strings.
+/// Variants never carry the cookie.
+#[derive(Debug)]
+pub enum FilesFetchError {
+    /// Upstream answered with a non-200 HTTP status (404 = missing file).
+    Status(u16),
+    /// The response exceeded the caller's size bound.
+    Oversized,
+    /// Connect/read/parse failure (endpoint gone, malformed response).
+    Io(String),
+}
+
+impl std::fmt::Display for FilesFetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FilesFetchError::Status(code) => write!(f, "upstream returned HTTP {code}"),
+            FilesFetchError::Oversized => write!(f, "response exceeded the size bound"),
+            FilesFetchError::Io(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+/// Fetch one `/files/` resource from the WebUI server, returning the
+/// upstream `Content-Type` (if any) and the body, with the total response
+/// bounded to `max_body_bytes` plus a small header allowance. Same one-shot
+/// `Connection: close` protocol as [`fetch_image`]'s helper, but the proxy
+/// needs the content type preserved and hard byte/status discipline, which
+/// the GUI texture path does not.
+///
+/// `path_and_query` must already be validated and percent-encoded by the
+/// caller (starts with `/files/`, no CR/LF). The cookie goes only upstream.
+pub async fn fetch_files_with_type(
+    host: &str,
+    port: u16,
+    token: &str,
+    path_and_query: &str,
+    max_body_bytes: usize,
+) -> Result<(Option<String>, Vec<u8>), FilesFetchError> {
+    if !path_and_query.starts_with("/files/") || path_and_query.contains(['\r', '\n']) {
+        return Err(FilesFetchError::Io("unsupported files path".to_string()));
+    }
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let io = |e: std::io::Error| FilesFetchError::Io(e.to_string());
+    let mut stream = tokio::net::TcpStream::connect((host, port))
+        .await
+        .map_err(io)?;
+    let request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}:{}\r\nCookie: lich_webui={}\r\nConnection: close\r\n\r\n",
+        path_and_query, host, port, token
+    );
+    stream.write_all(request.as_bytes()).await.map_err(io)?;
+
+    // Bounded read: body cap plus a generous header allowance. One byte of
+    // slack past the limit distinguishes "exactly at the cap" from "more
+    // data was coming".
+    const HEADER_ALLOWANCE: usize = 16 * 1024;
+    let limit = max_body_bytes + HEADER_ALLOWANCE;
+    let mut response = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        let n = stream.read(&mut chunk).await.map_err(io)?;
+        if n == 0 {
+            break;
+        }
+        if response.len() + n > limit + 1 {
+            return Err(FilesFetchError::Oversized);
+        }
+        response.extend_from_slice(&chunk[..n]);
+    }
+
+    let header_end = response
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or_else(|| FilesFetchError::Io("malformed HTTP response".to_string()))?;
+    let head = String::from_utf8_lossy(&response[..header_end]).to_string();
+    let status_line = head.lines().next().unwrap_or_default();
+    let status: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| FilesFetchError::Io("malformed HTTP status line".to_string()))?;
+    if status != 200 {
+        return Err(FilesFetchError::Status(status));
+    }
+    let content_type = head.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("content-type")
+            .then(|| value.trim().to_string())
+    });
+    let body = response[header_end + 4..].to_vec();
+    if body.len() > max_body_bytes {
+        return Err(FilesFetchError::Oversized);
+    }
+    Ok((content_type, body))
 }
 
 /// Which layer refused, per a bare TCP connect that carries no auth and does

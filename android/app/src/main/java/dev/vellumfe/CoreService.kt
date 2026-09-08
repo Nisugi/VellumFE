@@ -44,6 +44,9 @@ class CoreService : Service() {
     @Volatile private var stopping = false
     private var pollThread: Thread? = null
 
+    /** Only touched from the poll thread: last confirmed classification. */
+    private val activityTracker = SessionActivityTracker()
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -66,7 +69,12 @@ class CoreService : Service() {
 
         pollThread = Thread({
             // Password key first: the core seals saved passwords with it.
+            // If installation fails the core fails closed (no plaintext
+            // saves); login is session-only until the Keystore recovers.
             CryptoKeys.installPasswordKey(this)
+            if (!CryptoKeys.encryptionAvailable) {
+                Log.w(TAG, "encryption unavailable; password saving disabled: ${CryptoKeys.statusDetail}")
+            }
             // JNI boot (config load + server bind), then the status loop.
             val info = JSONObject(VellumCore.startCore(filesDir.absolutePath))
             if (info.has("error")) {
@@ -88,27 +96,38 @@ class CoreService : Service() {
         pollThread?.start()
     }
 
-    private fun fetchState(): String {
-        val url = statusUrl ?: return "unknown"
+    /** Poll `/status`; null when the poll failed (network error, bad body). */
+    private fun fetchState(): String? {
+        val url = statusUrl ?: return null
         return try {
             val conn = URL(url).openConnection() as HttpURLConnection
             conn.connectTimeout = 1000
             conn.readTimeout = 1000
             conn.inputStream.bufferedReader().use { reader ->
-                JSONObject(reader.readText()).optString("state", "unknown")
+                JSONObject(reader.readText()).optString("state", "")
+                    .takeIf { it.isNotEmpty() }
             }
         } catch (e: Exception) {
             Log.w(TAG, "status poll failed: $e")
-            "unknown"
+            null
         }
     }
 
-    private fun applyStatus(state: String) {
-        val active = state in ACTIVE_STATES
-        if (active) {
-            if (wakeLock?.isHeld != true) wakeLock?.acquire()
-        } else {
-            if (wakeLock?.isHeld == true) wakeLock?.release()
+    private fun applyStatus(state: String?) {
+        // Three-way classification: only a *confirmed* answer from the core
+        // changes wake-lock or shutdown decisions. On UNAVAILABLE the tracker
+        // hands back the last confirmed classification (or UNAVAILABLE before
+        // the first successful poll), so a transient poll failure after the
+        // task was swiped away can never stop a live session.
+        val effective = activityTracker.onPoll(SessionStatus.classify(state))
+        when (effective) {
+            SessionStatus.ACTIVE ->
+                if (wakeLock?.isHeld != true) wakeLock?.acquire()
+            SessionStatus.INACTIVE ->
+                if (wakeLock?.isHeld == true) wakeLock?.release()
+            SessionStatus.UNAVAILABLE -> {
+                // No evidence either way: keep the current wake-lock state.
+            }
         }
         updateNotification(
             when (state) {
@@ -117,10 +136,13 @@ class CoreService : Service() {
                 "authenticating", "connecting" -> "Logging in…"
                 "idle" -> "At the login screen"
                 "disconnected" -> "Session ended"
+                null -> "Status unavailable — retrying…"
                 else -> "Running"
             },
         )
-        if (taskRemoved && !active && !stopping) {
+        // Automatic shutdown only on a *confirmed* inactive state. Explicit
+        // notification Stop (ACTION_STOP) remains authoritative regardless.
+        if (taskRemoved && effective == SessionStatus.INACTIVE && !stopping) {
             Log.i(TAG, "app swiped away and session $state — stopping service")
             stopping = true
             stopSelf()
@@ -201,7 +223,5 @@ class CoreService : Service() {
         const val ACTION_STOP = "dev.vellumfe.STOP"
         const val POLL_INTERVAL_MS = 30_000L
         private const val TAG = "VellumShell"
-        private val ACTIVE_STATES =
-            setOf("authenticating", "connecting", "connected", "reconnecting")
     }
 }

@@ -41,11 +41,25 @@ object RemoteStore {
     fun list(context: Context): List<Target> {
         val file = File(context.filesDir, FILE)
         if (!file.exists()) return emptyList()
+        val bytes = file.readBytes()
+        if (!KeyBlobPolicy.blobStructurallyValid(bytes)) {
+            Log.w(TAG, "saved remote servers file truncated; preserving it aside")
+            KeyBlobPolicy.preserveAside(file)
+            return emptyList()
+        }
         val text = try {
-            String(CryptoKeys.openBlob(file.readBytes()), Charsets.UTF_8)
+            String(CryptoKeys.openBlob(bytes), Charsets.UTF_8)
         } catch (e: Exception) {
-            Log.w(TAG, "saved remote servers unreadable; forgetting them: $e")
-            file.delete()
+            when (KeyBlobPolicy.classifyDecryptFailure(e)) {
+                KeyBlobPolicy.Failure.UNUSABLE_BLOB -> {
+                    Log.w(TAG, "saved remote servers undecryptable; preserving them aside: $e")
+                    KeyBlobPolicy.preserveAside(file)
+                }
+                // Transient Keystore trouble: the blob may still be fine on a
+                // later read — never delete it for this.
+                KeyBlobPolicy.Failure.TRANSIENT ->
+                    Log.w(TAG, "saved remote servers unreadable (transient); keeping file: $e")
+            }
             return emptyList()
         }
         return try {
@@ -64,8 +78,8 @@ object RemoteStore {
                 writeBlob(context, listOf(migrated))
                 listOf(migrated)
             } catch (e: Exception) {
-                Log.w(TAG, "saved remote server unparseable; forgetting it: $e")
-                file.delete()
+                Log.w(TAG, "saved remote server unparseable; preserving it aside: $e")
+                KeyBlobPolicy.preserveAside(file)
                 emptyList()
             }
         }
@@ -87,6 +101,32 @@ object RemoteStore {
             current.add(target)
         }
         writeBlob(context, current)
+    }
+
+    /**
+     * Persist a pairing token the remote dashboard accepted for a saved
+     * server that lacked one (vellum://remote/token round-trip). Addressed
+     * by stable store ID; delegates the pure list edit to [withUpdatedToken].
+     */
+    fun updateToken(context: Context, id: String, token: String) {
+        val updated = withUpdatedToken(list(context), id, token) ?: return
+        writeBlob(context, updated)
+    }
+
+    /**
+     * The pure edit behind [updateToken] (JVM-testable): the same list with
+     * the entry whose id matches carrying the new token, or null when
+     * nothing changes — unknown/blank id, blank token, or token already
+     * equal. Never matches by name or host: a stale ID must be a no-op,
+     * not a guess.
+     */
+    fun withUpdatedToken(targets: List<Target>, id: String, token: String): List<Target>? {
+        if (id.isEmpty() || token.isEmpty()) return null
+        val idx = targets.indexOfFirst { it.id == id }
+        if (idx < 0 || targets[idx].token == token) return null
+        val updated = targets.toMutableList()
+        updated[idx] = targets[idx].copy(token = token)
+        return updated
     }
 
     /** Remove one saved server by id. Returns the remaining list. */
@@ -134,7 +174,10 @@ object RemoteStore {
                         .put("token", t.token)
                 )
             }
-            file.writeBytes(CryptoKeys.sealBlob(array.toString().toByteArray(Charsets.UTF_8)))
+            KeyBlobPolicy.writeAtomically(
+                file,
+                CryptoKeys.sealBlob(array.toString().toByteArray(Charsets.UTF_8)),
+            )
         } catch (e: Exception) {
             Log.w(TAG, "saving remote servers failed: $e")
         }

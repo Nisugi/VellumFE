@@ -123,7 +123,8 @@ impl VellumGuiApp {
                         })
                         .collect();
                     for page in pages {
-                        self.app_core.webui_subscribe(&page);
+                        self.app_core
+                            .webui_subscribe(crate::core::remote::WebUiConsumer::Local, &page);
                     }
                     let pending = std::mem::take(&mut self.webui_pending);
                     for action in pending {
@@ -150,7 +151,8 @@ impl VellumGuiApp {
                         .collect();
                     for page in hosted_ended {
                         if pages.iter().any(|p| p.id == page) {
-                            self.app_core.webui_subscribe(&page);
+                            self.app_core
+                                .webui_subscribe(crate::core::remote::WebUiConsumer::Local, &page);
                         }
                     }
                     // Transient pages registered while we're connected open
@@ -405,7 +407,8 @@ impl VellumGuiApp {
                 content.kind = kind.clone();
             }
         });
-        self.app_core.webui_subscribe(page_id);
+        self.app_core
+            .webui_subscribe(crate::core::remote::WebUiConsumer::Local, page_id);
         self.layout_dirty = true;
         tracing::info!("WebUI panel '{}' opened for page '{}'", name, page_id);
     }
@@ -437,7 +440,8 @@ impl VellumGuiApp {
             .values()
             .any(|w| matches!(&w.content, WindowContent::WebUi(c) if c.page_id == page_id));
         if !still_hosted {
-            self.app_core.webui_unsubscribe(&page_id);
+            self.app_core
+                .webui_unsubscribe(crate::core::remote::WebUiConsumer::Local, &page_id);
         }
         tracing::info!(
             "WebUI panel '{}' closed by user (page '{}', unsubscribed: {})",

@@ -26,13 +26,23 @@ final class BootModel: ObservableObject {
 
     /// True while a `startLocal()` core-boot is in flight. A second call
     /// (e.g. a vellum://lich deep link landing mid-launch) must not spawn a
-    /// second CoreBridge.startCore or race its phase writes.
+    /// second CoreBridge.startCore or race its phase writes; it records the
+    /// request in `requestedDestination` and shares the in-flight result.
     private var localBootInFlight = false
 
-    /// Bumped whenever the user navigates away from an in-flight local boot
-    /// (a remote deep link, or returning to the picker). A boot that started
-    /// before the bump must not overwrite the newer phase when it finishes.
-    private var navGeneration = 0
+    /// The screen the user most recently asked for. Every navigation entry
+    /// point (picker taps, deep links, shell URLs, local play) writes this
+    /// BEFORE any async work, and boot completion consults it instead of a
+    /// generation captured at boot start — so a local request made while an
+    /// older, superseded boot is still in flight is not lost, and a boot
+    /// finishing (or failing) after the user chose a remote server or the
+    /// picker never steals the screen.
+    private enum Destination: Equatable {
+        case local
+        case remote(RemoteStore.Target)
+        case picker
+    }
+    private var requestedDestination: Destination = .local
 
     /// Remote server the WebView is allowed to browse in-app (Remote mode);
     /// nil while on the embedded core. Read by the container's nav policy.
@@ -64,18 +74,27 @@ final class BootModel: ObservableObject {
     /// launch when no servers are saved, and from the picker's "play on this
     /// phone" entry.
     func startLocal() async {
+        // Record the request FIRST, before deciding whether a new core start
+        // is needed. `lichFragment` (if any) was stored by the caller before
+        // this call, and `bootURL` reads it at render time, so the latest
+        // deep-link prefill survives however the boot completes.
+        requestedDestination = .local
         if let port, let token, coreStarted {
             // Core already up (returning from a remote view): just reload.
             allowedRemoteHost = nil
             phase = .ready(bootURL(port: port, token: token))
             return
         }
-        // A boot is already spinning up the core; don't start a second one.
-        // The in-flight boot will land on local play; a deep link that wants
-        // something else will have bumped navGeneration and win.
-        if localBootInFlight { return }
+        if localBootInFlight {
+            // A boot is already spinning up the core; don't start a second
+            // one. Share its result: with the destination re-set to .local
+            // above, its completion renders local play — even if a remote
+            // navigation had superseded the boot in between. Show progress
+            // meanwhile.
+            phase = .starting
+            return
+        }
         localBootInFlight = true
-        let generation = navGeneration
         defer { localBootInFlight = false }
 
         phase = .starting
@@ -90,18 +109,19 @@ final class BootModel: ObservableObject {
         // The core is a process-wide singleton, so record its port/token even
         // if the user navigated away mid-boot — a later "play on this phone"
         // must reuse it rather than start a second core. But only take over
-        // the visible phase if nothing newer (a remote deep link, the picker)
-        // superseded this boot while it was running.
+        // the visible phase if local play is STILL the requested destination
+        // when this boot finishes; a remote or picker choice made afterwards
+        // stays authoritative, including over a boot failure.
         if let error = info.error {
-            if generation == navGeneration { phase = .failed("Core failed to start:\n\(error)") }
+            if requestedDestination == .local { phase = .failed("Core failed to start:\n\(error)") }
             return
         }
         guard let port = info.port, let token = info.token else {
-            if generation == navGeneration { phase = .failed("Core returned an incomplete reply.") }
+            if requestedDestination == .local { phase = .failed("Core returned an incomplete reply.") }
             return
         }
         guard await waitForServer(port: port) else {
-            if generation == navGeneration {
+            if requestedDestination == .local {
                 phase = .failed("The embedded server did not come up on port \(port).")
             }
             return
@@ -109,8 +129,8 @@ final class BootModel: ObservableObject {
         self.port = port
         self.token = token
         coreStarted = true
-        guard generation == navGeneration else {
-            // A deep link / picker navigation superseded this boot; leave the
+        guard requestedDestination == .local else {
+            // A remote / picker navigation superseded this boot; leave the
             // newer phase in place. The core is ready for later reuse.
             return
         }
@@ -139,7 +159,7 @@ final class BootModel: ObservableObject {
 
     /// Return to the picker from a remote/local view.
     func showPicker() {
-        navGeneration += 1 // supersede any in-flight local boot
+        requestedDestination = .picker // supersede any in-flight local boot
         allowedRemoteHost = nil
         servers = RemoteStore.list()
         phase = .picker
@@ -160,33 +180,42 @@ final class BootModel: ObservableObject {
         return URL(string: url)!
     }
 
-    /// The saved characters as a `chars=` fragment for the web client's
-    /// switch-character wheel: `name@host:port` entries (name and host
-    /// percent-encoded), comma-separated. Names only — pairing tokens stay
-    /// in the Keychain; a wheel pick round-trips through
-    /// vellum://remote/connect?name=… and this shell connects with its own
-    /// stored token. Nil when nothing is saved.
+    /// The saved characters as `chars=` + `charids=` fragment params for
+    /// the web client's switch-character wheel: display `name@host:port`
+    /// entries plus each target's stable store ID (same order). A wheel
+    /// pick round-trips through vellum://remote/connect?id=… and is
+    /// resolved BY ID — names are display only, so duplicate labels at
+    /// different servers stay distinct. Pairing tokens stay in the
+    /// Keychain; this shell connects with its own stored token. Nil when
+    /// nothing is saved. (Older web clients ignore the unknown charids=
+    /// param and keep their name-based behavior.)
     private static func charsFragment() -> String? {
-        let entries = RemoteStore.list().map { target in
+        let targets = RemoteStore.list()
+        if targets.isEmpty { return nil }
+        let entries = targets.map { target in
             "\(encode(target.name))@\(encode(target.host)):\(target.port)"
         }
-        return entries.isEmpty ? nil : "chars=" + entries.joined(separator: ",")
+        let ids = targets.map { encode($0.id) }
+        return "chars=" + entries.joined(separator: ",")
+            + "&charids=" + ids.joined(separator: ",")
     }
 
-    /// Republish the local boot URL (the container reloads on change).
-    /// No-op while boot is still in flight — it picks the fragments up.
+    /// Local play requested from the page (vellum://local). Routes through
+    /// `startLocal()` so every local-navigation entry point — picker action,
+    /// deep link, shell URL — shares one state transition: the request is
+    /// recorded even while a boot is in flight, and the running core (or the
+    /// shared in-flight boot) is reused rather than restarted.
     private func showLocal() {
-        allowedRemoteHost = nil
-        if let port, let token {
-            phase = .ready(bootURL(port: port, token: token))
-        }
+        Task { await startLocal() }
     }
 
     /// Point the WebView at a desktop VellumFE's dashboard. The embedded
     /// core keeps running but sits idle — there is no in-app game socket
     /// in this mode; the web client's own reconnect handles resume.
     private func showRemote(_ target: RemoteStore.Target) {
-        navGeneration += 1 // a remote deep link supersedes an in-flight local boot
+        // A remote request supersedes an in-flight local boot and stays
+        // authoritative until another navigation request replaces it.
+        requestedDestination = .remote(target)
         allowedRemoteHost = target.host.lowercased()
         // Bracket bare IPv6 literals so the URL parses.
         let host = target.host.contains(":") && !target.host.hasPrefix("[")
@@ -197,6 +226,11 @@ final class BootModel: ObservableObject {
         if !target.token.isEmpty {
             url += "&token=\(target.token)"
         }
+        // The saved target's stable store ID rides the fragment so a pairing
+        // token entered on the remote dashboard (a tokenless manual entry)
+        // can round-trip back through vellum://remote/token and update THIS
+        // exact entry — by ID, never by name/host guessing.
+        url += "&sid=\(Self.encode(target.id))"
         if let chars = Self.charsFragment() {
             url += "&\(chars)"
         }
@@ -247,21 +281,59 @@ final class BootModel: ObservableObject {
                 showPicker()
             case "/connect":
                 // Switch-character wheel pick: connect to a saved server by
-                // name (the token comes from the Keychain entry, never the
-                // page). An unknown or missing name lands on the picker.
-                guard let name = Self.queryValue(url, "name"), !name.isEmpty,
-                      let target = RemoteStore.list().first(where: { $0.name == name })
-                else {
+                // its stable store ID (the token comes from the Keychain
+                // entry, never the page). An explicit ID never falls back
+                // to a name match; legacy name-only requests resolve only
+                // when exactly one entry matches. Anything unknown,
+                // deleted, or ambiguous lands on the picker — never on a
+                // different entry.
+                if let target = Self.resolveConnect(
+                    RemoteStore.list(),
+                    id: Self.queryValue(url, "id"),
+                    name: Self.queryValue(url, "name")
+                ) {
+                    showRemote(target)
+                } else {
                     showPicker()
-                    return
                 }
-                showRemote(target)
+            case "/token":
+                // A pairing token the remote dashboard accepted for a saved
+                // server that lacked one: persist it on exactly the entry
+                // named by its stable store ID. No navigation — the page
+                // already retried with the accepted token and is showing
+                // the session list.
+                if let id = Self.queryValue(url, "id"), !id.isEmpty,
+                   let token = Self.queryValue(url, "token"), !token.isEmpty {
+                    RemoteStore.updateToken(id: id, token: token)
+                    servers = RemoteStore.list()
+                }
             default:
                 break
             }
         default:
             break
         }
+    }
+
+    /// Resolve a vellum://remote/connect pick (proposal item 7). A
+    /// non-blank `id` matches only by ID — never falling back to a name —
+    /// so a stale selection can't be redirected to a different server
+    /// after a delete. A legacy name-only request resolves only when
+    /// exactly ONE saved entry carries that name. Nil = show the picker.
+    /// Mirrors the Android shell's `CharacterWheel.resolve`.
+    static func resolveConnect(
+        _ targets: [RemoteStore.Target],
+        id: String?,
+        name: String?
+    ) -> RemoteStore.Target? {
+        if let id, !id.isEmpty {
+            return targets.first { $0.id == id }
+        }
+        if let name, !name.isEmpty {
+            let matches = targets.filter { $0.name == name }
+            return matches.count == 1 ? matches[0] : nil
+        }
+        return nil
     }
 
     private static func queryValue(_ url: URL, _ name: String) -> String? {

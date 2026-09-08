@@ -463,13 +463,32 @@ function scheduleRender() {
 }
 
 function appendText(seq, stream, line) {
-  if (seq <= state.lastSeq) return; // duplicate (snapshot/delta overlap)
+  // Duplicate (snapshot/delta overlap): only sequences strictly above the
+  // resume cursor render, and the cursor advances with them.
+  if (!WebuiCore.acceptServerSeq(state.lastSeq, seq)) return;
   state.lastSeq = seq;
   if (HIDDEN_STREAMS.has(stream)) return;
   // Speak before display routing: enabled streams speak even while
   // another stream is active (thoughts read out mid-hunt).
   speakLine(stream, line);
   gpRumbleLine(stream);
+  appendLine(stream, line);
+}
+
+// Client-local lines (WebUI notices) share the buffers, render path, and
+// limits of server text but carry NO server sequence: they must not consult
+// or advance the resume cursor. A fabricated seq either gets dropped by the
+// dedup gate (the old notice bug — negative seqs never rendered) or, if
+// positive, suppresses legitimate game text and corrupts resume. Because
+// these live only in the client buffers, a FULL snapshot clears them along
+// with everything else; resume/gap snapshots keep them.
+function appendLocalLine(stream, line) {
+  if (HIDDEN_STREAMS.has(stream)) return;
+  appendLine(stream, line);
+}
+
+// Shared tail of both paths: buffer with cap, paint or badge.
+function appendLine(stream, line) {
   const buf = ensureStream(stream);
   buf.lines.push(line);
   if (buf.lines.length > MAX_BUFFER_LINES) buf.lines.shift();
@@ -900,6 +919,12 @@ function handleMessage(msg) {
       // Answer with our resume cursor; the server replies with a
       // full/resume/gap snapshot accordingly.
       state.ws.send(JSON.stringify({ t: "resume", d: { seq: state.lastSeq } }));
+      // A reconnect gets a fresh server-side client id; the old id's WebUI
+      // subscriptions were released on disconnect, so re-subscribe every
+      // page we still have open (idempotent server-side).
+      for (const page of webuiState.subscribed) {
+        state.ws.send(JSON.stringify({ t: "webui_subscribe", d: { page } }));
+      }
       // Authenticated: pick up the skin's injury doll art (if any) and
       // any roaming prefs the character profile carries.
       fetchDollSkin();
@@ -1683,38 +1708,19 @@ const TOUCH_WHEEL_DEFAULT = [
 ];
 
 // ---- Character switching (app shell) ---------------------------------------
-// The native shell appends `chars=` to the boot fragment: the saved remote
-// sessions from its picker, `name@host:port` entries (name and host
-// percent-encoded), comma-separated. Names only identify picker entries —
+// The native shell appends `chars=` (display `name@host:port` entries) and
+// `charids=` (parallel stable store IDs) to the boot fragment: the saved
+// remote sessions from its picker. The ID — not the name — identifies a
+// picker entry, so duplicate labels at different servers stay distinct;
 // pairing tokens never leave native storage; a pick round-trips through
-// vellum://remote/connect?name=… and the shell connects with its own token.
-const shellChars = (() => {
-  const m = location.hash.match(/(?:^#|&)chars=([^&]+)/);
-  if (!m) return [];
-  const out = [];
-  for (const entry of m[1].split(",")) {
-    const at = entry.indexOf("@");
-    const colon = entry.lastIndexOf(":");
-    if (at <= 0 || colon <= at) continue;
-    const port = Number(entry.slice(colon + 1));
-    let host;
-    let name;
-    try {
-      name = decodeURIComponent(entry.slice(0, at));
-      host = decodeURIComponent(entry.slice(at + 1, colon));
-    } catch {
-      continue;
-    }
-    if (!name || !host || !Number.isInteger(port) || port <= 0) continue;
-    // Bracket bare IPv6 so hostPort matches location.host and parses in URLs.
-    if (host.includes(":") && !host.startsWith("[")) host = `[${host}]`;
-    out.push({ name, hostPort: `${host}:${port}` });
-  }
-  return out;
-})();
+// vellum://remote/connect?id=… (name=… for legacy shells without IDs) and
+// the shell connects with its own token. Parsing/identity rules live in
+// char-core.js (CharCore), shared with the node tests.
+const shellChars = CharCore.parseShellChars(location.hash);
 
-// Liveness per character name: "online" | "offline"; absent = unknown (drawn
-// normally — the wheel never hides an unprobed character).
+// Liveness per character key (store ID, or name@hostPort for legacy
+// shells): "online" | "offline"; absent = unknown (drawn normally — the
+// wheel never hides an unprobed character).
 const shellCharStatus = {};
 let shellCharProbeAt = 0;
 
@@ -1732,8 +1738,8 @@ function probeShellChars() {
     fetch(`http://${c.hostPort}/health`, {
       mode: "no-cors", cache: "no-store", signal: ctrl.signal,
     })
-      .then(() => { shellCharStatus[c.name] = "online"; })
-      .catch(() => { shellCharStatus[c.name] = "offline"; })
+      .then(() => { shellCharStatus[CharCore.charKey(c)] = "online"; })
+      .catch(() => { shellCharStatus[CharCore.charKey(c)] = "offline"; })
       .finally(() => {
         clearTimeout(timer);
         if (gpWheel && gpWheel.key === "touch") renderWheel();
@@ -1750,8 +1756,9 @@ function characterRingSlices() {
   const ring = [];
   for (const c of shellChars) {
     if (c.hostPort === location.host) continue;
-    const slice = { label: c.name, client: `shell:connect:${c.name}` };
-    if (shellCharStatus[c.name] === "offline") slice.color = SHELL_CHAR_OFFLINE_COLOR;
+    const key = CharCore.charKey(c);
+    const slice = { label: c.name, client: `shell:connect:${key}` };
+    if (shellCharStatus[key] === "offline") slice.color = SHELL_CHAR_OFFLINE_COLOR;
     ring.push(slice);
   }
   if (location.hostname !== "127.0.0.1") {
@@ -1874,7 +1881,7 @@ function runWheelClientAction(action) {
   if (verb === "focus") { if (arg === "input") cmdInput.focus(); return true; }
   if (verb === "shell") {
     // Character switching — handled past the 2-part split because
-    // shell:connect:<name> carries the name in the third segment.
+    // shell:connect:<key> carries the entry key in the third segment.
     runShellWheelAction(action.slice("shell:".length));
     return true;
   }
@@ -1903,13 +1910,22 @@ function runShellWheelAction(rest) {
     return;
   }
   if (rest.startsWith("connect:")) {
-    const name = rest.slice("connect:".length);
-    if (shellCharStatus[name] === "offline") {
-      // Refuse gracefully instead of reloading into a dead session.
-      shellToast(`${name} isn't reachable right now.`);
+    // The action carries the entry's stable key (store ID, or name@hostPort
+    // for legacy shells). Resolve back to the parsed entry; a stale key
+    // (entry deleted since the wheel was built) opens the picker rather
+    // than guessing at another character.
+    const key = rest.slice("connect:".length);
+    const c = CharCore.findByKey(shellChars, key);
+    if (!c) {
+      location.href = "vellum://remote/picker";
       return;
     }
-    location.href = `vellum://remote/connect?name=${encodeURIComponent(name)}`;
+    if (shellCharStatus[CharCore.charKey(c)] === "offline") {
+      // Refuse gracefully instead of reloading into a dead session.
+      shellToast(`${c.name} isn't reachable right now.`);
+      return;
+    }
+    location.href = CharCore.connectHref(c);
   }
 }
 
@@ -7231,15 +7247,17 @@ function handleWebUiRender(d) {
 function handleWebUiClosed(d) {
   webuiState.trees.delete(d.page);
   webuiState.seqs.delete(d.page);
+  webuiDrafts.dropPage(d.page); // page gone server-side: drop its drafts
   renderWebUiIfOpen(d.page);
 }
 
 function handleWebUiNotice(d) {
-  // Surface as a system line for now; P5b may show it inline in the panel.
-  appendText(++webuiNoticeSeq * -1, "main",
-    { segments: [{ text: `[WebUI ${d.level || "info"}] ${d.text || ""}` }] });
+  // Surface as a system line via the local-notice path: styled like server
+  // text (plain segments — the renderer uses textContent, so markup in the
+  // notice displays literally) but outside server-sequence dedup, leaving
+  // the resume cursor untouched.
+  appendLocalLine("main", WebuiCore.noticeLine(d));
 }
-let webuiNoticeSeq = 0;
 
 // Subscribe/unsubscribe a WebUI page (open/close its phone panel).
 function webuiSubscribe(page) {
@@ -7249,6 +7267,7 @@ function webuiSubscribe(page) {
 function webuiUnsubscribe(page) {
   webuiState.subscribed.delete(page);
   webuiState.trees.delete(page);
+  webuiDrafts.dropPage(page); // closed page: its unsent edits go with it
   sendJson("webui_unsubscribe", { page });
 }
 // Send a component interaction back to Lich (button/input/row).
@@ -7260,7 +7279,8 @@ function webuiSendEvent(page, cid, value) {
 // One page is shown at a time in a full-screen overlay (phone real estate).
 // A picker lists registered pages; opening one subscribes, closing
 // unsubscribes. The node renderer reproduces the desktop widget set; edit
-// state (in-progress input text) lives naturally in the DOM elements.
+// state (in-progress input text) lives in webuiDrafts so it survives the
+// full-DOM rebuild every server render performs.
 
 const webuiOverlay = document.createElement("div");
 webuiOverlay.id = "webui-overlay";
@@ -7278,6 +7298,20 @@ document.body.appendChild(webuiOverlay);
 const webuiBody = webuiOverlay.querySelector("#webui-body");
 const webuiTitle = webuiOverlay.querySelector("#webui-title");
 let webuiOpenPage = null; // page id currently shown, or null = picker
+
+// In-progress edits survive renders here, not in the DOM: renderWebUi
+// rebuilds the panel from the server tree, so typed-but-unsent text and
+// pending commits live in this store keyed by page + component id
+// (WebuiCore.createDraftStore — memory only, passwords included).
+const webuiDrafts = WebuiCore.createDraftStore();
+// True while renderWebUi tears down / rebuilds the panel: the teardown
+// blurs a focused input, and the blur-commit must not fire for it (the
+// draft store carries the text across; focus is restored after).
+let webuiRenderInProgress = false;
+// IME composition in flight on this element: rebuilding the DOM would tear
+// the composition, so renders are deferred until compositionend.
+let webuiComposeEl = null;
+let webuiRenderDeferred = false;
 
 webuiOverlay.querySelector("#webui-close").addEventListener("click", closeWebUi);
 webuiOverlay.querySelector("#webui-back").addEventListener("click", () => {
@@ -7311,6 +7345,45 @@ function renderWebUiIfOpen(page) {
 }
 
 function renderWebUi() {
+  // Never rebuild mid-IME-composition: keep the active DOM node alive and
+  // repaint once the composition commits.
+  if (webuiComposeEl && webuiBody.contains(webuiComposeEl)) {
+    webuiRenderDeferred = true;
+    return;
+  }
+  // Capture focus + caret of an editable field so the rebuild can restore
+  // them; the field's text itself rides in webuiDrafts.
+  let restoreFocus = null;
+  const active = document.activeElement;
+  if (active && webuiBody.contains(active) && active.dataset && active.dataset.webuiCid !== undefined) {
+    restoreFocus = {
+      cid: active.dataset.webuiCid,
+      selStart: active.selectionStart,
+      selEnd: active.selectionEnd,
+      selDir: active.selectionDirection || "none",
+    };
+  }
+  webuiRenderInProgress = true;
+  try {
+    renderWebUiInner();
+  } finally {
+    webuiRenderInProgress = false;
+  }
+  if (restoreFocus) {
+    const el = webuiBody.querySelector(
+      `[data-webui-cid="${CSS.escape(restoreFocus.cid)}"]`);
+    if (el) {
+      el.focus({ preventScroll: true });
+      try {
+        if (restoreFocus.selStart != null) {
+          el.setSelectionRange(restoreFocus.selStart, restoreFocus.selEnd, restoreFocus.selDir);
+        }
+      } catch { /* non-text input types reject setSelectionRange */ }
+    }
+  }
+}
+
+function renderWebUiInner() {
   webuiBody.replaceChildren();
   const backBtn = webuiOverlay.querySelector("#webui-back");
   if (!webuiState.connected && !webuiOpenPage) {
@@ -7353,6 +7426,8 @@ function renderWebUi() {
     }));
     return;
   }
+  // Components gone from the fresh tree take their drafts with them.
+  webuiDrafts.retainComponents(webuiOpenPage, WebuiCore.collectEditableCids(entry.tree));
   webuiBody.appendChild(renderWebUiNode(webuiOpenPage, entry.tree));
 }
 
@@ -7449,20 +7524,40 @@ function webuiButton(page, node, emit) {
   return btn;
 }
 
-// text/password: the DOM element IS the edit buffer. Adopt a changed server
-// value only when NOT focused; commit on blur or Enter.
+// Shared edit wiring for text/password/textarea: the draft store (not the
+// DOM) is the edit buffer, so a re-render can rebuild this element without
+// losing typing. Commit on blur or Enter goes through the store, which
+// only emits for a dirty (user-typed) field — a render tearing down the
+// focused node fires blur too, and must neither commit early nor twice.
+function webuiWireEditable(el, page, node, emit, alwaysEmit) {
+  const cid = node.cid || "";
+  const serverValue = webuiValueStr(node);
+  const renderSeq = webuiState.seqs.get(page) || 0;
+  el.value = webuiDrafts.displayValue(page, cid, serverValue, renderSeq);
+  el.dataset.webuiCid = cid; // focus/caret restore hook for renderWebUi
+  el.addEventListener("input", () => webuiDrafts.setDraft(page, cid, el.value));
+  el.addEventListener("compositionstart", () => { webuiComposeEl = el; });
+  el.addEventListener("compositionend", () => {
+    webuiComposeEl = null;
+    if (webuiRenderDeferred) { webuiRenderDeferred = false; renderWebUi(); }
+  });
+  el.addEventListener("blur", () => {
+    if (webuiRenderInProgress) return; // teardown blur, not a user commit
+    const v = webuiDrafts.commit(page, cid, el.value,
+      serverValue, webuiState.seqs.get(page) || 0, alwaysEmit);
+    if (v !== null) emit(v);
+  });
+}
+
+// text/password: commit on blur or Enter.
 function webuiTextInput(page, node, emit, isPassword) {
   const wrap = document.createElement("label");
   wrap.className = "webui-field";
   if (node.label) wrap.append(Object.assign(document.createElement("span"), { textContent: node.label }));
   const input = document.createElement("input");
   input.type = isPassword ? "password" : "text";
-  input.value = webuiValueStr(node);
   if (node.placeholder) input.placeholder = node.placeholder;
-  const commit = () => {
-    if (isPassword || input.value !== webuiValueStr(node)) emit(input.value);
-  };
-  input.addEventListener("blur", commit);
+  webuiWireEditable(input, page, node, emit, isPassword);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); input.blur(); } });
   wrap.appendChild(input);
   return wrap;
@@ -7473,10 +7568,9 @@ function webuiTextarea(page, node, emit) {
   wrap.className = "webui-field webui-field-col";
   if (node.label) wrap.append(Object.assign(document.createElement("span"), { textContent: node.label }));
   const ta = document.createElement("textarea");
-  ta.value = webuiValueStr(node);
   if (node.placeholder) ta.placeholder = node.placeholder;
   if (node.rows_hint) ta.rows = node.rows_hint;
-  ta.addEventListener("blur", () => { if (ta.value !== webuiValueStr(node)) emit(ta.value); });
+  webuiWireEditable(ta, page, node, emit, false);
   wrap.appendChild(ta);
   return wrap;
 }
@@ -7712,13 +7806,17 @@ function webuiImageMap(page, node, emit) {
   return wrap;
 }
 
-// /files/ images fetch over the bridge (cookie-authed) on desktop; on the
-// phone the token is in the URL fragment, not a usable cookie for a
-// cross-path GET, so route through the same /sounds-style token query the
-// phone already uses. Data URIs pass through untouched.
+// /files/ images live on the separate Lich WebUI server behind its own
+// cookie the browser never holds. Vellum proxies them at /webui/files/:
+// authenticate with the pairing token (same /sounds-style token query) and
+// the server fetches upstream with the bridge cookie. Data URIs pass
+// through untouched.
 function webuiImageSrc(src) {
   if (src.startsWith("data:")) return src;
-  if (src.startsWith("/files/")) return `${src}?token=${encodeURIComponent(pairingToken)}`;
+  if (src.startsWith("/files/")) {
+    const sep = src.includes("?") ? "&" : "?";
+    return `/webui${src}${sep}token=${encodeURIComponent(pairingToken)}`;
+  }
   return src;
 }
 
