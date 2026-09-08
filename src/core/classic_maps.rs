@@ -11,6 +11,8 @@ use std::sync::RwLock;
 
 use serde::Serialize;
 
+use crate::core::mapdb::MapDb;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ClassicMapEntry {
     pub name: String,
@@ -24,6 +26,12 @@ pub struct ClassicMapAsset {
     pub mime: &'static str,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ClassicMapRoom {
+    pub id: u32,
+    pub rect: [f64; 4],
+}
+
 /// One game session's trusted catalog of classic annotated map images.
 ///
 /// The catalog is deliberately an instance rather than process-global state:
@@ -33,6 +41,7 @@ pub struct ClassicMapAsset {
 #[derive(Debug, Default)]
 pub struct ClassicMapCatalog {
     maps: RwLock<BTreeMap<String, ClassicMapAsset>>,
+    rooms: RwLock<BTreeMap<String, Vec<ClassicMapRoom>>>,
 }
 
 impl ClassicMapCatalog {
@@ -68,6 +77,58 @@ impl ClassicMapCatalog {
                 label: display_label(&asset.name),
             })
             .collect()
+    }
+
+    /// Refresh the clickable room rectangles sourced from the active mapdb.
+    /// Image keys are case-insensitive, matching asset lookup.
+    pub fn reload_rooms(&self, db: &MapDb) -> usize {
+        let mut next: BTreeMap<String, Vec<ClassicMapRoom>> = BTreeMap::new();
+        for room in db.all_rooms() {
+            let (Some(image), Some(rect)) = (&room.image, room.image_coords) else {
+                continue;
+            };
+            if !rect.iter().all(|value| value.is_finite()) {
+                continue;
+            }
+            next.entry(image.to_ascii_lowercase())
+                .or_default()
+                .push(ClassicMapRoom { id: room.id, rect });
+        }
+        for rooms in next.values_mut() {
+            rooms.sort_by_key(|room| room.id);
+        }
+        let count = next.values().map(Vec::len).sum();
+        *self.rooms.write().expect("classic map rooms poisoned") = next;
+        count
+    }
+
+    pub fn clear_rooms(&self) {
+        self.rooms
+            .write()
+            .expect("classic map rooms poisoned")
+            .clear();
+    }
+
+    /// Clickable room rectangles for a discovered classic image. Unknown
+    /// assets never disclose mapdb metadata.
+    pub fn rooms(&self, name: &str) -> Option<Vec<ClassicMapRoom>> {
+        let key = name.to_ascii_lowercase();
+        if !self
+            .maps
+            .read()
+            .expect("classic map catalog poisoned")
+            .contains_key(&key)
+        {
+            return None;
+        }
+        Some(
+            self.rooms
+                .read()
+                .expect("classic map rooms poisoned")
+                .get(&key)
+                .cloned()
+                .unwrap_or_default(),
+        )
     }
 }
 
@@ -156,5 +217,31 @@ mod tests {
         assert!(second.get("icemule.jpg").is_some());
         assert_eq!(first.entries()[0].name, "landing.png");
         assert_eq!(second.entries()[0].name, "icemule.jpg");
+    }
+
+    #[test]
+    fn room_rectangles_are_grouped_by_discovered_image() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("landing.png"), b"map").unwrap();
+        let catalog = ClassicMapCatalog::new();
+        catalog.reload_from_dir(Some(dir.path()));
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 2, "location": "Landing", "image": "LANDING.PNG", "image_coords": [30, 40, 50, 60]},
+                {"id": 1, "location": "Landing", "image": "landing.png", "image_coords": [10, 20, 30, 40]},
+                {"id": 3, "location": "Landing", "image": "missing.png", "image_coords": [0, 0, 1, 1]}
+            ]"#,
+        )
+        .unwrap();
+
+        assert_eq!(catalog.reload_rooms(&db), 3);
+        assert_eq!(
+            catalog.rooms("landing.png").unwrap(),
+            vec![
+                ClassicMapRoom { id: 1, rect: [10.0, 20.0, 30.0, 40.0] },
+                ClassicMapRoom { id: 2, rect: [30.0, 40.0, 50.0, 60.0] },
+            ]
+        );
+        assert_eq!(catalog.rooms("missing.png"), None);
     }
 }

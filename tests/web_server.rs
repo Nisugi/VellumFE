@@ -16,6 +16,7 @@ use tokio::sync::mpsc;
 
 use vellum_fe::config::WebConfig;
 use vellum_fe::core::classic_maps::ClassicMapCatalog;
+use vellum_fe::core::mapdb::MapDb;
 use vellum_fe::core::remote::{RemoteEvent, RemoteSessionInfo, RemoteSink, SessionState};
 use vellum_fe::core::GameState;
 use vellum_fe::data::widget::{StyledLine, TextSegment};
@@ -1023,6 +1024,12 @@ async fn classic_map_filesystem_authority_is_isolated_per_server() {
     let second_catalog = Arc::new(ClassicMapCatalog::new());
     first_catalog.reload_from_dir(Some(first_dir.path()));
     second_catalog.reload_from_dir(Some(second_dir.path()));
+    first_catalog.reload_rooms(
+        &MapDb::from_json(
+            r#"[{"id": 42, "location": "Test", "image": "aster.png", "image_coords": [1, 2, 3, 4]}]"#,
+        )
+        .unwrap(),
+    );
     let (_first_sink, _first_events, first_addr) =
         start_server_with_catalog(10, first_catalog).await;
     let (_second_sink, _second_events, second_addr) =
@@ -1048,12 +1055,21 @@ async fn classic_map_filesystem_authority_is_isolated_per_server() {
         &format!("/api/v1/maps/classic/aster.png?token={TEST_TOKEN}"),
     )
     .await;
+    let first_rooms = http_get(
+        first_addr,
+        &format!("/api/v1/maps/classic/aster.png/rooms?token={TEST_TOKEN}"),
+    )
+    .await;
     let crossed_image = http_get(
         first_addr,
         &format!("/api/v1/maps/classic/briar.png?token={TEST_TOKEN}"),
     )
     .await;
     assert!(first_image.contains("aster-map"));
+    assert!(first_rooms.contains("200"));
+    assert!(first_rooms.contains("application/json"));
+    assert!(first_rooms.contains(r#""id":42"#));
+    assert!(first_rooms.contains(r#""rect":[1.0,2.0,3.0,4.0]"#));
     assert!(crossed_image.contains("404"));
 }
 

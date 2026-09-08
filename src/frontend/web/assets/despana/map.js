@@ -236,6 +236,56 @@ export class DesktopMapViewport {
   }
 }
 
+/** Resolve one classic-map viewport point against mapdb image rectangles. */
+export function classicRoomAtViewportPoint({
+  x,
+  y,
+  width,
+  height,
+  camera,
+  rooms,
+} = {}) {
+  if (
+    !isFiniteNumber(x) ||
+    !isFiniteNumber(y) ||
+    !isFiniteNumber(width) ||
+    !isFiniteNumber(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    !camera ||
+    !isFiniteNumber(camera.x) ||
+    !isFiniteNumber(camera.y) ||
+    !isFiniteNumber(camera.scale) ||
+    camera.scale <= 0 ||
+    !Array.isArray(rooms)
+  ) {
+    return null;
+  }
+
+  const imageX = camera.x + (x - width / 2) / camera.scale;
+  const imageY = camera.y + (y - height / 2) / camera.scale;
+  let best = null;
+  let bestArea = Infinity;
+  for (const room of rooms) {
+    if (!Number.isSafeInteger(room?.id) || !Array.isArray(room.rect) || room.rect.length < 4) {
+      continue;
+    }
+    const [rawX1, rawY1, rawX2, rawY2] = room.rect;
+    if (![rawX1, rawY1, rawX2, rawY2].every(isFiniteNumber)) continue;
+    const x1 = Math.min(rawX1, rawX2);
+    const x2 = Math.max(rawX1, rawX2);
+    const y1 = Math.min(rawY1, rawY2);
+    const y2 = Math.max(rawY1, rawY2);
+    if (imageX < x1 || imageX > x2 || imageY < y1 || imageY > y2) continue;
+    const area = (x2 - x1) * (y2 - y1);
+    if (area < bestArea) {
+      best = room.id;
+      bestArea = area;
+    }
+  }
+  return best;
+}
+
 function normalizeScene(scene) {
   if (!scene || typeof scene !== "object" || Array.isArray(scene)) return null;
   return Object.freeze({
