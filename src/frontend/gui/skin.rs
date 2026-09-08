@@ -968,7 +968,7 @@ impl SkinState {
                 continue;
             };
             let prone = art.extra("prone").cloned();
-            let wounds: Vec<PathBuf> = want
+            let mut wounds: Vec<PathBuf> = want
                 .injuries
                 .iter()
                 .filter_map(|(part, rank)| {
@@ -980,7 +980,18 @@ impl SkinState {
                 let key = path.to_string_lossy().into_owned();
                 if !cache.variant_bases.contains_key(&key) {
                     let art = load_creature_art(ctx, &path, &cache.skin_name);
-                    cache.variant_bases.insert(key, art);
+                    cache.variant_bases.insert(key.clone(), art);
+                }
+                // Prone wound layers ({token}_prone_{loc}{rank}) are the
+                // PRONE art's own extras (its stem prefixes them), so a
+                // downed creature's wounds draw pose-matched art instead
+                // of standing layers on a sprawled body.
+                if let Some(Some(prone_art)) = cache.variant_bases.get(&key) {
+                    wounds.extend(want.injuries.iter().filter_map(|(part, rank)| {
+                        prone_art
+                            .extra(&format!("{}{rank}", part.to_ascii_lowercase()))
+                            .cloned()
+                    }));
                 }
             }
             // Refine the core geometry-calibration store with the decoded
@@ -1996,14 +2007,30 @@ fn load_creature_art(ctx: &egui::Context, path: &Path, skin_name: &str) -> Optio
             .find(|(key, _)| key.eq_ignore_ascii_case(name))
             .map(|(_, a)| *a)
     };
+    // Template-canvas art (scale-spec): pixels ARE feet (px ÷
+    // px_per_foot), and the baseline sits on the bottom edge — the art
+    // self-calibrates, no bbox-to-bestiary guessing. The renderer's
+    // authored-size path maps `size` onto the alpha-content height, so
+    // the derived size measures the CONTENT at the canvas's px/ft (the
+    // net scale is exactly world-units-per-pixel × px_per_foot,
+    // independent of where the content sits on the canvas). An authored
+    // `size` still wins; the derived value feeds the same field so the
+    // renderer needs no second path.
+    let template_ppf = sidecar.px_per_foot.filter(|ppf| *ppf > 0.0);
+    let template_size = template_ppf.map(|ppf| {
+        (bbox[3] - bbox[1]) * h as f32 / ppf * crate::core::creature_cards::UNITS_PER_FOOT
+    });
+    let template_feet = template_ppf.map(|_| [mid_x, 1.0]);
     Some(CreatureArt {
         texture,
         head: sidecar_pt("head").unwrap_or([mid_x, bbox[1]]),
-        feet: sidecar_pt("feet").unwrap_or([mid_x, bbox[3]]),
+        feet: sidecar_pt("feet")
+            .or(template_feet)
+            .unwrap_or([mid_x, bbox[3]]),
         bbox,
         anchors: sidecar.anchors,
         footprint: sidecar.footprint,
-        size: sidecar.size,
+        size: sidecar.size.or(template_size),
         lift: sidecar.lift,
         alpha_px,
         extras,
@@ -3588,6 +3615,44 @@ cell = 32
         state.prepare_creature_art(&env.ctx, &[wanted("gryphon")]);
         let cache = state.creature_art.lock().unwrap();
         assert!(cache.bases.get("gryphon").is_some_and(|art| art.is_none()));
+    }
+
+    #[test]
+    fn prone_wound_layers_load_from_the_pose_arts_extras() {
+        let env = test_env();
+        // {token}_prone_{loc}{rank}: the prone pose's own wound layer,
+        // discovered as the PRONE art's extra (its stem prefixes it).
+        let dir = pool_dir().join("creatures");
+        write_png(&dir.join("kobold.png"), 4);
+        write_png(&dir.join("kobold_prone.png"), 8);
+        write_png(&dir.join("kobold_prone_chest1.png"), 2);
+
+        let mut state = SkinState::default();
+        state.apply_if_changed(&env.ctx, None);
+        state.prepare_creature_art(
+            &env.ctx,
+            &[WantedCreature {
+                name: "a kobold".to_string(),
+                noun: Some("kobold".to_string()),
+                family: None,
+                injuries: vec![("chest".to_string(), 1)],
+            }],
+        );
+        let cache = state.creature_art.lock().unwrap();
+        let art = cache.base("kobold").expect("flat base resolves");
+        let prone_path = art.extra("prone").cloned().expect("prone extra listed");
+        let prone = cache
+            .variant_base(prone_path.to_string_lossy().as_ref())
+            .expect("prone pose loaded");
+        let wound_path = prone
+            .extra("chest1")
+            .expect("prone wound is the pose art's extra")
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            cache.overlays.get(&wound_path).is_some_and(|t| t.is_some()),
+            "prone wound texture loads so the renderer's lookup on the active art hits"
+        );
     }
 
     #[test]

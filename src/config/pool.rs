@@ -497,6 +497,14 @@ pub struct CreatureSidecar {
     /// sources stays in scale with each other. Absent = family default.
     #[serde(default)]
     pub size: Option<f32>,
+    /// Template-canvas calibration (`docs/art/scale-spec.md`): the image
+    /// was authored on the standard canvas where this many pixels equal
+    /// one foot (spec default 32), baseline on the bottom edge. The
+    /// loader derives world size from the CANVAS height (not the alpha
+    /// bbox) and grounds the sprite on the bottom edge, so template art
+    /// self-calibrates. An explicit `size` still wins when both are set.
+    #[serde(default)]
+    pub px_per_foot: Option<f32>,
     /// Ground clearance for a neutral pose that floats (wisps, spectres),
     /// as a fraction of the drawn sprite height. Absent = grounded.
     #[serde(default)]
@@ -818,6 +826,7 @@ pub fn write_creature_sidecar(
         }
         for (key, field) in [
             ("size", sidecar.size),
+            ("px_per_foot", sidecar.px_per_foot),
             ("lift", sidecar.lift),
             ("aspect", sidecar.aspect),
             ("overlay_scale", sidecar.overlay_scale),
@@ -1073,6 +1082,7 @@ mod tests {
 
         let mut sidecar = CreatureSidecar {
             size: Some(1.25),
+            px_per_foot: Some(32.0),
             lift: Some(0.1),
             footprint: Some(CreatureFootprint {
                 rx: 0.46,
@@ -1088,6 +1098,7 @@ mod tests {
         let read: CreatureSidecar = read_sidecar(&image).unwrap();
         assert_eq!(read.kind.as_deref(), Some("creature"));
         assert_eq!(read.size, Some(1.25));
+        assert_eq!(read.px_per_foot, Some(32.0));
         assert_eq!(read.lift, Some(0.1));
         assert_eq!(read.anchors["mouth"], [0.2, 0.3]);
         let fp = read.footprint.unwrap();
@@ -1097,10 +1108,12 @@ mod tests {
 
         // Clearing optional fields removes them from the file.
         sidecar.size = None;
+        sidecar.px_per_foot = None;
         sidecar.footprint = None;
         write_creature_sidecar(&image, &sidecar).unwrap();
         let read: CreatureSidecar = read_sidecar(&image).unwrap();
         assert!(read.size.is_none());
+        assert!(read.px_per_foot.is_none());
         assert!(read.footprint.is_none());
         assert_eq!(read.lift, Some(0.1));
     }

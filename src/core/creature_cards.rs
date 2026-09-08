@@ -23,6 +23,11 @@ use crate::config::skins::{
 use crate::core::gameobj_data::GameObjData;
 use crate::core::state::{CreatureFlags, GameState};
 
+/// World units per foot of bestiary height: a 6 ft human is the 1.2-unit
+/// default card. Shared with the template-canvas art path (a sidecar
+/// `px_per_foot` maps canvas pixels → feet → world units through this).
+pub const UNITS_PER_FOOT: f32 = 0.2;
+
 /// One creature's resolved card for this frame: which variant (if any) is
 /// active, its lift, and which overlay layers draw. Borrowed from the skin
 /// manifest — resolve per creature per frame, render from the result.
@@ -439,7 +444,7 @@ fn bestiary_height_units(name: &str, noun: Option<&str>) -> Option<(f32, bool)> 
     let of = |e: &crate::core::bestiary::CreatureEntry| -> Option<(f32, bool)> {
         if let Some(feet) = e.height {
             // 6 ft ≡ the 1.2-unit default card.
-            return Some((feet as f32 * 0.2, true));
+            return Some((feet as f32 * UNITS_PER_FOOT, true));
         }
         match e.size.as_deref().map(str::trim) {
             Some(s) if s.eq_ignore_ascii_case("tiny") => Some((0.55, false)),

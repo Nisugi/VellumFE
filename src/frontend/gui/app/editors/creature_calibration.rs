@@ -1,21 +1,42 @@
-//! Creature calibrator: pick any pool creature image, click to place its
-//! anchors — the built-in grounding pair (feet/head) plus arbitrary named
-//! anchors for overlay layers (mouth, back, doll parts for wounds) — set
-//! the floor footprint ellipse, world size, and lift, and save it all to
-//! the image's sidecar (embedded in the PNG too, so the file travels
-//! calibrated). The same metadata the field renderer consumes.
+//! Creature calibrator: a ruler stage (feet up from a ground line, the
+//! scale-spec's world) with the creature sprite standing on it. Fit mode:
+//! pick the body type, a red dotted line marks the bestiary height with a
+//! note saying which landmark belongs on it (crown, shoulder, diameter…),
+//! and the user drags/sizes the sprite until it lines up — that fit IS
+//! the calibration (world size + grounding), written to the image's
+//! sidecar. Anchor mode locks the sprite and places named anchors (feet/
+//! head/mouth + doll parts for wounds) by clicking. Footprint ellipse,
+//! lift and overlay scale ride along as before. Sidecar embedded in the
+//! PNG too, so the file travels calibrated.
 
 use std::collections::HashMap;
 
 use super::super::VellumGuiApp;
 use super::CalibrationOutcome;
 use crate::config::pool::{self, CreatureFootprint, CreatureSidecar};
+use crate::core::creature_cards::UNITS_PER_FOOT;
 use crate::frontend::gui::image_store;
-use crate::frontend::gui::skin::{self as gui_skin, SkinTexture};
 use eframe::egui;
 
 /// Anchor names offered up front; any other name can be added freely.
 const SUGGESTED_ANCHORS: &[&str] = &["feet", "head", "mouth", "back", "saddle"];
+
+/// Body types from the scale spec, each with the landmark the red target
+/// line marks ("height" means different things per silhouette).
+const BODY_TYPES: &[(&str, &str)] = &[
+    ("Biped", "crown of head, standing erect"),
+    ("Quadruped", "shoulder (withers) — head/neck may rise above"),
+    ("Hybrid", "crown of the humanoid head/torso"),
+    ("Plantlife", "topmost foliage/limb"),
+    ("Elemental", "top of visual mass (not wisps/particles)"),
+    ("Insect", "top of body, wings folded"),
+    ("Arachnid", "top of cephalothorax in stance"),
+    ("Ophidian", "body diameter at the thickest coil"),
+    ("Worm", "body diameter (a reared pose may rise ~3×)"),
+    ("Avian", "crown, standing, wings folded"),
+    ("Globoid", "sphere diameter"),
+    ("Crustacean", "top of carapace"),
+];
 
 /// Wound-part anchors, offered as a second suggestion group: the field's
 /// injury overlays look these up by doll-part name on the image's sidecar
@@ -29,12 +50,44 @@ struct CreatureChoice {
     label: String,
     pool_path: String,
     abs_path: std::path::PathBuf,
+    /// A `{token}_<suffix>` layer file (wound overlays, pose art other
+    /// than `_prone`) — hidden from the picker unless "all layers" is on,
+    /// so the list reads as one entry per creature, not one per layer.
+    layer: bool,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+enum CalMode {
+    /// Drag/size the sprite against the ruler.
+    Fit,
+    /// Sprite locked; clicks place anchors.
+    Anchors,
 }
 
 pub(crate) struct CreatureCalibrationState {
     choices: Vec<CreatureChoice>,
     selected: Option<usize>,
     texture: Option<egui::TextureHandle>,
+    /// Alpha-content bbox of the selected image, as image fractions
+    /// [x0, y0, x1, y1] — the fit sizes the CONTENT, matching the field
+    /// renderer's authored-size semantics.
+    bbox: [f32; 4],
+    mode: CalMode,
+    /// Fitted content height in feet — the number the whole stage turns
+    /// into sidecar `size` on save.
+    height_ft: f32,
+    /// Content-center horizontal offset from stage center, in feet.
+    pos_x_ft: f32,
+    /// Content bottom edge above the ground line, in feet (negative =
+    /// sunk below it).
+    bottom_ft: f32,
+    /// Stage zoom in px per foot; 0 = auto-fit next frame.
+    zoom: f32,
+    /// Index into [`BODY_TYPES`], driving the target-line note.
+    body_type: usize,
+    target_on: bool,
+    /// Red dotted line height in feet (bestiary height when known).
+    target_ft: f32,
     /// Working anchors, lowercase name -> image fractions.
     anchors: HashMap<String, [f32; 2]>,
     /// The anchor the next canvas click places.
@@ -49,14 +102,22 @@ pub(crate) struct CreatureCalibrationState {
     /// line); the stored Y is preserved verbatim, never repurposed. None =
     /// feet-centred, the renderer's default.
     footprint_center: Option<[f32; 2]>,
-    size_on: bool,
-    size: f32,
+    /// Write the fitted size to the sidecar on save. Off for images where
+    /// only anchors/overlay-scale are being edited (shared overlay art).
+    write_size: bool,
     lift_on: bool,
     lift: f32,
     /// Overlay art (creatures/wounds, creatures/status): drawn width as a
     /// fraction of the wearing creature's drawn width.
     overlay_scale_on: bool,
     overlay_scale: f32,
+    /// Template-canvas calibration (scale-spec): px/ft authored into the
+    /// canvas; world size derives from the art itself.
+    template_on: bool,
+    px_per_foot: f32,
+    /// Show `{token}_<suffix>` layer files (wound overlays, pose art) in
+    /// the picker instead of just base + `_prone` images.
+    show_layers: bool,
     error: Option<String>,
 }
 
@@ -69,10 +130,14 @@ impl CreatureCalibrationState {
         // below the generic scanner's depth.
         let choices: Vec<CreatureChoice> = pool::list_creature_images()
             .into_iter()
-            .map(|image| CreatureChoice {
-                label: image.display_label(),
-                pool_path: image.pool_path.clone(),
-                abs_path: image.abs_path.clone(),
+            .map(|image| {
+                let layer = is_layer_file(&image.abs_path);
+                CreatureChoice {
+                    label: image.display_label(),
+                    pool_path: image.pool_path.clone(),
+                    abs_path: image.abs_path.clone(),
+                    layer,
+                }
             })
             .collect();
         if choices.is_empty() {
@@ -88,6 +153,15 @@ impl CreatureCalibrationState {
             choices,
             selected,
             texture: None,
+            bbox: [0.0, 0.0, 1.0, 1.0],
+            mode: CalMode::Fit,
+            height_ft: 6.0,
+            pos_x_ft: 0.0,
+            bottom_ft: 0.0,
+            zoom: 0.0,
+            body_type: 0,
+            target_on: false,
+            target_ft: 6.0,
             anchors: HashMap::new(),
             selected_anchor: "feet".to_owned(),
             new_anchor_name: String::new(),
@@ -96,12 +170,14 @@ impl CreatureCalibrationState {
             ry_auto: true,
             ry: 0.35 * 0.24,
             footprint_center: None,
-            size_on: false,
-            size: 1.0,
+            write_size: true,
             lift_on: false,
             lift: 0.1,
             overlay_scale_on: false,
             overlay_scale: 1.0,
+            template_on: false,
+            px_per_foot: 32.0,
+            show_layers: false,
             error: None,
         };
         if let Some(index) = selected {
@@ -124,250 +200,486 @@ impl CreatureCalibrationState {
             .id(egui::Id::new("gui_creature_calibration"))
             .order(egui::Order::Foreground)
             .open(&mut open)
-            .default_width(640.0)
-            .default_height(560.0)
+            .default_width(720.0)
+            .default_height(620.0)
             .resizable(true)
             .show(ctx, |ui| {
-                ui.label(
-                    "Click the sprite to place the selected anchor. feet grounds the sprite \
-                     on the field; named anchors position status/wound overlay layers.",
-                );
                 let selected_label = state
                     .selected
                     .map(|index| state.choices[index].label.clone())
                     .unwrap_or_else(|| "Pick a creature".to_owned());
-                egui::ComboBox::from_label("Creature image")
-                    .selected_text(selected_label)
-                    .show_ui(ui, |ui| {
-                        for (index, choice) in state.choices.iter().enumerate() {
-                            if ui
-                                .selectable_label(state.selected == Some(index), &choice.label)
-                                .clicked()
-                            {
-                                load_request = Some(index);
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_label("Creature image")
+                        .selected_text(selected_label)
+                        .show_ui(ui, |ui| {
+                            for (index, choice) in state.choices.iter().enumerate() {
+                                if choice.layer
+                                    && !state.show_layers
+                                    && state.selected != Some(index)
+                                {
+                                    continue;
+                                }
+                                if ui
+                                    .selectable_label(
+                                        state.selected == Some(index),
+                                        &choice.label,
+                                    )
+                                    .clicked()
+                                {
+                                    load_request = Some(index);
+                                }
                             }
-                        }
-                    });
+                        });
+                    ui.checkbox(&mut state.show_layers, "all layers")
+                        .on_hover_text(
+                            "List every image file, including per-wound overlays and pose \
+                             layers ({token}_chest1, …). Off = base + _prone images only.",
+                        );
+                    ui.separator();
+                    ui.selectable_value(&mut state.mode, CalMode::Fit, "Fit")
+                        .on_hover_text(
+                            "Drag the creature and set its height until the landmark \
+                             sits on the red line",
+                        );
+                    ui.selectable_value(&mut state.mode, CalMode::Anchors, "Anchors")
+                        .on_hover_text(
+                            "Sprite locked in place; click to place the selected anchor",
+                        );
+                });
 
                 let (Some(texture), Some(_)) = (&state.texture, state.selected) else {
                     return;
                 };
-                let sprite = SkinTexture {
-                    texture: texture.id(),
-                    size: texture.size_vec2(),
-                };
+                let tex_size = texture.size_vec2();
+                let tex_id = texture.id();
+
+                match state.mode {
+                    CalMode::Fit => {
+                        ui.horizontal(|ui| {
+                            let type_label = BODY_TYPES[state.body_type].0;
+                            egui::ComboBox::from_label("Body type")
+                                .selected_text(type_label)
+                                .show_ui(ui, |ui| {
+                                    for (index, (name, _)) in BODY_TYPES.iter().enumerate() {
+                                        ui.selectable_value(&mut state.body_type, index, *name);
+                                    }
+                                });
+                            ui.checkbox(&mut state.target_on, "Target line");
+                            if state.target_on {
+                                ui.add(
+                                    egui::DragValue::new(&mut state.target_ft)
+                                        .range(0.1..=50.0)
+                                        .speed(0.1)
+                                        .suffix(" ft"),
+                                )
+                                .on_hover_text("Bestiary height when known; editable");
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Height");
+                            ui.add(
+                                egui::DragValue::new(&mut state.height_ft)
+                                    .range(0.1..=60.0)
+                                    .speed(0.05)
+                                    .suffix(" ft"),
+                            )
+                            .on_hover_text(
+                                "Drawn height of the art's content — scroll on the stage \
+                                 also adjusts it",
+                            );
+                            if ui
+                                .button("Ground")
+                                .on_hover_text("Drop the content onto the ground line")
+                                .clicked()
+                            {
+                                state.bottom_ft = 0.0;
+                            }
+                            if ui
+                                .button("Match target")
+                                .on_hover_text("Set height to the target line")
+                                .clicked()
+                            {
+                                state.height_ft = state.target_ft;
+                            }
+                            ui.separator();
+                            ui.label("Zoom");
+                            let mut auto = state.zoom <= 0.0;
+                            if ui
+                                .checkbox(&mut auto, "auto")
+                                .on_hover_text("Fit the stage to the creature + target")
+                                .changed()
+                            {
+                                state.zoom = if auto { 0.0 } else { 16.0 };
+                            }
+                            if state.zoom > 0.0 {
+                                ui.add(
+                                    egui::Slider::new(&mut state.zoom, 2.0..=64.0)
+                                        .suffix(" px/ft")
+                                        .logarithmic(true),
+                                );
+                            }
+                        });
+                    }
+                    CalMode::Anchors => {
+                        ui.label(
+                            "Click the sprite to place the selected anchor. feet grounds the \
+                             sprite on the field; named anchors position status/wound overlay \
+                             layers.",
+                        );
+                    }
+                }
                 ui.separator();
 
                 ui.horizontal_top(|ui| {
-                    // Anchor list: suggested + present + add-your-own.
-                    ui.vertical(|ui| {
-                        ui.set_width(160.0);
-                        let mut names: Vec<String> =
-                            SUGGESTED_ANCHORS.iter().map(|s| s.to_string()).collect();
-                        for key in state.anchors.keys() {
-                            if !names.iter().any(|n| n.eq_ignore_ascii_case(key))
-                                && !wound_anchor_names().any(|w| w.eq_ignore_ascii_case(key))
-                            {
-                                names.push(key.clone());
+                    // Anchor list: suggested + present + add-your-own
+                    // (anchor mode only — fit mode gives the stage the room).
+                    if state.mode == CalMode::Anchors {
+                        ui.vertical(|ui| {
+                            ui.set_width(160.0);
+                            let mut names: Vec<String> =
+                                SUGGESTED_ANCHORS.iter().map(|s| s.to_string()).collect();
+                            for key in state.anchors.keys() {
+                                if !names.iter().any(|n| n.eq_ignore_ascii_case(key))
+                                    && !wound_anchor_names()
+                                        .any(|w| w.eq_ignore_ascii_case(key))
+                                {
+                                    names.push(key.clone());
+                                }
                             }
-                        }
-                        names.sort();
-                        let mut anchor_row = |ui: &mut egui::Ui,
-                                              state: &mut CreatureCalibrationState,
-                                              name: String| {
-                            let placed = state.anchors.contains_key(&name);
-                            let label = if placed {
-                                format!("{name} \u{2022}")
-                            } else {
-                                name.clone()
-                            };
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .selectable_label(state.selected_anchor == name, label)
-                                    .clicked()
-                                {
-                                    state.selected_anchor = name.clone();
-                                }
-                                if placed
-                                    && ui
-                                        .small_button("\u{2715}")
-                                        .on_hover_text("Remove this anchor")
+                            names.sort();
+                            let mut anchor_row = |ui: &mut egui::Ui,
+                                                  state: &mut CreatureCalibrationState,
+                                                  name: String| {
+                                let placed = state.anchors.contains_key(&name);
+                                let label = if placed {
+                                    format!("{name} \u{2022}")
+                                } else {
+                                    name.clone()
+                                };
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .selectable_label(state.selected_anchor == name, label)
                                         .clicked()
-                                {
-                                    state.anchors.remove(&name);
-                                }
-                            });
-                        };
-                        for name in names {
-                            anchor_row(ui, state, name);
-                        }
-                        // Wound parts: the injury overlays look these up by
-                        // doll-part name, collapsed so the common anchors
-                        // stay one glance.
-                        egui::CollapsingHeader::new("Wound parts")
-                            .default_open(false)
-                            .show(ui, |ui| {
-                                ui.weak(
-                                    "A part WITHOUT an anchor draws its wound art \
-                                     full-canvas over the base (author both at the \
-                                     same resolution for 1:1 alignment). An anchor \
-                                     switches that part to a small sprite centred \
-                                     on it.",
-                                );
-                                let any_wound_anchor = wound_anchor_names()
-                                    .any(|name| state.anchors.contains_key(name));
-                                if any_wound_anchor
-                                    && ui
-                                        .button("Clear all wound anchors")
-                                        .on_hover_text(
-                                            "Full-canvas wound art for every part",
-                                        )
-                                        .clicked()
-                                {
-                                    for name in wound_anchor_names() {
-                                        state.anchors.remove(name);
+                                    {
+                                        state.selected_anchor = name.clone();
                                     }
-                                }
-                                for name in wound_anchor_names() {
-                                    anchor_row(ui, state, name.to_string());
+                                    if placed
+                                        && ui
+                                            .small_button("\u{2715}")
+                                            .on_hover_text("Remove this anchor")
+                                            .clicked()
+                                    {
+                                        state.anchors.remove(&name);
+                                    }
+                                });
+                            };
+                            for name in names {
+                                anchor_row(ui, state, name);
+                            }
+                            // Wound parts: the injury overlays look these up
+                            // by doll-part name, collapsed so the common
+                            // anchors stay one glance.
+                            egui::CollapsingHeader::new("Wound parts")
+                                .default_open(false)
+                                .show(ui, |ui| {
+                                    ui.weak(
+                                        "A part WITHOUT an anchor draws its wound art \
+                                         full-canvas over the base (author both at the \
+                                         same resolution for 1:1 alignment). An anchor \
+                                         switches that part to a small sprite centred \
+                                         on it.",
+                                    );
+                                    let any_wound_anchor = wound_anchor_names()
+                                        .any(|name| state.anchors.contains_key(name));
+                                    if any_wound_anchor
+                                        && ui
+                                            .button("Clear all wound anchors")
+                                            .on_hover_text(
+                                                "Full-canvas wound art for every part",
+                                            )
+                                            .clicked()
+                                    {
+                                        for name in wound_anchor_names() {
+                                            state.anchors.remove(name);
+                                        }
+                                    }
+                                    for name in wound_anchor_names() {
+                                        anchor_row(ui, state, name.to_string());
+                                    }
+                                });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                let field =
+                                    egui::TextEdit::singleline(&mut state.new_anchor_name)
+                                        .hint_text("new anchor")
+                                        .desired_width(90.0);
+                                let submitted = ui.add(field).lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                if (ui.button("+").clicked() || submitted)
+                                    && !state.new_anchor_name.trim().is_empty()
+                                {
+                                    state.selected_anchor =
+                                        state.new_anchor_name.trim().to_ascii_lowercase();
+                                    state.new_anchor_name.clear();
                                 }
                             });
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            let field = egui::TextEdit::singleline(&mut state.new_anchor_name)
-                                .hint_text("new anchor")
-                                .desired_width(90.0);
-                            let submitted = ui.add(field).lost_focus()
-                                && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                            if (ui.button("+").clicked() || submitted)
-                                && !state.new_anchor_name.trim().is_empty()
+                            if ui
+                                .button("Remove anchor")
+                                .on_hover_text("Drop the selected anchor's placement")
+                                .clicked()
                             {
-                                state.selected_anchor =
-                                    state.new_anchor_name.trim().to_ascii_lowercase();
-                                state.new_anchor_name.clear();
+                                let key = state.selected_anchor.to_ascii_lowercase();
+                                state.anchors.remove(&key);
                             }
                         });
-                        if ui
-                            .button("Remove anchor")
-                            .on_hover_text("Drop the selected anchor's placement")
-                            .clicked()
-                        {
-                            let key = state.selected_anchor.to_ascii_lowercase();
-                            state.anchors.remove(&key);
-                        }
-                    });
+                    }
 
-                    // Sprite canvas: anchors, ground line, footprint.
-                    const CONTROLS_HEIGHT: f32 = 150.0;
+                    // The ruler stage.
+                    const CONTROLS_HEIGHT: f32 = 130.0;
                     let avail = ui.available_size();
                     let canvas = egui::Vec2::new(
-                        avail.x.max(160.0),
-                        (avail.y - CONTROLS_HEIGHT).max(200.0),
+                        avail.x.max(200.0),
+                        (avail.y - CONTROLS_HEIGHT).max(240.0),
                     );
-                    let (rect, response) = ui.allocate_exact_size(canvas, egui::Sense::click());
+                    let sense = match state.mode {
+                        CalMode::Fit => egui::Sense::click_and_drag(),
+                        CalMode::Anchors => egui::Sense::click(),
+                    };
+                    let (rect, response) = ui.allocate_exact_size(canvas, sense);
                     let painter = ui.painter().with_clip_rect(rect);
                     painter.rect_filled(rect, 4.0, ui.visuals().extreme_bg_color);
-                    let dest = gui_skin::sprite_dest(&sprite, rect);
-                    gui_skin::paint_sprite(&painter, dest, &sprite, egui::Color32::WHITE);
 
-                    let at = |anchor: [f32; 2]| {
-                        dest.min
-                            + egui::Vec2::new(anchor[0] * dest.width(), anchor[1] * dest.height())
+                    // Auto zoom: creature + target inside ~80% of the stage.
+                    let ground_y = rect.max.y - 20.0;
+                    let span_ft = state
+                        .height_ft
+                        .max(state.target_on.then_some(state.target_ft).unwrap_or(0.0))
+                        .max(1.0);
+                    let zoom = if state.zoom > 0.0 {
+                        state.zoom
+                    } else {
+                        ((ground_y - rect.min.y) * 0.8 / span_ft).clamp(1.0, 64.0)
                     };
-                    let feet = state
-                        .anchors
-                        .get("feet")
-                        .copied()
-                        .unwrap_or([0.5, 0.95]);
 
-                    // Ground line through the feet anchor.
-                    let ground_y = at(feet).y;
-                    // Shadow centre X: authored centre wins, else feet.
-                    let shadow_cx = state
-                        .footprint_center
-                        .map(|[x, _]| at([x, 0.0]).x)
-                        .unwrap_or_else(|| at(feet).x);
-                    painter.line_segment(
-                        [
-                            egui::pos2(dest.min.x, ground_y),
-                            egui::pos2(dest.max.x, ground_y),
-                        ],
-                        egui::Stroke::new(
-                            1.0,
-                            egui::Color32::from_rgba_unmultiplied(120, 200, 120, 160),
-                        ),
+                    // Ruler: a line per foot when legible, else per 5 ft;
+                    // labels on the left every 5 ft (every foot when roomy).
+                    let weak = ui.visuals().weak_text_color();
+                    let grid = egui::Color32::from_rgba_unmultiplied(
+                        weak.r(),
+                        weak.g(),
+                        weak.b(),
+                        40,
                     );
-                    // Footprint ellipse on the ground line.
-                    if state.footprint_on {
-                        let rx = state.rx * dest.width();
-                        let ry = if state.ry_auto {
-                            state.rx * 0.24
-                        } else {
-                            state.ry
-                        } * dest.width();
-                        let center = egui::pos2(shadow_cx, ground_y);
-                        paint_ellipse(
-                            &painter,
-                            center,
-                            rx,
-                            ry,
+                    let step = if zoom >= 5.0 { 1 } else { 5 };
+                    let label_step = if zoom >= 24.0 {
+                        1
+                    } else if zoom >= 5.0 {
+                        5
+                    } else {
+                        10
+                    };
+                    let mut ft = 0i32;
+                    loop {
+                        let y = ground_y - ft as f32 * zoom;
+                        if y < rect.min.y {
+                            break;
+                        }
+                        let major = ft % label_step == 0;
+                        painter.line_segment(
+                            [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
                             egui::Stroke::new(
-                                1.5,
-                                egui::Color32::from_rgba_unmultiplied(120, 200, 120, 200),
+                                if ft == 0 { 1.5 } else { 1.0 },
+                                if ft == 0 {
+                                    egui::Color32::from_rgba_unmultiplied(120, 200, 120, 160)
+                                } else if major {
+                                    egui::Color32::from_rgba_unmultiplied(
+                                        weak.r(),
+                                        weak.g(),
+                                        weak.b(),
+                                        90,
+                                    )
+                                } else {
+                                    grid
+                                },
                             ),
                         );
+                        if major {
+                            painter.text(
+                                egui::pos2(rect.min.x + 4.0, y - 2.0),
+                                egui::Align2::LEFT_BOTTOM,
+                                format!("{ft} ft"),
+                                egui::FontId::proportional(10.0),
+                                weak,
+                            );
+                        }
+                        ft += step;
                     }
 
-                    // All anchors; the selected one cross-haired.
-                    let highlight = ui.visuals().hyperlink_color;
-                    for (name, anchor) in &state.anchors {
-                        let pos = at(*anchor);
-                        let selected = name.eq_ignore_ascii_case(&state.selected_anchor);
-                        let color = if selected {
-                            highlight
-                        } else {
-                            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200)
-                        };
-                        painter.circle_stroke(pos, 4.0, egui::Stroke::new(1.5, color));
+                    // The sprite, at the fitted transform. Content height =
+                    // height_ft; content bottom sits bottom_ft above ground.
+                    let content_h = ((state.bbox[3] - state.bbox[1]) * tex_size.y).max(1.0);
+                    let scale = state.height_ft * zoom / content_h;
+                    let drawn = tex_size * scale;
+                    let content_bottom_y = ground_y - state.bottom_ft * zoom;
+                    let image_top_y = content_bottom_y - state.bbox[3] * tex_size.y * scale;
+                    let content_cx =
+                        (state.bbox[0] + state.bbox[2]) / 2.0 * tex_size.x * scale;
+                    let image_left =
+                        rect.center().x + state.pos_x_ft * zoom - content_cx;
+                    let dest = egui::Rect::from_min_size(
+                        egui::pos2(image_left, image_top_y),
+                        drawn,
+                    );
+                    painter.image(
+                        tex_id,
+                        dest,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+
+                    // Red dotted target line with the landmark note.
+                    if state.target_on {
+                        let y = ground_y - state.target_ft * zoom;
+                        let red = egui::Color32::from_rgb(220, 70, 70);
+                        let mut x = rect.min.x;
+                        while x < rect.max.x {
+                            painter.line_segment(
+                                [egui::pos2(x, y), egui::pos2((x + 6.0).min(rect.max.x), y)],
+                                egui::Stroke::new(1.5, red),
+                            );
+                            x += 11.0;
+                        }
                         painter.text(
-                            pos + egui::vec2(6.0, -6.0),
-                            egui::Align2::LEFT_BOTTOM,
-                            name,
+                            egui::pos2(rect.max.x - 6.0, y - 3.0),
+                            egui::Align2::RIGHT_BOTTOM,
+                            format!(
+                                "{:.1} ft — {}",
+                                state.target_ft, BODY_TYPES[state.body_type].1
+                            ),
                             egui::FontId::proportional(11.0),
-                            color,
-                        );
-                    }
-                    if let Some(anchor) = state
-                        .anchors
-                        .get(&state.selected_anchor.to_ascii_lowercase())
-                    {
-                        let center = at(*anchor);
-                        let stroke = egui::Stroke::new(1.0, highlight);
-                        painter.line_segment(
-                            [
-                                egui::pos2(dest.min.x, center.y),
-                                egui::pos2(dest.max.x, center.y),
-                            ],
-                            stroke,
-                        );
-                        painter.line_segment(
-                            [
-                                egui::pos2(center.x, dest.min.y),
-                                egui::pos2(center.x, dest.max.y),
-                            ],
-                            stroke,
+                            red,
                         );
                     }
 
-                    if response.clicked() {
-                        if let Some(pos) = response.interact_pointer_pos() {
-                            if dest.contains(pos) && dest.width() > 0.0 && dest.height() > 0.0 {
-                                let normalized = [
-                                    ((pos.x - dest.min.x) / dest.width()).clamp(0.0, 1.0),
-                                    ((pos.y - dest.min.y) / dest.height()).clamp(0.0, 1.0),
-                                ];
-                                let key = state.selected_anchor.to_ascii_lowercase();
-                                state.anchors.insert(key, normalized);
+                    match state.mode {
+                        CalMode::Fit => {
+                            // Drag moves; scroll over the stage resizes.
+                            if response.dragged() {
+                                let delta = response.drag_delta();
+                                state.pos_x_ft += delta.x / zoom;
+                                state.bottom_ft -= delta.y / zoom;
+                            }
+                            if response.hovered() {
+                                let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+                                if scroll.abs() > 0.0 {
+                                    state.height_ft = (state.height_ft
+                                        * (1.0 + scroll * 0.002))
+                                        .clamp(0.1, 60.0);
+                                }
+                            }
+                        }
+                        CalMode::Anchors => {
+                            let at = |anchor: [f32; 2]| {
+                                dest.min
+                                    + egui::Vec2::new(
+                                        anchor[0] * dest.width(),
+                                        anchor[1] * dest.height(),
+                                    )
+                            };
+                            let feet = state
+                                .anchors
+                                .get("feet")
+                                .copied()
+                                .unwrap_or([0.5, state.bbox[3]]);
+                            // Footprint ellipse under the feet anchor.
+                            if state.footprint_on {
+                                let rx = state.rx * dest.width();
+                                let ry = if state.ry_auto {
+                                    state.rx * 0.24
+                                } else {
+                                    state.ry
+                                } * dest.width();
+                                // Shadow centre X: authored centre wins, else feet.
+                                let shadow_cx = state
+                                    .footprint_center
+                                    .map(|[x, _]| at([x, 0.0]).x)
+                                    .unwrap_or_else(|| at(feet).x);
+                                let center = egui::pos2(shadow_cx, at(feet).y);
+                                paint_ellipse(
+                                    &painter,
+                                    center,
+                                    rx,
+                                    ry,
+                                    egui::Stroke::new(
+                                        1.5,
+                                        egui::Color32::from_rgba_unmultiplied(
+                                            120, 200, 120, 200,
+                                        ),
+                                    ),
+                                );
+                            }
+                            // All anchors; the selected one cross-haired.
+                            let highlight = ui.visuals().hyperlink_color;
+                            for (name, anchor) in &state.anchors {
+                                let pos = at(*anchor);
+                                let selected =
+                                    name.eq_ignore_ascii_case(&state.selected_anchor);
+                                let color = if selected {
+                                    highlight
+                                } else {
+                                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200)
+                                };
+                                painter.circle_stroke(
+                                    pos,
+                                    4.0,
+                                    egui::Stroke::new(1.5, color),
+                                );
+                                painter.text(
+                                    pos + egui::vec2(6.0, -6.0),
+                                    egui::Align2::LEFT_BOTTOM,
+                                    name,
+                                    egui::FontId::proportional(11.0),
+                                    color,
+                                );
+                            }
+                            if let Some(anchor) = state
+                                .anchors
+                                .get(&state.selected_anchor.to_ascii_lowercase())
+                            {
+                                let center = at(*anchor);
+                                let stroke = egui::Stroke::new(1.0, highlight);
+                                painter.line_segment(
+                                    [
+                                        egui::pos2(rect.min.x, center.y),
+                                        egui::pos2(rect.max.x, center.y),
+                                    ],
+                                    stroke,
+                                );
+                                painter.line_segment(
+                                    [
+                                        egui::pos2(center.x, rect.min.y),
+                                        egui::pos2(center.x, rect.max.y),
+                                    ],
+                                    stroke,
+                                );
+                            }
+                            if response.clicked() {
+                                if let Some(pos) = response.interact_pointer_pos() {
+                                    if dest.contains(pos)
+                                        && dest.width() > 0.0
+                                        && dest.height() > 0.0
+                                    {
+                                        let normalized = [
+                                            ((pos.x - dest.min.x) / dest.width())
+                                                .clamp(0.0, 1.0),
+                                            ((pos.y - dest.min.y) / dest.height())
+                                                .clamp(0.0, 1.0),
+                                        ];
+                                        let key =
+                                            state.selected_anchor.to_ascii_lowercase();
+                                        state.anchors.insert(key, normalized);
+                                    }
+                                }
                             }
                         }
                     }
@@ -375,6 +687,16 @@ impl CreatureCalibrationState {
 
                 ui.separator();
                 ui.horizontal(|ui| {
+                    ui.checkbox(&mut state.write_size, "Write size").on_hover_text(
+                        "Save the fitted height as this image's world size. Uncheck for \
+                         shared overlay art where only anchors/overlay scale matter.",
+                    );
+                    ui.weak(format!(
+                        "{:.1} ft = {:.2} world units",
+                        state.height_ft,
+                        state.height_ft * UNITS_PER_FOOT
+                    ));
+                    ui.separator();
                     ui.checkbox(&mut state.footprint_on, "Footprint").on_hover_text(
                         "Floor ellipse for the contact shadow, centered on the feet anchor. \
                          Off = the generic standee shadow.",
@@ -442,17 +764,6 @@ impl CreatureCalibrationState {
                     });
                 }
                 ui.horizontal(|ui| {
-                    ui.checkbox(&mut state.size_on, "World size").on_hover_text(
-                        "This creature's height in world units, overriding the family \
-                         default — keeps art from different sources in scale.",
-                    );
-                    if state.size_on {
-                        ui.add(
-                            egui::DragValue::new(&mut state.size)
-                                .range(0.05..=20.0)
-                                .speed(0.05),
-                        );
-                    }
                     ui.checkbox(&mut state.lift_on, "Lift").on_hover_text(
                         "Ground clearance for a neutral pose that floats (wisps, spectres), \
                          as a fraction of the sprite height.",
@@ -463,8 +774,6 @@ impl CreatureCalibrationState {
                                 .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                         );
                     }
-                });
-                ui.horizontal(|ui| {
                     ui.checkbox(&mut state.overlay_scale_on, "Overlay scale")
                         .on_hover_text(
                             "For shared overlay art (creatures/wounds, creatures/status): \
@@ -478,6 +787,21 @@ impl CreatureCalibrationState {
                                 .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                         );
                     }
+                    ui.checkbox(&mut state.template_on, "Template canvas")
+                        .on_hover_text(
+                            "Art authored on the scale-spec canvas (docs/art/scale-spec.md): \
+                             pixels are feet at this ratio, baseline on the bottom edge. \
+                             World size derives from the art itself; a written size still \
+                             wins if both are set.",
+                        );
+                    if state.template_on {
+                        ui.add(
+                            egui::DragValue::new(&mut state.px_per_foot)
+                                .range(1.0..=512.0)
+                                .speed(1.0)
+                                .suffix(" px/ft"),
+                        );
+                    }
                 });
 
                 ui.separator();
@@ -485,8 +809,9 @@ impl CreatureCalibrationState {
                     if ui
                         .button("Save")
                         .on_hover_text(
-                            "Writes anchors, footprint, size and lift to the image's sidecar \
-                             (and embeds them in the PNG) — the calibration travels with the file",
+                            "Writes the fit (size + grounding), anchors, footprint and lift \
+                             to the image's sidecar (and embeds them in the PNG) — the \
+                             calibration travels with the file",
                         )
                         .clicked()
                     {
@@ -514,11 +839,35 @@ impl CreatureCalibrationState {
         }
         if save_request {
             if let Some(index) = state.selected {
+                // The fitted grounding becomes the feet anchor: where the
+                // ground line crosses the image at the current fit (x kept
+                // from a placed anchor; content-center otherwise).
+                let mut anchors = state.anchors.clone();
+                if state.write_size {
+                    let content_px = ((state.bbox[3] - state.bbox[1])
+                        * state.texture.as_ref().map(|t| t.size_vec2().y).unwrap_or(1.0))
+                    .max(1.0);
+                    let tex_h = state
+                        .texture
+                        .as_ref()
+                        .map(|t| t.size_vec2().y)
+                        .unwrap_or(1.0)
+                        .max(1.0);
+                    let feet_y = (state.bbox[3]
+                        + state.bottom_ft * content_px
+                            / (tex_h * state.height_ft.max(0.01)))
+                    .clamp(0.0, 1.0);
+                    let feet_x = anchors
+                        .get("feet")
+                        .map(|a| a[0])
+                        .unwrap_or((state.bbox[0] + state.bbox[2]) / 2.0);
+                    anchors.insert("feet".to_owned(), [feet_x, feet_y]);
+                }
                 // Scenery calibration (exclusion edges + aspect) lives in
                 // the same sidecar; carry it through untouched.
                 let existing: CreatureSidecar =
                     pool::read_sidecar(&state.choices[index].abs_path).unwrap_or_default();
-                let sidecar = state.to_sidecar(&existing);
+                let sidecar = state.to_sidecar(anchors, &existing);
                 match pool::write_creature_sidecar(&state.choices[index].abs_path, &sidecar) {
                     Ok(()) => {
                         state.error = None;
@@ -571,17 +920,86 @@ impl VellumGuiApp {
     }
 }
 
+/// Whether a pool file is a `{token}_<suffix>` layer beside its base
+/// (wound overlays like `kobold_chest1`, pose layers like
+/// `kobold_prone_chest1`) rather than something to calibrate directly.
+/// The base's stem is its parent folder's name (the tier scheme); the
+/// `_prone` pose itself stays visible — it carries its own calibration.
+fn is_layer_file(path: &std::path::Path) -> bool {
+    let (Some(stem), Some(parent)) = (
+        path.file_stem().and_then(|s| s.to_str()),
+        path.parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str()),
+    ) else {
+        return false;
+    };
+    let Some(suffix) = stem.strip_prefix(parent).and_then(|s| s.strip_prefix('_')) else {
+        return false;
+    };
+    !suffix.eq_ignore_ascii_case("prone")
+}
+
+/// Bestiary lookup for a pool image: folder/file stems are slugs of the
+/// creature name (underscores for spaces), so de-slug and match by noun
+/// with the exact-name-first discipline the field itself uses.
+fn bestiary_for_label(label: &str) -> Option<(Option<f32>, Option<String>)> {
+    let stem = label.rsplit('/').next().unwrap_or(label).trim();
+    let name = stem.replace('_', " ").to_ascii_lowercase();
+    let noun = name.split_whitespace().last()?.to_string();
+    let db = crate::core::bestiary::format::shared();
+    let entries = db.by_noun(&noun);
+    let entry = entries
+        .iter()
+        .find(|e| e.name.eq_ignore_ascii_case(&name))
+        .or_else(|| (entries.len() == 1).then(|| &entries[0]))?;
+    Some((
+        entry.height.map(|h| h as f32),
+        entry.creature_type.clone(),
+    ))
+}
+
 fn load_creature_choice(state: &mut CreatureCalibrationState, index: usize) {
     let choice = &state.choices[index];
     // The texture reloads lazily from render (`ensure_texture` needs ctx).
     state.texture = None;
+    state.bbox = alpha_bbox(&choice.abs_path).unwrap_or([0.0, 0.0, 1.0, 1.0]);
+    let label = choice.label.clone();
     let sidecar: CreatureSidecar = pool::read_sidecar(&choice.abs_path).unwrap_or_default();
     state.apply_sidecar(&sidecar);
+    // Fit state: saved size, else the bestiary height, else the human 6 ft.
+    let (bestiary_ft, bestiary_type) = bestiary_for_label(&label).unwrap_or((None, None));
+    state.height_ft = sidecar
+        .size
+        .map(|s| s / UNITS_PER_FOOT)
+        .or(bestiary_ft)
+        .unwrap_or(6.0);
+    state.target_ft = bestiary_ft.unwrap_or(state.height_ft);
+    state.target_on = bestiary_ft.is_some();
+    state.body_type = bestiary_type
+        .and_then(|t| {
+            BODY_TYPES
+                .iter()
+                .position(|(name, _)| name.eq_ignore_ascii_case(t.trim()))
+        })
+        .unwrap_or(0);
+    state.pos_x_ft = 0.0;
+    // Grounding from the saved feet anchor (inverse of the save mapping);
+    // no anchor = content bottom on the ground.
+    state.bottom_ft = 0.0;
+    if let Some(feet) = state.anchors.get("feet") {
+        let content = (state.bbox[3] - state.bbox[1]).max(0.001);
+        state.bottom_ft = (state.bbox[3] - feet[1]) / content * state.height_ft;
+    }
+    state.zoom = 0.0; // auto-fit
+    state.write_size = true;
 }
 
 impl CreatureCalibrationState {
-    /// Adopt a loaded sidecar into the editor state. Everything authored —
-    /// including the footprint centre — is retained for round-tripping.
+    /// Adopt a loaded sidecar's authored fields into the editor state.
+    /// Everything authored — including the footprint centre — is retained
+    /// for round-tripping. Fit state (height/grounding) is derived
+    /// separately in [`load_creature_choice`].
     fn apply_sidecar(&mut self, sidecar: &CreatureSidecar) {
         self.anchors = sidecar
             .anchors
@@ -596,10 +1014,6 @@ impl CreatureCalibrationState {
             self.ry = fp.effective_ry();
             self.footprint_center = fp.center;
         }
-        self.size_on = sidecar.size.is_some();
-        if let Some(size) = sidecar.size {
-            self.size = size;
-        }
         self.lift_on = sidecar.lift.is_some();
         if let Some(lift) = sidecar.lift {
             self.lift = lift;
@@ -608,47 +1022,39 @@ impl CreatureCalibrationState {
         if let Some(scale) = sidecar.overlay_scale {
             self.overlay_scale = scale;
         }
+        self.template_on = sidecar.px_per_foot.is_some();
+        if let Some(ppf) = sidecar.px_per_foot {
+            self.px_per_foot = ppf;
+        }
     }
 
-    /// The sidecar this editor state saves. `existing` carries through the
-    /// scenery-calibration fields (exclude/aspect) that live in the same
-    /// file; the footprint centre round-trips unless the user explicitly
-    /// reset it to the feet anchor.
-    fn to_sidecar(&self, existing: &CreatureSidecar) -> CreatureSidecar {
+    /// The sidecar this editor state saves. `anchors` is the working set
+    /// (the save path folds the fitted grounding into the feet anchor
+    /// first); `existing` carries through the scenery-calibration fields
+    /// (exclude/aspect) that live in the same file. The footprint centre
+    /// round-trips unless the user explicitly reset it to the feet anchor.
+    fn to_sidecar(
+        &self,
+        anchors: HashMap<String, [f32; 2]>,
+        existing: &CreatureSidecar,
+    ) -> CreatureSidecar {
         CreatureSidecar {
             kind: None, // the writer stamps it
-            anchors: self.anchors.clone(),
+            anchors,
             footprint: self.footprint_on.then(|| CreatureFootprint {
                 rx: self.rx,
                 ry: (!self.ry_auto).then_some(self.ry),
                 center: self.footprint_center,
             }),
-            size: self.size_on.then_some(self.size),
+            size: self.write_size.then_some(self.height_ft * UNITS_PER_FOOT),
+            px_per_foot: self
+                .template_on
+                .then_some(self.px_per_foot)
+                .filter(|ppf| *ppf > 0.0),
             lift: self.lift_on.then_some(self.lift),
             overlay_scale: self.overlay_scale_on.then_some(self.overlay_scale),
             exclude: existing.exclude,
             aspect: existing.aspect,
-        }
-    }
-}
-
-impl CreatureCalibrationState {
-    fn ensure_texture(&mut self, ctx: &egui::Context) {
-        if self.texture.is_some() {
-            return;
-        }
-        let Some(index) = self.selected else {
-            return;
-        };
-        let choice = &self.choices[index];
-        self.texture = image_store::load_texture_file(
-            ctx,
-            &choice.abs_path,
-            &format!("creature-cal:{}", choice.pool_path),
-            "creature calibration",
-        );
-        if self.texture.is_none() {
-            self.error = Some(format!("Cannot load {}", choice.pool_path));
         }
     }
 }
@@ -662,6 +1068,15 @@ mod tests {
             choices: Vec::new(),
             selected: None,
             texture: None,
+            bbox: [0.0, 0.0, 1.0, 1.0],
+            mode: CalMode::Fit,
+            height_ft: 6.0,
+            pos_x_ft: 0.0,
+            bottom_ft: 0.0,
+            zoom: 0.0,
+            body_type: 0,
+            target_on: false,
+            target_ft: 6.0,
             anchors: HashMap::new(),
             selected_anchor: "feet".to_owned(),
             new_anchor_name: String::new(),
@@ -670,12 +1085,14 @@ mod tests {
             ry_auto: true,
             ry: 0.35 * 0.24,
             footprint_center: None,
-            size_on: false,
-            size: 1.0,
+            write_size: false,
             lift_on: false,
             lift: 0.1,
             overlay_scale_on: false,
             overlay_scale: 1.0,
+            template_on: false,
+            px_per_foot: 32.0,
+            show_layers: false,
             error: None,
         }
     }
@@ -702,7 +1119,7 @@ mod tests {
         // Change only the head anchor — the authored centre (X and the
         // stored, unrendered Y) must survive the save untouched.
         state.anchors.insert("head".to_string(), [0.55, 0.05]);
-        let saved = state.to_sidecar(&CreatureSidecar::default());
+        let saved = state.to_sidecar(state.anchors.clone(), &CreatureSidecar::default());
         let fp = saved.footprint.unwrap();
         assert_eq!(fp.center, Some([0.3, 0.6]));
         assert_eq!(fp.rx, 0.46);
@@ -710,7 +1127,7 @@ mod tests {
         assert_eq!(saved.anchors["head"], [0.55, 0.05]);
         // Explicit reset to the feet anchor drops the authored centre.
         state.footprint_center = None;
-        let reset = state.to_sidecar(&CreatureSidecar::default());
+        let reset = state.to_sidecar(state.anchors.clone(), &CreatureSidecar::default());
         assert_eq!(reset.footprint.unwrap().center, None);
     }
 
@@ -728,7 +1145,11 @@ mod tests {
         let loaded: CreatureSidecar = pool::read_sidecar(&image_path).unwrap();
         state.apply_sidecar(&loaded);
         state.anchors.insert("head".to_string(), [0.6, 0.08]);
-        pool::write_creature_sidecar(&image_path, &state.to_sidecar(&loaded)).unwrap();
+        pool::write_creature_sidecar(
+            &image_path,
+            &state.to_sidecar(state.anchors.clone(), &loaded),
+        )
+        .unwrap();
 
         // External sidecar keeps the authored centre.
         let external: CreatureSidecar = pool::read_sidecar(&image_path).unwrap();
@@ -742,6 +1163,54 @@ mod tests {
             .expect("embedded metadata should hydrate a sidecar");
         assert_eq!(embedded.footprint.unwrap().center, Some([0.3, 0.6]));
         assert_eq!(embedded.anchors["head"], [0.6, 0.08]);
+    }
+}
+
+/// Alpha-content bbox of an image as fractions, same 32/255 threshold as
+/// the field loader — the fit sizes content, not canvas.
+fn alpha_bbox(path: &std::path::Path) -> Option<[f32; 4]> {
+    let rgba = image::open(path).ok()?.to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0u32, 0u32);
+    for (x, y, px) in rgba.enumerate_pixels() {
+        if px.0[3] >= 32 {
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+    }
+    (x0 <= x1 && y0 <= y1).then(|| {
+        [
+            x0 as f32 / w as f32,
+            y0 as f32 / h as f32,
+            (x1 + 1) as f32 / w as f32,
+            (y1 + 1) as f32 / h as f32,
+        ]
+    })
+}
+
+impl CreatureCalibrationState {
+    fn ensure_texture(&mut self, ctx: &egui::Context) {
+        if self.texture.is_some() {
+            return;
+        }
+        let Some(index) = self.selected else {
+            return;
+        };
+        let choice = &self.choices[index];
+        self.texture = image_store::load_texture_file(
+            ctx,
+            &choice.abs_path,
+            &format!("creature-cal:{}", choice.pool_path),
+            "creature calibration",
+        );
+        if self.texture.is_none() {
+            self.error = Some(format!("Cannot load {}", choice.pool_path));
+        }
     }
 }
 
