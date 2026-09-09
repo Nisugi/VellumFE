@@ -16,6 +16,10 @@
 //! POLICY (owner-pinned): an authored sidecar `size` is an ABSOLUTE world
 //! height with its existing visual meaning — it is never reinterpreted as
 //! a multiplier, and the solver now agrees with the renderer about it.
+//! Display, though, is uniform per creature: whatever factor readability
+//! policy (clamp, boss bump) applied to the standing height applies to
+//! every pose's authored size too, so a downed creature can never dwarf
+//! its own standing pose.
 //! Shared family/default art contributes only SHAPE (aspect, span): its
 //! calibration never sets a species' height, so creatures sharing fallback
 //! art keep their own bestiary heights unless the art explicitly authors
@@ -123,6 +127,13 @@ pub fn resolve_geometry(
     let bestiary = super::bestiary_height_units(&c.name, c.noun.as_deref());
     let quad = super::bestiary_body_type(&c.name, c.noun.as_deref())
         .is_some_and(|t| t == "quadruped");
+    // The creature's NATURAL reference height — before boss emphasis, the
+    // readability clamp, or a standing override. Authored pose sizes are
+    // true world heights measured against this, so the display factor
+    // below can re-express them in shown units.
+    let natural_h = bestiary
+        .map(|(h, _)| h)
+        .unwrap_or(CardSize::default().h);
 
     // ---- reference height + readability policy --------------------------
     let (mut world_h, source, mut boss_emphasis) = match bestiary {
@@ -174,12 +185,28 @@ pub fn resolve_geometry(
         span: sanitize_span(standing_cal.span),
     };
 
+    // The DISPLAY factor: how far readability policy (clamp, boss bump)
+    // or a standing override moved the shown standing height off the
+    // natural reference height. Every pose of one creature must ride the
+    // same factor: an authored pose `size` is a TRUE world height, and
+    // drawing it raw next to a readability-clamped standing pose splits
+    // the one-geometry contract — the reported giant prone golem (40 ft
+    // standing clamped to 2.6 units, its authored 22 ft prone drawn
+    // unclamped at 4.4).
+    let display_scale = if natural_h > 0.01 {
+        world_h / natural_h
+    } else {
+        1.0
+    };
+
     // Prone height, in renderer precedence (finding 7 — bounds derive
     // from the SAME resolved pose scale the sprite draws at):
-    //   1. the pose's own authored `size`: absolute, exactly as drawn —
-    //      the explicit calibration path for pose files at a different
-    //      canvas scale; no minimum inflates it (a minimum HIT target is
-    //      an input policy, never part of visible bounds);
+    //   1. the pose's own authored `size`: a true world height, shown
+    //      through the creature's display factor (× `display_scale`) so
+    //      it scales exactly as the standing pose did — the explicit
+    //      calibration path for pose files at a different canvas scale;
+    //      no minimum inflates it (a minimum HIT target is an input
+    //      policy, never part of visible bounds);
     //   2. the measured pose-to-standing content ratio × the shared world
     //      height — precisely the height the renderer's inherited pixel
     //      scale draws the pose at (a prone image with half the standing
@@ -190,7 +217,7 @@ pub fn resolve_geometry(
     //      a policy applied to real measurements.
     let prone_cal = cal.and_then(|c| c.prone).unwrap_or_default();
     let prone_h = if let Some(s) = prone_cal.size.filter(|s| s.is_finite() && *s > 0.0) {
-        s
+        s * display_scale
     } else if let Some(r) = prone_cal
         .content_ratio
         .filter(|r| r.is_finite() && *r > 0.0)
@@ -488,6 +515,37 @@ mod tests {
             let g = resolve_geometry(&creature("agresh bear", "bear"), Some(&cal));
             assert!((g.prone.h - 0.8 * 0.70).abs() < 1e-3);
         }
+    }
+
+    /// Authored pose sizes ride the creature's DISPLAY factor: a
+    /// readability-clamped giant shows its authored prone height scaled
+    /// by the same factor its standing pose was clamped by — never raw
+    /// (the giant-prone-golem report: 40 ft standing clamps to 2.6
+    /// units, so its authored 4.4-unit prone must show at 4.4 × 2.6/8.0,
+    /// well BELOW the standing pose, not tower over it).
+    #[test]
+    fn authored_pose_size_rides_readability_factor() {
+        // agresh troll chieftain: 9 ft -> 1.8 units, no clamp (factor 1):
+        // authored prone passes through exactly.
+        let cal = |size| ArtCalibration {
+            standing: PoseCalibration::default(),
+            prone: Some(PoseCalibration {
+                size: Some(size),
+                ..Default::default()
+            }),
+        };
+        let g = resolve_geometry(&creature("agresh troll chieftain", "chieftain"), Some(&cal(0.9)));
+        assert!((g.prone.h - 0.9).abs() < 1e-4, "unclamped: exact");
+        // giant rat: 1 ft (0.2) clamps UP to 0.55 (factor 2.75); an
+        // authored 0.1-unit prone scales up with it.
+        let g = resolve_geometry(&creature("giant rat", "rat"), Some(&cal(0.1)));
+        assert!(g.readability_clamped);
+        assert!(
+            (g.prone.h - 0.1 * (0.55 / 0.2)).abs() < 1e-4,
+            "clamped up: prone rides the factor, got {}",
+            g.prone.h
+        );
+        assert!(g.prone.h < g.standing.h, "prone stays below standing");
     }
 
     /// A sidecar `size` on the STANDING pose scales the whole envelope,

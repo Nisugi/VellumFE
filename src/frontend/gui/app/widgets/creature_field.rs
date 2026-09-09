@@ -554,11 +554,26 @@ impl VellumGuiApp {
             // narrow card box.
             let px_per_unit = card.height() / unit.size.h.max(0.01);
             let scale = if let Some(s) = a.size.filter(|s| *s > 0.0) {
-                // Authored world size (sidecar) wins outright.
+                // Authored world size (sidecar) wins — but displayed
+                // through the creature's readability factor, which is
+                // already folded into the resolved box heights (geometry
+                // precedence 1). Target the box for the pose this art
+                // depicts instead of raw `s`: a readability-clamped
+                // creature otherwise draws its prone pose unclamped and
+                // towers over its own standing pose (the giant prone
+                // golem). Standing art keeps the standing box even while
+                // the unit lies (no prone art shipped): lying must not
+                // squash an upright sprite.
+                let pose_art = art.is_some_and(|base| !std::ptr::eq(base, a));
+                let target_h = if pose_art {
+                    unit.size.h
+                } else {
+                    unit.standing.h
+                };
                 let content_h = ((a.bbox[3] - a.bbox[1]) * ts.y).max(1.0);
-                let sc = s * px_per_unit / content_h;
+                let sc = target_h * px_per_unit / content_h;
                 tracing::debug!(
-                    "[field-scale] {} authored_size={s:.2} content_h={content_h:.0} scale={sc:.4}",
+                    "[field-scale] {} authored_size={s:.2} target_h={target_h:.2} content_h={content_h:.0} scale={sc:.4}",
                     creature.name,
                 );
                 sc
