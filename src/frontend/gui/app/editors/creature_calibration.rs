@@ -54,6 +54,8 @@ struct CreatureChoice {
     /// than `_prone`) — hidden from the picker unless "all layers" is on,
     /// so the list reads as one entry per creature, not one per layer.
     layer: bool,
+    /// Sidecar present at scan time — the "already calibrated" marker.
+    calibrated: bool,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -66,6 +68,11 @@ enum CalMode {
 
 pub(crate) struct CreatureCalibrationState {
     choices: Vec<CreatureChoice>,
+    /// Area groups over `choices` (bestiary `areas`; multi-area creatures
+    /// appear under each; unknowns under "Other"), sorted by area name.
+    groups: Vec<(String, Vec<usize>)>,
+    /// Picker search box; non-empty flattens the groups to matches.
+    search: String,
     selected: Option<usize>,
     texture: Option<egui::TextureHandle>,
     /// Alpha-content bbox of the selected image, as image fractions
@@ -137,6 +144,7 @@ impl CreatureCalibrationState {
                     pool_path: image.pool_path.clone(),
                     abs_path: image.abs_path.clone(),
                     layer,
+                    calibrated: image.has_sidecar,
                 }
             })
             .collect();
@@ -148,9 +156,33 @@ impl CreatureCalibrationState {
             );
             return (None, outcome);
         }
+        // Area grouping from the bestiary; a creature in several areas
+        // lists under each, unknown names land in "Other".
+        let db = crate::core::bestiary::format::shared();
+        let mut by_area: std::collections::BTreeMap<String, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for (index, choice) in choices.iter().enumerate() {
+            let stem = choice.label.rsplit('/').next().unwrap_or(&choice.label).trim();
+            let name = stem
+                .strip_suffix("_prone")
+                .unwrap_or(stem)
+                .replace('_', " ");
+            let areas = db.areas_for_name(&name);
+            if areas.is_empty() {
+                by_area.entry("Other".to_owned()).or_default().push(index);
+            } else {
+                for area in areas {
+                    by_area.entry(area).or_default().push(index);
+                }
+            }
+        }
+        let groups: Vec<(String, Vec<usize>)> = by_area.into_iter().collect();
+
         let selected = (choices.len() == 1).then_some(0);
         let mut state = CreatureCalibrationState {
             choices,
+            groups,
+            search: String::new(),
             selected,
             texture: None,
             bbox: [0.0, 0.0, 1.0, 1.0],
@@ -207,34 +239,9 @@ impl CreatureCalibrationState {
                 let selected_label = state
                     .selected
                     .map(|index| state.choices[index].label.clone())
-                    .unwrap_or_else(|| "Pick a creature".to_owned());
+                    .unwrap_or_else(|| "Pick a creature below".to_owned());
                 ui.horizontal(|ui| {
-                    egui::ComboBox::from_label("Creature image")
-                        .selected_text(selected_label)
-                        .show_ui(ui, |ui| {
-                            for (index, choice) in state.choices.iter().enumerate() {
-                                if choice.layer
-                                    && !state.show_layers
-                                    && state.selected != Some(index)
-                                {
-                                    continue;
-                                }
-                                if ui
-                                    .selectable_label(
-                                        state.selected == Some(index),
-                                        &choice.label,
-                                    )
-                                    .clicked()
-                                {
-                                    load_request = Some(index);
-                                }
-                            }
-                        });
-                    ui.checkbox(&mut state.show_layers, "all layers")
-                        .on_hover_text(
-                            "List every image file, including per-wound overlays and pose \
-                             layers ({token}_chest1, …). Off = base + _prone images only.",
-                        );
+                    ui.strong(selected_label);
                     ui.separator();
                     ui.selectable_value(&mut state.mode, CalMode::Fit, "Fit")
                         .on_hover_text(
@@ -246,6 +253,79 @@ impl CreatureCalibrationState {
                             "Sprite locked in place; click to place the selected anchor",
                         );
                 });
+                // Picker: search + area groups (bestiary `areas`), with a
+                // • marker on images that already carry a calibration.
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.search)
+                            .hint_text("search creatures")
+                            .desired_width(180.0),
+                    );
+                    ui.checkbox(&mut state.show_layers, "all layers")
+                        .on_hover_text(
+                            "List every image file, including per-wound overlays and pose \
+                             layers ({token}_chest1, …). Off = base + _prone images only.",
+                        );
+                });
+                let search = state.search.trim().to_ascii_lowercase();
+                let visible = |choice: &CreatureChoice, index: usize| {
+                    (!choice.layer || state.show_layers || state.selected == Some(index))
+                        && (search.is_empty()
+                            || choice.label.to_ascii_lowercase().contains(&search))
+                };
+                egui::ScrollArea::vertical()
+                    .id_salt("creature_cal_picker")
+                    .max_height(140.0)
+                    .show(ui, |ui| {
+                        let mut row = |ui: &mut egui::Ui, index: usize| {
+                            let choice = &state.choices[index];
+                            let label = if choice.calibrated {
+                                format!("{} \u{2022}", choice.label)
+                            } else {
+                                choice.label.clone()
+                            };
+                            if ui
+                                .selectable_label(state.selected == Some(index), label)
+                                .on_hover_text(if choice.calibrated {
+                                    "Calibrated (sidecar present)"
+                                } else {
+                                    "Not yet calibrated"
+                                })
+                                .clicked()
+                            {
+                                load_request = Some(index);
+                            }
+                        };
+                        if search.is_empty() {
+                            for (area, members) in &state.groups {
+                                let shown: Vec<usize> = members
+                                    .iter()
+                                    .copied()
+                                    .filter(|&i| visible(&state.choices[i], i))
+                                    .collect();
+                                if shown.is_empty() {
+                                    continue;
+                                }
+                                egui::CollapsingHeader::new(format!(
+                                    "{area} ({})",
+                                    shown.len()
+                                ))
+                                .default_open(state.groups.len() == 1)
+                                .show(ui, |ui| {
+                                    for index in shown {
+                                        row(ui, index);
+                                    }
+                                });
+                            }
+                        } else {
+                            // Search flattens the groups to matches.
+                            for index in 0..state.choices.len() {
+                                if visible(&state.choices[index], index) {
+                                    row(ui, index);
+                                }
+                            }
+                        }
+                    });
 
                 let (Some(texture), Some(_)) = (&state.texture, state.selected) else {
                     return;
@@ -677,6 +757,17 @@ impl CreatureCalibrationState {
                                         ];
                                         let key =
                                             state.selected_anchor.to_ascii_lowercase();
+                                        // A hand-placed feet anchor IS the
+                                        // grounding: sync the fit so the
+                                        // save's fit-derived feet agrees
+                                        // instead of clobbering it.
+                                        if key == "feet" {
+                                            state.bottom_ft = bottom_ft_for_feet(
+                                                normalized[1],
+                                                state.bbox,
+                                                state.height_ft,
+                                            );
+                                        }
                                         state.anchors.insert(key, normalized);
                                     }
                                 }
@@ -940,23 +1031,45 @@ fn is_layer_file(path: &std::path::Path) -> bool {
     !suffix.eq_ignore_ascii_case("prone")
 }
 
+/// The stage grounding (content-bottom height above the ground line, in
+/// feet) implied by a feet-anchor Y at the current fit. Exact inverse of
+/// the save mapping in [`CreatureCalibrationState::ui`]: the renderer
+/// puts the feet fraction ON the floor, so an anchor below the content
+/// bottom floats the content and one above it sinks it.
+fn bottom_ft_for_feet(feet_y: f32, bbox: [f32; 4], height_ft: f32) -> f32 {
+    let content = (bbox[3] - bbox[1]).max(0.001);
+    (feet_y - bbox[3]) / content * height_ft
+}
+
 /// Bestiary lookup for a pool image: folder/file stems are slugs of the
 /// creature name (underscores for spaces), so de-slug and match by noun
 /// with the exact-name-first discipline the field itself uses.
 fn bestiary_for_label(label: &str) -> Option<(Option<f32>, Option<String>)> {
+    // Pose/layer stems carry suffixes ("{token}_prone") — the creature
+    // name is the folder segment when present, else the suffix-stripped
+    // stem. Try the most specific candidate first.
     let stem = label.rsplit('/').next().unwrap_or(label).trim();
-    let name = stem.replace('_', " ").to_ascii_lowercase();
-    let noun = name.split_whitespace().last()?.to_string();
+    let folder = label.split('/').next().filter(|_| label.contains('/'));
+    let stripped = stem.strip_suffix("_prone").unwrap_or(stem);
     let db = crate::core::bestiary::format::shared();
-    let entries = db.by_noun(&noun);
-    let entry = entries
-        .iter()
-        .find(|e| e.name.eq_ignore_ascii_case(&name))
-        .or_else(|| (entries.len() == 1).then(|| &entries[0]))?;
-    Some((
-        entry.height.map(|h| h as f32),
-        entry.creature_type.clone(),
-    ))
+    for candidate in [Some(stripped), folder.map(str::trim)].into_iter().flatten() {
+        let name = candidate.replace('_', " ").to_ascii_lowercase();
+        let Some(noun) = name.split_whitespace().last().map(str::to_string) else {
+            continue;
+        };
+        let entries = db.by_noun(&noun);
+        if let Some(entry) = entries
+            .iter()
+            .find(|e| e.name.eq_ignore_ascii_case(&name))
+            .or_else(|| (entries.len() == 1).then(|| &entries[0]))
+        {
+            return Some((
+                entry.height.map(|h| h as f32),
+                entry.creature_type.clone(),
+            ));
+        }
+    }
+    None
 }
 
 fn load_creature_choice(state: &mut CreatureCalibrationState, index: usize) {
@@ -968,12 +1081,32 @@ fn load_creature_choice(state: &mut CreatureCalibrationState, index: usize) {
     let sidecar: CreatureSidecar = pool::read_sidecar(&choice.abs_path).unwrap_or_default();
     state.apply_sidecar(&sidecar);
     // Fit state: saved size, else the bestiary height, else the human 6 ft.
+    // Prone art's content height is body THICKNESS, not standing height —
+    // default to the prone-box ratio of the bestiary height so the first
+    // fit starts in the right ballpark.
+    let prone_pose = state.choices[index]
+        .abs_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.to_ascii_lowercase().ends_with("_prone"));
     let (bestiary_ft, bestiary_type) = bestiary_for_label(&label).unwrap_or((None, None));
+    // Prone starting ratios from live calibration sessions: a curled biped
+    // fits ~0.28 of standing (6 ft vampire → 1.7 ft); a felled quadruped
+    // keeps most of its bulk (30 ft mastodon → 20 ft lying).
+    let quad = bestiary_type
+        .as_deref()
+        .is_some_and(|t| t.trim().eq_ignore_ascii_case("quadruped"));
+    let prone_ratio = if quad { 0.65 } else { 0.28 };
+    let default_ft = match (bestiary_ft, prone_pose) {
+        (Some(ft), true) => ft * prone_ratio,
+        (Some(ft), false) => ft,
+        (None, true) => 1.7,
+        (None, false) => 6.0,
+    };
     state.height_ft = sidecar
         .size
         .map(|s| s / UNITS_PER_FOOT)
-        .or(bestiary_ft)
-        .unwrap_or(6.0);
+        .unwrap_or(default_ft);
     state.target_ft = bestiary_ft.unwrap_or(state.height_ft);
     state.target_on = bestiary_ft.is_some();
     state.body_type = bestiary_type
@@ -984,12 +1117,13 @@ fn load_creature_choice(state: &mut CreatureCalibrationState, index: usize) {
         })
         .unwrap_or(0);
     state.pos_x_ft = 0.0;
-    // Grounding from the saved feet anchor (inverse of the save mapping);
-    // no anchor = content bottom on the ground.
+    // Grounding from the saved feet anchor (inverse of the save mapping):
+    // a feet anchor BELOW the content bottom (in the padding) means the
+    // content floats above the ground by that much; above it, it sinks.
+    // No anchor = content bottom on the ground.
     state.bottom_ft = 0.0;
     if let Some(feet) = state.anchors.get("feet") {
-        let content = (state.bbox[3] - state.bbox[1]).max(0.001);
-        state.bottom_ft = (state.bbox[3] - feet[1]) / content * state.height_ft;
+        state.bottom_ft = bottom_ft_for_feet(feet[1], state.bbox, state.height_ft);
     }
     state.zoom = 0.0; // auto-fit
     state.write_size = true;
@@ -1066,6 +1200,8 @@ mod tests {
     fn blank_state() -> CreatureCalibrationState {
         CreatureCalibrationState {
             choices: Vec::new(),
+            groups: Vec::new(),
+            search: String::new(),
             selected: None,
             texture: None,
             bbox: [0.0, 0.0, 1.0, 1.0],
@@ -1109,6 +1245,30 @@ mod tests {
         sidecar.anchors.insert("feet".to_string(), [0.48, 0.9]);
         sidecar.anchors.insert("head".to_string(), [0.5, 0.1]);
         sidecar
+    }
+
+    #[test]
+    fn feet_anchor_and_fit_grounding_are_exact_inverses() {
+        // The save path derives feet_y from bottom_ft; the load path (and
+        // a hand-placed feet click) derive bottom_ft from feet_y. A sign
+        // slip here made every save invert the grounding (a placed contact
+        // point became an equal-sized float). Pin the round trip.
+        let bbox = [0.1_f32, 0.2, 0.9, 0.8];
+        let (tex_h, height_ft) = (100.0_f32, 6.0_f32);
+        let content_frac = bbox[3] - bbox[1];
+        for feet_y in [0.5_f32, 0.8, 0.95] {
+            let bottom_ft = bottom_ft_for_feet(feet_y, bbox, height_ft);
+            // Mirror of the save formula in ui().
+            let content_px = content_frac * tex_h;
+            let saved_feet_y = bbox[3] + bottom_ft * content_px / (tex_h * height_ft);
+            assert!(
+                (saved_feet_y - feet_y).abs() < 1e-5,
+                "feet {feet_y} -> bottom {bottom_ft} -> feet {saved_feet_y}"
+            );
+        }
+        // Signs: anchor above the content bottom sinks; below it floats.
+        assert!(bottom_ft_for_feet(0.5, bbox, height_ft) < 0.0);
+        assert!(bottom_ft_for_feet(0.95, bbox, height_ft) > 0.0);
     }
 
     #[test]

@@ -134,6 +134,8 @@ struct CastEntry {
     display: String,
     /// Last word of the display name.
     noun: String,
+    /// Bestiary areas (empty = unknown; grouped under "Other").
+    areas: Vec<String>,
 }
 
 /// The Stage sandbox: a fabricated AppCore whose room roster and target
@@ -779,22 +781,51 @@ impl StageState {
             });
             let filter = self.filter.to_ascii_lowercase();
             let mut spawn_request: Option<(String, String)> = None;
+            let mut cast_row = |ui: &mut egui::Ui, entry: &CastEntry| {
+                ui.horizontal(|ui| {
+                    if ui.small_button("Spawn").clicked() {
+                        spawn_request = Some((entry.display.clone(), entry.noun.clone()));
+                    }
+                    ui.label(&entry.display);
+                });
+            };
             egui::ScrollArea::vertical()
                 .id_salt("stage_cast")
                 .max_height(160.0)
                 .show(ui, |ui| {
-                    for entry in &self.cast {
-                        if !filter.is_empty() && !entry.display.to_ascii_lowercase().contains(&filter)
-                        {
-                            continue;
-                        }
-                        ui.horizontal(|ui| {
-                            if ui.small_button("Spawn").clicked() {
-                                spawn_request =
-                                    Some((entry.display.clone(), entry.noun.clone()));
+                    if filter.is_empty() {
+                        // Grouped by bestiary area (multi-area creatures
+                        // list under each; unknowns under "Other").
+                        let mut by_area: std::collections::BTreeMap<&str, Vec<&CastEntry>> =
+                            std::collections::BTreeMap::new();
+                        for entry in &self.cast {
+                            if entry.areas.is_empty() {
+                                by_area.entry("Other").or_default().push(entry);
+                            } else {
+                                for area in &entry.areas {
+                                    by_area.entry(area.as_str()).or_default().push(entry);
+                                }
                             }
-                            ui.label(&entry.display);
-                        });
+                        }
+                        for (area, entries) in by_area {
+                            egui::CollapsingHeader::new(format!(
+                                "{area} ({})",
+                                entries.len()
+                            ))
+                            .id_salt(("cast_area", area))
+                            .show(ui, |ui| {
+                                for entry in entries {
+                                    cast_row(ui, entry);
+                                }
+                            });
+                        }
+                    } else {
+                        // Filter flattens the groups to matches.
+                        for entry in &self.cast {
+                            if entry.display.to_ascii_lowercase().contains(&filter) {
+                                cast_row(ui, entry);
+                            }
+                        }
                     }
                 });
             if let Some((display, noun)) = spawn_request {
@@ -1251,6 +1282,7 @@ fn build_cast() -> Vec<CastEntry> {
     for extra in extras {
         tokens.remove(&extra);
     }
+    let db = crate::core::bestiary::format::shared();
     tokens
         .into_iter()
         .map(|token| {
@@ -1260,7 +1292,12 @@ fn build_cast() -> Vec<CastEntry> {
                 .next()
                 .unwrap_or(&display)
                 .to_string();
-            CastEntry { display, noun }
+            let areas = db.areas_for_name(&display);
+            CastEntry {
+                display,
+                noun,
+                areas,
+            }
         })
         .collect()
 }
