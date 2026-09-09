@@ -379,6 +379,25 @@ impl BestiaryDb {
             .map(|v| v.iter().map(|&i| &self.entries[i]).collect())
             .unwrap_or_default()
     }
+
+    /// Area names for a creature by display name, with the exact-name-
+    /// then-lone-noun discipline the art resolvers use. Empty when the
+    /// name is unknown or the noun is ambiguous — callers group those
+    /// under their own fallback bucket.
+    pub fn areas_for_name(&self, name: &str) -> Vec<String> {
+        let name = name.trim().to_ascii_lowercase();
+        let Some(noun) = name.split_whitespace().last() else {
+            return Vec::new();
+        };
+        let entries = self.by_noun(noun);
+        let entry = entries
+            .iter()
+            .find(|e| e.name.eq_ignore_ascii_case(&name))
+            .or_else(|| (entries.len() == 1).then(|| &entries[0]));
+        entry
+            .map(|e| e.areas.iter().map(|a| a.trim().to_string()).collect())
+            .unwrap_or_default()
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -400,6 +419,10 @@ impl BestiaryDb {
 /// they hold raw combat captures, future trigger fodder, not data).
 pub fn ruby_template_to_json(text: &str) -> String {
     let key_re = regex::Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)\s*:").expect("static regex");
+    // Bare symbol VALUES (`type: :buff`, `target: :self`) — quote to
+    // strings. Matched by the leading `: :` so symbol-looking text inside
+    // strings never qualifies (strings don't reach the code path anyway).
+    let sym_re = regex::Regex::new(r":\s*:([A-Za-z_][A-Za-z0-9_]*)").expect("static regex");
     let nil_re = regex::Regex::new(r"\bnil\b").expect("static regex");
     let range_re = regex::Regex::new(r"\((-?\d+)\s*\.\.\s*(-?\d+)\)").expect("static regex");
     // Bare ranges (`uids: [14012050..14012070]`) appeared with the areas
@@ -427,11 +450,14 @@ pub fn ruby_template_to_json(text: &str) -> String {
         &'a regex::Regex,
         &'a regex::Regex,
         &'a regex::Regex,
+        &'a regex::Regex,
     );
     fn flush(code: &mut String, out: &mut String, res: Rewrites) {
-        let (comment_re, key_re, nil_re, range_re, bare_range_re, paren_re, trailing_re) = res;
+        let (comment_re, sym_re, key_re, nil_re, range_re, bare_range_re, paren_re, trailing_re) =
+            res;
         let stripped = comment_re.replace_all(code, "");
-        let keys = key_re.replace_all(&stripped, "\"$1\":");
+        let syms = sym_re.replace_all(&stripped, ": \"$1\"");
+        let keys = key_re.replace_all(&syms, "\"$1\":");
         let nils = nil_re.replace_all(&keys, "null");
         let ranges = range_re.replace_all(&nils, "[$1, $2]");
         let bare = bare_range_re.replace_all(&ranges, "[$1, $2]");
@@ -446,6 +472,13 @@ pub fn ruby_template_to_json(text: &str) -> String {
     let mut in_string = false;
     while let Some(c) = chars.next() {
         if in_string {
+            // Raw control bytes appear in the wild (ithzir_seer's healing
+            // messages carry literal 0x01/0x02 from a bad upstream
+            // substitution) and are invalid inside JSON strings — drop
+            // them rather than losing the whole template.
+            if c.is_control() {
+                continue;
+            }
             out.push(c);
             match c {
                 '\\' => {
@@ -462,6 +495,7 @@ pub fn ruby_template_to_json(text: &str) -> String {
                 &mut out,
                 (
                     &comment_re,
+                    &sym_re,
                     &key_re,
                     &nil_re,
                     &range_re,
@@ -481,6 +515,7 @@ pub fn ruby_template_to_json(text: &str) -> String {
         &mut out,
         (
             &comment_re,
+            &sym_re,
             &key_re,
             &nil_re,
             &range_re,
@@ -1278,6 +1313,22 @@ pub mod format {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn symbol_values_quote_to_strings() {
+        // Ability blocks use bare Ruby symbols as values (`type: :buff`,
+        // `target: :self`) — seen in the Hinterwilds templates; they must
+        // land as JSON strings, and symbol-shaped text inside strings must
+        // survive untouched.
+        let json = ruby_template_to_json(
+            "{\n  id: :frenzy,\n  type: :buff,\n  target: :self,\n  note: \"a :symbol in text\"\n}",
+        );
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["id"], "frenzy");
+        assert_eq!(v["type"], "buff");
+        assert_eq!(v["target"], "self");
+        assert_eq!(v["note"], "a :symbol in text");
+    }
 
     const MANTICORE: &str = r#"{
   schema_version: 3,
