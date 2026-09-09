@@ -38,10 +38,24 @@ pub struct ClassicMapRoom {
 /// Vellum can host more than one character, and each session may be attached
 /// to a different Lich installation. Sharing an `Arc<ClassicMapCatalog>` with
 /// that session's renderers keeps filesystem authority scoped to the session.
+/// Outcome of a clickable-room lookup for one classic image.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClassicRoomLookup {
+    /// The image is not in this session's catalog; never disclose mapdb data.
+    UnknownImage,
+    /// The image exists but no mapdb has been loaded (or one is reloading),
+    /// so the answer would be a misleading empty list.
+    NotReady,
+    /// Rooms from the loaded mapdb; empty when the image has no clickable
+    /// rooms at all.
+    Ready(Vec<ClassicMapRoom>),
+}
+
 #[derive(Debug, Default)]
 pub struct ClassicMapCatalog {
     maps: RwLock<BTreeMap<String, ClassicMapAsset>>,
-    rooms: RwLock<BTreeMap<String, Vec<ClassicMapRoom>>>,
+    /// `None` until a mapdb has been loaded; cleared again while reloading.
+    rooms: RwLock<Option<BTreeMap<String, Vec<ClassicMapRoom>>>>,
 }
 
 impl ClassicMapCatalog {
@@ -98,20 +112,20 @@ impl ClassicMapCatalog {
             rooms.sort_by_key(|room| room.id);
         }
         let count = next.values().map(Vec::len).sum();
-        *self.rooms.write().expect("classic map rooms poisoned") = next;
+        *self.rooms.write().expect("classic map rooms poisoned") = Some(next);
         count
     }
 
+    /// Forget the room table until the next `reload_rooms`. Lookups report
+    /// `NotReady` in between so clients don't cache an empty answer.
     pub fn clear_rooms(&self) {
-        self.rooms
-            .write()
-            .expect("classic map rooms poisoned")
-            .clear();
+        *self.rooms.write().expect("classic map rooms poisoned") = None;
     }
 
     /// Clickable room rectangles for a discovered classic image. Unknown
-    /// assets never disclose mapdb metadata.
-    pub fn rooms(&self, name: &str) -> Option<Vec<ClassicMapRoom>> {
+    /// assets never disclose mapdb metadata; a missing mapdb is reported
+    /// distinctly from an image that simply has no rooms.
+    pub fn rooms(&self, name: &str) -> ClassicRoomLookup {
         let key = name.to_ascii_lowercase();
         if !self
             .maps
@@ -119,16 +133,17 @@ impl ClassicMapCatalog {
             .expect("classic map catalog poisoned")
             .contains_key(&key)
         {
-            return None;
+            return ClassicRoomLookup::UnknownImage;
         }
-        Some(
-            self.rooms
-                .read()
-                .expect("classic map rooms poisoned")
-                .get(&key)
-                .cloned()
-                .unwrap_or_default(),
-        )
+        match self
+            .rooms
+            .read()
+            .expect("classic map rooms poisoned")
+            .as_ref()
+        {
+            None => ClassicRoomLookup::NotReady,
+            Some(rooms) => ClassicRoomLookup::Ready(rooms.get(&key).cloned().unwrap_or_default()),
+        }
     }
 }
 
@@ -234,14 +249,46 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            catalog.rooms("landing.png"),
+            ClassicRoomLookup::NotReady,
+            "before any mapdb load the answer must not look like 'no rooms'"
+        );
         assert_eq!(catalog.reload_rooms(&db), 3);
         assert_eq!(
-            catalog.rooms("landing.png").unwrap(),
-            vec![
+            catalog.rooms("landing.png"),
+            ClassicRoomLookup::Ready(vec![
                 ClassicMapRoom { id: 1, rect: [10.0, 20.0, 30.0, 40.0] },
                 ClassicMapRoom { id: 2, rect: [30.0, 40.0, 50.0, 60.0] },
-            ]
+            ])
         );
-        assert_eq!(catalog.rooms("missing.png"), None);
+        assert_eq!(catalog.rooms("missing.png"), ClassicRoomLookup::UnknownImage);
+    }
+
+    #[test]
+    fn clearing_rooms_reports_not_ready_until_the_next_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("landing.png"), b"map").unwrap();
+        std::fs::write(dir.path().join("empty.png"), b"map").unwrap();
+        let catalog = ClassicMapCatalog::new();
+        catalog.reload_from_dir(Some(dir.path()));
+        let db = MapDb::from_json(
+            r#"[{"id": 1, "location": "Landing", "image": "landing.png", "image_coords": [1, 2, 3, 4]}]"#,
+        )
+        .unwrap();
+        catalog.reload_rooms(&db);
+        assert_eq!(
+            catalog.rooms("empty.png"),
+            ClassicRoomLookup::Ready(Vec::new()),
+            "a loaded mapdb with no rooms for an image is a real empty answer"
+        );
+
+        catalog.clear_rooms();
+        assert_eq!(catalog.rooms("landing.png"), ClassicRoomLookup::NotReady);
+        assert_eq!(catalog.rooms("empty.png"), ClassicRoomLookup::NotReady);
+        assert_eq!(catalog.rooms("missing.png"), ClassicRoomLookup::UnknownImage);
+
+        catalog.reload_rooms(&db);
+        assert!(matches!(catalog.rooms("landing.png"), ClassicRoomLookup::Ready(rooms) if rooms.len() == 1));
     }
 }

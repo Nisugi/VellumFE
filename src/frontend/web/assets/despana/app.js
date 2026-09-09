@@ -6,7 +6,7 @@ import DesktopSession, {
 import DesktopInteractionCoordinator from "./interactions.js";
 import { DesktopMacros } from "./macros.js";
 import { DesktopMacroEditor } from "./macro-editor.js";
-import { DesktopMapViewport, classicRoomAtViewportPoint } from "./map.js";
+import { ClassicRoomStore, DesktopMapViewport, classicRoomAtViewportPoint } from "./map.js";
 import { InventoryRefreshTracker } from "./inventory-refresh.js";
 import { projectInventoryItems } from "./inventory-tree.js";
 import { DesktopWorkspace } from "./workspace.js";
@@ -148,6 +148,9 @@ const mapController = createMapController(
     },
     travelToRoom(roomId) {
       return submitCommand(`.go2 ${roomId}`, `Traveling to room ${roomId}`);
+    },
+    status(message) {
+      commandStatus.textContent = message;
     },
     reportRoom(roomId) {
       const text = String(roomId);
@@ -924,8 +927,6 @@ function createMapController(canvas, emptyState, options = {}) {
   let localLocations = null;
   let classicCatalog = null;
   let classicCatalogRequest = null;
-  const classicRooms = new Map();
-  const classicRoomRequests = new Map();
   let mapRequestId = 0;
   let pendingLocationsRequest = 0;
   let pendingBrowseRequest = 0;
@@ -1004,30 +1005,23 @@ function createMapController(canvas, emptyState, options = {}) {
       classicCatalogRequest = null;
     }
   };
-  const loadClassicRooms = async (name) => {
-    if (!name || classicRooms.has(name)) return classicRooms.get(name) || [];
-    if (classicRoomRequests.has(name)) return classicRoomRequests.get(name);
-    const request = (async () => {
-      const response = await fetch(classicRoomsUrl(name), {
-        cache: "no-store",
-        signal: events.signal,
-      });
-      if (!response.ok) throw new Error(`classic map rooms returned ${response.status}`);
-      const value = await response.json();
-      const rooms = Array.isArray(value) ? value : [];
-      classicRooms.set(name, rooms);
-      return rooms;
-    })();
-    classicRoomRequests.set(name, request);
-    try {
-      return await request;
-    } catch (error) {
-      if (error?.name !== "AbortError") console.warn("Classic map room metadata unavailable:", error);
-      return [];
-    } finally {
-      classicRoomRequests.delete(name);
-    }
-  };
+  // Room rectangles are fetched per image and only cached once non-empty:
+  // the server answers 503 (or, before that fix, an empty list) while its
+  // mapdb is loading, and a cached empty answer would silently kill every
+  // click on that image for the rest of the session.
+  const classicRooms = new ClassicRoomStore(async (name) => {
+    const response = await fetch(classicRoomsUrl(name), {
+      cache: "no-store",
+      signal: events.signal,
+    });
+    if (!response.ok) throw new Error(`classic map rooms returned ${response.status}`);
+    return response.json();
+  });
+  const loadClassicRooms = (name) => classicRooms.load(name, {
+    onError(error) {
+      console.warn("Classic map room metadata unavailable:", error);
+    },
+  });
   const requestLocalLocations = () => {
     if (localLocations || pendingLocationsRequest) return;
     pendingLocationsRequest = ++mapRequestId;
@@ -1438,10 +1432,19 @@ function createMapController(canvas, emptyState, options = {}) {
       !classicDrag.moved;
     if (classicDrag?.id === event.pointerId) classicDrag = null;
     if (!wasTap || mode !== "classic" || !classicLoaded || !classicName) return;
+    const rooms = classicRooms.get(classicName);
+    if (!rooms) {
+      // Nothing usable arrived yet (server still loading its mapdb, or the
+      // earlier fetch failed). Say so instead of eating the click, and
+      // re-request so the next click can land.
+      options.status?.("Map rooms are still loading; click again in a moment");
+      loadClassicRooms(classicName);
+      return;
+    }
     const roomId = classicRoomAtViewportPoint({
       ...classicEventPosition(event),
       camera: classicCamera,
-      rooms: classicRooms.get(classicName),
+      rooms,
     });
     if (roomId === null) return;
     if (event.ctrlKey || event.metaKey) options.reportRoom?.(roomId);

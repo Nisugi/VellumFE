@@ -6,10 +6,62 @@ const source = await readFile(new URL("./map.js", import.meta.url), "utf8");
 const styles = await readFile(new URL("./app.css", import.meta.url), "utf8");
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 const {
+  ClassicRoomStore,
   DesktopMapViewport,
   DesktopMapViewportError,
   classicRoomAtViewportPoint,
 } = await import(moduleUrl);
+
+// Issue #40: a rooms fetch that lands while the server's mapdb is loading
+// used to be cached as "no rooms" forever, silently killing every classic
+// map click for the rest of the session.
+test("classic room store never caches an empty or failed answer", async () => {
+  const answers = [[], [], [{ id: 7, rect: [0, 0, 10, 10] }]];
+  let fetches = 0;
+  const store = new ClassicRoomStore(async () => answers[fetches++]);
+
+  assert.deepEqual(await store.load("landing.png"), []);
+  assert.equal(store.get("landing.png"), null, "empty answer is not cached");
+  assert.deepEqual(await store.load("landing.png"), []);
+  assert.equal(fetches, 2, "each load retries while nothing usable is known");
+
+  const rooms = await store.load("landing.png");
+  assert.equal(rooms.length, 1);
+  assert.equal(store.get("landing.png"), rooms);
+  await store.load("landing.png");
+  assert.equal(fetches, 3, "a non-empty answer is cached");
+
+  const errors = [];
+  const failing = new ClassicRoomStore(async () => { throw new Error("503"); });
+  assert.deepEqual(await failing.load("briar.png", { onError: (e) => errors.push(e.message) }), []);
+  assert.equal(failing.get("briar.png"), null);
+  assert.deepEqual(errors, ["503"]);
+
+  const aborted = new ClassicRoomStore(async () => {
+    throw Object.assign(new Error("aborted"), { name: "AbortError" });
+  });
+  const abortErrors = [];
+  await aborted.load("briar.png", { onError: (e) => abortErrors.push(e) });
+  assert.deepEqual(abortErrors, [], "aborts are silent");
+});
+
+test("classic room store shares one in-flight request per image", async () => {
+  let resolve = null;
+  let fetches = 0;
+  const store = new ClassicRoomStore((name) => {
+    fetches += 1;
+    return new Promise((r) => { resolve = () => r([{ id: 1, rect: [0, 0, 1, 1] }]); });
+  });
+  const first = store.load("a.png");
+  const second = store.load("a.png");
+  assert.equal(fetches, 1);
+  resolve();
+  assert.equal(await first, await second);
+  assert.equal(store.has("a.png"), true);
+  assert.deepEqual(await store.load(""), []);
+  store.clear();
+  assert.equal(store.get("a.png"), null);
+});
 
 const SCENE = Object.freeze({
   location: "Wehnimer's Landing",

@@ -286,6 +286,66 @@ export function classicRoomAtViewportPoint({
   return best;
 }
 
+/**
+ * Per-image cache of classic map room rectangles.
+ *
+ * Only a non-empty room list is remembered. An empty list is what the server
+ * returns while its map database is still loading (or reloading after
+ * `.go2 reload`), so caching it would leave every click on that image dead for
+ * the rest of the session. Failures and empties are retried on the next
+ * `load` call; concurrent loads for one image share a single request.
+ */
+export class ClassicRoomStore {
+  constructor(fetchRooms) {
+    if (typeof fetchRooms !== "function") {
+      throw new TypeError("fetchRooms must be a function");
+    }
+    this._fetch = fetchRooms;
+    this._rooms = new Map();
+    this._requests = new Map();
+  }
+
+  /** Cached rooms for an image, or null when none are known yet. */
+  get(name) {
+    return this._rooms.get(name) || null;
+  }
+
+  has(name) {
+    return this._rooms.has(name);
+  }
+
+  clear() {
+    this._rooms.clear();
+  }
+
+  /**
+   * Resolve the rooms for an image, fetching when nothing usable is cached.
+   * Never rejects: a failed or empty fetch resolves to an empty list and is
+   * not cached. `onError` receives non-abort failures.
+   */
+  async load(name, { onError = null } = {}) {
+    if (!name) return EMPTY_LIST;
+    const cached = this._rooms.get(name);
+    if (cached) return cached;
+    if (this._requests.has(name)) return this._requests.get(name);
+    const request = (async () => {
+      try {
+        const value = await this._fetch(name);
+        const rooms = Array.isArray(value) ? value : [];
+        if (rooms.length > 0) this._rooms.set(name, rooms);
+        return rooms;
+      } catch (error) {
+        if (error?.name !== "AbortError") onError?.(error);
+        return EMPTY_LIST;
+      } finally {
+        this._requests.delete(name);
+      }
+    })();
+    this._requests.set(name, request);
+    return request;
+  }
+}
+
 function normalizeScene(scene) {
   if (!scene || typeof scene !== "object" || Array.isArray(scene)) return null;
   return Object.freeze({

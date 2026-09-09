@@ -602,6 +602,7 @@ impl MapService {
     pub fn reload(&mut self) {
         let source = self.source.clone();
         self.mapdb = None;
+        self.classic_maps.clear_rooms();
         self.db_state = DbState::NotLoaded;
         self.db_error = None;
         self.source = MapSourceResolution::default(); // force ensure_db past its guard

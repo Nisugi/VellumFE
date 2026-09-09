@@ -22,7 +22,7 @@ use tokio::sync::broadcast;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::config::WebConfig;
-use crate::core::classic_maps::ClassicMapCatalog;
+use crate::core::classic_maps::{ClassicMapCatalog, ClassicRoomLookup};
 use crate::core::remote::{RemoteDelta, RemoteEvent, RemoteLaunchEndpoint, RemoteServerHandles};
 use crate::data::remote_buffer::RemoteLine;
 
@@ -426,12 +426,25 @@ async fn classic_map_rooms(
             "[]".to_string(),
         );
     }
-    let Some(rooms) = state.classic_maps.rooms(&name) else {
-        return (
-            StatusCode::NOT_FOUND,
-            [(header::CONTENT_TYPE, "application/json")],
-            "[]".to_string(),
-        );
+    let rooms = match state.classic_maps.rooms(&name) {
+        ClassicRoomLookup::UnknownImage => {
+            return (
+                StatusCode::NOT_FOUND,
+                [(header::CONTENT_TYPE, "application/json")],
+                "[]".to_string(),
+            );
+        }
+        // The mapdb is still loading (or reloading). An OK empty list here
+        // would be cached by the client as "this image has no rooms", so
+        // answer with a retryable status instead.
+        ClassicRoomLookup::NotReady => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::CONTENT_TYPE, "application/json")],
+                "[]".to_string(),
+            );
+        }
+        ClassicRoomLookup::Ready(rooms) => rooms,
     };
     (
         StatusCode::OK,

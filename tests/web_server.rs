@@ -1071,6 +1071,25 @@ async fn classic_map_filesystem_authority_is_isolated_per_server() {
     assert!(first_rooms.contains(r#""id":42"#));
     assert!(first_rooms.contains(r#""rect":[1.0,2.0,3.0,4.0]"#));
     assert!(crossed_image.contains("404"));
+
+    // The second server knows briar.png but has never loaded a mapdb. It
+    // must not answer 200 [] — the Despana client would cache that as "no
+    // clickable rooms" for the whole session (issue #40).
+    let not_ready_rooms = http_get(
+        second_addr,
+        &format!("/api/v1/maps/classic/briar.png/rooms?token={TEST_TOKEN}"),
+    )
+    .await;
+    assert!(
+        not_ready_rooms.contains("503"),
+        "rooms before any mapdb load must be retryable, got: {not_ready_rooms}"
+    );
+    let crossed_rooms = http_get(
+        second_addr,
+        &format!("/api/v1/maps/classic/aster.png/rooms?token={TEST_TOKEN}"),
+    )
+    .await;
+    assert!(crossed_rooms.contains("404"));
 }
 
 #[tokio::test]
