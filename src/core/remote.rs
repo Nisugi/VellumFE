@@ -1802,6 +1802,14 @@ impl RemoteSink {
         self.launch_endpoint().map(|endpoint| endpoint.bound_port())
     }
 
+    /// True when at least one remote client is currently connected (there is a
+    /// live receiver on the delta broadcast). The GUI uses this to keep its
+    /// frame loop ticking while minimized — a minimized desktop window stops
+    /// painting frames, which otherwise starves the frame-driven phone feed.
+    pub fn has_remote_clients(&self) -> bool {
+        self.delta_tx.receiver_count() > 0
+    }
+
     /// Publish macro definitions: stored for connect-time delivery and
     /// broadcast to already-connected clients. Called on enable and by
     /// `.reloadmacros`.

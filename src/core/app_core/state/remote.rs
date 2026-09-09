@@ -39,6 +39,16 @@ impl AppCore {
             .and_then(|sink| sink.launch_endpoint())
     }
 
+    /// True when a remote (phone/web) client is connected. The GUI keeps its
+    /// frame loop alive while this holds, because the frame loop is what feeds
+    /// the phone and a minimized desktop window stops painting frames.
+    pub fn has_remote_clients(&self) -> bool {
+        self.message_processor
+            .remote
+            .as_ref()
+            .is_some_and(|sink| sink.has_remote_clients())
+    }
+
     /// Re-publish radial-wheel definitions to remote clients after the
     /// wheel config changed (keybinds reload, desktop wheel editor).
     /// No-op when web is disabled.
