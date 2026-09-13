@@ -1472,3 +1472,92 @@ fn match_cursor_survives_lines_scrolling_off_a_full_buffer() {
     let content = VellumGuiApp::search_content(&core, "main").expect("buffer");
     assert_eq!(VellumGuiApp::line_index_of(content, cursor), None);
 }
+
+// ---- tab-tear-out spec §4: reading-position migration ------------------------
+
+/// Render one buffer under parent `Ui` A as id `src`, leave it scrolled up
+/// with follow off and a custom split fraction, queue `src → dst`, then
+/// render under a DIFFERENT parent `Ui` B as `dst`. The destination must
+/// come up at the same offset with the same flags, and the pending entry
+/// must be gone. The history pane's `ScrollArea` id derives from its parent
+/// `Ui`, so this is exactly the case a string-only migration cannot do.
+#[test]
+fn scroll_state_migrates_between_renderer_ids_under_different_parents() {
+    use crate::data::widget::{StyledLine, TextContent, TextSegment};
+    use crate::frontend::gui::app::tab_drag;
+
+    let mut content = TextContent::new("moving", 0);
+    for i in 0..400 {
+        content.add_line(StyledLine {
+            segments: vec![TextSegment::plain(format!("line {i}"))],
+            stream: String::new(),
+            timestamp: None,
+        });
+    }
+    let font = egui::FontId::monospace(14.0);
+    let ctx = egui::Context::default();
+    let input = || egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(400.0, 200.0),
+        )),
+        ..Default::default()
+    };
+    // This egui fork runs a pass through `run_ui`, which hands out the root
+    // `Ui` that panels are shown inside.
+    let render = |ctx: &egui::Context, salt: &'static str, id: &str| {
+        let _ = ctx.run_ui(input(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.scope_builder(egui::UiBuilder::new().id_salt(salt), |ui| {
+                    VellumGuiApp::render_text_content_auto_split(
+                        ui, &content, id, None, &font, true, None,
+                    );
+                });
+            });
+        });
+    };
+
+    // Frame 1: the source renders and stashes its real area id.
+    render(&ctx, "parent_a", "src");
+    let src_area: egui::Id = ctx
+        .data(|d| d.get_temp(egui::Id::new(("text_scroll_area_id", "src"))))
+        .expect("source stashed its area id");
+    // Leave the reader scrolled up, not following, with a custom split.
+    let mut state = egui::scroll_area::State::load(&ctx, src_area).unwrap_or_default();
+    state.offset.y = 123.0;
+    state.store(&ctx, src_area);
+    ctx.data_mut(|d| {
+        d.insert_temp(egui::Id::new(("text_scroll_follow", "src")), false);
+        d.insert_persisted(egui::Id::new(("text_split_frac", "src")), 0.4f32);
+    });
+
+    tab_drag::queue_scroll_migration(&ctx, "src", "dst");
+    assert_eq!(
+        tab_drag::pending_scroll_migration(&ctx, "dst").as_deref(),
+        Some("src")
+    );
+
+    // Frame 2: the destination renders under a different parent Ui.
+    render(&ctx, "parent_b", "dst");
+
+    let follow: Option<bool> =
+        ctx.data(|d| d.get_temp(egui::Id::new(("text_scroll_follow", "dst"))));
+    assert_eq!(follow, Some(false), "follow flag migrated");
+    let frac: Option<f32> =
+        ctx.data_mut(|d| d.get_persisted(egui::Id::new(("text_split_frac", "dst"))));
+    assert_eq!(frac, Some(0.4), "persisted split fraction migrated");
+    let dst_area: egui::Id = ctx
+        .data(|d| d.get_temp(egui::Id::new(("text_scroll_area_id", "dst"))))
+        .expect("destination stashed its area id");
+    assert_ne!(dst_area, src_area, "different parent Ui ⇒ different area id");
+    let dst_state = egui::scroll_area::State::load(&ctx, dst_area).expect("dst scroll state");
+    assert!(
+        (dst_state.offset.y - 123.0).abs() < 1.0,
+        "reading position survived: offset {} ≠ 123",
+        dst_state.offset.y
+    );
+    assert!(
+        tab_drag::pending_scroll_migration(&ctx, "dst").is_none(),
+        "entry cleared after the frame"
+    );
+}

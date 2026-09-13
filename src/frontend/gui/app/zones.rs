@@ -464,6 +464,12 @@ pub(super) struct GuiZoneDragState {
     pointer_pos: Pos2,
 }
 
+impl GuiZoneDragState {
+    pub(super) fn tab_key(&self) -> &TabKey {
+        &self.tab_key
+    }
+}
+
 /// Move mode: the window follows the cursor within its zone until a click
 /// places it or Esc restores the original position. Works with the title
 /// bar hidden.
@@ -783,17 +789,37 @@ impl VellumGuiApp {
         // top-center like Move mode. Size comes from the entry set_tab_zone
         // just wrote (prior size where one existed, zone-shaped defaults
         // otherwise), clamped into the target pane.
+        self.place_window_at_pointer(&tab_key, target_zone, pointer, None, zone_rects);
+    }
+
+    /// Put `key`'s window at `pointer` in `zone`, grabbed top-center like
+    /// Move mode and clamped into the zone's pane. `size` overrides the
+    /// stored/default size — a torn-out tab arrives with its source
+    /// window's size (tab-tear-out spec §5.6). Shared by the Alt+drag zone
+    /// drop and the tab tear-out drop so the two can't drift apart.
+    /// Assumes `set_tab_zone` already ran for the zone (callers do that;
+    /// this only writes the rect and re-infers contact anchors).
+    pub(super) fn place_window_at_pointer(
+        &mut self,
+        key: &TabKey,
+        zone: GuiShellZone,
+        pointer: Pos2,
+        size: Option<Vec2>,
+        zone_rects: &[(GuiShellZone, Rect)],
+    ) {
         let zone_rect = zone_rects
             .iter()
-            .find_map(|(zone, rect)| (*zone == target_zone).then_some(*rect));
-        let stored = self.main_window_rects.get(&tab_key).copied();
-        let width = stored
-            .map(|rect| rect[2])
+            .find_map(|(candidate, rect)| (*candidate == zone).then_some(*rect));
+        let stored = self.main_window_rects.get(key).copied();
+        let width = size
+            .map(|s| s.x)
+            .or_else(|| stored.map(|rect| rect[2]))
             .filter(|value| value.is_finite())
             .unwrap_or(240.0)
             .max(60.0);
-        let height = stored
-            .map(|rect| rect[3])
+        let height = size
+            .map(|s| s.y)
+            .or_else(|| stored.map(|rect| rect[3]))
             .filter(|value| value.is_finite())
             .unwrap_or(160.0)
             .max(24.0);
@@ -807,11 +833,11 @@ impl VellumGuiApp {
         };
         if placed.is_finite() {
             self.main_window_rects
-                .insert(tab_key.clone(), Self::rect_to_snapshot(placed));
+                .insert(key.clone(), Self::rect_to_snapshot(placed));
         }
         // Re-run contact inference against the FINAL drop position (the
         // entry pass in set_tab_zone saw the pre-drop stack placement).
-        self.apply_zone_entry_anchor_inference(&tab_key, target_zone);
+        self.apply_zone_entry_anchor_inference(key, zone);
         self.layout_dirty = true;
     }
 
@@ -1066,7 +1092,7 @@ impl VellumGuiApp {
         (ctx.layer_id_at(pointer_pos) == Some(window_layer)).then_some(pointer_pos)
     }
 
-    fn zone_for_pointer(
+    pub(super) fn zone_for_pointer(
         zone_rects: &[(GuiShellZone, Rect)],
         pointer_pos: Pos2,
     ) -> Option<GuiShellZone> {
@@ -1568,6 +1594,7 @@ impl VellumGuiApp {
         let just_pressed = ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
         if !pointer_down {
             self.zone_engaged_tab = None;
+            self.zone_window_dragged = None;
             self.zone_press_drag_seen = false;
             self.zone_resize_active = false;
             // The snap drag must survive the RELEASE frame: the hook's
@@ -2032,6 +2059,12 @@ impl VellumGuiApp {
                 .perf_stats
                 .record_window_render(&tab.window_name, window_render_start.elapsed());
             if let Some(inner) = window_shown {
+                // egui reports the window's own body/title drag here (a
+                // resize handle or content drag never sets it); the join
+                // gesture needs to know which window is in flight.
+                if pointer_down && inner.response.dragged() {
+                    self.zone_window_dragged = Some(tab.id.key.clone());
+                }
                 // When a window owns a skinned title bar, the TITLE BAR owns the
                 // top edge: its sprite carries the top border line AND a
                 // transparent cutout notch that the window mesh (painted behind)

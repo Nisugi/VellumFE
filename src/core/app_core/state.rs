@@ -102,6 +102,10 @@ pub struct AppCore {
     /// reorder). Gated by a hash of the layout defs and cleared on any
     /// wholesale layout replacement. See `tab_moves`.
     pub last_tab_move: Option<tab_moves::UndoRecord>,
+    /// An undo that ran outside the GUI's own handler (the `.undotabmove`
+    /// command), parked here so the GUI can reconcile placement and
+    /// migrate scroll state on its next frame. The TUI never reads it.
+    pub tab_undo_to_apply: Option<tab_moves::UndoOutcome>,
 
     /// Creature-field placement (the creaturefield widget's solver state).
     /// Synced from `game_state.room_creatures` by `sync_creature_field`,
@@ -528,6 +532,7 @@ impl AppCore {
             menu_categories: HashMap::new(),
             last_link_click_pos: None,
             last_tab_move: None,
+            tab_undo_to_apply: None,
             creature_field: Default::default(),
             creature_field_synced_gen: 0,
             creature_field_synced_cal: 0,
@@ -741,6 +746,7 @@ impl AppCore {
             menu_categories: HashMap::new(),
             last_link_click_pos: None,
             last_tab_move: None,
+            tab_undo_to_apply: None,
             creature_field: Default::default(),
             creature_field_synced_gen: 0,
             creature_field_synced_cal: 0,

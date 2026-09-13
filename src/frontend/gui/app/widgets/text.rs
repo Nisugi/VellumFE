@@ -1469,6 +1469,23 @@ impl VellumGuiApp {
         let max_height = ui.available_height().max(1.0);
         let cache_id = egui::Id::new(("text_row_heights", scroll_id));
 
+        // ---- Reading-position migration (tab-tear-out spec §4) ----------
+        // Content that moved between a tab and a window changed renderer
+        // id. Adopt the previous id's state here, BEFORE the ScrollArea
+        // reads it: this is the one place where this pane's parent Ui —
+        // and so the area's real id — is known. Idempotent while pending;
+        // `render_text_content_auto_split` clears the entry after both
+        // panes have run.
+        {
+            let base_id = scroll_id.trim_end_matches("~live");
+            if let Some(origin) =
+                super::super::tab_drag::pending_scroll_migration(ui.ctx(), base_id)
+            {
+                let suffix = &scroll_id[base_id.len()..];
+                Self::adopt_text_scroll_state(ui, &format!("{origin}{suffix}"), scroll_id);
+            }
+        }
+
         // ---- Same-frame scroll anchoring ---------------------------------
         // Once the ring buffer is full, each appended line drops one off the
         // front and every remaining row shifts up, while the persisted
@@ -2427,7 +2444,7 @@ impl VellumGuiApp {
     /// scroll state, row-height cache, and selection are independent of the
     /// top pane's; both render the same buffer. The split fraction is
     /// persisted per window.
-    pub(super) fn render_text_content_auto_split(
+    pub(in crate::frontend::gui::app) fn render_text_content_auto_split(
         ui: &mut egui::Ui,
         content: &TextContent,
         scroll_id: &str,
@@ -2451,8 +2468,13 @@ impl VellumGuiApp {
         // opening the split would hand the pane a fresh scroll state and
         // throw the reader's place away.
         let pane_salt = ("split_history_pane", scroll_id);
+        // A pending migration is adopted by each pane as it renders (see
+        // render_text_content) and cleared once every pane this frame has
+        // had its chance — the unsplit view has one pane, the split two.
+        let migrating =
+            super::super::tab_drag::pending_scroll_migration(&ctx, scroll_id).is_some();
         if following || avail.y < min_pane * 2.0 + DIVIDER_H {
-            return ui
+            let out = ui
                 .scope_builder(egui::UiBuilder::new().id_salt(pane_salt), |ui| {
                     Self::render_text_content(
                         ui,
@@ -2466,6 +2488,10 @@ impl VellumGuiApp {
                     )
                 })
                 .inner;
+            if migrating {
+                super::super::tab_drag::finish_scroll_migration(&ctx, scroll_id);
+            }
+            return out;
         }
 
         let frac_key = egui::Id::new(("text_split_frac", scroll_id));
@@ -2640,6 +2666,54 @@ impl VellumGuiApp {
             });
         }
 
+        if migrating {
+            super::super::tab_drag::finish_scroll_migration(&ctx, scroll_id);
+        }
         clicked_link
+    }
+
+    /// Copy every piece of per-id renderer state from `from` to `to`:
+    /// the row-height cache, viewport height, pending jump, follow flag,
+    /// the persisted split fraction, and egui's own `ScrollArea` state —
+    /// stored under the id the area will have when `to` renders inside
+    /// this `ui` (the same `text_scroll_{id}` salt `render_text_content`
+    /// uses). `from`'s area id comes from the stash its last render left.
+    fn adopt_text_scroll_state(ui: &egui::Ui, from: &str, to: &str) {
+        fn copy_temp<T: Clone + Send + Sync + 'static>(
+            data: &mut egui::util::IdTypeMap,
+            key: &'static str,
+            from: &str,
+            to: &str,
+        ) {
+            if let Some(value) = data.get_temp::<T>(egui::Id::new((key, from))) {
+                data.insert_temp(egui::Id::new((key, to)), value);
+            }
+        }
+        let ctx = ui.ctx().clone();
+        let old_area = ctx.data_mut(|data| {
+            copy_temp::<std::sync::Arc<std::sync::Mutex<RowHeightCache>>>(
+                data,
+                "text_row_heights",
+                from,
+                to,
+            );
+            copy_temp::<f32>(data, "text_scroll_view_h", from, to);
+            copy_temp::<(u8, f32)>(data, "text_scroll_pending", from, to);
+            copy_temp::<bool>(data, "text_scroll_follow", from, to);
+            if let Some(frac) = data.get_persisted::<f32>(egui::Id::new(("text_split_frac", from)))
+            {
+                data.insert_persisted(egui::Id::new(("text_split_frac", to)), frac);
+            }
+            data.get_temp::<egui::Id>(egui::Id::new(("text_scroll_area_id", from)))
+        });
+        if let Some(old_area) = old_area {
+            // `ScrollArea::id_salt` hashes its salt into an `IdSalt` and the
+            // area id is `ui.id().with(that salt)`; hashing the raw string
+            // instead yields a different id, so build the salt the same way.
+            let new_area = ui.make_persistent_id(egui::IdSalt::new(format!("text_scroll_{to}")));
+            if let Some(state) = egui::scroll_area::State::load(&ctx, old_area) {
+                state.store(&ctx, new_area);
+            }
+        }
     }
 }

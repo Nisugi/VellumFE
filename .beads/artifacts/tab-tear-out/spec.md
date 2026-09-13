@@ -526,6 +526,56 @@ viewport tear-out; multi-level undo; optional TUI geometry.
 
 - Dwell time 350 ms — tune live (Phase 3).
 
+## Phase 2 notes (2026-09-13)
+
+- **Gesture mechanism.** The tear-out rides egui's native drag-and-drop
+  (`dnd_set_drag_payload` on the tab, `DragAndDrop::take_payload` on
+  release) instead of a hand-rolled `TabDragState` + `press_became_drag`.
+  egui only sets the payload once the press has travelled its own
+  click/drag threshold, so a click still selects — the behaviour §5 asked
+  for, with no new state machine. Esc clears the payload.
+- **Where migration runs.** Inside `render_text_content`, per pane, before
+  the `ScrollArea` is shown: that is the only place the pane's parent `Ui`
+  is known. `ScrollArea::id_salt` hashes its salt into an `IdSalt` and the
+  area id is `ui.id().with(that IdSalt)` — hashing the raw string gives a
+  different id. The headless two-parent-`Ui` test in `gui/app/tests.rs`
+  caught exactly this.
+- **Re-keying is a pure function** (`tab_drag::rekey_placement` over
+  `PlacementMaps`) because GUI tests never construct a `VellumGuiApp`.
+  Detached viewports and the three `Option<TabKey>` fields are re-keyed
+  by the app-level wrapper.
+- **Restore of group membership** re-joins under the leader via the
+  existing `group_tabs` (appends; original member order is not restored).
+### Join (pulled forward from Phase 3)
+- Live run showed the join gesture was expected alongside tear-out, so
+  §7 landed with Phase 2. It lives in `gui/app/tab_join.rs`: a pure
+  `step_join_dwell` state machine (4 tests) driven once per frame by
+  `poll_join_dwell`, which runs BEFORE `render_zone_drop_overlay` so an
+  armed release is not also consumed as an Alt+drag zone move.
+- Source detection covers both a plain title/body drag and an Alt+drag:
+  `zone_window_dragged` is recorded from egui's own `response.dragged()`
+  on the window (a resize or content drag never sets it). The shell
+  clears its latches on the release frame, so the dwell state remembers
+  the source itself and the release consults it.
+- Only a `Text` source arms; the own strip never does. Strip rects are
+  widened to the window's full width so the band and hit test cover the
+  row. A single-tab tabbedtext renders its strip as a band only while a
+  join source is in flight.
+- Undo restores the source at the rect it was released at (a plain drag
+  has already moved it); the pre-drag rect is not captured.
+
+### Reorder (Phase 4, landed with Phase 2)
+- The strip records per-tab rects; `reorder_for_drop` (pure, tested)
+  slots the dragged tab before the first other tab whose centre is right
+  of the pointer and returns the caret x. A drop on its own slot is a
+  no-op. Live-verified with tear-out and join on 2026-09-13.
+
+- **Ghost chip** is a minimal label; the polished ghost, drop band, dwell
+  join, caret/highlight, undo toast and single-tab hover handle are Phase 3.
+- **Not exercised live yet.** Headless coverage: pure re-keying, migration
+  composition, and the egui two-parent migration. The drag itself (a tab's
+  drag sense inside a window that also drags/resizes) needs a live run.
+
 ## Follow-ups (noted during Phase 1, 2026-09-13)
 
 - **`Layout::add_window` should return the created window's name.** Both

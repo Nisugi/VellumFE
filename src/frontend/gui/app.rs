@@ -46,6 +46,8 @@ mod server_pump;
 mod skins;
 mod snap;
 mod status_icons;
+mod tab_drag;
+mod tab_join;
 mod tabs;
 pub(crate) mod theme;
 mod webui_bridge;
@@ -673,6 +675,12 @@ pub struct VellumGuiApp {
     /// desired_size, the rect diverged, and the snap hook popped the grid
     /// on a plain click.
     zone_press_drag_seen: bool,
+    /// Zone window egui reported as body/title-dragged this press (not a
+    /// resize, not a content drag); cleared on release. The join gesture
+    /// (`tab_join.rs`) reads it to know which window is in flight.
+    zone_window_dragged: Option<TabKey>,
+    /// Window → tab join dwell in progress (tab-tear-out spec §7).
+    join_dwell: Option<tab_join::JoinDwell>,
     /// Sticky per press: set once egui is observed resizing a window this
     /// press (its rendered size diverged from the pinned size), cleared on
     /// release. A resize-edge drag can't be seen through pointer travel —
@@ -1155,6 +1163,8 @@ impl VellumGuiApp {
             zone_drag_state: None,
             zone_engaged_tab: None,
             zone_press_drag_seen: false,
+            zone_window_dragged: None,
+            join_dwell: None,
             zone_resize_active: false,
             zone_snap_drag: None,
             zone_snap_guides: Vec::new(),
@@ -2411,6 +2421,10 @@ impl eframe::App for VellumGuiApp {
                 .request_repaint_after(std::time::Duration::from_millis(150));
         }
         self.sync_room_windows_from_components();
+        // An `.undotabmove` that ran in the core needs the PRE-undo key map
+        // to reconcile placement, so it must consume `available_tabs`
+        // before this frame's refresh replaces it.
+        self.apply_pending_tab_undo(&ctx);
         self.refresh_available_tabs_if_needed();
         let monitor_bounds = Self::monitor_bounds_from_ctx(&ctx);
         self.last_monitor_bounds = Some(monitor_bounds);
@@ -3233,7 +3247,14 @@ impl eframe::App for VellumGuiApp {
         let detached_link_clicks = self.render_detached_viewports(&ctx);
         self.render_map_explorer(&ctx);
 
+        // The join dwell claims an armed release before the Alt+drag zone
+        // drop can consume the same release as a plain move.
+        let join_drop = self.poll_join_dwell(&ctx);
+        if join_drop.is_some() {
+            self.zone_drag_state = None;
+        }
         let zone_drop_result = self.render_zone_drop_overlay(&ctx, &visible_zone_rects);
+        let tab_drop = self.poll_tab_drag(&ctx);
         self.render_window_move_overlay(&ctx, &visible_zone_rects);
         self.handle_link_drag_drop(&ctx, &zone_window_rects);
 
@@ -3258,6 +3279,12 @@ impl eframe::App for VellumGuiApp {
         }
         if let Some(drop_result) = zone_drop_result {
             self.apply_zone_drop(drop_result, &visible_zone_rects);
+        }
+        if let Some(request) = tab_drop {
+            self.handle_tab_drop(&ctx, request, &visible_zone_rects);
+        }
+        if let Some(request) = join_drop {
+            self.handle_join_drop(&ctx, request);
         }
         if let Some(request) = zone_actions.window_menu_request {
             // While a window is in Move mode the pointer belongs to placement.

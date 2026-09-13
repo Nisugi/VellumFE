@@ -646,10 +646,10 @@ impl VellumGuiApp {
             }
             GuiWindowMenuCommand::Detach => self.detach_tab(request.tab_key.clone()),
             GuiWindowMenuCommand::ConvertToTextWindow => {
-                self.convert_window_via_menu(&request.tab_key, true);
+                self.convert_window_via_menu(ctx, &request.tab_key, true);
             }
             GuiWindowMenuCommand::ConvertToTabbedWindow => {
-                self.convert_window_via_menu(&request.tab_key, false);
+                self.convert_window_via_menu(ctx, &request.tab_key, false);
             }
             GuiWindowMenuCommand::Reattach => self.reattach_tab(request.tab_key.clone()),
             GuiWindowMenuCommand::SendToBack => {
@@ -3106,9 +3106,10 @@ impl VellumGuiApp {
 
     /// Run the conversion behind a menu row. A menu conversion has no drop
     /// point, so the window keeps its placement; the core records undo
-    /// (`.undotabmove`). Errors surface as a system line for now — the
-    /// undo toast and receipt handling arrive with the gesture work.
-    fn convert_window_via_menu(&mut self, key: &TabKey, to_text: bool) {
+    /// (`.undotabmove`) and the receipt goes through the shared handler so
+    /// shell keys and scroll state stay consistent. Errors surface as a
+    /// system line for now — the toast arrives with Phase 3.
+    fn convert_window_via_menu(&mut self, ctx: &egui::Context, key: &TabKey, to_text: bool) {
         let Some(name) = self
             .available_tabs
             .get(key)
@@ -3116,6 +3117,8 @@ impl VellumGuiApp {
         else {
             return;
         };
+        let old_keys = self.window_keys_by_name();
+        let capture = self.capture_placement(&name);
         let result = if to_text {
             // The only tab's id; normalise first so a legacy def can't hand
             // back the unassigned sentinel.
@@ -3140,7 +3143,26 @@ impl VellumGuiApp {
             self.app_core.wrap_text_as_tabbed(&name)
         };
         match result {
-            Ok(_receipt) => self.layout_dirty = true,
+            Ok(receipt) => {
+                // The window stays put; the snapshot only makes undo's
+                // restore a faithful no-op.
+                if let Ok(value) = serde_json::to_value(&capture) {
+                    self.app_core.set_tab_undo_gui(value);
+                }
+                let zone_rects: Vec<(GuiShellZone, Rect)> = self
+                    .last_zone_pane_rects
+                    .iter()
+                    .map(|(zone, rect)| (*zone, *rect))
+                    .collect();
+                self.apply_tab_move_receipt(
+                    ctx,
+                    &receipt,
+                    super::tab_drag::GestureContext { drop: None, size: None },
+                    &old_keys,
+                    None,
+                    &zone_rects,
+                );
+            }
             Err(e) => self.app_core.add_system_message(&format!("{e}")),
         }
     }

@@ -81,7 +81,12 @@ impl VellumGuiApp {
         tabbed: &TabbedTextContent,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) -> Option<GuiLinkClick> {
-        if tabbed.tabs.len() < 2 {
+        // A `Text` window being dragged turns every other strip into a
+        // drop band, single-tab strips included (spec §7); otherwise a
+        // single tab has no strip.
+        let join_source = super::super::tab_join::join_drag_source(ui.ctx());
+        let is_drop_band = join_source.as_deref().is_some_and(|source| source != window_name);
+        if tabbed.tabs.len() < 2 && !is_drop_band {
             return None;
         }
         // A skin skins tabs with `[controls.tab]` (+ optional `tab.active`);
@@ -95,7 +100,8 @@ impl VellumGuiApp {
             Option<egui::Color32>,
         ) = (None, None, None);
         let mut clicked = None;
-        ui.horizontal_wrapped(|ui| {
+        let mut tab_rects: Vec<(crate::data::widget::TabId, egui::Rect)> = Vec::new();
+        let strip = ui.horizontal_wrapped(|ui| {
             for (index, tab_state) in tabbed.tabs.iter().enumerate() {
                 let is_active = index == tabbed.active_tab_index;
                 let unread = tab_state.has_unread && !is_active;
@@ -127,7 +133,8 @@ impl VellumGuiApp {
                         ui.visuals().text_color(),
                     );
                     let size = galley.size() + egui::vec2(16.0, 6.0);
-                    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+                    let (rect, resp) =
+                        ui.allocate_exact_size(size, egui::Sense::click_and_drag());
                     let state = if is_active {
                         "active"
                     } else if resp.hovered() {
@@ -144,9 +151,16 @@ impl VellumGuiApp {
                         );
                     }
                     ui.put(rect, egui::Label::new(label).selectable(false));
+                    tab_rects.push((tab_state.definition.id, rect));
+                    Self::arm_tab_drag(&resp, window_name, tab_state);
                     resp.clicked()
                 } else {
-                    ui.selectable_label(is_active, label).clicked()
+                    let resp = ui.selectable_label(is_active, label);
+                    tab_rects.push((tab_state.definition.id, resp.rect));
+                    // Re-register with a drag sense so a press that travels
+                    // becomes a tear-out; a stationary click still selects.
+                    Self::arm_tab_drag(&resp.interact(egui::Sense::drag()), window_name, tab_state);
+                    resp.clicked()
                 };
                 if hit && !is_active {
                     clicked = Some(GuiLinkClick {
@@ -161,11 +175,61 @@ impl VellumGuiApp {
                 }
             }
         });
+        // The strip's rect, so a tab released back onto its own strip is a
+        // reorder rather than a tear-out (tab-tear-out spec §6 registry).
+        // Widen the recorded strip to the window's full width so the band
+        // (and the dwell hit test) covers the whole row, not just the labels.
+        let mut strip_rect = strip.response.rect;
+        strip_rect.min.x = strip_rect.min.x.min(ui.max_rect().min.x);
+        strip_rect.max.x = strip_rect.max.x.max(ui.max_rect().max.x);
+        super::super::tab_drag::record_tab_strip_rect(ui.ctx(), window_name, strip_rect);
+        super::super::tab_drag::record_tab_rects(ui.ctx(), window_name, tab_rects);
+        if is_drop_band {
+            let dwell = super::super::tab_join::join_dwell_target(ui.ctx())
+                .filter(|(target, _)| target == window_name);
+            let (fill, stroke) = match dwell {
+                Some((_, true)) => (
+                    Color32::from_rgba_unmultiplied(70, 180, 90, 70),
+                    egui::Stroke::new(2.0, Color32::from_rgb(90, 200, 110)),
+                ),
+                Some((_, false)) => (
+                    Color32::from_rgba_unmultiplied(70, 130, 220, 60),
+                    egui::Stroke::new(1.5, Color32::from_rgb(90, 150, 240)),
+                ),
+                None => (
+                    Color32::from_rgba_unmultiplied(70, 130, 220, 28),
+                    egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(90, 150, 240, 120)),
+                ),
+            };
+            let band = strip_rect.expand2(egui::vec2(0.0, 2.0));
+            ui.painter().rect(
+                band,
+                3.0,
+                fill,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
         // No divider line under the tab strip — the window mesh flows
         // uninterrupted into the text area (skin look). egui's separator draws
         // the theme's noninteractive stroke, which reads as a hard cyan line
         // over a dark skin.
         clicked
+    }
+
+    /// Make a tab a drag source: egui sets the payload only once the press
+    /// has travelled its click/drag threshold, so a plain click never
+    /// tears out. The drop is consumed in `poll_tab_drag`.
+    fn arm_tab_drag(
+        resp: &egui::Response,
+        window_name: &str,
+        tab_state: &crate::data::TabState,
+    ) {
+        resp.dnd_set_drag_payload(super::super::tab_drag::TabDragPayload {
+            window: window_name.to_string(),
+            tab_id: tab_state.definition.id,
+            label: tab_state.definition.name.clone(),
+        });
     }
 
     pub(super) fn render_quickbar_content(

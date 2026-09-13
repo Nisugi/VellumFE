@@ -119,7 +119,7 @@ impl VellumGuiApp {
 
     /// Popup menus hosted by a window that is no longer detached would
     /// reappear in the root window at foreign coordinates; close them.
-    fn close_popup_menus_if_host_gone(&mut self) {
+    pub(super) fn close_popup_menus_if_host_gone(&mut self) {
         if self
             .popup_menu_host
             .as_ref()
