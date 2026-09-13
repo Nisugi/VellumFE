@@ -87,6 +87,7 @@ impl VellumGuiApp {
         let join_source = super::super::tab_join::join_drag_source(ui.ctx());
         let is_drop_band = join_source.as_deref().is_some_and(|source| source != window_name);
         if tabbed.tabs.len() < 2 && !is_drop_band {
+            Self::render_single_tab_grip(ui, window_name, tabbed);
             return None;
         }
         // A skin skins tabs with `[controls.tab]` (+ optional `tab.active`);
@@ -215,6 +216,47 @@ impl VellumGuiApp {
         // the theme's noninteractive stroke, which reads as a hard cyan line
         // over a dark skin.
         clicked
+    }
+
+    /// A single-tab window has no strip, so its only tab would be
+    /// unreachable by drag. While the pointer is over the window, show a
+    /// small grip in the top-right corner that acts as that tab (spec 6,
+    /// last-tab reachability; the context menu remains the guaranteed way).
+    fn render_single_tab_grip(ui: &mut egui::Ui, window_name: &str, tabbed: &TabbedTextContent) {
+        let Some(tab_state) = tabbed.tabs.first() else {
+            return;
+        };
+        let dragging_this =
+            egui::DragAndDrop::payload::<super::super::tab_drag::TabDragPayload>(ui.ctx())
+                .is_some_and(|payload| payload.window == window_name);
+        if !ui.rect_contains_pointer(ui.max_rect()) && !dragging_this {
+            return;
+        }
+        let size = egui::vec2(22.0, 14.0);
+        let rect = egui::Rect::from_min_size(
+            ui.max_rect().right_top() - egui::vec2(size.x + 2.0, -2.0),
+            size,
+        );
+        let id = ui.id().with(("single_tab_grip", window_name));
+        let resp = ui.interact(rect, id, egui::Sense::click_and_drag());
+        let visuals = ui.style().interact(&resp);
+        ui.painter().rect(
+            rect,
+            3.0,
+            visuals.bg_fill,
+            visuals.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+        // Two rows of three dots: the universal "grab here" glyph.
+        for row in 0..2 {
+            for col in 0..3 {
+                let center =
+                    rect.min + egui::vec2(5.0 + col as f32 * 6.0, 4.0 + row as f32 * 6.0);
+                ui.painter().circle_filled(center, 1.2, visuals.fg_stroke.color);
+            }
+        }
+        resp.clone().on_hover_text("Drag out as its own window");
+        Self::arm_tab_drag(&resp, window_name, tab_state);
     }
 
     /// Make a tab a drag source: egui sets the payload only once the press

@@ -561,8 +561,10 @@ viewport tear-out; multi-level undo; optional TUI geometry.
   widened to the window's full width so the band and hit test cover the
   row. A single-tab tabbedtext renders its strip as a band only while a
   join source is in flight.
-- Undo restores the source at the rect it was released at (a plain drag
-  has already moved it); the pre-drag rect is not captured.
+- Undo restores the source where the drag BEGAN: the shell snapshots the
+  window's placement on the first frame egui reports it dragged
+  (`drag_start_placement`) and the join uses that over a release-time
+  capture.
 
 ### Reorder (Phase 4, landed with Phase 2)
 - The strip records per-tab rects; `reorder_for_drop` (pure, tested)
@@ -570,17 +572,23 @@ viewport tear-out; multi-level undo; optional TUI geometry.
   of the pointer and returns the caret x. A drop on its own slot is a
   no-op. Live-verified with tear-out and join on 2026-09-13.
 
-- **Ghost chip** is a minimal label; the polished ghost, drop band, dwell
-  join, caret/highlight, undo toast and single-tab hover handle are Phase 3.
-- **Not exercised live yet.** Headless coverage: pure re-keying, migration
-  composition, and the egui two-parent migration. The drag itself (a tab's
-  drag sense inside a window that also drags/resizes) needs a live run.
+- Follow-ups closed: `Layout::add_window` now returns the created name
+  and every caller uses it; `GroupSnapshot` carries the member index so
+  undo restores group order; a single-tab tabbedtext shows a six-dot
+  grip at its top-right while hovered, which drags as that tab.
+- **Phase 3 complete.** The ghost is the tab itself lifted (skin tab art
+  when present, the theme's selection fill otherwise, soft shadow, hint
+  beneath). Every move raises a bottom-centre toast (`TabMoveToast`):
+  headline, capacity notes, an Undo button that runs the same undo as
+  `.undotabmove`, auto-fade after 8 s, held open while hovered. The undo
+  itself raises a non-undoable toast.
+- **Live-verified 2026-09-13**: tear-out, both conversions, join (band
+  blue on hover, green when armed), reorder. Headless coverage: pure
+  re-keying, migration composition, the egui two-parent migration,
+  dwell and reorder step functions.
 
 ## Follow-ups (noted during Phase 1, 2026-09-13)
 
-- **`Layout::add_window` should return the created window's name.** Both
-  `create_custom_window` (`editors/custom_windows.rs`) and `tear_out_tab`
-  (`tab_moves.rs`) locate the window they just added as "the last entry in
-  `layout.windows`". True today, but an implicit contract; returning
-  `Result<String>` (the auto-generated name) removes it. Touch both callers
-  when it lands.
+- ~~`Layout::add_window` should return the created window's name.~~
+  Done: returns `Result<String>`; `tear_out_tab`, `create_custom_window`,
+  the GUI/TUI add-from-template paths and both lifecycle auto-adds use it.

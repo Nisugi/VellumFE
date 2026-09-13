@@ -196,7 +196,13 @@ impl VellumGuiApp {
     /// undo, run the core transaction, and reconcile the shell.
     pub(super) fn handle_join_drop(&mut self, ctx: &egui::Context, request: JoinRequest) {
         let old_keys = self.window_keys_by_name();
-        let capture = self.capture_placement(&request.source);
+        // A plain drag has already moved the window; the snapshot taken when
+        // the drag began is where undo should put it back.
+        let capture = self
+            .drag_start_placement
+            .take()
+            .filter(|snapshot| snapshot.window == request.source)
+            .unwrap_or_else(|| self.capture_placement(&request.source));
         let receipt = match self
             .app_core
             .join_window_as_tab(&request.source, &request.target, None)

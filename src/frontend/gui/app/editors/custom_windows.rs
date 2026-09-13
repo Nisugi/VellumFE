@@ -247,16 +247,15 @@ impl VellumGuiApp {
     /// Create a new custom text window, then apply the drafted title + streams.
     fn create_custom_window(&mut self, title: &str, streams: &[String]) -> Result<String, String> {
         // Spawn an auto-named text window via the shared layout path.
-        self.app_core
+        let created = self
+            .app_core
             .layout
             .add_window(CUSTOM_TEXT_TEMPLATE)
             .map_err(|err| format!("Failed to create window: {}", err))?;
-        // The auto-named window is the last layout entry.
         let window_def = self
             .app_core
             .layout
-            .windows
-            .last()
+            .get_window(&created)
             .cloned()
             .ok_or_else(|| "New window definition could not be retrieved.".to_string())?;
         let name = window_def.name().to_string();

@@ -679,8 +679,14 @@ pub struct VellumGuiApp {
     /// resize, not a content drag); cleared on release. The join gesture
     /// (`tab_join.rs`) reads it to know which window is in flight.
     zone_window_dragged: Option<TabKey>,
+    /// Placement of `zone_window_dragged` as it stood when the drag began,
+    /// so a join's undo restores the pre-drag position (spec 5.1).
+    drag_start_placement: Option<tab_drag::GuiPlacementSnapshot>,
     /// Window → tab join dwell in progress (tab-tear-out spec §7).
     join_dwell: Option<tab_join::JoinDwell>,
+    /// Toast after a tab move: what happened, capacity notes, an Undo
+    /// button. Auto-dismisses.
+    tab_move_toast: Option<tab_drag::TabMoveToast>,
     /// Sticky per press: set once egui is observed resizing a window this
     /// press (its rendered size diverged from the pinned size), cleared on
     /// release. A resize-edge drag can't be seen through pointer travel —
@@ -1164,7 +1170,9 @@ impl VellumGuiApp {
             zone_engaged_tab: None,
             zone_press_drag_seen: false,
             zone_window_dragged: None,
+            drag_start_placement: None,
             join_dwell: None,
+            tab_move_toast: None,
             zone_resize_active: false,
             zone_snap_drag: None,
             zone_snap_guides: Vec::new(),
@@ -1397,15 +1405,8 @@ impl VellumGuiApp {
     /// refresh_available_tabs_if_needed.
     fn add_window_from_template(&mut self, template: &str) {
         match self.app_core.layout.add_window(template) {
-            Ok(_) => {
-                // Templates with auto-generated names (spacers, custom tabbed
-                // windows) end up as the last layout entry.
-                let window_def = self
-                    .app_core
-                    .layout
-                    .get_window(template)
-                    .cloned()
-                    .or_else(|| self.app_core.layout.windows.last().cloned());
+            Ok(created) => {
+                let window_def = self.app_core.layout.get_window(&created).cloned();
                 if let Some(window_def) = window_def {
                     let actual_name = window_def.name().to_string();
                     self.app_core.add_new_window(
@@ -3286,6 +3287,7 @@ impl eframe::App for VellumGuiApp {
         if let Some(request) = join_drop {
             self.handle_join_drop(&ctx, request);
         }
+        self.render_tab_move_toast(&ctx);
         if let Some(request) = zone_actions.window_menu_request {
             // While a window is in Move mode the pointer belongs to placement.
             if self.window_move_state.is_none() {

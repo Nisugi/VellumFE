@@ -166,10 +166,14 @@ impl AppCore {
         // Use Layout's add_window() which handles both:
         // 1. Existing windows (just marks visible)
         // 2. New windows (creates from template and adds to layout)
-        if let Err(e) = self.layout.add_window(name) {
-            self.add_system_message(&format!("Failed to add window '{}': {}", name, e));
-            return;
-        }
+        let name = match self.layout.add_window(name) {
+            Ok(created) => created,
+            Err(e) => {
+                self.add_system_message(&format!("Failed to add window '{}': {}", name, e));
+                return;
+            }
+        };
+        let name = name.as_str();
 
         // Get the window definition (now guaranteed to exist)
         let window_def_clone = self
@@ -349,19 +353,15 @@ impl AppCore {
             // Genuinely new: add the templated window, bound to this feed.
             // (U2a keeps the current visible-spawn behavior; U2b gates on
             // visibility so a hidden binding suppresses the auto-spawn.)
-            if let Err(e) = self.layout.add_window(&template_name) {
-                tracing::warn!("Failed to auto-add window '{}': {}", template_name, e);
-                continue;
-            }
-            let created = self
-                .layout
-                .windows
-                .iter()
-                .rev()
-                .find(|w| w.widget_type() == template_name || w.name() == template_name)
-                .or_else(|| self.layout.windows.last())
-                .map(|w| w.name().to_string());
-            if let Some(name) = created {
+            let created = match self.layout.add_window(&template_name) {
+                Ok(created) => created,
+                Err(e) => {
+                    tracing::warn!("Failed to auto-add window '{}': {}", template_name, e);
+                    continue;
+                }
+            };
+            {
+                let name = created;
                 if let Some(def) = self.layout.windows.iter_mut().find(|w| w.name() == name) {
                     def.base_mut().binding = Some(WindowBinding::Dialog(dialog_id.clone()));
                 }

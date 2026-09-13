@@ -2766,13 +2766,9 @@ impl TuiFrontend {
     fn menu_add_window(&mut self, window_name: &str, app_core: &mut crate::core::AppCore) {
         use crate::data::ui_state::InputMode;
         match app_core.layout.add_window(window_name) {
-            Ok(_) => {
+            Ok(created) => {
                 let (width, height) = self.size();
-                let window_def = app_core
-                    .layout
-                    .get_window(window_name)
-                    .cloned()
-                    .or_else(|| app_core.layout.windows.last().cloned());
+                let window_def = app_core.layout.get_window(&created).cloned();
                 if let Some(window_def) = window_def {
                     let actual_name = window_def.name().to_string();
                     app_core.add_new_window(&window_def, width, height);

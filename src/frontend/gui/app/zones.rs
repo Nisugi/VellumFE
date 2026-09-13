@@ -2063,6 +2063,10 @@ impl VellumGuiApp {
                 // resize handle or content drag never sets it); the join
                 // gesture needs to know which window is in flight.
                 if pointer_down && inner.response.dragged() {
+                    if self.zone_window_dragged.as_ref() != Some(&tab.id.key) {
+                        self.drag_start_placement =
+                            Some(self.capture_placement(&tab.window_name));
+                    }
                     self.zone_window_dragged = Some(tab.id.key.clone());
                 }
                 // When a window owns a skinned title bar, the TITLE BAR owns the

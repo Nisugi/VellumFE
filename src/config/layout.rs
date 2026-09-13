@@ -923,13 +923,17 @@ impl Layout {
         format!("custom-{}-{}", normalized_type, max_number + 1)
     }
 
-    pub fn add_window(&mut self, name: &str) -> Result<()> {
+    /// Add (or re-show) a window from template `name`. Returns the name of
+    /// the window that now exists — for templates with auto-generated names
+    /// (spacers, `*_custom`) that differs from `name`, so callers must use
+    /// the return value rather than assume the last layout entry.
+    pub fn add_window(&mut self, name: &str) -> Result<String> {
         // Check if window already exists in layout
         if let Some(existing) = self.windows.iter_mut().find(|w| w.name() == name) {
             // Just make it visible
             existing.base_mut().visibility = crate::config::WindowVisibility::Shown;
             tracing::info!("Window '{}' already exists, setting visible=true", name);
-            return Ok(());
+            return Ok(name.to_string());
         }
 
         // Get template
@@ -962,9 +966,10 @@ impl Layout {
         }
 
         // Add to layout
+        let created = window_def.name().to_string();
         self.windows.push(window_def);
         tracing::info!("Added window '{}' from template", name);
-        Ok(())
+        Ok(created)
     }
 
     /// Whether any layout window is bound to `id` (regardless of source

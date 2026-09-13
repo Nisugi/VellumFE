@@ -397,10 +397,16 @@ impl AppCore {
 
         // Ordinary tear-out: drop the tab from the def, seed a new window.
         self.tabbed_def_mut(window)?.tabs.remove(index);
-        self.layout
+        let seeded = self
+            .layout
             .add_window(CUSTOM_TEXT_SEED)
             .map_err(|e| TabMoveError::Layout(e.to_string()))?;
-        let new_index = self.layout.windows.len() - 1;
+        let new_index = self
+            .layout
+            .windows
+            .iter()
+            .position(|w| w.name() == seeded)
+            .ok_or_else(|| TabMoveError::Layout(format!("seed '{seeded}' vanished")))?;
         let new_name = {
             let WindowDef::Text {
                 base: new_base,

@@ -146,6 +146,48 @@ pub(crate) fn finish_scroll_migration(ctx: &egui::Context, scroll_id: &str) {
     });
 }
 
+// ---- toast -------------------------------------------------------------------
+
+/// What the last tab move did, shown briefly with an Undo button.
+#[derive(Clone, Debug)]
+pub(super) struct TabMoveToast {
+    pub headline: String,
+    pub notes: Vec<String>,
+    pub shown_at: Instant,
+    /// False for the toast that reports an undo (nothing to undo again).
+    pub undoable: bool,
+}
+
+impl TabMoveToast {
+    const LIFETIME: Duration = Duration::from_secs(8);
+
+    fn for_receipt(receipt: &TabMoveReceipt) -> Self {
+        let headline = match receipt.kind {
+            TabMoveKind::TearOut => format!("Opened '{}' as its own window", receipt.window),
+            TabMoveKind::ConvertedInPlace => format!("'{}' is a text window now", receipt.window),
+            TabMoveKind::Join => match &receipt.removed_window {
+                Some(source) => format!("Added '{source}' as a tab of '{}'", receipt.window),
+                None => format!("Added a tab to '{}'", receipt.window),
+            },
+            TabMoveKind::WrappedInPlace => format!("'{}' is a tabbed window now", receipt.window),
+            TabMoveKind::Reorder => format!("Reordered tabs in '{}'", receipt.window),
+        };
+        let notes = receipt
+            .capacity_changed
+            .iter()
+            .map(|(window, from, to)| {
+                format!("'{window}' scrollback capacity {from} → {to} lines; nothing was lost")
+            })
+            .collect();
+        Self {
+            headline,
+            notes,
+            shown_at: Instant::now(),
+            undoable: true,
+        }
+    }
+}
+
 // ---- placement snapshot (§5.1 / §5.5) ---------------------------------------
 
 /// Everything the shell knows about one window's placement, captured by
@@ -177,6 +219,9 @@ pub(super) struct GuiPlacementSnapshot {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(super) struct GroupSnapshot {
     pub leader: String,
+    /// Position among the group's members, so restore keeps the order.
+    #[serde(default)]
+    pub index: usize,
 }
 
 /// How a receipt reached the handler: a drop point and size for a gesture,
@@ -374,14 +419,14 @@ impl VellumGuiApp {
                 }
             }
         }
-        let group = self
-            .group_for_tab(&key)
-            .and_then(|group| group.members.first())
-            .filter(|leader| *leader != &key)
-            .and_then(|leader| names_by_key.get(leader))
-            .map(|leader| GroupSnapshot {
+        let group = self.group_for_tab(&key).and_then(|group| {
+            let leader = group.members.first().filter(|leader| *leader != &key)?;
+            let index = group.members.iter().position(|member| member == &key)?;
+            names_by_key.get(leader).map(|leader| GroupSnapshot {
                 leader: leader.clone(),
-            });
+                index,
+            })
+        });
         GuiPlacementSnapshot {
             window: window.to_string(),
             rect: self.main_window_rects.get(&key).copied(),
@@ -466,6 +511,7 @@ impl VellumGuiApp {
                 "'{window}' scrollback capacity {from} → {to} lines (no history was lost)."
             ));
         }
+        self.tab_move_toast = Some(TabMoveToast::for_receipt(receipt));
         if receipt.kind == TabMoveKind::TearOut || receipt.kind == TabMoveKind::Join {
             self.close_popup_menus_if_host_gone();
         }
@@ -561,6 +607,18 @@ impl VellumGuiApp {
             if let Some(leader) = new_keys.get(&group.leader).cloned() {
                 if leader != *final_key {
                     self.group_tabs(&leader, final_key.clone());
+                    if let Some(members) = self
+                        .tab_groups
+                        .iter_mut()
+                        .find(|g| g.members.contains(&leader))
+                        .map(|g| &mut g.members)
+                    {
+                        if let Some(at) = members.iter().position(|m| m == final_key) {
+                            let key = members.remove(at);
+                            let index = group.index.clamp(1, members.len());
+                            members.insert(index, key);
+                        }
+                    }
                 }
             }
         }
@@ -594,6 +652,10 @@ impl VellumGuiApp {
         let over_own_strip = pointer.is_some_and(|pos| {
             tab_strip_rect(ctx, &payload.window).is_some_and(|rect| rect.contains(pos))
         });
+        let skin_tab = self
+            .skin_state
+            .widget_art()
+            .and_then(|art| art.control_border("tab", "active").cloned());
         if let Some(pointer_pos) = pointer {
             if over_own_strip {
                 if let Some((_, caret_x)) =
@@ -611,18 +673,56 @@ impl VellumGuiApp {
                     }
                 }
             }
+            // The ghost is drawn as the tab itself, lifted: a chip in the
+            // strip's own look (skin tab art when there is one, the theme's
+            // selected-tab fill otherwise) with a soft shadow, offset so
+            // the pointer sits on its left edge the way it grabbed the tab.
             egui::Area::new(egui::Id::new("gui_tab_drag_ghost"))
                 .order(egui::Order::Tooltip)
-                .fixed_pos(pointer_pos + Vec2::new(12.0, 12.0))
+                .fixed_pos(pointer_pos + Vec2::new(-8.0, -10.0))
                 .interactable(false)
                 .show(ctx, |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        ui.label(RichText::new(&payload.label).strong());
-                        ui.weak(if over_own_strip {
-                            "Release to reorder"
-                        } else {
-                            "Release to open in its own window"
-                        });
+                    ui.set_opacity(0.92);
+                    let font = egui::TextStyle::Body.resolve(ui.style());
+                    let galley = ui.painter().layout_no_wrap(
+                        payload.label.clone(),
+                        font,
+                        ui.visuals().strong_text_color(),
+                    );
+                    let size = galley.size() + egui::vec2(18.0, 8.0);
+                    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                    ui.painter().rect_filled(
+                        rect.translate(Vec2::new(2.0, 3.0)),
+                        4.0,
+                        Color32::from_black_alpha(90),
+                    );
+                    match &skin_tab {
+                        Some(border) => {
+                            crate::frontend::gui::skin::paint_nine_slice_filled(
+                                ui.painter(),
+                                rect,
+                                border,
+                            );
+                        }
+                        None => {
+                            let visuals = &ui.visuals().widgets.active;
+                            ui.painter().rect(
+                                rect,
+                                4.0,
+                                ui.visuals().selection.bg_fill,
+                                egui::Stroke::new(1.0, visuals.fg_stroke.color),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                    }
+                    let text_pos = rect.center() - galley.size() / 2.0;
+                    ui.painter()
+                        .galley(text_pos, galley, ui.visuals().strong_text_color());
+                    ui.add_space(2.0);
+                    ui.weak(if over_own_strip {
+                        "Release to reorder"
+                    } else {
+                        "Release to open in its own window"
                     });
                 });
             ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -730,6 +830,85 @@ impl VellumGuiApp {
             restore,
             &zone_rects,
         );
+        self.tab_move_toast = Some(TabMoveToast {
+            headline: format!("Undid the last tab move; '{}' holds the content again", outcome.receipt.window),
+            notes: Vec::new(),
+            shown_at: Instant::now(),
+            undoable: false,
+        });
+    }
+
+    /// Bottom-centre toast for the last tab move, with Undo. Hovering it
+    /// holds it open; otherwise it fades after a few seconds.
+    pub(super) fn render_tab_move_toast(&mut self, ctx: &egui::Context) {
+        let Some(toast) = self.tab_move_toast.clone() else {
+            return;
+        };
+        let age = toast.shown_at.elapsed();
+        if age > TabMoveToast::LIFETIME {
+            self.tab_move_toast = None;
+            return;
+        }
+        let fade_in = Duration::from_millis(150);
+        let fade_out = Duration::from_millis(400);
+        let alpha = if age < fade_in {
+            age.as_secs_f32() / fade_in.as_secs_f32()
+        } else if age > TabMoveToast::LIFETIME - fade_out {
+            (TabMoveToast::LIFETIME - age).as_secs_f32() / fade_out.as_secs_f32()
+        } else {
+            1.0
+        };
+        let screen = ctx.content_rect();
+        let mut undo_clicked = false;
+        let mut dismiss = false;
+        let mut hovered = false;
+        let response = egui::Area::new(egui::Id::new("gui_tab_move_toast"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_BOTTOM, Vec2::new(0.0, -28.0))
+            .constrain_to(screen)
+            .show(ctx, |ui| {
+                ui.set_opacity(alpha.clamp(0.0, 1.0));
+                let frame = egui::Frame::popup(ui.style())
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::symmetric(14, 10));
+                frame.show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(&toast.headline).strong());
+                            for note in &toast.notes {
+                                ui.weak(note);
+                            }
+                        });
+                        ui.add_space(12.0);
+                        if toast.undoable {
+                            if ui.button("Undo").on_hover_text(".undotabmove").clicked() {
+                                undo_clicked = true;
+                            }
+                        }
+                        if ui.small_button("✕").clicked() {
+                            dismiss = true;
+                        }
+                    });
+                    hovered = ui.rect_contains_pointer(ui.min_rect());
+                });
+            });
+        if hovered && response.response.contains_pointer() {
+            // Hold the clock while the pointer rests on it.
+            if let Some(live) = self.tab_move_toast.as_mut() {
+                live.shown_at = Instant::now() - fade_in.min(age);
+            }
+        }
+        ctx.request_repaint_after(Duration::from_millis(50));
+        if dismiss {
+            self.tab_move_toast = None;
+        }
+        if undo_clicked {
+            self.tab_move_toast = None;
+            match self.app_core.undo_tab_move() {
+                Ok(outcome) => self.app_core.tab_undo_to_apply = Some(outcome),
+                Err(e) => self.app_core.add_system_message(&format!("{e}")),
+            }
+        }
     }
 }
 
