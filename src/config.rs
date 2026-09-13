@@ -65,7 +65,7 @@ pub use keybinds::{
     reserved_combo_conflict, touch_wheel_action_catalog, validate_wheel_spans, AppKeybinds,
     ControllerBindKey, KeyAction, KeyBindAction, MacroAction, MenuKeybindField, MenuKeybinds,
     RumbleConfig, RumblePattern, TuningConfig, WheelMeta, WheelSlice, WheelSpanIssue,
-    CONTROLLER_BUTTON_ORDER, TOUCH_WHEEL_CLIENT_ACTIONS, WHEEL_MIN_SPAN_DEG,
+    CONTROLLER_BUTTON_ORDER, TOUCH_WHEEL_CLIENT_ACTIONS, TOUCH_WHEEL_KEY, WHEEL_MIN_SPAN_DEG,
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};

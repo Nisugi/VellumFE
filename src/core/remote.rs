@@ -20,7 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, watch};
 
-use crate::config::{Config, MacrosConfig};
+use crate::config::{Config, MacrosConfig, TOUCH_WHEEL_KEY};
 use crate::data::remote_buffer::{RemoteBuffer, RemoteLine};
 use crate::data::widget::StyledLine;
 
@@ -253,7 +253,7 @@ impl RemoteWheels {
                 // client fall back to its built-in default.
                 if !config.touch_wheel.is_empty() {
                     named.insert(
-                        "touch".to_string(),
+                        TOUCH_WHEEL_KEY.to_string(),
                         wire_slices(config, &config.touch_wheel),
                     );
                 }

@@ -917,6 +917,12 @@ pub struct WheelSlice {
     pub locked: bool,
 }
 
+/// The reserved wheel key the phone's touch wheel ships and fires under.
+/// It is not a `[controller_wheels.<name>]` entry — it rides along as a
+/// named wheel on the wire while living in `Config::touch_wheel`, so both
+/// the wire payload and `wheel_level_slices` must agree on this spelling.
+pub const TOUCH_WHEEL_KEY: &str = "touch";
+
 /// The client-action vocabulary a touch-wheel slice's `client` field may
 /// use, shipped to the editor UIs so they render the same picker the runtime
 /// understands (a field added here surfaces in both frontends without a
@@ -2497,6 +2503,14 @@ impl Config {
             } else {
                 &self.controller_wheel
             }
+        } else if key == TOUCH_WHEEL_KEY {
+            // The phone's touch wheel is its own config field, not a
+            // [controller_wheels.<name>] entry. It ships to the client as the
+            // reserved "touch" named wheel, so a pick comes back under that
+            // key and must resolve against the list the phone actually
+            // rendered — otherwise an edited command silently keeps firing
+            // whatever the stale lookup found (or nothing at all).
+            &self.touch_wheel
         } else {
             self.controller_wheels.get(key)?
         };
@@ -4383,6 +4397,75 @@ command = \"fire\"
                 .and_then(|m| m.as_str()),
             Some("stand\r")
         );
+    }
+
+    /// The phone fires a touch-wheel slice as `wheel_pick { key: "touch" }`,
+    /// and the host resolves the command by index. The ring it renders comes
+    /// from `config.touch_wheel`, so the resolver must read that same list —
+    /// not `controller_wheels`, which only holds gamepad wheels.
+    #[test]
+    fn touch_wheel_picks_resolve_against_the_touch_wheel() {
+        let mut config = Config::default();
+        config.touch_wheel = vec![
+            WheelSlice {
+                label: "Room".into(),
+                client: Some("open:room".into()),
+                ..Default::default()
+            },
+            WheelSlice {
+                label: "Look".into(),
+                command: "glance".into(),
+                ..Default::default()
+            },
+        ];
+
+        assert_eq!(
+            config.wheel_pick_command("touch", &[1]),
+            Some("glance".into()),
+            "the touch wheel's own slice list must back a key=\"touch\" pick"
+        );
+        // A client-action slice carries no command: nothing to fire host-side.
+        assert_eq!(config.wheel_pick_command("touch", &[0]), None);
+    }
+
+    /// A phone edit saves to the CHARACTER layer; a global `controller.toml`
+    /// that also defines `[touch_wheel] slices` must not win the reload.
+    /// `last_controller_value` takes the last layer that has the key, and
+    /// the character layer is pushed last, so the edit must survive.
+    #[test]
+    fn touch_wheel_character_edit_beats_the_global_layer() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+
+        // Global layer ships a "look" slice — the stale command from the bug
+        // report.
+        let global = Config::common_controller_path().unwrap();
+        fs::create_dir_all(global.parent().unwrap()).unwrap();
+        fs::write(
+            &global,
+            "[touch_wheel]\nslices = [{ label = \"Look\", command = \"look\" }]\n",
+        )
+        .unwrap();
+
+        // The phone edits that slice to a different game command.
+        let edited = vec![WheelSlice {
+            label: "Look".into(),
+            command: "glance".into(),
+            ..Default::default()
+        }];
+        Config::save_touch_wheel(&edited, false, Some("Tester")).unwrap();
+
+        let loaded = Config::load_touch_wheel(Some("Tester")).unwrap();
+        assert_eq!(
+            loaded.first().map(|s| s.command.as_str()),
+            Some("glance"),
+            "the character-scope edit must win the reload, not the global slice"
+        );
+
+        std::env::remove_var("VELLUM_FE_DIR");
     }
 
     #[test]
