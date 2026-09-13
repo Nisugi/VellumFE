@@ -2716,6 +2716,19 @@ impl AppCore {
                 return Ok(CommandOutcome::Handled);
             }
 
+            "undotabmove" => {
+                // Single-level undo for the last tab tear-out / join /
+                // conversion / reorder (tab-tear-out spec §2). Refuses if
+                // the layout changed since.
+                match self.undo_tab_move() {
+                    Ok(outcome) => self.add_system_message(&format!(
+                        "Undid the last tab move; '{}' holds the content again.",
+                        outcome.receipt.window
+                    )),
+                    Err(e) => self.add_system_message(&format!("{e}")),
+                }
+                return Ok(CommandOutcome::Handled);
+            }
             // Layout commands are capability hooks (parity plan D3): core
             // owns the command names, each frontend owns its persistence
             // model — TOML cell layouts in the TUI, window-snapshot

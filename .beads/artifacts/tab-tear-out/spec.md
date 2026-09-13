@@ -525,3 +525,12 @@ viewport tear-out; multi-level undo; optional TUI geometry.
 ## Open questions
 
 - Dwell time 350 ms — tune live (Phase 3).
+
+## Follow-ups (noted during Phase 1, 2026-09-13)
+
+- **`Layout::add_window` should return the created window's name.** Both
+  `create_custom_window` (`editors/custom_windows.rs`) and `tear_out_tab`
+  (`tab_moves.rs`) locate the window they just added as "the last entry in
+  `layout.windows`". True today, but an implicit contract; returning
+  `Result<String>` (the auto-generated name) removes it. Touch both callers
+  when it lands.

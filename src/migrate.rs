@@ -408,6 +408,7 @@ fn apply_widget_specific_fields(window: &mut WindowDef, table: &toml::value::Tab
                         let show_timestamps = get_bool(t, "show_timestamps").ok().flatten();
                         let ignore_activity = get_bool(t, "ignore_activity").ok().flatten();
                         Some(TabbedTextTab {
+                            id: 0,
                             name,
                             stream: None,
                             streams,
@@ -419,6 +420,7 @@ fn apply_widget_specific_fields(window: &mut WindowDef, table: &toml::value::Tab
                     .collect();
             } else if let Some(v) = get_vec_str(table, "streams")? {
                 data.tabs = vec![TabbedTextTab {
+                    id: 0,
                     name: "Tab".to_string(),
                     stream: None,
                     streams: v,

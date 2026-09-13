@@ -159,6 +159,11 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
             ),
             entry!(&["layouts"], "", "List available layouts"),
             entry!(
+                &["undotabmove"],
+                "",
+                "Undo the last tab tear-out, join, conversion, or reorder"
+            ),
+            entry!(
                 &["resize"],
                 "[name]",
                 "Refit windows to the current size; with a layout name, adopt just its geometry (GUI)"

@@ -327,7 +327,10 @@ impl Layout {
     /// so saves round-trip them instead of destroying them.
     pub(crate) fn parse_tolerant(contents: &str, source: &str) -> Result<Self> {
         let strict_err = match toml::from_str::<Layout>(contents) {
-            Ok(layout) => return Ok(layout),
+            Ok(mut layout) => {
+                layout.normalize_tab_ids();
+                return Ok(layout);
+            }
             Err(err) => err,
         };
 
@@ -369,7 +372,19 @@ impl Layout {
             .try_into()
             .with_context(|| format!("Failed to parse layout file: {}", source))?;
         layout.unknown_windows = unknown;
+        layout.normalize_tab_ids();
         Ok(layout)
+    }
+
+    /// Give every tabbed window's tabs valid, unique ids (see
+    /// `TabbedTextWidgetData::normalize_tab_ids`). Runs on parse so a
+    /// legacy file gets ids on first load; the next autosave persists them.
+    pub fn normalize_tab_ids(&mut self) {
+        for window in &mut self.windows {
+            if let WindowDef::TabbedText { data, .. } = window {
+                data.normalize_tab_ids();
+            }
+        }
     }
 
     /// Serialize, re-appending any unknown windows carried from load.
@@ -939,6 +954,12 @@ impl Layout {
 
         // Set visible
         window_def.base_mut().visibility = crate::config::WindowVisibility::Shown;
+
+        // A seed's tabs carry no ids; assign them before the def can reach
+        // runtime state (template instantiation is a def→runtime boundary).
+        if let WindowDef::TabbedText { data, .. } = &mut window_def {
+            data.normalize_tab_ids();
+        }
 
         // Add to layout
         self.windows.push(window_def);

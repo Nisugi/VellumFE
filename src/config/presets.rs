@@ -1609,8 +1609,10 @@ impl Config {
                     ..base_defaults.clone()
                 },
                 data: TabbedTextWidgetData {
+                    next_tab_id: 0,
                     tabs: vec![
                         TabbedTextTab {
+                            id: 0,
                             name: "Thoughts".to_string(),
                             stream: None,
                             streams: vec!["thoughts".to_string()],
@@ -1619,6 +1621,7 @@ impl Config {
                             timestamp_position: None,
                         },
                         TabbedTextTab {
+                            id: 0,
                             name: "Speech".to_string(),
                             stream: None,
                             streams: vec!["speech".to_string()],
@@ -1627,6 +1630,7 @@ impl Config {
                             timestamp_position: None,
                         },
                         TabbedTextTab {
+                            id: 0,
                             name: "Announcements".to_string(),
                             stream: None,
                             streams: vec!["announcements".to_string()],
@@ -1635,6 +1639,7 @@ impl Config {
                             timestamp_position: None,
                         },
                         TabbedTextTab {
+                            id: 0,
                             name: "Loot".to_string(),
                             stream: None,
                             streams: vec!["loot".to_string()],
@@ -1643,6 +1648,7 @@ impl Config {
                             timestamp_position: None,
                         },
                         TabbedTextTab {
+                            id: 0,
                             name: "Ambients".to_string(),
                             stream: None,
                             streams: vec!["ambients".to_string()],
@@ -1670,7 +1676,9 @@ impl Config {
                     ..base_defaults.clone()
                 },
                 data: TabbedTextWidgetData {
+                    next_tab_id: 0,
                     tabs: vec![TabbedTextTab {
+                        id: 0,
                         name: "Main".to_string(),
                         stream: None,
                         streams: vec!["main".to_string()],

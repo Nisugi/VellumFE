@@ -21,6 +21,7 @@ mod persistence;
 mod remote;
 mod stage_scene;
 mod streams;
+pub mod tab_moves;
 mod travel_ticks;
 mod window_lifecycle;
 mod windows;
@@ -96,6 +97,11 @@ pub struct AppCore {
 
     /// Position of last link click (for menu positioning)
     pub last_link_click_pos: Option<(u16, u16)>,
+
+    /// Single-level undo for the last tab move (tear-out / join / convert /
+    /// reorder). Gated by a hash of the layout defs and cleared on any
+    /// wholesale layout replacement. See `tab_moves`.
+    pub last_tab_move: Option<tab_moves::UndoRecord>,
 
     /// Creature-field placement (the creaturefield widget's solver state).
     /// Synced from `game_state.room_creatures` by `sync_creature_field`,
@@ -521,6 +527,7 @@ impl AppCore {
             pending_menu_requests: HashMap::new(),
             menu_categories: HashMap::new(),
             last_link_click_pos: None,
+            last_tab_move: None,
             creature_field: Default::default(),
             creature_field_synced_gen: 0,
             creature_field_synced_cal: 0,
@@ -733,6 +740,7 @@ impl AppCore {
             pending_menu_requests: HashMap::new(),
             menu_categories: HashMap::new(),
             last_link_click_pos: None,
+            last_tab_move: None,
             creature_field: Default::default(),
             creature_field_synced_gen: 0,
             creature_field_synced_cal: 0,

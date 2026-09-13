@@ -119,6 +119,9 @@ impl VellumGuiApp {
             ));
         };
         data.tabs = new_tabs;
+        // Rows added in this session carry no id yet; assign before the def
+        // reaches runtime state (the sync normalises too — belt and braces).
+        data.normalize_tab_ids();
         // Rebuild live tabs (and the stream routing index) from the def.
         self.app_core.sync_tabbed_window_tabs(&state.window);
         self.app_core.schedule_layout_autosave();

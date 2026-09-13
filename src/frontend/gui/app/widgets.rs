@@ -222,8 +222,13 @@ impl VellumGuiApp {
                     let query = Self::active_search_query(app_core);
                     // Per-tab scroll id: each tab keeps its own scroll
                     // position and height cache (tabs have independent
-                    // buffers and generations).
-                    let scroll_id = format!("{}::tab{}", tab.window_name, tabbed.active_tab_index);
+                    // buffers and generations). Keyed by the tab's stable
+                    // id, not its index, so a removal or reorder doesn't
+                    // hand one tab's scroll state to its neighbour.
+                    let scroll_id = crate::core::app_core::tab_moves::scroll_id_for_tab(
+                        &tab.window_name,
+                        active.definition.id,
+                    );
                     if let Some(link) = Self::render_text_content_auto_split(
                         ui,
                         &active.content,

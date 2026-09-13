@@ -365,6 +365,7 @@ impl WindowDef {
                 base,
                 data: TabbedTextWidgetData {
                     tabs: vec![],
+                    next_tab_id: 0,
                     buffer_size: DEFAULT_BUFFER_SIZE,
                     tab_bar_position: "top".to_string(),
                     tab_separator: false,

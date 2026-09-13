@@ -1338,6 +1338,7 @@ fn search_targets_list_every_searchable_window_and_name_tabs() {
     tabbed.widget_type = crate::data::WidgetType::TabbedText;
     let tab_of = |name: &str| TabState {
         definition: TabDefinition {
+            id: 0,
             name: name.to_string(),
             streams: vec![name.to_string()],
             show_timestamps: false,

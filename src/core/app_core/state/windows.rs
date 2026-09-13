@@ -7,6 +7,14 @@ use super::*;
 impl AppCore {
     /// Initialize windows based on current layout
     pub fn init_windows(&mut self, terminal_width: u16, terminal_height: u16) {
+        // Every buffer below is rebuilt from scratch, so a pending tab-move
+        // undo would restore onto content that no longer exists — the hash
+        // gate can't see a reload that reproduces identical defs.
+        self.invalidate_tab_undo();
+        // Tab ids are assigned at every def→runtime boundary (spec §0);
+        // this is the one every wholesale layout replacement funnels into.
+        self.layout.normalize_tab_ids();
+
         // Preserve command history from existing command_input window
         let preserved_history: Option<Vec<String>> =
             self.ui_state.windows.get("command_input").and_then(|w| {
@@ -137,26 +145,8 @@ impl AppCore {
                 WidgetType::TabbedText => {
                     // Extract tab definitions and buffer size from window def
                     if let crate::config::WindowDef::TabbedText { data, .. } = window_def {
-                        let global_ts_pos = self.config.ui.timestamp_position;
-                        let tabs: Vec<(
-                            String,
-                            Vec<String>,
-                            bool,
-                            bool,
-                            crate::config::TimestampPosition,
-                        )> = data
-                            .tabs
-                            .iter()
-                            .map(|tab| {
-                                // show_timestamps defaults to false if not explicitly set per-tab
-                                let show_ts = tab.show_timestamps.unwrap_or(false);
-                                let ignore = tab.ignore_activity.unwrap_or(false);
-                                let ts_pos = tab.timestamp_position.unwrap_or(global_ts_pos);
-                                (tab.name.clone(), tab.get_streams(), show_ts, ignore, ts_pos)
-                            })
-                            .collect();
-                        WindowContent::TabbedText(crate::data::TabbedTextContent::new(
-                            tabs,
+                        WindowContent::TabbedText(crate::data::TabbedTextContent::from_specs(
+                            data.tab_specs(self.config.ui.timestamp_position),
                             data.buffer_size,
                         ))
                     } else {
@@ -461,6 +451,31 @@ impl AppCore {
             window_def.widget_type()
         );
 
+        // Tab ids are assigned at every def→runtime boundary (spec §0). The
+        // def arrives by reference, so normalise a private copy for content
+        // construction and, when the layout holds an entry of the same name
+        // (it usually does — callers push then hand us the clone), bring
+        // that entry into step too so the persisted def agrees.
+        let normalized_def;
+        let window_def = if matches!(window_def, crate::config::WindowDef::TabbedText { .. }) {
+            let mut def = window_def.clone();
+            if let crate::config::WindowDef::TabbedText { data, .. } = &mut def {
+                data.normalize_tab_ids();
+            }
+            if let Some(crate::config::WindowDef::TabbedText { data, .. }) = self
+                .layout
+                .windows
+                .iter_mut()
+                .find(|w| w.name() == def.name())
+            {
+                data.normalize_tab_ids();
+            }
+            normalized_def = def;
+            &normalized_def
+        } else {
+            window_def
+        };
+
         // Use exact position from window definition
         let base = window_def.base();
         let position = WindowPosition {
@@ -543,26 +558,8 @@ impl AppCore {
             WidgetType::TabbedText => {
                 // Extract tab definitions and buffer size from window def
                 if let crate::config::WindowDef::TabbedText { data, .. } = window_def {
-                    let global_ts_pos = self.config.ui.timestamp_position;
-                    let tabs: Vec<(
-                        String,
-                        Vec<String>,
-                        bool,
-                        bool,
-                        crate::config::TimestampPosition,
-                    )> = data
-                        .tabs
-                        .iter()
-                        .map(|tab| {
-                            // show_timestamps defaults to false if not explicitly set per-tab
-                            let show_ts = tab.show_timestamps.unwrap_or(false);
-                            let ignore = tab.ignore_activity.unwrap_or(false);
-                            let ts_pos = tab.timestamp_position.unwrap_or(global_ts_pos);
-                            (tab.name.clone(), tab.get_streams(), show_ts, ignore, ts_pos)
-                        })
-                        .collect();
-                    WindowContent::TabbedText(crate::data::TabbedTextContent::new(
-                        tabs,
+                    WindowContent::TabbedText(crate::data::TabbedTextContent::from_specs(
+                        data.tab_specs(self.config.ui.timestamp_position),
                         data.buffer_size,
                     ))
                 } else {
@@ -888,11 +885,32 @@ impl AppCore {
     /// Called after window editor saves changes to a TabbedText window.
     /// Returns true if structural changes occurred (requiring widget cache reset).
     pub fn sync_tabbed_window_tabs(&mut self, window_name: &str) -> bool {
-        // Find the layout definition
-        let window_def = self.layout.windows.iter().find(|w| w.name() == window_name);
+        self.sync_tabbed_window_tabs_keep(window_name, None)
+    }
+
+    /// `sync_tabbed_window_tabs` with an explicit selection: `keep_active`
+    /// names the tab id to show afterwards (a tab move passes the id it just
+    /// created); `None` keeps the current tab if it survives. Either way the
+    /// neighbour rule in `update_tabs` applies when the wanted tab is gone.
+    pub fn sync_tabbed_window_tabs_keep(
+        &mut self,
+        window_name: &str,
+        keep_active: Option<crate::data::widget::TabId>,
+    ) -> bool {
+        // Find the layout definition. Every sync is a def→runtime boundary:
+        // ids are normalised here so an editor that pushed an unassigned tab
+        // can never reach `update_tabs` with a 0 or a duplicate.
+        let window_def = self
+            .layout
+            .windows
+            .iter_mut()
+            .find(|w| w.name() == window_name);
         let Some(crate::config::WindowDef::TabbedText { data, base: _ }) = window_def else {
             return false;
         };
+        data.normalize_tab_ids();
+        let new_tabs = data.tab_specs(self.config.ui.timestamp_position);
+        let buffer_size = data.buffer_size;
 
         // Get the TabbedTextContent from ui_state
         let Some(window) = self.ui_state.windows.get_mut(window_name) else {
@@ -902,21 +920,8 @@ impl AppCore {
             return false;
         };
 
-        // Build new tab definitions from layout
-        let global_ts_pos = self.config.ui.timestamp_position;
-        let new_tabs: Vec<_> = data
-            .tabs
-            .iter()
-            .map(|tab| {
-                let show_ts = tab.show_timestamps.unwrap_or(false);
-                let ignore = tab.ignore_activity.unwrap_or(false);
-                let ts_pos = tab.timestamp_position.unwrap_or(global_ts_pos);
-                (tab.name.clone(), tab.get_streams(), show_ts, ignore, ts_pos)
-            })
-            .collect();
-
         // Update and return whether structural change occurred
-        let changed = tabbed_content.update_tabs(new_tabs, data.buffer_size);
+        let changed = tabbed_content.update_tabs(new_tabs, buffer_size, keep_active);
         if changed {
             tracing::info!("Updated tabs for window '{}'", window_name);
             // Tab streams changed - keep the routing index in sync

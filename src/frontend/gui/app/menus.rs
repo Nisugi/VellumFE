@@ -34,6 +34,11 @@ pub(super) struct GuiWindowMenuRequest {
 pub(super) enum GuiWindowMenuCommand {
     Hide,
     Detach,
+    /// A one-tab tabbed window becomes a plain text window in place
+    /// (the last-tab case of a tear-out; see the tab-tear-out spec).
+    ConvertToTextWindow,
+    /// A text window becomes a one-tab tabbed window in place.
+    ConvertToTabbedWindow,
     /// Send this floating window behind any windows it overlaps in its
     /// zone, so a covered window can be reached. Live-session only, like
     /// egui's built-in click-to-raise.
@@ -240,6 +245,12 @@ pub(super) struct DetachedWindowMenuData {
 /// the menu body stays a static fn.
 struct WindowMenuView<'a> {
     zone: GuiShellZone,
+    /// Offer "Convert to text window": a tabbed window with exactly one
+    /// tab. With more tabs the row is shown disabled — tear the others out
+    /// first (a conversion must know which tab's content survives).
+    convert_to_text: Option<bool>,
+    /// Offer "Convert to tabbed window": a plain text window.
+    convert_to_tabbed: bool,
     /// Rendering inside a detached viewport: the flat actions swap Detach
     /// for Reattach, and the zone-placement sections (Arrange, Group,
     /// Send to Back) are omitted — they're meaningless in an OS window.
@@ -520,6 +531,8 @@ impl VellumGuiApp {
             // at; close rather than dangle.
             C::Hide
             | C::Detach
+            | C::ConvertToTextWindow
+            | C::ConvertToTabbedWindow
             | C::Reattach
             | C::SendToBack
             | C::StartMove
@@ -632,6 +645,12 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::Detach => self.detach_tab(request.tab_key.clone()),
+            GuiWindowMenuCommand::ConvertToTextWindow => {
+                self.convert_window_via_menu(&request.tab_key, true);
+            }
+            GuiWindowMenuCommand::ConvertToTabbedWindow => {
+                self.convert_window_via_menu(&request.tab_key, false);
+            }
             GuiWindowMenuCommand::Reattach => self.reattach_tab(request.tab_key.clone()),
             GuiWindowMenuCommand::SendToBack => {
                 self.send_window_to_back(ctx, &request.tab_key);
@@ -1335,8 +1354,11 @@ impl VellumGuiApp {
                 )
             })
             .unwrap_or_default();
+        let (convert_to_text, convert_to_tabbed) = self.conversion_offers(&request.tab_key);
         let view = WindowMenuView {
             zone: request.zone,
+            convert_to_text,
+            convert_to_tabbed,
             detached: false,
             locked: self.window_locked(&request.tab_key),
             anchored: self
@@ -1856,6 +1878,9 @@ impl VellumGuiApp {
             // Zone is only read by zone-gated rows, all skipped when
             // detached; Center is an inert placeholder.
             zone: GuiShellZone::Center,
+            // Conversions re-key shell state; not offered from an OS window.
+            convert_to_text: None,
+            convert_to_tabbed: false,
             detached: true,
             locked: data.locked,
             anchored: false,
@@ -1892,6 +1917,31 @@ impl VellumGuiApp {
             }
         } else if ui.selectable_label(false, "Detach").clicked() {
             return Some(GuiWindowMenuCommand::Detach);
+        }
+        if let Some(single_tab) = view.convert_to_text {
+            let row = ui
+                .add_enabled_ui(single_tab, |ui| {
+                    ui.selectable_label(false, "Convert to text window")
+                })
+                .inner;
+            let row = if single_tab {
+                row.on_hover_text(
+                    "Turn this one-tab window into a plain text window (undo: .undotabmove)",
+                )
+            } else {
+                row.on_disabled_hover_text("Tear the other tabs out first")
+            };
+            if row.clicked() {
+                return Some(GuiWindowMenuCommand::ConvertToTextWindow);
+            }
+        }
+        if view.convert_to_tabbed
+            && ui
+                .selectable_label(false, "Convert to tabbed window")
+                .on_hover_text("Wrap this window as a single tab (undo: .undotabmove)")
+                .clicked()
+        {
+            return Some(GuiWindowMenuCommand::ConvertToTabbedWindow);
         }
         // Stacking matters wherever windows float freely and can overlap —
         // every zone except the packed sidebars (and never in an OS window).
@@ -3022,5 +3072,76 @@ mod tests {
             &[menu_rect],
         );
         assert!(!should_close);
+    }
+}
+
+// ---- in-place conversions from the context menu (tab-tear-out spec §1) ----
+
+impl VellumGuiApp {
+    /// What the context menu may offer this window: `Some(single_tab)` for a
+    /// tabbed window ("Convert to text window", enabled only with one tab),
+    /// and whether "Convert to tabbed window" applies (a plain text window).
+    fn conversion_offers(&self, key: &TabKey) -> (Option<bool>, bool) {
+        let Some(name) = self
+            .available_tabs
+            .get(key)
+            .map(|tab| tab.window_name.as_str())
+        else {
+            return (None, false);
+        };
+        match self
+            .app_core
+            .layout
+            .windows
+            .iter()
+            .find(|window| window.name() == name)
+        {
+            Some(crate::config::WindowDef::TabbedText { data, .. }) => {
+                (Some(data.tabs.len() == 1), false)
+            }
+            Some(crate::config::WindowDef::Text { .. }) => (None, true),
+            _ => (None, false),
+        }
+    }
+
+    /// Run the conversion behind a menu row. A menu conversion has no drop
+    /// point, so the window keeps its placement; the core records undo
+    /// (`.undotabmove`). Errors surface as a system line for now — the
+    /// undo toast and receipt handling arrive with the gesture work.
+    fn convert_window_via_menu(&mut self, key: &TabKey, to_text: bool) {
+        let Some(name) = self
+            .available_tabs
+            .get(key)
+            .map(|tab| tab.window_name.clone())
+        else {
+            return;
+        };
+        let result = if to_text {
+            // The only tab's id; normalise first so a legacy def can't hand
+            // back the unassigned sentinel.
+            let only_tab = match self
+                .app_core
+                .layout
+                .windows
+                .iter_mut()
+                .find(|window| window.name() == name)
+            {
+                Some(crate::config::WindowDef::TabbedText { data, .. }) if data.tabs.len() == 1 => {
+                    data.normalize_tab_ids();
+                    data.tabs.first().map(|tab| tab.id)
+                }
+                _ => None,
+            };
+            match only_tab {
+                Some(id) => self.app_core.tear_out_tab(&name, id),
+                None => Err(crate::core::app_core::tab_moves::TabMoveError::NotTabbed(name)),
+            }
+        } else {
+            self.app_core.wrap_text_as_tabbed(&name)
+        };
+        match result {
+            Ok(_receipt) => self.layout_dirty = true,
+            Err(e) => self.app_core.add_system_message(&format!("{e}")),
+        }
     }
 }

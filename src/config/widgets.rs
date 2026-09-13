@@ -461,6 +461,13 @@ pub struct InventoryWidgetData {
 pub struct TabbedTextWidgetData {
     #[serde(default)]
     pub tabs: Vec<TabbedTextTab>,
+    /// Next `TabId` this window will hand out. Monotonic and persisted so a
+    /// deleted tab's id is never reused (undo targets and renderer state key
+    /// on ids). `0` = never allocated; `normalize_tab_ids` raises it above
+    /// every existing id before anything allocates. Skipped on the wire
+    /// while unassigned so seed definitions serialise unchanged.
+    #[serde(default, skip_serializing_if = "tab_id_unassigned")]
+    pub next_tab_id: TabId,
     #[serde(default = "default_buffer_size")]
     pub buffer_size: usize,
     #[serde(default = "default_tab_bar_position")]
@@ -481,9 +488,75 @@ fn default_tab_bar_position() -> String {
     "top".to_string()
 }
 
+use crate::data::widget::{TabId, TabSpec};
+
+fn tab_id_unassigned(id: &TabId) -> bool {
+    *id == 0
+}
+
+impl TabbedTextWidgetData {
+    /// Hand out the next id and advance the counter. Callers must have
+    /// normalised first (the counter is then `>= 1` and above every
+    /// existing id); the debug assertion catches a bypass.
+    pub fn alloc_tab_id(&mut self) -> TabId {
+        debug_assert!(self.next_tab_id >= 1, "allocate after normalize_tab_ids");
+        let id = self.next_tab_id.max(1);
+        self.next_tab_id = id + 1;
+        id
+    }
+
+    /// Give every tab a valid, unique id. **Reserve, then repair**: first
+    /// raise the counter above every id already present (so nothing
+    /// allocated below can collide with an existing tab, and `0` can never
+    /// be handed out), then walk the tabs in order allocating for any id
+    /// that is unassigned or duplicates an earlier one. Deterministic, so
+    /// two loads of the same file agree. Returns true if anything changed.
+    ///
+    /// This is the single chokepoint every def→runtime boundary calls:
+    /// layout parse, template instantiation, runtime window construction,
+    /// every tab sync, and the tab editors.
+    pub fn normalize_tab_ids(&mut self) -> bool {
+        let highest = self.tabs.iter().map(|t| t.id).max().unwrap_or(0);
+        let reserved = self.next_tab_id.max(1).max(highest.saturating_add(1));
+        let mut changed = reserved != self.next_tab_id;
+        self.next_tab_id = reserved;
+
+        let mut seen = std::collections::HashSet::new();
+        for index in 0..self.tabs.len() {
+            let id = self.tabs[index].id;
+            if id == 0 || !seen.insert(id) {
+                let fresh = self.alloc_tab_id();
+                self.tabs[index].id = fresh;
+                seen.insert(fresh);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Position of the tab with this id.
+    pub fn index_of_tab(&self, id: TabId) -> Option<usize> {
+        self.tabs.iter().position(|t| t.id == id)
+    }
+
+    /// The data-layer specs for every tab, resolving the legacy `stream:`
+    /// field and the global timestamp default.
+    pub fn tab_specs(&self, global_timestamp_position: TimestampPosition) -> Vec<TabSpec> {
+        self.tabs
+            .iter()
+            .map(|tab| tab.to_spec(global_timestamp_position))
+            .collect()
+    }
+}
+
 /// Tab configuration for TabbedText widget
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TabbedTextTab {
+    /// Stable identity within the window (see `crate::data::widget::TabId`).
+    /// `0` until normalised; skipped on the wire while unassigned so seed
+    /// definitions serialise unchanged.
+    #[serde(default, skip_serializing_if = "tab_id_unassigned")]
+    pub id: TabId,
     pub name: String,
     /// Single stream (for compatibility) - converts to streams array
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -512,6 +585,22 @@ impl TabbedTextTab {
             vec![stream.clone()]
         } else {
             vec![]
+        }
+    }
+
+    /// The data-layer spec for this tab. Per-tab `None`s fall back the same
+    /// way the three former hand-built call sites did: timestamps off,
+    /// activity tracked, position from the global setting.
+    pub fn to_spec(&self, global_timestamp_position: TimestampPosition) -> TabSpec {
+        TabSpec {
+            id: self.id,
+            name: self.name.clone(),
+            streams: self.get_streams(),
+            show_timestamps: self.show_timestamps.unwrap_or(false),
+            ignore_activity: self.ignore_activity.unwrap_or(false),
+            timestamp_position: self
+                .timestamp_position
+                .unwrap_or(global_timestamp_position),
         }
     }
 }

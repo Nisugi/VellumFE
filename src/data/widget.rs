@@ -537,14 +537,50 @@ pub struct ObjectivesContent {
     pub generation: u64,
 }
 
+/// Stable per-window identity of a tab. Unique within its tabbed window and
+/// never reused (the window's allocator only counts up), so anything that
+/// must survive a rename, reorder, or a duplicate name — buffer adoption in
+/// `update_tabs`, the active selection, renderer scroll state, undo targets —
+/// keys on this rather than on the name. `0` is the unassigned sentinel a
+/// legacy layout carries until normalisation; it is never a valid id.
+pub type TabId = u32;
+
+/// Everything needed to build or update one tab, in data-layer terms. The
+/// config layer produces these from `TabbedTextTab` (resolving the legacy
+/// `stream:` field and the global timestamp default) so the three core call
+/// sites that used to hand-build a 5-tuple share one shape.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabSpec {
+    pub id: TabId,
+    pub name: String,
+    pub streams: Vec<String>,
+    pub show_timestamps: bool,
+    pub ignore_activity: bool,
+    pub timestamp_position: TimestampPosition,
+}
+
 /// Tab definition for tabbed text window
 #[derive(Clone, Debug)]
 pub struct TabDefinition {
+    pub id: TabId,                             // Stable identity (see `TabId`)
     pub name: String,                          // Display name of tab
     pub streams: Vec<String>,                  // Stream IDs this tab listens to
     pub show_timestamps: bool,                 // Whether to render timestamps for this tab
     pub ignore_activity: bool,                 // Skip unread indicators/counts
     pub timestamp_position: TimestampPosition, // Position of timestamps (start or end)
+}
+
+impl TabDefinition {
+    fn from_spec(spec: TabSpec) -> Self {
+        Self {
+            id: spec.id,
+            name: spec.name,
+            streams: spec.streams,
+            show_timestamps: spec.show_timestamps,
+            ignore_activity: spec.ignore_activity,
+            timestamp_position: spec.timestamp_position,
+        }
+    }
 }
 
 /// Holds the state for a single tab, including its definition and content.
@@ -563,37 +599,86 @@ pub struct TabbedTextContent {
 }
 
 impl TabbedTextContent {
+    /// Build from plain tuples, assigning ids `1..=n` in order. A convenience
+    /// for tests and fixtures that don't carry ids; production paths go
+    /// through [`Self::from_specs`] with ids the config layer allocated.
     pub fn new(
         tabs: Vec<(String, Vec<String>, bool, bool, TimestampPosition)>,
         max_lines_per_tab: usize,
     ) -> Self {
-        let tabs = tabs
+        let specs = tabs
             .into_iter()
+            .zip(1..)
             .map(
-                |(name, streams, show_timestamps, ignore_activity, timestamp_position)| {
-                    let definition = TabDefinition {
-                        name: name.clone(),
+                |((name, streams, show_timestamps, ignore_activity, timestamp_position), id)| {
+                    TabSpec {
+                        id,
+                        name,
                         streams,
                         show_timestamps,
                         ignore_activity,
                         timestamp_position,
-                    };
-                    let mut content = TextContent::new(name, max_lines_per_tab);
-                    // Mirror timestamp settings onto the tab's content so the
-                    // shared text renderer can honor them uniformly.
-                    content.show_timestamps = definition.show_timestamps;
-                    content.timestamp_position = definition.timestamp_position;
-                    TabState {
-                        definition,
-                        content,
-                        has_unread: false,
                     }
                 },
             )
             .collect();
+        Self::from_specs(specs, max_lines_per_tab)
+    }
+
+    pub fn from_specs(specs: Vec<TabSpec>, max_lines_per_tab: usize) -> Self {
+        debug_assert!(
+            Self::ids_unique(specs.iter().map(|s| s.id)),
+            "tab ids must be unique and non-zero within a window"
+        );
+        let tabs = specs
+            .into_iter()
+            .map(|spec| Self::fresh_tab(spec, max_lines_per_tab))
+            .collect();
         Self {
             tabs,
             active_tab_index: 0,
+        }
+    }
+
+    fn fresh_tab(spec: TabSpec, max_lines_per_tab: usize) -> TabState {
+        let definition = TabDefinition::from_spec(spec);
+        let mut content = TextContent::new(definition.name.clone(), max_lines_per_tab);
+        // Mirror timestamp settings onto the tab's content so the shared
+        // text renderer can honor them uniformly.
+        content.show_timestamps = definition.show_timestamps;
+        content.timestamp_position = definition.timestamp_position;
+        TabState {
+            definition,
+            content,
+            has_unread: false,
+        }
+    }
+
+    fn ids_unique(mut ids: impl Iterator<Item = TabId>) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        ids.all(|id| id != 0 && seen.insert(id))
+    }
+
+    /// Id of the active tab, if any tab exists.
+    pub fn active_tab_id(&self) -> Option<TabId> {
+        self.tabs.get(self.active_tab_index).map(|t| t.definition.id)
+    }
+
+    /// Position of the tab with this id.
+    pub fn index_of(&self, id: TabId) -> Option<usize> {
+        self.tabs.iter().position(|t| t.definition.id == id)
+    }
+
+    /// Make the tab with this id active, clearing its unread mark as a
+    /// click would. Returns false (and changes nothing) if no such tab.
+    pub fn select_tab_id(&mut self, id: TabId) -> bool {
+        match self.index_of(id) {
+            Some(index) => {
+                self.active_tab_index = index;
+                self.tabs[index].has_unread = false;
+                true
+            }
+            None => false,
         }
     }
 
@@ -641,86 +726,86 @@ impl TabbedTextContent {
         None
     }
 
-    /// Update tabs from new layout definition while preserving content for existing tabs.
-    /// New tabs are added with empty content. Tabs not in the new definition are removed.
-    /// Returns true if the tabs structure changed (requiring widget cache reset).
+    /// Update tabs from a new definition list while preserving content for
+    /// tabs that survive. Survival is decided **by id**, never by name: two
+    /// tabs may share a name, and a rename must not lose a buffer. New ids
+    /// get empty content; ids absent from `specs` are dropped (callers that
+    /// want a dropped tab's buffer lift it out *before* calling this).
+    ///
+    /// Selection is carried by id too. `keep_active` names the tab that
+    /// should be active afterwards (a caller that just moved content passes
+    /// the id it wants shown); `None` keeps the currently active tab. If the
+    /// wanted tab is gone, the neighbour rule applies: the tab now sitting at
+    /// the vanished tab's old index (its right-hand neighbour), else the
+    /// last tab. Reselecting clears the tab's unread mark, as a click would.
+    ///
+    /// Returns true if the tab structure (the id sequence) changed, which
+    /// callers use to reset per-window widget caches.
     pub fn update_tabs(
         &mut self,
-        new_tabs: Vec<(String, Vec<String>, bool, bool, TimestampPosition)>,
+        specs: Vec<TabSpec>,
         max_lines_per_tab: usize,
+        keep_active: Option<TabId>,
     ) -> bool {
-        // Quick check: if tab count and names match, no structural change needed
-        let old_names: Vec<&str> = self
-            .tabs
-            .iter()
-            .map(|t| t.definition.name.as_str())
-            .collect();
-        let new_names: Vec<&str> = new_tabs
-            .iter()
-            .map(|(name, _, _, _, _)| name.as_str())
-            .collect();
+        debug_assert!(
+            Self::ids_unique(specs.iter().map(|s| s.id)),
+            "tab ids must be unique and non-zero within a window"
+        );
+        let wanted = keep_active.or_else(|| self.active_tab_id());
+        let wanted_old_index = wanted.and_then(|id| self.index_of(id));
 
-        if old_names == new_names {
-            // Just update definitions (streams, settings) without recreating
-            for (tab, (_, streams, show_ts, ignore, ts_pos)) in
-                self.tabs.iter_mut().zip(new_tabs.iter())
-            {
-                tab.definition.streams = streams.clone();
-                tab.definition.show_timestamps = *show_ts;
-                tab.definition.ignore_activity = *ignore;
-                tab.definition.timestamp_position = *ts_pos;
-                tab.content.show_timestamps = *show_ts;
-                tab.content.timestamp_position = *ts_pos;
+        let old_ids: Vec<TabId> = self.tabs.iter().map(|t| t.definition.id).collect();
+        let new_ids: Vec<TabId> = specs.iter().map(|s| s.id).collect();
+
+        if old_ids == new_ids {
+            // Same tabs in the same order: refresh definitions in place.
+            for (tab, spec) in self.tabs.iter_mut().zip(specs) {
+                tab.definition = TabDefinition::from_spec(spec);
+                tab.content.show_timestamps = tab.definition.show_timestamps;
+                tab.content.timestamp_position = tab.definition.timestamp_position;
+                // Capacity follows the window (see tab-tear-out spec §3).
+                tab.content.max_lines = max_lines_per_tab;
             }
-            return false; // No structural change
+            if let Some(id) = keep_active {
+                self.select_tab_id(id);
+            }
+            return false;
         }
 
-        // Structural change - rebuild tabs, preserving content where possible
-        let mut old_tabs: std::collections::HashMap<String, TabState> = self
+        // Structural change: rebuild, adopting each surviving id's buffer.
+        let mut old_tabs: std::collections::HashMap<TabId, TabState> = self
             .tabs
             .drain(..)
-            .map(|t| (t.definition.name.clone(), t))
+            .map(|t| (t.definition.id, t))
             .collect();
 
-        self.tabs = new_tabs
+        self.tabs = specs
             .into_iter()
-            .map(
-                |(name, streams, show_timestamps, ignore_activity, timestamp_position)| {
-                    let definition = TabDefinition {
-                        name: name.clone(),
-                        streams,
-                        show_timestamps,
-                        ignore_activity,
-                        timestamp_position,
-                    };
-
-                    // Reuse existing tab content if available
-                    if let Some(mut old_tab) = old_tabs.remove(&name) {
-                        old_tab.content.show_timestamps = definition.show_timestamps;
-                        old_tab.content.timestamp_position = definition.timestamp_position;
-                        old_tab.definition = definition;
-                        old_tab
-                    } else {
-                        // New tab - empty content
-                        let mut content = TextContent::new(&name, max_lines_per_tab);
-                        content.show_timestamps = definition.show_timestamps;
-                        content.timestamp_position = definition.timestamp_position;
-                        TabState {
-                            definition,
-                            content,
-                            has_unread: false,
-                        }
-                    }
-                },
-            )
+            .map(|spec| match old_tabs.remove(&spec.id) {
+                Some(mut old_tab) => {
+                    old_tab.definition = TabDefinition::from_spec(spec);
+                    old_tab.content.show_timestamps = old_tab.definition.show_timestamps;
+                    old_tab.content.timestamp_position = old_tab.definition.timestamp_position;
+                    old_tab.content.max_lines = max_lines_per_tab;
+                    old_tab
+                }
+                None => Self::fresh_tab(spec, max_lines_per_tab),
+            })
             .collect();
 
-        // Ensure active_tab_index is valid
-        if self.active_tab_index >= self.tabs.len() {
-            self.active_tab_index = self.tabs.len().saturating_sub(1);
+        // Selection by id, then the neighbour rule.
+        let selected = wanted.is_some_and(|id| self.select_tab_id(id));
+        if !selected {
+            let fallback = wanted_old_index
+                .unwrap_or(self.active_tab_index)
+                .min(self.tabs.len().saturating_sub(1));
+            self.active_tab_index = fallback;
+            if let Some(tab) = self.tabs.get_mut(fallback) {
+                tab.has_unread = false;
+            }
         }
 
-        true // Structural change occurred
+        true
     }
 }
 
@@ -1472,136 +1557,170 @@ mod tests {
 
     // ==================== TabbedTextContent update_tabs Tests ====================
 
+    fn spec(id: TabId, name: &str, streams: &[&str]) -> TabSpec {
+        TabSpec {
+            id,
+            name: name.to_string(),
+            streams: streams.iter().map(|s| s.to_string()).collect(),
+            show_timestamps: false,
+            ignore_activity: false,
+            timestamp_position: TimestampPosition::End,
+        }
+    }
+
+    fn tabbed(specs: Vec<TabSpec>) -> TabbedTextContent {
+        TabbedTextContent::from_specs(specs, 1000)
+    }
+
+    fn push_line(tabbed: &mut TabbedTextContent, id: TabId, text: &str) {
+        let index = tabbed.index_of(id).expect("tab exists");
+        tabbed.tabs[index].content.add_line(StyledLine {
+            segments: vec![TextSegment::plain(text)],
+            stream: String::new(),
+            timestamp: None,
+        });
+    }
+
     #[test]
     fn test_tabbed_text_content_update_tabs_no_change() {
-        use super::TabbedTextContent;
-        use crate::config::TimestampPosition;
-
-        let mut tabbed = TabbedTextContent::new(
-            vec![
-                (
-                    "Main".to_string(),
-                    vec!["main".to_string()],
-                    false,
-                    false,
-                    TimestampPosition::End,
-                ),
-                (
-                    "Combat".to_string(),
-                    vec!["combat".to_string()],
-                    true,
-                    false,
-                    TimestampPosition::Start,
-                ),
-            ],
+        let mut t = tabbed(vec![spec(1, "Main", &["main"]), spec(2, "Combat", &["combat"])]);
+        let changed = t.update_tabs(
+            vec![spec(1, "Main", &["main"]), spec(2, "Combat", &["combat"])],
             1000,
-        );
-
-        // Same tabs - should return false (no structural change)
-        let changed = tabbed.update_tabs(
-            vec![
-                (
-                    "Main".to_string(),
-                    vec!["main".to_string()],
-                    false,
-                    false,
-                    TimestampPosition::End,
-                ),
-                (
-                    "Combat".to_string(),
-                    vec!["combat".to_string()],
-                    true,
-                    false,
-                    TimestampPosition::Start,
-                ),
-            ],
-            1000,
+            None,
         );
         assert!(!changed);
-        assert_eq!(tabbed.tabs.len(), 2);
+        assert_eq!(t.tabs.len(), 2);
     }
 
     #[test]
     fn test_tabbed_text_content_update_tabs_add_tab() {
-        use super::TabbedTextContent;
-        use crate::config::TimestampPosition;
-
-        let mut tabbed = TabbedTextContent::new(
-            vec![(
-                "Main".to_string(),
-                vec!["main".to_string()],
-                false,
-                false,
-                TimestampPosition::End,
-            )],
+        let mut t = tabbed(vec![spec(1, "Main", &["main"])]);
+        let changed = t.update_tabs(
+            vec![spec(1, "Main", &["main"]), spec(2, "Combat", &["combat"])],
             1000,
-        );
-
-        // Add a new tab - should return true (structural change)
-        let changed = tabbed.update_tabs(
-            vec![
-                (
-                    "Main".to_string(),
-                    vec!["main".to_string()],
-                    false,
-                    false,
-                    TimestampPosition::End,
-                ),
-                (
-                    "Combat".to_string(),
-                    vec!["combat".to_string()],
-                    true,
-                    false,
-                    TimestampPosition::Start,
-                ),
-            ],
-            1000,
+            None,
         );
         assert!(changed);
-        assert_eq!(tabbed.tabs.len(), 2);
-        assert_eq!(tabbed.tabs[0].definition.name, "Main");
-        assert_eq!(tabbed.tabs[1].definition.name, "Combat");
+        assert_eq!(t.tabs.len(), 2);
+        assert_eq!(t.tabs[0].definition.name, "Main");
+        assert_eq!(t.tabs[1].definition.name, "Combat");
     }
 
     #[test]
     fn test_tabbed_text_content_update_tabs_remove_tab() {
-        use super::TabbedTextContent;
-        use crate::config::TimestampPosition;
+        let mut t = tabbed(vec![spec(1, "Main", &["main"]), spec(2, "Combat", &["combat"])]);
+        t.active_tab_index = 1; // Combat
+        let changed = t.update_tabs(vec![spec(1, "Main", &["main"])], 1000, None);
+        assert!(changed);
+        assert_eq!(t.tabs.len(), 1);
+        assert_eq!(t.active_tab_index, 0);
+    }
 
-        let mut tabbed = TabbedTextContent::new(
-            vec![
-                (
-                    "Main".to_string(),
-                    vec!["main".to_string()],
-                    false,
-                    false,
-                    TimestampPosition::End,
-                ),
-                (
-                    "Combat".to_string(),
-                    vec!["combat".to_string()],
-                    true,
-                    false,
-                    TimestampPosition::Start,
-                ),
-            ],
-            1000,
-        );
-        tabbed.active_tab_index = 1; // Set to Combat tab
+    /// The bug the id key fixes: two tabs with the same name used to collapse
+    /// into one map slot and one of them lost its buffer on any structural
+    /// change. Removing one now leaves the other's scrollback intact.
+    #[test]
+    fn update_tabs_keeps_a_duplicate_named_survivor_buffer() {
+        let mut t = tabbed(vec![
+            spec(1, "Combat", &["combat"]),
+            spec(2, "Combat", &["death"]),
+            spec(3, "Loot", &["loot"]),
+        ]);
+        push_line(&mut t, 2, "second combat tab line");
 
-        // Remove Combat tab - should return true and fix active_tab_index
-        let changed = tabbed.update_tabs(
-            vec![(
-                "Main".to_string(),
-                vec!["main".to_string()],
-                false,
-                false,
-                TimestampPosition::End,
-            )],
+        let changed = t.update_tabs(
+            vec![spec(2, "Combat", &["death"]), spec(3, "Loot", &["loot"])],
             1000,
+            None,
         );
         assert!(changed);
-        assert_eq!(tabbed.tabs.len(), 1);
-        assert_eq!(tabbed.active_tab_index, 0); // Should be clamped
+        let survivor = &t.tabs[t.index_of(2).unwrap()];
+        assert_eq!(survivor.content.lines.len(), 1, "id 2's buffer must survive");
+        assert_eq!(survivor.definition.streams, vec!["death"]);
+    }
+
+    /// A rename is not a structural change: the id is the same, so the
+    /// buffer stays and only the definition refreshes.
+    #[test]
+    fn update_tabs_treats_a_rename_as_in_place() {
+        let mut t = tabbed(vec![spec(1, "Main", &["main"])]);
+        push_line(&mut t, 1, "hello");
+        let changed = t.update_tabs(vec![spec(1, "Story", &["main"])], 1000, None);
+        assert!(!changed);
+        assert_eq!(t.tabs[0].definition.name, "Story");
+        assert_eq!(t.tabs[0].content.lines.len(), 1);
+    }
+
+    /// Selection follows the active tab's id, not its index: with B active,
+    /// removing A must keep B on screen rather than sliding to C.
+    #[test]
+    fn update_tabs_keeps_the_active_tab_by_id_when_an_earlier_tab_goes() {
+        let mut t = tabbed(vec![spec(1, "A", &["a"]), spec(2, "B", &["b"]), spec(3, "C", &["c"])]);
+        t.active_tab_index = 1; // B
+        t.update_tabs(vec![spec(2, "B", &["b"]), spec(3, "C", &["c"])], 1000, None);
+        assert_eq!(t.active_tab_id(), Some(2));
+    }
+
+    /// Removing the active tab itself selects its right-hand neighbour (the
+    /// tab now at its old index), and the last tab when it was last.
+    #[test]
+    fn update_tabs_neighbour_rule_when_the_active_tab_goes() {
+        let mut t = tabbed(vec![spec(1, "A", &["a"]), spec(2, "B", &["b"]), spec(3, "C", &["c"])]);
+        t.active_tab_index = 1; // B
+        t.update_tabs(vec![spec(1, "A", &["a"]), spec(3, "C", &["c"])], 1000, None);
+        assert_eq!(t.active_tab_id(), Some(3), "right-hand neighbour");
+
+        let mut t = tabbed(vec![spec(1, "A", &["a"]), spec(2, "B", &["b"])]);
+        t.active_tab_index = 1; // B, last
+        t.update_tabs(vec![spec(1, "A", &["a"])], 1000, None);
+        assert_eq!(t.active_tab_id(), Some(1), "falls back to the last tab");
+    }
+
+    /// `keep_active` overrides the current selection and clears the chosen
+    /// tab's unread mark, as clicking it would.
+    #[test]
+    fn update_tabs_keep_active_selects_and_clears_unread() {
+        let mut t = tabbed(vec![spec(1, "A", &["a"]), spec(2, "B", &["b"])]);
+        t.tabs[1].has_unread = true;
+        t.update_tabs(
+            vec![spec(1, "A", &["a"]), spec(2, "B", &["b"]), spec(3, "C", &["c"])],
+            1000,
+            Some(2),
+        );
+        assert_eq!(t.active_tab_id(), Some(2));
+        assert!(!t.tabs[1].has_unread);
+    }
+
+    /// Reorder keeps every buffer and the active id.
+    #[test]
+    fn update_tabs_reorder_preserves_buffers_and_selection() {
+        let mut t = tabbed(vec![spec(1, "A", &["a"]), spec(2, "B", &["b"]), spec(3, "C", &["c"])]);
+        push_line(&mut t, 1, "a-line");
+        push_line(&mut t, 3, "c-line");
+        t.active_tab_index = 1; // B
+        let changed = t.update_tabs(
+            vec![spec(3, "C", &["c"]), spec(1, "A", &["a"]), spec(2, "B", &["b"])],
+            1000,
+            None,
+        );
+        assert!(changed);
+        assert_eq!(t.active_tab_id(), Some(2));
+        assert_eq!(t.tabs[t.index_of(1).unwrap()].content.lines.len(), 1);
+        assert_eq!(t.tabs[t.index_of(3).unwrap()].content.lines.len(), 1);
+    }
+
+    /// The tuple convenience constructor numbers ids 1..=n in order.
+    #[test]
+    fn tuple_constructor_assigns_sequential_ids() {
+        let t = TabbedTextContent::new(
+            vec![
+                ("A".to_string(), vec![], false, false, TimestampPosition::End),
+                ("B".to_string(), vec![], false, false, TimestampPosition::End),
+            ],
+            10,
+        );
+        assert_eq!(t.tabs[0].definition.id, 1);
+        assert_eq!(t.tabs[1].definition.id, 2);
     }
 }

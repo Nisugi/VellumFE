@@ -393,6 +393,8 @@ impl TabEditor {
         self.tabs
             .iter()
             .map(|t| TabbedTextTab {
+                // Unassigned: the sync boundary normalises ids on save.
+                id: 0,
                 name: t.name.clone(),
                 stream: None,
                 streams: t.streams.clone(),
