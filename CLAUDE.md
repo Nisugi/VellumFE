@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-VellumFE is a modern terminal client for GemStone IV (text-based MUD) built in Rust. It supports both TUI (ratatui) and GUI (egui, future) frontends with a shared core architecture.
+VellumFE is a modern client for GemStone IV (text-based MUD) built in Rust, GPL-3.0-or-later. A shared core drives four frontends: TUI (ratatui), GUI (egui), web (Despana, browser JS served by the Rust binary), and headless. Android/iOS build the library `--no-default-features` (core + parser + network + web + headless).
+
+### Cargo features
+
+`default = ["tui", "gui", "sound", "tts", "desktop", "gamepad"]`. The `vellum-fe` binary requires `tui,gui,desktop`. The feature split exists so the library builds for Android without them — when changing `core/`, `data/`, `parser/`, or `network.rs`, check `cargo test --no-default-features` still passes (CI gates this).
 
 ## Build Commands
 
@@ -35,6 +39,34 @@ cargo test -- --nocapture
 
 # Run with single thread (for tests with shared state)
 cargo test -- --test-threads=1
+
+# Feature-independent suite — gates the Android/web build (CI runs this)
+cargo test --no-default-features
+
+# Desktop launcher + web presentation without the TUI
+cargo build --no-default-features --features gui,desktop
+```
+
+### Despana (web frontend) tests
+
+Browser modules are plain ESM tested with Node 22's built-in runner — no npm
+install, no package.json step:
+
+```bash
+node --test src/frontend/web/assets/despana/*.test.mjs
+
+# End-to-end smoke test; needs Firefox + geckodriver on PATH
+# (override with FIREFOX=/abs/path GECKODRIVER=/abs/path)
+MOZ_HEADLESS=1 node --test src/frontend/web/assets/despana/browser-smoke.test.mjs
+```
+
+### Ignored / opt-in tests
+
+`tests/chokepoints.rs` needs a real Lich map database and is `#[ignore]`d:
+
+```bash
+VELLUM_LICH_GAME_DIR=C:/Gemstone/Lich5/data/GSIV \
+  cargo test --test chokepoints -- --ignored --nocapture
 ```
 
 ## Architecture
@@ -66,6 +98,9 @@ src/
 └── frontend/
     ├── mod.rs        # Frontend trait definition
     ├── common/       # Shared frontend types (Color, Rect, TextInput)
+    ├── gui/          # egui desktop frontend (app.rs is a facade; see caps)
+    ├── web/          # Despana: Rust server + assets/despana/*.mjs browser code
+    ├── headless/     # No-render runtime (Android/iOS host the web UI over it)
     └── tui/          # Ratatui terminal UI
         ├── mod.rs    # TuiFrontend struct
         ├── input.rs  # Keyboard/mouse event handling
@@ -76,9 +111,16 @@ src/
 
 ### Key Architectural Rules
 
-1. **Core layer has NO frontend imports** - `core/` and `data/` modules must not import from `frontend/` (enforced by `tests/architecture.rs`; input event types live in `data/input.rs` for this reason)
-2. **Frontend reads from data layer** - Frontends render by reading `AppCore.ui_state` and `AppCore.game_state`
-3. **Widget data vs rendering** - `data/widget.rs` defines data, `frontend/tui/*.rs` handles rendering
+`tests/architecture.rs` enforces these mechanically — run `cargo test --test architecture` after structural changes:
+
+1. **Core layer has NO frontend imports** - `core/` and `data/` must not import from `frontend/`, nor reference `egui` (input event types live in `data/input.rs` for this reason)
+2. **`core/` stays Android-safe** - no desktop-only APIs, so the `--no-default-features` build keeps working
+3. **`gui/` must not reference `tui/`** - the two frontends are siblings, not layers
+4. **Facade line caps** - split parents hold type definitions and dispatchers only; new methods go in the matching submodule. If a cap trips, **move code down, don't raise the cap**:
+   `gui/app.rs` 3600 · `core/app_core/state.rs` 2100 · `tui/window_editor.rs` 1700 · `core/messages.rs` 800 · `gui/app/widgets.rs` 700 · `parser.rs` 1100 · `config.rs` 700
+5. **Catalog access goes through the seams** - template enumeration, gating, and id-mapping are reachable only via `core::local_catalog` and `core::view_resolver` (or inside `config/`). The id-maps `dialog_id_to_template` / `stream_id_to_template` / `id_has_widget_template` are deleted; referencing them fails the test.
+6. **Frontend reads from data layer** - Frontends render by reading `AppCore.ui_state` and `AppCore.game_state`
+7. **Widget data vs rendering** - `data/widget.rs` defines data, `frontend/tui/*.rs` handles rendering
 
 ### Data Flow
 

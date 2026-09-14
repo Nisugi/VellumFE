@@ -3,8 +3,6 @@
 /target-verify
 # Local skin-asset scratch (Gemini-generated PNGs, prompt notes, dekey.py)
 /skins
-/Cargo.toml
-Cargo.lock
 .vscode/
 .idea/
 *.swp
@@ -14,7 +12,6 @@ Cargo.lock
 
 archive/
 design/
-docs/
 doculated/
 
 # Cache
@@ -61,7 +58,6 @@ docs_backup_*/
 *.egg
 .claude/settings.local.*.json
 .mypy_cache
-/CLAUDE.md
 logs/
 # Backups
 
@@ -110,3 +106,6 @@ Sa4dHKm0cLlY.yaml
 
 # mdbook build output (CI builds from book/src and deploys to Pages)
 book/book/
+
+# Captured cargo test output (local scratch)
+cargo-test.out
