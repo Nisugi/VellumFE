@@ -351,24 +351,26 @@ impl WindowEditor {
 
     pub(super) fn refresh_size_inputs(&mut self) {
         // Show total rows/cols (not content rows) - VellumFE style
-        self.rows_input = Self::textarea_with_value(self.window_def.base().rows.get().max(1));
-        self.cols_input = Self::textarea_with_value(self.window_def.base().cols.get().max(1));
+        self.rows_input =
+            Self::textarea_with_value(self.window_def.base().placement.rows.get().max(1));
+        self.cols_input =
+            Self::textarea_with_value(self.window_def.base().placement.cols.get().max(1));
 
         // Also refresh min/max inputs (they adjust with border changes)
         self.min_rows_input = Self::create_textarea();
-        if let Some(min_rows) = self.window_def.base().min_rows {
+        if let Some(min_rows) = self.window_def.base().placement.min_rows {
             self.min_rows_input.insert_str(min_rows.to_string());
         }
         self.min_cols_input = Self::create_textarea();
-        if let Some(min_cols) = self.window_def.base().min_cols {
+        if let Some(min_cols) = self.window_def.base().placement.min_cols {
             self.min_cols_input.insert_str(min_cols.to_string());
         }
         self.max_rows_input = Self::create_textarea();
-        if let Some(max_rows) = self.window_def.base().max_rows {
+        if let Some(max_rows) = self.window_def.base().placement.max_rows {
             self.max_rows_input.insert_str(max_rows.to_string());
         }
         self.max_cols_input = Self::create_textarea();
-        if let Some(max_cols) = self.window_def.base().max_cols {
+        if let Some(max_cols) = self.window_def.base().placement.max_cols {
             self.max_cols_input.insert_str(max_cols.to_string());
         }
     }
@@ -400,34 +402,34 @@ impl WindowEditor {
         }
 
         let mut row_input = Self::create_textarea();
-        row_input.insert_str(window_def.base().row.get().to_string());
+        row_input.insert_str(window_def.base().placement.row.get().to_string());
 
         let mut col_input = Self::create_textarea();
-        col_input.insert_str(window_def.base().col.get().to_string());
+        col_input.insert_str(window_def.base().placement.col.get().to_string());
 
         // Show total rows/cols (not content rows) - VellumFE style
         // User sets actual widget size; content adjusts based on borders
-        let rows_input = Self::textarea_with_value(window_def.base().rows.get().max(1));
+        let rows_input = Self::textarea_with_value(window_def.base().placement.rows.get().max(1));
 
-        let cols_input = Self::textarea_with_value(window_def.base().cols.get().max(1));
+        let cols_input = Self::textarea_with_value(window_def.base().placement.cols.get().max(1));
 
         let mut min_rows_input = Self::create_textarea();
-        if let Some(min_rows) = window_def.base().min_rows {
+        if let Some(min_rows) = window_def.base().placement.min_rows {
             min_rows_input.insert_str(min_rows.to_string());
         }
 
         let mut min_cols_input = Self::create_textarea();
-        if let Some(min_cols) = window_def.base().min_cols {
+        if let Some(min_cols) = window_def.base().placement.min_cols {
             min_cols_input.insert_str(min_cols.to_string());
         }
 
         let mut max_rows_input = Self::create_textarea();
-        if let Some(max_rows) = window_def.base().max_rows {
+        if let Some(max_rows) = window_def.base().placement.max_rows {
             max_rows_input.insert_str(max_rows.to_string());
         }
 
         let mut max_cols_input = Self::create_textarea();
-        if let Some(max_cols) = window_def.base().max_cols {
+        if let Some(max_cols) = window_def.base().placement.max_cols {
             max_cols_input.insert_str(max_cols.to_string());
         }
 
@@ -1042,10 +1044,17 @@ impl WindowEditor {
         // Create base configuration with defaults
         let base = WindowBase {
             name: String::new(),
-            row: crate::data::geometry::Row::new(0),
-            col: crate::data::geometry::Col::new(0),
-            rows: crate::data::geometry::Height::new(10),
-            cols: crate::data::geometry::Width::new(40),
+            placement: crate::config::TuiPlacement {
+                row: crate::data::geometry::Row::new(0),
+                col: crate::data::geometry::Col::new(0),
+                rows: crate::data::geometry::Height::new(10),
+                cols: crate::data::geometry::Width::new(40),
+                min_rows: None,
+                max_rows: None,
+                min_cols: None,
+                max_cols: None,
+                visibility: crate::config::WindowVisibility::Shown,
+            },
             show_border: true,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
@@ -1057,11 +1066,6 @@ impl WindowEditor {
             text_color: None,
             transparent_background: false,
             locked: false,
-            min_rows: None,
-            max_rows: None,
-            min_cols: None,
-            max_cols: None,
-            visibility: crate::config::WindowVisibility::Shown,
             binding: None,
             content_align: None,
             tts_speak: false,
@@ -1128,9 +1132,9 @@ impl WindowEditor {
         col_input.insert_str("0");
 
         // Show total rows/cols (not content rows) - VellumFE style
-        let rows_input = Self::textarea_with_value(window_def.base().rows.get().max(1));
+        let rows_input = Self::textarea_with_value(window_def.base().placement.rows.get().max(1));
 
-        let cols_input = Self::textarea_with_value(window_def.base().cols.get().max(1));
+        let cols_input = Self::textarea_with_value(window_def.base().placement.cols.get().max(1));
 
         let min_rows_input = Self::create_textarea();
         let min_cols_input = Self::create_textarea();

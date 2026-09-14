@@ -809,11 +809,19 @@ mod blank_tests {
 
     fn sample_base() -> WindowBase {
         WindowBase {
+            placement: TuiPlacement {
+                row: crate::data::geometry::Row::new(0),
+                col: crate::data::geometry::Col::new(0),
+                rows: crate::data::geometry::Height::new(3),
+                cols: crate::data::geometry::Width::new(20),
+                min_rows: None,
+                max_rows: None,
+                min_cols: None,
+                max_cols: None,
+                visibility: WindowVisibility::Shown,
+                ..Default::default()
+            },
             name: "test".to_string(),
-            row: crate::data::geometry::Row::new(0),
-            col: crate::data::geometry::Col::new(0),
-            rows: crate::data::geometry::Height::new(3),
-            cols: crate::data::geometry::Width::new(20),
             show_border: true,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
@@ -825,11 +833,6 @@ mod blank_tests {
             text_color: None,
             transparent_background: false,
             locked: false,
-            min_rows: None,
-            max_rows: None,
-            min_cols: None,
-            max_cols: None,
-            visibility: WindowVisibility::Shown,
             binding: None,
             content_align: None,
             tts_speak: false,

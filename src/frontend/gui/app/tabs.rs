@@ -281,34 +281,72 @@ impl VellumGuiApp {
         }
     }
 
-    /// Hide a window the authoritative way: flip its core WindowVisibility —
-    /// the same layer the Windows-window checkbox drives. Right-click Hide,
-    /// detached-viewport close, `.hidewindow`, and load-time extras all route
-    /// here, so "hide" and "uncheck" are one mechanism (auto-spawn suppressed,
-    /// checkbox reflects reality). The old `hidden_tabs` overlay survives only
-    /// to honor legacy layout files at restore time; any overlay mark for this
-    /// window is cleared so the two layers can never disagree. The stored rect
-    /// survives the hide (rect_survivor_keys) so a re-show lands in place.
-    pub(super) fn core_hide_tab(&mut self, key: &TabKey) {
-        let Some(name) = self
+    /// The GUI's ONE show/hide mechanism: flip `hidden_tabs`, the GUI's own
+    /// selection, and nothing else.
+    ///
+    /// `Layout.windows` is a catalog shared with the TUI, and
+    /// `placement.visibility` inside it is the TUI's selection. The GUI must
+    /// never write it: doing so removed the window from `ui_state`, printed
+    /// "Window 'X' hidden" + the ".savelayout" tip, and made a GUI
+    /// `.loadlayout` silently rewrite the TUI's layout. Everything stays
+    /// live (see `AppCore::init_windows_all_catalog`); the GUI simply does
+    /// not render a hidden tab. The stored rect survives the hide
+    /// (rect_survivor_keys) so a re-show lands in place.
+    ///
+    /// The dialog-popup allow-set is genuinely shared bookkeeping (which
+    /// dialogs may pop, not who shows what), so it is kept in sync through
+    /// the core helper `AppCore::sync_dialog_popup_allow_set`.
+    pub(super) fn gui_set_tab_shown(&mut self, key: &TabKey, shown: bool) {
+        if shown {
+            self.hidden_tabs.remove(key);
+        } else {
+            self.hidden_tabs.insert(key.clone());
+        }
+        if let Some(name) = self
             .available_tabs
             .get(key)
             .map(|tab| tab.window_name.clone())
-        else {
-            return;
-        };
-        self.core_hide_window_by_name(&name);
+        {
+            self.app_core.sync_dialog_popup_allow_set(&name, shown);
+        }
+        self.layout_dirty = true;
+    }
+
+    /// Hide a window: GUI-local, `hidden_tabs`-only. Right-click Hide,
+    /// detached-viewport close, `.hidewindow`, and load-time extras all route
+    /// here.
+    pub(super) fn core_hide_tab(&mut self, key: &TabKey) {
+        self.gui_set_tab_shown(key, false);
     }
 
     /// Name-keyed twin of [`Self::core_hide_tab`] for callers that start from
-    /// a window name (`.hidewindow <name>`).
+    /// a window name (`.hidewindow <name>`, the dialog `closeButton`).
     pub(super) fn core_hide_window_by_name(&mut self, name: &str) {
         if let Some(key) = self.find_tab_key_by_name(name) {
-            self.hidden_tabs.remove(&key);
+            self.gui_set_tab_shown(&key, false);
+        } else {
+            // Not a live tab (ephemeral panel / container window): the core
+            // ephemeral close path in core owns those, and it never touches
+            // the TUI's selection for them.
+            let (w, h) = self.core_layout_size;
+            self.app_core.close_ephemeral_known_window(name, w, h);
         }
+    }
+
+    /// Name-keyed show for a catalog window (quick switcher, Windows editor).
+    pub(super) fn gui_show_window_by_name(&mut self, name: &str) -> Option<TabKey> {
+        if let Some(key) = self.find_tab_key_by_name(name) {
+            self.gui_set_tab_shown(&key, true);
+            return Some(key);
+        }
+        // Never-materialized name (a template not yet in the catalog, an
+        // ephemeral container): core conjures it. This branch cannot reach
+        // core `hide_window`, so it writes no TUI visibility beyond the
+        // add-window path a GUI "add this window" request implies.
         let (w, h) = self.core_layout_size;
-        self.app_core.set_known_window_shown(name, false, w, h);
+        self.app_core.conjure_known_window(name, w, h);
         self.layout_dirty = true;
+        None
     }
 
     /// Find the live tab whose window matches `window_name` (bridges the

@@ -1009,56 +1009,31 @@ fn drop_tab_is_noop_when_key_absent() {
 }
 
 fn migration_test_layout() -> crate::config::Layout {
-    use crate::config::{BorderSides, CompassWidgetData, TextWidgetData, WindowBase, WindowDef};
-    let base = |name: &str| WindowBase {
-        name: name.to_string(),
-        row: crate::data::geometry::Row::new(0),
-        col: crate::data::geometry::Col::new(0),
-        rows: crate::data::geometry::Height::new(10),
-        cols: crate::data::geometry::Width::new(40),
-        show_border: true,
-        border_style: "single".to_string(),
-        border_sides: BorderSides::default(),
-        border_color: None,
-        show_title: true,
-        title: None,
-        title_position: "top-left".to_string(),
-        background_color: None,
-        text_color: None,
-        transparent_background: false,
-        locked: false,
-        min_rows: None,
-        max_rows: None,
-        min_cols: None,
-        max_cols: None,
-        visibility: crate::config::WindowVisibility::Shown,
-        binding: None,
-        content_align: None,
-        tts_speak: false,
-        text_size: None,
-        font_family: None,
-    };
+    // Built from catalog seeds rather than a hand-rolled `WindowBase` (which
+    // would need to name the TUI-only placement type the GUI must never
+    // reference — enforced by tests/architecture.rs
+    // gui_does_not_reference_tui_placement). Only the fields these
+    // migration tests actually exercise (text_size/font_family/wordwrap)
+    // are overridden; TUI placement stays whatever the seed defaults to.
+    use crate::config::{TextWidgetData, WindowDef};
+    let mut main = crate::core::local_catalog::seed("text_custom").expect("text_custom seed");
+    main.base_mut().name = "main".to_string();
+    if let WindowDef::Text { data, .. } = &mut main {
+        *data = TextWidgetData {
+            streams: vec!["main".to_string()],
+            buffer_size: 100,
+            wordwrap: true,
+            show_timestamps: false,
+            timestamp_position: None,
+            compact: false,
+        };
+    }
+
+    let mut compass = crate::core::local_catalog::seed("compass").expect("compass seed");
+    compass.base_mut().name = "compass".to_string();
+
     crate::config::Layout {
-        windows: vec![
-            WindowDef::Text {
-                base: base("main"),
-                data: TextWidgetData {
-                    streams: vec!["main".to_string()],
-                    buffer_size: 100,
-                    wordwrap: true,
-                    show_timestamps: false,
-                    timestamp_position: None,
-                    compact: false,
-                },
-            },
-            WindowDef::Compass {
-                base: base("compass"),
-                data: CompassWidgetData {
-                    active_color: None,
-                    inactive_color: None,
-                },
-            },
-        ],
+        windows: vec![main, compass],
         terminal_width: None,
         terminal_height: None,
         base_layout: None,
@@ -1550,7 +1525,10 @@ fn scroll_state_migrates_between_renderer_ids_under_different_parents() {
     let dst_area: egui::Id = ctx
         .data(|d| d.get_temp(egui::Id::new(("text_scroll_area_id", "dst"))))
         .expect("destination stashed its area id");
-    assert_ne!(dst_area, src_area, "different parent Ui ⇒ different area id");
+    assert_ne!(
+        dst_area, src_area,
+        "different parent Ui ⇒ different area id"
+    );
     let dst_state = egui::scroll_area::State::load(&ctx, dst_area).expect("dst scroll state");
     assert!(
         (dst_state.offset.y - 123.0).abs() < 1.0,

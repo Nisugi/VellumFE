@@ -9,9 +9,9 @@ impl WindowEditor {
         self.window_def.base_mut().name = self.name_input.lines()[0].to_string();
         self.window_def.base_mut().title =
             Some(self.title_input.lines()[0].to_string()).filter(|s| !s.is_empty());
-        self.window_def.base_mut().row =
+        self.window_def.base_mut().placement.row =
             crate::data::geometry::Row::new(self.row_input.lines()[0].parse().unwrap_or(0));
-        self.window_def.base_mut().col =
+        self.window_def.base_mut().placement.col =
             crate::data::geometry::Col::new(self.col_input.lines()[0].parse().unwrap_or(0));
         // Rows/cols is now total size (VellumFE style), not content size
         // User specifies actual widget dimensions; content adjusts based on borders
@@ -27,12 +27,14 @@ impl WindowEditor {
             .first()
             .and_then(|s| s.parse::<u16>().ok())
             .unwrap_or(40);
-        self.window_def.base_mut().rows = crate::data::geometry::Height::new(total_rows.max(1));
-        self.window_def.base_mut().cols = crate::data::geometry::Width::new(total_cols.max(1));
-        self.window_def.base_mut().min_rows = self.min_rows_input.lines()[0].parse().ok();
-        self.window_def.base_mut().min_cols = self.min_cols_input.lines()[0].parse().ok();
-        self.window_def.base_mut().max_rows = self.max_rows_input.lines()[0].parse().ok();
-        self.window_def.base_mut().max_cols = self.max_cols_input.lines()[0].parse().ok();
+        self.window_def.base_mut().placement.rows =
+            crate::data::geometry::Height::new(total_rows.max(1));
+        self.window_def.base_mut().placement.cols =
+            crate::data::geometry::Width::new(total_cols.max(1));
+        self.window_def.base_mut().placement.min_rows = self.min_rows_input.lines()[0].parse().ok();
+        self.window_def.base_mut().placement.min_cols = self.min_cols_input.lines()[0].parse().ok();
+        self.window_def.base_mut().placement.max_rows = self.max_rows_input.lines()[0].parse().ok();
+        self.window_def.base_mut().placement.max_cols = self.max_cols_input.lines()[0].parse().ok();
         self.window_def.base_mut().background_color =
             Some(self.bg_color_input.lines()[0].to_string()).filter(|s| !s.is_empty());
         self.window_def.base_mut().border_color =

@@ -275,16 +275,16 @@ fn convert_window(win_val: Value, verbose: bool) -> Result<Option<WindowDef>> {
     // Override base fields
     if let Some(base) = window.base_mut_opt() {
         if let Some(v) = get_u16(table, "row")? {
-            base.row = crate::data::geometry::Row::new(v);
+            base.placement.row = crate::data::geometry::Row::new(v);
         }
         if let Some(v) = get_u16(table, "col")? {
-            base.col = crate::data::geometry::Col::new(v);
+            base.placement.col = crate::data::geometry::Col::new(v);
         }
         if let Some(v) = get_u16(table, "rows")? {
-            base.rows = crate::data::geometry::Height::new(v);
+            base.placement.rows = crate::data::geometry::Height::new(v);
         }
         if let Some(v) = get_u16(table, "cols")? {
-            base.cols = crate::data::geometry::Width::new(v);
+            base.placement.cols = crate::data::geometry::Width::new(v);
         }
         if let Some(v) = get_bool(table, "show_border")? {
             base.show_border = v;
@@ -306,13 +306,13 @@ fn convert_window(win_val: Value, verbose: bool) -> Result<Option<WindowDef>> {
         // serde `alias = "visible"` never catches the old bool. Carry it over
         // explicitly, or a deliberately hidden window comes back visible.
         if let Some(v) = get_bool(table, "visible")? {
-            base.visibility = if v {
+            base.placement.visibility = if v {
                 crate::config::WindowVisibility::Shown
             } else {
                 crate::config::WindowVisibility::Hidden
             };
         } else if let Some(v) = get_str(table, "visibility")? {
-            base.visibility = match v.as_str() {
+            base.placement.visibility = match v.as_str() {
                 "hidden" => crate::config::WindowVisibility::Hidden,
                 "ephemeral" => crate::config::WindowVisibility::Ephemeral,
                 _ => crate::config::WindowVisibility::Shown,
@@ -322,16 +322,16 @@ fn convert_window(win_val: Value, verbose: bool) -> Result<Option<WindowDef>> {
             base.title = Some(v);
         }
         if let Some(v) = get_u16(table, "min_rows")? {
-            base.min_rows = Some(v);
+            base.placement.min_rows = Some(v);
         }
         if let Some(v) = get_u16(table, "max_rows")? {
-            base.max_rows = Some(v);
+            base.placement.max_rows = Some(v);
         }
         if let Some(v) = get_u16(table, "min_cols")? {
-            base.min_cols = Some(v);
+            base.placement.min_cols = Some(v);
         }
         if let Some(v) = get_u16(table, "max_cols")? {
-            base.max_cols = Some(v);
+            base.placement.max_cols = Some(v);
         }
         if let Some(v) = get_str(table, "content_align")? {
             base.content_align = Some(v);
@@ -826,7 +826,7 @@ visible = false
             .unwrap()
             .expect("window converts");
         assert!(
-            !out.base().visibility.is_shown(),
+            !out.base().placement.visibility.is_shown(),
             "legacy visible=false must migrate to Hidden"
         );
     }
@@ -843,7 +843,7 @@ visible = true
         let out = convert_window(table, false)
             .unwrap()
             .expect("window converts");
-        assert!(out.base().visibility.is_shown());
+        assert!(out.base().placement.visibility.is_shown());
     }
 
     // ===========================================

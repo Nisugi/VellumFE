@@ -389,8 +389,8 @@ pub struct GuiUiSettings {
 
     /// Theme (preset or custom name) at save time, so a checkpoint loaded on
     /// another profile reproduces the saver's look. The live source of truth
-    /// is config.active_theme; the save path stamps this and the load path
-    /// mirrors it back into config. None = legacy file from before themes
+    /// is this field itself (see `VellumGuiApp::gui_theme_id`); the load path
+    /// applies it directly. None = legacy file from before themes
     /// rode with layouts — loading one keeps the current theme.
     #[serde(default)]
     pub active_theme: Option<String>,

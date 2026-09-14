@@ -117,8 +117,9 @@ impl AppCore {
         let mut found_count = 0;
         let mut is_command_input = false;
         for window_def in self.layout.windows.iter_mut() {
-            if window_def.name() == name && window_def.base().visibility.is_shown() {
-                window_def.base_mut().visibility = crate::config::WindowVisibility::Hidden;
+            if window_def.name() == name && window_def.base().placement.visibility.is_shown() {
+                window_def.base_mut().placement.visibility =
+                    crate::config::WindowVisibility::Hidden;
                 is_command_input |= window_def.widget_type() == "command_input";
                 found_count += 1;
             }
@@ -207,6 +208,12 @@ impl AppCore {
         terminal_height: u16,
     ) -> Vec<String> {
         let mut created = Vec::new();
+        // Append-only union into the shared catalog. This is deliberately NOT
+        // `Layout::merge_loaded`: that hides every catalog window the loaded
+        // set doesn't name, which is the TUI's *selection* — a TUI
+        // `.loadlayout` owns it, a GUI checkpoint must never touch it (the
+        // GUI keeps its own selection in `hidden_tabs`). Defs already present
+        // are left untouched so live content survives.
         for def in defs {
             let name = def.name().to_string();
             if self.ui_state.windows.contains_key(&name) {
@@ -297,7 +304,7 @@ impl AppCore {
                             .binding
                             .as_ref()
                             .is_some_and(|b| b.id() == dialog_id)
-                            && w.base().visibility.is_shown()
+                            && w.base().placement.visibility.is_shown()
                     })
                     .map(|w| w.name().to_string())
                     .collect();
@@ -332,7 +339,7 @@ impl AppCore {
                     .windows
                     .iter()
                     .find(|w| w.name() == existing_name)
-                    .map(|w| w.base().visibility.is_shown())
+                    .map(|w| w.base().placement.visibility.is_shown())
                     .unwrap_or(false);
                 if shown && !self.ui_state.windows.contains_key(&existing_name) {
                     if let Some(def) = self
@@ -506,7 +513,7 @@ impl AppCore {
         };
         let mut def = self.layout.deleted_windows.remove(pos);
         // A restored window comes back visible (Ephemeral would not persist).
-        def.base_mut().visibility = crate::config::WindowVisibility::Shown;
+        def.base_mut().placement.visibility = crate::config::WindowVisibility::Shown;
         self.layout.windows.push(def);
         self.mark_layout_modified();
         // Rebuild the live windows so the restored def gets a UI window.
@@ -675,6 +682,65 @@ impl AppCore {
     /// - a session-only EPHEMERAL window (container, ad-hoc panel): create
     ///   or remove the runtime window.
     /// - the bank-style POPUP: materialize from / clear active_dialog.
+    /// Keep the dialog-popup allow-set (`ui_state.shown_dialog_ids`) in sync
+    /// with a show/hide decision about the layout window `name` — but ONLY
+    /// for dialogs that render as a transient popup (bank/shop). A
+    /// DialogPanel widget (combat, UberBar) renders the dialog store IN THE
+    /// PANEL; adding its id here would ALSO pop it up as an active_dialog,
+    /// producing a duplicate (an empty panel + a populated popup, or
+    /// vice-versa). So a panel-bound dialog must stay out of the set.
+    ///
+    /// This bookkeeping is frontend-agnostic (it is about which dialogs may
+    /// pop, not about anyone's selection), so it is shared: the TUI reaches
+    /// it through `set_known_window_shown`, and the GUI calls it directly
+    /// from its `hidden_tabs`-only show/hide (`gui_set_tab_shown`) because
+    /// the GUI must never write `placement.visibility`.
+    pub fn sync_dialog_popup_allow_set(&mut self, name: &str, shown: bool) {
+        let Some(win) = self.layout.windows.iter().find(|w| w.name() == name) else {
+            return;
+        };
+        let is_dialog_panel = matches!(win, crate::config::WindowDef::DialogPanel { .. });
+        let Some(crate::config::WindowBinding::Dialog(id)) = win.base().binding.clone() else {
+            return;
+        };
+        if is_dialog_panel {
+            return;
+        }
+        if shown {
+            self.ui_state.shown_dialog_ids.insert(id);
+        } else {
+            self.ui_state.shown_dialog_ids.remove(&id);
+        }
+    }
+
+    /// GUI entry point for "make this named window exist and be live".
+    ///
+    /// The GUI's selection is `hidden_tabs`, so it never hides through core.
+    /// But a name that is not yet a live tab (an unmaterialized template, a
+    /// remembered binding, an ephemeral container) has to be CONJURED into
+    /// the shared catalog first — a catalog mutation, not a selection
+    /// change. This wrapper exposes exactly that half of
+    /// `set_known_window_shown`, so `frontend/gui` needs no reference to the
+    /// show/hide selection API (enforced by tests/architecture.rs).
+    pub fn conjure_known_window(&mut self, name: &str, terminal_width: u16, terminal_height: u16) {
+        self.set_known_window_shown(name, true, terminal_width, terminal_height);
+    }
+
+    /// GUI entry point for closing a window that is NOT a live layout tab —
+    /// an ephemeral container or ad-hoc panel. Layout windows are the GUI's
+    /// own `hidden_tabs` business and are deliberately ignored here.
+    pub fn close_ephemeral_known_window(
+        &mut self,
+        name: &str,
+        terminal_width: u16,
+        terminal_height: u16,
+    ) {
+        if self.layout.windows.iter().any(|w| w.name() == name) {
+            return;
+        }
+        self.set_known_window_shown(name, false, terminal_width, terminal_height);
+    }
+
     pub fn set_known_window_shown(
         &mut self,
         name: &str,
@@ -683,23 +749,8 @@ impl AppCore {
         terminal_height: u16,
     ) {
         // Persistent layout window? (streams, dialog panels, plain widgets)
-        if let Some(win) = self.layout.windows.iter().find(|w| w.name() == name) {
-            // Keep the dialog-popup allow-set in sync — but ONLY for dialogs
-            // that render as a transient popup (bank/shop). A DialogPanel
-            // widget (combat, UberBar) renders the dialog store IN THE PANEL;
-            // adding its id here would ALSO pop it up as an active_dialog,
-            // producing a duplicate (an empty panel + a populated popup, or
-            // vice-versa). So a panel-bound dialog must stay out of the set.
-            let is_dialog_panel = matches!(win, crate::config::WindowDef::DialogPanel { .. });
-            if let Some(crate::config::WindowBinding::Dialog(id)) = win.base().binding.clone() {
-                if !is_dialog_panel {
-                    if shown {
-                        self.ui_state.shown_dialog_ids.insert(id);
-                    } else {
-                        self.ui_state.shown_dialog_ids.remove(&id);
-                    }
-                }
-            }
+        if self.layout.windows.iter().any(|w| w.name() == name) {
+            self.sync_dialog_popup_allow_set(name, shown);
             if shown {
                 self.show_window(name, terminal_width, terminal_height);
             } else {
@@ -856,7 +907,7 @@ impl AppCore {
                     .windows
                     .iter()
                     .find(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
-                    .map(|w| (w.name().to_string(), w.base().visibility));
+                    .map(|w| (w.name().to_string(), w.base().placement.visibility));
                 if let Some((name, visibility)) = target {
                     use crate::config::WindowVisibility;
                     if visibility == WindowVisibility::Hidden {
@@ -984,11 +1035,11 @@ impl AppCore {
         if let Some(hpx) = h {
             // Content px → cells (~16px rows) + title-bar row.
             let rows = ((hpx / 16.0).ceil() as u16 + 1).clamp(3, 80);
-            base.rows = crate::data::geometry::Height::new(rows);
+            base.placement.rows = crate::data::geometry::Height::new(rows);
         }
         if let Some(wpx) = w {
             let cols = ((wpx / 8.0).ceil() as u16 + 2).clamp(12, 240);
-            base.cols = crate::data::geometry::Width::new(cols);
+            base.placement.cols = crate::data::geometry::Width::new(cols);
         }
         self.mark_layout_modified();
     }
@@ -1111,7 +1162,7 @@ impl AppCore {
                 // Freshly discovered windows are Hidden (U3:
                 // hidden-by-default); this is where a future policy
                 // (e.g. resident streams shown) would flip it.
-                def.base_mut().visibility = WindowVisibility::Hidden;
+                def.base_mut().placement.visibility = WindowVisibility::Hidden;
                 // Wire the widget to its game feed by id.
                 match (d.kind, def) {
                     // A stream text window subscribes to the stream id.
@@ -1356,10 +1407,17 @@ impl AppCore {
 
         let base = WindowBase {
             name: name.to_string(),
-            row: crate::data::geometry::Row::new(y),
-            col: crate::data::geometry::Col::new(x),
-            rows: crate::data::geometry::Height::new(height),
-            cols: crate::data::geometry::Width::new(width),
+            placement: crate::config::TuiPlacement {
+                row: crate::data::geometry::Row::new(y),
+                col: crate::data::geometry::Col::new(x),
+                rows: crate::data::geometry::Height::new(height),
+                cols: crate::data::geometry::Width::new(width),
+                min_rows: None,
+                max_rows: None,
+                min_cols: None,
+                max_cols: None,
+                visibility: crate::config::WindowVisibility::Shown,
+            },
             show_border: true,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
@@ -1371,11 +1429,6 @@ impl AppCore {
             text_color: None,
             transparent_background: false,
             locked: false,
-            min_rows: None,
-            max_rows: None,
-            min_cols: None,
-            max_cols: None,
-            visibility: crate::config::WindowVisibility::Shown,
             binding: None,
             content_align: None,
             tts_speak: false,
@@ -1483,10 +1536,17 @@ impl AppCore {
 
         let base = crate::config::WindowBase {
             name: name.clone(),
-            row: crate::data::geometry::Row::new(0),
-            col: crate::data::geometry::Col::new(0),
-            rows: crate::data::geometry::Height::new(height),
-            cols: crate::data::geometry::Width::new(width),
+            placement: crate::config::TuiPlacement {
+                row: crate::data::geometry::Row::new(0),
+                col: crate::data::geometry::Col::new(0),
+                rows: crate::data::geometry::Height::new(height),
+                cols: crate::data::geometry::Width::new(width),
+                min_rows: None,
+                max_rows: None,
+                min_cols: None,
+                max_cols: None,
+                visibility: crate::config::WindowVisibility::Shown,
+            },
             show_border: true,
             border_style: "single".to_string(),
             border_sides: crate::config::BorderSides::default(),
@@ -1498,11 +1558,6 @@ impl AppCore {
             text_color: None,
             transparent_background: false,
             locked: false,
-            min_rows: None,
-            max_rows: None,
-            min_cols: None,
-            max_cols: None,
-            visibility: crate::config::WindowVisibility::Shown,
             binding: None,
             content_align: None,
             tts_speak: false,

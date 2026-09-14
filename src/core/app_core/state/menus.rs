@@ -636,7 +636,7 @@ impl AppCore {
                     .filter(|name| {
                         self.layout
                             .get_window(name)
-                            .map(|w| !w.base().visibility.is_shown())
+                            .map(|w| !w.base().placement.visibility.is_shown())
                             .unwrap_or(true)
                     })
                     .map(|name| {
@@ -666,7 +666,7 @@ impl AppCore {
                 .filter(|name| {
                     self.layout
                         .get_window(name)
-                        .map(|w| !w.base().visibility.is_shown())
+                        .map(|w| !w.base().placement.visibility.is_shown())
                         .unwrap_or(true)
                 })
                 .collect();
@@ -761,7 +761,7 @@ impl AppCore {
                 title: base.title.clone().unwrap_or(name),
                 kind,
                 widget_type: w.widget_type().to_string(),
-                shown: base.visibility.is_shown(),
+                shown: base.placement.visibility.is_shown(),
                 ephemeral: false,
             });
         }
@@ -1269,7 +1269,7 @@ impl AppCore {
         let hidden = self
             .layout
             .get_window(name)
-            .is_some_and(|w| !w.base().visibility.is_shown());
+            .is_some_and(|w| !w.base().placement.visibility.is_shown());
         if hidden {
             format!("{} (hidden)", display)
         } else {

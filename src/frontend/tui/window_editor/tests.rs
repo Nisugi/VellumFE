@@ -3,16 +3,24 @@
 //! `use super::*` semantics are identical to the inline mod.
 
 use super::*;
-use crate::config::{Layout, SpacerWidgetData};
+use crate::config::{Layout, SpacerWidgetData, TuiPlacement};
 
 /// A throwaway WindowBase for field-order tests.
 fn test_base(name: &str) -> crate::config::WindowBase {
     crate::config::WindowBase {
+        placement: TuiPlacement {
+            row: crate::data::geometry::Row::new(0),
+            col: crate::data::geometry::Col::new(0),
+            rows: crate::data::geometry::Height::new(5),
+            cols: crate::data::geometry::Width::new(20),
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
+            visibility: crate::config::WindowVisibility::Shown,
+            ..Default::default()
+        },
         name: name.to_string(),
-        row: crate::data::geometry::Row::new(0),
-        col: crate::data::geometry::Col::new(0),
-        rows: crate::data::geometry::Height::new(5),
-        cols: crate::data::geometry::Width::new(20),
         show_border: true,
         border_style: "single".to_string(),
         border_sides: crate::config::BorderSides::default(),
@@ -23,11 +31,6 @@ fn test_base(name: &str) -> crate::config::WindowBase {
         text_color: None,
         transparent_background: false,
         locked: false,
-        min_rows: None,
-        max_rows: None,
-        min_cols: None,
-        max_cols: None,
-        visibility: crate::config::WindowVisibility::Shown,
         binding: None,
         content_align: None,
         tts_speak: false,
@@ -148,11 +151,19 @@ fn test_new_window_spacer_auto_naming_existing_spacers() {
     // RED: Test that new_window_with_layout generates next sequential name
     let spacer1 = WindowDef::Spacer {
         base: crate::config::WindowBase {
+            placement: TuiPlacement {
+                row: crate::data::geometry::Row::new(0),
+                col: crate::data::geometry::Col::new(0),
+                rows: crate::data::geometry::Height::new(2),
+                cols: crate::data::geometry::Width::new(5),
+                min_rows: None,
+                max_rows: None,
+                min_cols: None,
+                max_cols: None,
+                visibility: crate::config::WindowVisibility::Shown,
+                ..Default::default()
+            },
             name: "spacer_1".to_string(),
-            row: crate::data::geometry::Row::new(0),
-            col: crate::data::geometry::Col::new(0),
-            rows: crate::data::geometry::Height::new(2),
-            cols: crate::data::geometry::Width::new(5),
             show_border: false,
             border_style: "single".to_string(),
             border_sides: crate::config::BorderSides::default(),
@@ -163,11 +174,6 @@ fn test_new_window_spacer_auto_naming_existing_spacers() {
             text_color: None,
             transparent_background: false,
             locked: false,
-            min_rows: None,
-            max_rows: None,
-            min_cols: None,
-            max_cols: None,
-            visibility: crate::config::WindowVisibility::Shown,
             binding: None,
             content_align: None,
             tts_speak: false,

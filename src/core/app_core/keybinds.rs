@@ -410,11 +410,13 @@ impl AppCore {
         // Build window def from template and override geometry from UI config
         let mut window_def = self.build_perf_overlay_def();
         window_def.base_mut().name = OVERLAY_NAME.to_string();
-        window_def.base_mut().row = crate::data::geometry::Row::new(self.config.ui.perf_stats_y);
-        window_def.base_mut().col = crate::data::geometry::Col::new(self.config.ui.perf_stats_x);
-        window_def.base_mut().rows =
+        window_def.base_mut().placement.row =
+            crate::data::geometry::Row::new(self.config.ui.perf_stats_y);
+        window_def.base_mut().placement.col =
+            crate::data::geometry::Col::new(self.config.ui.perf_stats_x);
+        window_def.base_mut().placement.rows =
             crate::data::geometry::Height::new(self.config.ui.perf_stats_height.max(1));
-        window_def.base_mut().cols =
+        window_def.base_mut().placement.cols =
             crate::data::geometry::Width::new(self.config.ui.perf_stats_width.max(1));
 
         // Add to UI state only (does not touch layout)
@@ -487,18 +489,29 @@ impl AppCore {
         {
             let mut base = base;
             // Override position/size with config.ui settings
-            base.row = crate::data::geometry::Row::new(self.config.ui.perf_stats_y);
-            base.col = crate::data::geometry::Col::new(self.config.ui.perf_stats_x);
-            base.rows = crate::data::geometry::Height::new(self.config.ui.perf_stats_height.max(1));
-            base.cols = crate::data::geometry::Width::new(self.config.ui.perf_stats_width.max(1));
+            base.placement.row = crate::data::geometry::Row::new(self.config.ui.perf_stats_y);
+            base.placement.col = crate::data::geometry::Col::new(self.config.ui.perf_stats_x);
+            base.placement.rows =
+                crate::data::geometry::Height::new(self.config.ui.perf_stats_height.max(1));
+            base.placement.cols =
+                crate::data::geometry::Width::new(self.config.ui.perf_stats_width.max(1));
             base
         } else {
             WindowBase {
                 name: "performance".to_string(),
-                row: crate::data::geometry::Row::new(self.config.ui.perf_stats_y),
-                col: crate::data::geometry::Col::new(self.config.ui.perf_stats_x),
-                rows: crate::data::geometry::Height::new(self.config.ui.perf_stats_height.max(1)),
-                cols: crate::data::geometry::Width::new(self.config.ui.perf_stats_width.max(1)),
+                placement: crate::config::TuiPlacement {
+                    row: crate::data::geometry::Row::new(self.config.ui.perf_stats_y),
+                    col: crate::data::geometry::Col::new(self.config.ui.perf_stats_x),
+                    rows: crate::data::geometry::Height::new(
+                        self.config.ui.perf_stats_height.max(1),
+                    ),
+                    cols: crate::data::geometry::Width::new(self.config.ui.perf_stats_width.max(1)),
+                    min_rows: None,
+                    max_rows: None,
+                    min_cols: None,
+                    max_cols: None,
+                    visibility: crate::config::WindowVisibility::Shown,
+                },
                 show_border: true,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -510,11 +523,6 @@ impl AppCore {
                 text_color: None,
                 transparent_background: false,
                 locked: false,
-                min_rows: None,
-                max_rows: None,
-                min_cols: None,
-                max_cols: None,
-                visibility: crate::config::WindowVisibility::Shown,
                 binding: None,
                 content_align: None,
                 tts_speak: false,

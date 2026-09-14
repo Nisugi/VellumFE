@@ -447,13 +447,13 @@ impl WindowEditor {
                             if prev_show && !self.betrayer_show_items {
                                 // Toggling OFF - set rows to just bar + borders
                                 let ideal_rows_off = bar_rows + border_rows;
-                                base.rows = crate::data::geometry::Height::new(
+                                base.placement.rows = crate::data::geometry::Height::new(
                                     ideal_rows_off.max(min_rows).min(max_rows),
                                 );
                             } else if !prev_show && self.betrayer_show_items {
                                 // Toggling ON - add 1 item row (minimum)
                                 let ideal_rows_on = bar_rows + 1 + border_rows;
-                                base.rows = crate::data::geometry::Height::new(
+                                base.placement.rows = crate::data::geometry::Height::new(
                                     ideal_rows_on.max(min_rows).min(max_rows),
                                 );
                             }

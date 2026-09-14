@@ -1495,11 +1495,22 @@ impl VellumGuiApp {
                 }
             }
 
-            // Side effects for the keys that just changed. Theme needs no
-            // explicit hook: apply_theme_if_changed watches
-            // config.active_theme every frame. (active_skin left the
-            // registry for the appearance store — the Appearance menus
-            // and .setskin write it directly.)
+            // Side effects for the keys that just changed.
+            // `active_theme` is a registry-backed config.toml setting (the
+            // TUI's theme slot); this editor IS the config editor, so it
+            // still writes it there via (def.set). But the GUI renders from
+            // its OWN slot (`ui_settings.active_theme`, see `gui_theme_id`),
+            // so mirror the user's explicit choice across — otherwise the
+            // combo box would appear to do nothing in the GUI.
+            if applied.iter().any(|key| *key == "active_theme") {
+                if let Some(DraftValue::Text(chosen)) = state.drafts.get("active_theme") {
+                    let chosen = chosen.clone();
+                    self.set_gui_theme_id(&chosen);
+                    self.applied_theme_id = None;
+                }
+            }
+            // (active_skin left the registry for the appearance store — the
+            // Appearance menus and .setskin write it directly.)
             if applied
                 .iter()
                 .any(|key| key.starts_with("map.") || *key == "connection.game")

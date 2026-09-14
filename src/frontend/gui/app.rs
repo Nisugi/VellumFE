@@ -37,8 +37,10 @@ mod global_input;
 mod interact;
 mod launch;
 mod layout_persistence;
+mod layout_undo;
 mod map_explorer;
 mod menus;
+mod quick_switcher;
 mod render_settings;
 mod room_sync;
 mod search_bar;
@@ -46,8 +48,6 @@ mod server_pump;
 mod skins;
 mod snap;
 mod status_icons;
-mod layout_undo;
-mod quick_switcher;
 mod tab_drag;
 mod tab_join;
 mod tabs;
@@ -775,7 +775,8 @@ impl VellumGuiApp {
             initial_width.max(1.0) as u16,
             initial_height.max(1.0) as u16,
         );
-        app_core.init_windows(core_layout_size.0, core_layout_size.1);
+        // GUI selection is `hidden_tabs`; the whole catalog goes live here.
+        app_core.init_windows_all_catalog(core_layout_size.0, core_layout_size.1);
         // This frontend drains disconnect_requested each frame, so keep-open
         // `.quit` works.
         app_core.detach_quit_supported = true;
@@ -963,7 +964,10 @@ impl VellumGuiApp {
             ui_settings,
             tab_settings,
             main_viewport: main_viewport_state,
+            newly_hidden_catalog_windows,
         } = Self::restore_layout_state(persisted_layout.as_ref(), &available_tabs);
+
+        Self::report_newly_hidden_catalog_windows(&mut app_core, &newly_hidden_catalog_windows);
 
         // The live-manifest skin runtime is gone: any active_skin still on
         // record (layout copy or appearance store) is a legacy skin to
@@ -1721,38 +1725,7 @@ impl VellumGuiApp {
             A::LoadLayout {
                 name: Some(name),
                 keep_skin,
-            } => {
-                match load_named_layout(&name) {
-                    Ok(layout) => {
-                        self.apply_layout_snapshot(&layout, keep_skin);
-                        // Persist the loaded arrangement to the auto-save slot
-                        // RIGHT NOW, not just via the 2s debounce. Loading a
-                        // layout is a deliberate, infrequent choice, and a user
-                        // who X-es or kills the window before the debounce fires
-                        // would otherwise lose it — the exact "it never saves my
-                        // .loadlayout" report. Also persist the core TOML
-                        // (window defs) so a rebuilt window set survives too.
-                        self.save_layout_state();
-                        self.app_core.autosave_layout();
-                        self.layout_dirty = false;
-                        self.layout_dirty_since = None;
-                        self.app_core.add_system_message(&format!(
-                            "Loaded GUI layout '{}'{}.",
-                            name,
-                            if keep_skin {
-                                " (keeping your skin/theme)"
-                            } else {
-                                ""
-                            }
-                        ));
-                    }
-                    Err(err) => {
-                        self.app_core
-                            .add_system_message(&format!("Failed to load layout: {}", err));
-                        self.list_layout_checkpoints();
-                    }
-                }
-            }
+            } => self.load_layout_by_name(&name, keep_skin),
             A::ListLayouts => self.list_layout_checkpoints(),
             A::AnchorInfer => self.anchor_infer(),
             A::ResizeLayout(None) => {

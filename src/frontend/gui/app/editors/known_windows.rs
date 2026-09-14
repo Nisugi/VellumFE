@@ -285,7 +285,13 @@ impl VellumGuiApp {
         // Apply deferred actions.
         let (w, h) = self.core_layout_size;
         if let Some((name, shown)) = toggle {
-            self.app_core.set_known_window_shown(&name, shown, w, h);
+            // GUI selection only: hidden_tabs, never the TUI's
+            // placement.visibility (see `gui_set_tab_shown`).
+            if shown {
+                self.gui_show_window_by_name(&name);
+            } else {
+                self.core_hide_window_by_name(&name);
+            }
         }
         if let Some((name, zone)) = zone_change {
             if let Some(key) = self.find_tab_key_by_name(&name) {

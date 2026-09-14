@@ -67,6 +67,103 @@ fn gui_does_not_reference_tui() {
 }
 
 #[test]
+fn gui_does_not_reference_tui_placement() {
+    // TuiPlacement (src/config/widgets.rs) is TUI-only per-window state
+    // (terminal-cell geometry, TUI show/hide selection), flattened into
+    // WindowBase's on-disk shape but split out as its own type specifically
+    // so the GUI cannot reach it — the GUI has its own selection/placement
+    // (hidden_tabs, main_window_rects/zones/groups). Reaching `.placement`
+    // or naming `TuiPlacement` from GUI code reintroduces the coupling that
+    // caused loading a layout in one frontend to wreck the other's tab set.
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut violations = Vec::new();
+    scan_dir(
+        &src.join("frontend/gui"),
+        &[".placement", "TuiPlacement"],
+        &mut violations,
+    );
+    assert!(
+        violations.is_empty(),
+        "frontend/gui/ must not reference WindowBase.placement or TuiPlacement — \
+         the GUI has its own selection/placement (hidden_tabs, main_window_rects/zones/groups).\n\
+         Violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn gui_does_not_use_tui_show_hide_selection() {
+    // `placement.visibility` is the TUI's SELECTION of which catalog windows
+    // it shows; the GUI's selection is `hidden_tabs` in its own
+    // layout_v1.json. Core's `set_known_window_shown` / `hide_window` /
+    // `show_window` all write the TUI slot (plus a "Window 'X' hidden"
+    // message and the ".savelayout" tip), so GUI code must not call them —
+    // a GUI hide goes through `VellumGuiApp::gui_set_tab_shown`, and the
+    // shared dialog-popup bookkeeping through
+    // `AppCore::sync_dialog_popup_allow_set`.
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut violations = Vec::new();
+    scan_dir(
+        &src.join("frontend/gui"),
+        &["set_known_window_shown(", ".hide_window(", ".show_window("],
+        &mut violations,
+    );
+    assert!(
+        violations.is_empty(),
+        "frontend/gui/ must not drive the TUI's show/hide selection. \
+         Use VellumGuiApp::gui_set_tab_shown (hidden_tabs) instead.\nViolations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn gui_does_not_assign_config_active_theme() {
+    // Theme is presentation, so it is per-frontend: `config.active_theme`
+    // (per-character config.toml) is the TUI's slot; `ui_settings
+    // .active_theme` (layout_v1.json) is the GUI's. The GUI must never
+    // ASSIGN the TUI's slot. Reads are allowed only in the single
+    // first-run fallback `VellumGuiApp::gui_theme_id`, which lives in
+    // src/frontend/gui/app/theme.rs — the one allowlisted file.
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut violations = Vec::new();
+    scan_dir(
+        &src.join("frontend/gui"),
+        &["config.active_theme ="],
+        &mut violations,
+    );
+    assert!(
+        violations.is_empty(),
+        "frontend/gui/ must not assign config.active_theme (the TUI's theme slot). \
+         Write the GUI slot via VellumGuiApp::set_gui_theme_id instead.\nViolations:\n{}",
+        violations.join("\n")
+    );
+
+    // And the read side: only the documented fallback file may read it, and
+    // only in real code (prose mentions are fine anywhere).
+    let mut reads = Vec::new();
+    scan_dir(
+        &src.join("frontend/gui"),
+        &["config.active_theme"],
+        &mut reads,
+    );
+    let stray: Vec<&String> = reads
+        .iter()
+        .filter(|v| {
+            let code = v.rsplit_once(": ").map(|(_, c)| c).unwrap_or(v);
+            !code.starts_with("//")
+        })
+        .filter(|v| !v.replace(char::from(92u8), "/").contains("app/theme.rs"))
+        .collect();
+    assert!(
+        stray.is_empty(),
+        "config.active_theme may only be read in the documented first-run \
+         fallback (VellumGuiApp::gui_theme_id, src/frontend/gui/app/theme.rs).\
+         \nViolations:\n{:#?}",
+        stray
+    );
+}
+
+#[test]
 fn core_and_data_do_not_reference_egui() {
     // Rendering stays in frontends: core/, data/, and config/ must compile
     // without any UI toolkit.

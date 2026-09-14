@@ -215,10 +215,17 @@ impl Config {
         // Create base defaults that all windows share
         let base_defaults = WindowBase {
             name: String::new(), // Will be overridden
-            row: Row::new(0),
-            col: Col::new(0),
-            rows: Height::new(10),
-            cols: Width::new(40),
+            placement: TuiPlacement {
+                row: Row::new(0),
+                col: Col::new(0),
+                rows: Height::new(10),
+                cols: Width::new(40),
+                min_rows: None,
+                max_rows: None,
+                min_cols: None,
+                max_cols: None,
+                visibility: crate::config::WindowVisibility::Shown,
+            },
             show_border: true,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
@@ -230,11 +237,6 @@ impl Config {
             text_color: None,
             transparent_background: false,
             locked: false,
-            min_rows: None,
-            max_rows: None,
-            min_cols: None,
-            max_cols: None,
-            visibility: crate::config::WindowVisibility::Shown,
             binding: None,
             content_align: None,
             tts_speak: false,
@@ -254,10 +256,13 @@ impl Config {
         match name {
             "main" => Some(WindowDef::Text {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(37),
+                        cols: Width::new(120),
+                        ..Default::default()
+                    },
                     name: "main".to_string(),
                     title: Some("Story".to_string()),
-                    rows: Height::new(37),
-                    cols: Width::new(120),
                     locked: true,
                     ..base_defaults
                 },
@@ -273,11 +278,14 @@ impl Config {
 
             "room" => Some(WindowDef::Room {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(80),
+                        min_rows: Some(5),
+                        ..Default::default()
+                    },
                     name: "room".to_string(),
                     title: Some("Room".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(80),
-                    min_rows: Some(5),
                     ..base_defaults.clone()
                 },
                 data: RoomWidgetData {
@@ -292,11 +300,14 @@ impl Config {
 
             "inventory" => Some(WindowDef::Inventory {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(20),
+                        cols: Width::new(40),
+                        min_rows: Some(4),
+                        ..Default::default()
+                    },
                     name: "inventory".to_string(),
                     title: Some("Inventory".to_string()),
-                    rows: Height::new(20),
-                    cols: Width::new(40),
-                    min_rows: Some(4),
                     ..base_defaults.clone()
                 },
                 data: InventoryWidgetData {
@@ -309,11 +320,14 @@ impl Config {
 
             "reserve" => Some(WindowDef::Reserve {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(20),
+                        cols: Width::new(40),
+                        min_rows: Some(4),
+                        ..Default::default()
+                    },
                     name: "reserve".to_string(),
                     title: Some("Reserve".to_string()),
-                    rows: Height::new(20),
-                    cols: Width::new(40),
-                    min_rows: Some(4),
                     ..base_defaults.clone()
                 },
                 data: InventoryWidgetData {
@@ -326,12 +340,15 @@ impl Config {
 
             "command_input" => Some(WindowDef::CommandInput {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(1),
+                        cols: Width::new(120),
+                        min_rows: Some(1),
+                        max_rows: Some(1),
+                        ..Default::default()
+                    },
                     name: "command_input".to_string(),
                     title: Some("Command Input".to_string()),
-                    rows: Height::new(1),
-                    cols: Width::new(120),
-                    min_rows: Some(1),
-                    max_rows: Some(1),
                     locked: true,
                     ..base_defaults.clone()
                 },
@@ -340,12 +357,15 @@ impl Config {
 
             "quickbar" => Some(WindowDef::Quickbar {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(3),
+                        cols: Width::new(120),
+                        min_rows: Some(3),
+                        max_rows: Some(3),
+                        ..Default::default()
+                    },
                     name: "quickbar".to_string(),
                     title: Some("Quickbar".to_string()),
-                    rows: Height::new(3),
-                    cols: Width::new(120),
-                    min_rows: Some(3),
-                    max_rows: Some(3),
                     show_border: true,
                     show_title: false,
                     ..base_defaults.clone()
@@ -355,12 +375,15 @@ impl Config {
 
             "hotkeybar" => Some(WindowDef::Hotkeybar {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(3),
+                        cols: Width::new(60),
+                        min_rows: Some(3),
+                        max_rows: Some(3),
+                        ..Default::default()
+                    },
                     name: "hotkeybar".to_string(),
                     title: Some("Actions".to_string()),
-                    rows: Height::new(3),
-                    cols: Width::new(60),
-                    min_rows: Some(3),
-                    max_rows: Some(3),
                     show_border: true,
                     show_title: false,
                     ..base_defaults.clone()
@@ -373,15 +396,18 @@ impl Config {
 
             "health" => Some(WindowDef::Progress {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        min_rows: Some(3),
+                        max_rows: Some(3),
+                        ..Default::default()
+                    },
                     name: "health".to_string(),
                     title: Some("Health".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
-                    min_rows: Some(3),
-                    max_rows: Some(3),
                     ..base_defaults.clone()
                 },
                 data: ProgressWidgetData {
@@ -394,14 +420,17 @@ impl Config {
             }),
             "performance" => Some(WindowDef::Performance {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(10),
+                        cols: Width::new(40),
+                        min_rows: Some(4),
+                        min_cols: Some(20),
+                        ..Default::default()
+                    },
                     name: "performance".to_string(),
                     title: Some("Performance Stats".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(10),
-                    cols: Width::new(40),
-                    min_rows: Some(4),
-                    min_cols: Some(20),
                     ..base_defaults.clone()
                 },
                 data: PerformanceWidgetData {
@@ -425,15 +454,18 @@ impl Config {
 
             "mana" => Some(WindowDef::Progress {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        min_rows: Some(3),
+                        max_rows: Some(3),
+                        ..Default::default()
+                    },
                     name: "mana".to_string(),
                     title: Some("Mana".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
-                    min_rows: Some(3),
-                    max_rows: Some(3),
                     ..base_defaults.clone()
                 },
                 data: ProgressWidgetData {
@@ -447,15 +479,18 @@ impl Config {
 
             "stamina" => Some(WindowDef::Progress {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        min_rows: Some(3),
+                        max_rows: Some(3),
+                        ..Default::default()
+                    },
                     name: "stamina".to_string(),
                     title: Some("Stamina".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
-                    min_rows: Some(3),
-                    max_rows: Some(3),
                     ..base_defaults.clone()
                 },
                 data: ProgressWidgetData {
@@ -468,27 +503,33 @@ impl Config {
             }),
             "quests" => Some(WindowDef::Quests {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(14),
+                        cols: Width::new(45),
+                        min_rows: Some(4),
+                        min_cols: Some(20),
+                        ..Default::default()
+                    },
                     name: "quests".to_string(),
                     title: Some("Quests".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(14),
-                    cols: Width::new(45),
-                    min_rows: Some(4),
-                    min_cols: Some(20),
                     ..base_defaults.clone()
                 },
             }),
             "targets" => Some(WindowDef::Targets {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(10),
+                        cols: Width::new(40),
+                        min_rows: Some(4),
+                        min_cols: Some(20),
+                        ..Default::default()
+                    },
                     name: "targets".to_string(),
                     title: Some("Targets".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(10),
-                    cols: Width::new(40),
-                    min_rows: Some(4),
-                    min_cols: Some(20),
                     ..base_defaults.clone()
                 },
                 data: TargetsWidgetData {
@@ -499,28 +540,34 @@ impl Config {
             }),
             "creaturefield" => Some(WindowDef::CreatureField {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(16),
+                        cols: Width::new(60),
+                        min_rows: Some(8),
+                        min_cols: Some(30),
+                        ..Default::default()
+                    },
                     name: "creaturefield".to_string(),
                     title: Some("Creature Field".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(16),
-                    cols: Width::new(60),
-                    min_rows: Some(8),
-                    min_cols: Some(30),
                     ..base_defaults.clone()
                 },
                 data: CreatureFieldWidgetData::default(),
             }),
             "players" => Some(WindowDef::Players {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(10),
+                        cols: Width::new(40),
+                        min_rows: Some(4),
+                        min_cols: Some(20),
+                        ..Default::default()
+                    },
                     name: "players".to_string(),
                     title: Some("Players".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(10),
-                    cols: Width::new(40),
-                    min_rows: Some(4),
-                    min_cols: Some(20),
                     ..base_defaults.clone()
                 },
                 data: PlayersWidgetData {
@@ -529,14 +576,17 @@ impl Config {
             }),
             "items" => Some(WindowDef::Items {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(10),
+                        cols: Width::new(40),
+                        min_rows: Some(4),
+                        min_cols: Some(20),
+                        ..Default::default()
+                    },
                     name: "items".to_string(),
                     title: Some("Items".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(10),
-                    cols: Width::new(40),
-                    min_rows: Some(4),
-                    min_cols: Some(20),
                     ..base_defaults.clone()
                 },
                 data: ItemsWidgetData {
@@ -546,14 +596,17 @@ impl Config {
 
             "entity_custom" => Some(WindowDef::Targets {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(10),
+                        cols: Width::new(40),
+                        min_rows: Some(4),
+                        min_cols: Some(20),
+                        ..Default::default()
+                    },
                     name: String::new(), // Auto-generated by WindowEditor
                     title: Some("Custom".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(10),
-                    cols: Width::new(40),
-                    min_rows: Some(4),
-                    min_cols: Some(20),
                     ..base_defaults.clone()
                 },
                 data: TargetsWidgetData {
@@ -565,14 +618,17 @@ impl Config {
 
             "dashboard" => Some(WindowDef::Dashboard {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(10),
+                        min_rows: Some(1),
+                        min_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "dashboard".to_string(),
                     title: Some("Dashboard".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(10),
-                    min_rows: Some(1),
-                    min_cols: Some(1),
                     ..base_defaults.clone()
                 },
                 data: DashboardWidgetData {
@@ -588,16 +644,19 @@ impl Config {
 
             "poisoned" => Some(WindowDef::Indicator {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(2),
+                        cols: Width::new(1),
+                        min_rows: Some(2),
+                        max_rows: Some(2),
+                        min_cols: Some(1),
+                        max_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "poisoned".to_string(),
                     title: Some("Poisoned".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(2),
-                    cols: Width::new(1),
-                    min_rows: Some(2),
-                    max_rows: Some(2),
-                    min_cols: Some(1),
-                    max_cols: Some(1),
                     show_border: false,
                     ..base_defaults.clone()
                 },
@@ -613,16 +672,19 @@ impl Config {
             }),
             "bleeding" => Some(WindowDef::Indicator {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(2),
+                        cols: Width::new(1),
+                        min_rows: Some(2),
+                        max_rows: Some(2),
+                        min_cols: Some(1),
+                        max_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "bleeding".to_string(),
                     title: Some("Bleeding".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(2),
-                    cols: Width::new(1),
-                    min_rows: Some(2),
-                    max_rows: Some(2),
-                    min_cols: Some(1),
-                    max_cols: Some(1),
                     show_border: false,
                     ..base_defaults.clone()
                 },
@@ -637,16 +699,19 @@ impl Config {
             }),
             "diseased" => Some(WindowDef::Indicator {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(2),
+                        cols: Width::new(1),
+                        min_rows: Some(2),
+                        max_rows: Some(2),
+                        min_cols: Some(1),
+                        max_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "diseased".to_string(),
                     title: Some("Diseased".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(2),
-                    cols: Width::new(1),
-                    min_rows: Some(2),
-                    max_rows: Some(2),
-                    min_cols: Some(1),
-                    max_cols: Some(1),
                     show_border: false,
                     ..base_defaults.clone()
                 },
@@ -661,16 +726,19 @@ impl Config {
             }),
             "stunned" => Some(WindowDef::Indicator {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(2),
+                        cols: Width::new(1),
+                        min_rows: Some(2),
+                        max_rows: Some(2),
+                        min_cols: Some(1),
+                        max_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "stunned".to_string(),
                     title: Some("Stunned".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(2),
-                    cols: Width::new(1),
-                    min_rows: Some(2),
-                    max_rows: Some(2),
-                    min_cols: Some(1),
-                    max_cols: Some(1),
                     show_border: false,
                     ..base_defaults.clone()
                 },
@@ -685,16 +753,19 @@ impl Config {
             }),
             "webbed" => Some(WindowDef::Indicator {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(2),
+                        cols: Width::new(1),
+                        min_rows: Some(2),
+                        max_rows: Some(2),
+                        min_cols: Some(1),
+                        max_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "webbed".to_string(),
                     title: Some("Webbed".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(2),
-                    cols: Width::new(1),
-                    min_rows: Some(2),
-                    max_rows: Some(2),
-                    min_cols: Some(1),
-                    max_cols: Some(1),
                     show_border: false,
                     ..base_defaults.clone()
                 },
@@ -719,16 +790,19 @@ impl Config {
             // is a TUI-side fallback chosen to be present in the bundled fonts.
             "standing" => Some(WindowDef::Indicator {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(2),
+                        cols: Width::new(1),
+                        min_rows: Some(2),
+                        max_rows: Some(2),
+                        min_cols: Some(1),
+                        max_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "standing".to_string(),
                     title: Some("Standing".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(2),
-                    cols: Width::new(1),
-                    min_rows: Some(2),
-                    max_rows: Some(2),
-                    min_cols: Some(1),
-                    max_cols: Some(1),
                     show_border: false,
                     ..base_defaults.clone()
                 },
@@ -743,16 +817,19 @@ impl Config {
             }),
             "kneeling" => Some(WindowDef::Indicator {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(2),
+                        cols: Width::new(1),
+                        min_rows: Some(2),
+                        max_rows: Some(2),
+                        min_cols: Some(1),
+                        max_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "kneeling".to_string(),
                     title: Some("Kneeling".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(2),
-                    cols: Width::new(1),
-                    min_rows: Some(2),
-                    max_rows: Some(2),
-                    min_cols: Some(1),
-                    max_cols: Some(1),
                     show_border: false,
                     ..base_defaults.clone()
                 },
@@ -767,16 +844,19 @@ impl Config {
             }),
             "sitting" => Some(WindowDef::Indicator {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(2),
+                        cols: Width::new(1),
+                        min_rows: Some(2),
+                        max_rows: Some(2),
+                        min_cols: Some(1),
+                        max_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "sitting".to_string(),
                     title: Some("Sitting".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(2),
-                    cols: Width::new(1),
-                    min_rows: Some(2),
-                    max_rows: Some(2),
-                    min_cols: Some(1),
-                    max_cols: Some(1),
                     show_border: false,
                     ..base_defaults.clone()
                 },
@@ -791,16 +871,19 @@ impl Config {
             }),
             "prone" => Some(WindowDef::Indicator {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(2),
+                        cols: Width::new(1),
+                        min_rows: Some(2),
+                        max_rows: Some(2),
+                        min_cols: Some(1),
+                        max_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "prone".to_string(),
                     title: Some("Prone".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(2),
-                    cols: Width::new(1),
-                    min_rows: Some(2),
-                    max_rows: Some(2),
-                    min_cols: Some(1),
-                    max_cols: Some(1),
                     show_border: false,
                     ..base_defaults.clone()
                 },
@@ -815,16 +898,19 @@ impl Config {
             }),
             "hidden" => Some(WindowDef::Indicator {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(2),
+                        cols: Width::new(1),
+                        min_rows: Some(2),
+                        max_rows: Some(2),
+                        min_cols: Some(1),
+                        max_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "hidden".to_string(),
                     title: Some("Hidden".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(2),
-                    cols: Width::new(1),
-                    min_rows: Some(2),
-                    max_rows: Some(2),
-                    min_cols: Some(1),
-                    max_cols: Some(1),
                     show_border: false,
                     ..base_defaults.clone()
                 },
@@ -839,16 +925,19 @@ impl Config {
             }),
             "invisible" => Some(WindowDef::Indicator {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(2),
+                        cols: Width::new(1),
+                        min_rows: Some(2),
+                        max_rows: Some(2),
+                        min_cols: Some(1),
+                        max_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "invisible".to_string(),
                     title: Some("Invisible".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(2),
-                    cols: Width::new(1),
-                    min_rows: Some(2),
-                    max_rows: Some(2),
-                    min_cols: Some(1),
-                    max_cols: Some(1),
                     show_border: false,
                     ..base_defaults.clone()
                 },
@@ -863,16 +952,19 @@ impl Config {
             }),
             "joined" => Some(WindowDef::Indicator {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(2),
+                        cols: Width::new(1),
+                        min_rows: Some(2),
+                        max_rows: Some(2),
+                        min_cols: Some(1),
+                        max_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "joined".to_string(),
                     title: Some("Joined".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(2),
-                    cols: Width::new(1),
-                    min_rows: Some(2),
-                    max_rows: Some(2),
-                    min_cols: Some(1),
-                    max_cols: Some(1),
                     show_border: false,
                     ..base_defaults.clone()
                 },
@@ -887,16 +979,19 @@ impl Config {
             }),
             "dead" => Some(WindowDef::Indicator {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(2),
+                        cols: Width::new(1),
+                        min_rows: Some(2),
+                        max_rows: Some(2),
+                        min_cols: Some(1),
+                        max_cols: Some(1),
+                        ..Default::default()
+                    },
                     name: "dead".to_string(),
                     title: Some("Dead".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(2),
-                    cols: Width::new(1),
-                    min_rows: Some(2),
-                    max_rows: Some(2),
-                    min_cols: Some(1),
-                    max_cols: Some(1),
                     show_border: false,
                     ..base_defaults.clone()
                 },
@@ -912,15 +1007,18 @@ impl Config {
 
             "spirit" => Some(WindowDef::Progress {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        min_rows: Some(3),
+                        max_rows: Some(3),
+                        ..Default::default()
+                    },
                     name: "spirit".to_string(),
                     title: Some("Spirit".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
-                    min_rows: Some(3),
-                    max_rows: Some(3),
                     ..base_defaults.clone()
                 },
                 data: ProgressWidgetData {
@@ -935,15 +1033,18 @@ impl Config {
             // DR-specific: Concentration bar (4th vital in DragonRealms)
             "concentration" => Some(WindowDef::Progress {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        min_rows: Some(3),
+                        max_rows: Some(3),
+                        ..Default::default()
+                    },
                     name: "concentration".to_string(),
                     title: Some("Concentration".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
-                    min_rows: Some(3),
-                    max_rows: Some(3),
                     ..base_defaults.clone()
                 },
                 data: ProgressWidgetData {
@@ -957,15 +1058,18 @@ impl Config {
 
             "stance" => Some(WindowDef::Progress {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        min_rows: Some(3),
+                        max_rows: Some(3),
+                        ..Default::default()
+                    },
                     name: "stance".to_string(),
                     title: Some("Stance".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
-                    min_rows: Some(3),
-                    max_rows: Some(3),
                     ..base_defaults.clone()
                 },
                 data: ProgressWidgetData {
@@ -979,15 +1083,18 @@ impl Config {
 
             "progress_custom" => Some(WindowDef::Progress {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        min_rows: Some(3),
+                        max_rows: Some(3),
+                        ..Default::default()
+                    },
                     name: String::new(), // Auto-generated by WindowEditor
                     title: Some("Custom".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
-                    min_rows: Some(3),
-                    max_rows: Some(3),
                     ..base_defaults.clone()
                 },
                 data: ProgressWidgetData {
@@ -1001,12 +1108,15 @@ impl Config {
 
             "roundtime" => Some(WindowDef::Countdown {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        ..Default::default()
+                    },
                     name: "roundtime".to_string(),
                     title: Some("RT".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
                     text_color: Some("#FF0000".to_string()), // Red
                     ..base_defaults.clone()
@@ -1024,12 +1134,15 @@ impl Config {
 
             "casttime" => Some(WindowDef::Countdown {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        ..Default::default()
+                    },
                     name: "casttime".to_string(),
                     title: Some("Cast".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
                     text_color: Some("#00BFFF".to_string()), // Deep sky blue
                     ..base_defaults.clone()
@@ -1051,12 +1164,15 @@ impl Config {
             // during the min..max window instead of the widget blanking.
             "pulse" => Some(WindowDef::Countdown {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        ..Default::default()
+                    },
                     name: "pulse".to_string(),
                     title: Some("Pulse".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
                     text_color: Some("#9370DB".to_string()), // Medium purple
                     ..base_defaults.clone()
@@ -1076,12 +1192,15 @@ impl Config {
 
             "stuntime" => Some(WindowDef::Countdown {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        ..Default::default()
+                    },
                     name: "stuntime".to_string(),
                     title: Some("Stun".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
                     text_color: Some("#FFFF00".to_string()), // Yellow
                     ..base_defaults.clone()
@@ -1100,12 +1219,15 @@ impl Config {
             // Aimed-shot timer (AimTimerDialog on the wire); GS4-only.
             "aimtime" => Some(WindowDef::Countdown {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        ..Default::default()
+                    },
                     name: "aimtime".to_string(),
                     title: Some("Aim".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
                     text_color: Some("#FFA500".to_string()), // Orange
                     ..base_defaults.clone()
@@ -1123,12 +1245,15 @@ impl Config {
 
             "countdown_custom" => Some(WindowDef::Countdown {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        ..Default::default()
+                    },
                     name: String::new(), // Auto-generated by WindowEditor
                     title: Some("Custom".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1145,15 +1270,18 @@ impl Config {
 
             "map" => Some(WindowDef::Map {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(12),
+                        cols: Width::new(30),
+                        min_rows: Some(5),
+                        min_cols: Some(10),
+                        ..Default::default()
+                    },
                     name: "map".to_string(),
                     title: Some("Map".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(12),
-                    cols: Width::new(30),
                     show_border: true,
-                    min_rows: Some(5),
-                    min_cols: Some(10),
                     ..base_defaults.clone()
                 },
                 data: MapWidgetData::default(),
@@ -1161,15 +1289,18 @@ impl Config {
 
             "compass" => Some(WindowDef::Compass {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(5), // 3 for compass grid + 2 for border
+                        cols: Width::new(9),  // 7 for compass grid + 2 for border
+                        min_rows: Some(3),
+                        min_cols: Some(7),
+                        ..Default::default()
+                    },
                     name: "compass".to_string(),
                     title: Some("Compass".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(5), // 3 for compass grid + 2 for border
-                    cols: Width::new(9),  // 7 for compass grid + 2 for border
                     show_border: true,
-                    min_rows: Some(3),
-                    min_cols: Some(7),
                     content_align: Some("center".to_string()),
                     ..base_defaults.clone()
                 },
@@ -1181,15 +1312,18 @@ impl Config {
 
             "injuries" | "injury_doll" => Some(WindowDef::InjuryDoll {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(8), // 6 for injury doll + 2 for border
+                        cols: Width::new(10), // 8 for injury doll (5+3 for labels) + 2 for border
+                        min_rows: Some(6),
+                        min_cols: Some(8),
+                        ..Default::default()
+                    },
                     name: "injuries".to_string(),
                     title: Some("Injuries".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(8), // 6 for injury doll + 2 for border
-                    cols: Width::new(10), // 8 for injury doll (5+3 for labels) + 2 for border
                     show_border: true,
-                    min_rows: Some(6),
-                    min_cols: Some(8),
                     content_align: Some("center".to_string()),
                     ..base_defaults.clone()
                 },
@@ -1207,10 +1341,13 @@ impl Config {
 
             "buffs" => Some(WindowDef::ActiveEffects {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(30),
+                        ..Default::default()
+                    },
                     name: "buffs".to_string(),
                     title: Some("Buffs".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(30),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1221,10 +1358,13 @@ impl Config {
 
             "debuffs" => Some(WindowDef::ActiveEffects {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(30),
+                        ..Default::default()
+                    },
                     name: "debuffs".to_string(),
                     title: Some("Debuffs".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(30),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1235,10 +1375,13 @@ impl Config {
 
             "cooldowns" => Some(WindowDef::ActiveEffects {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(30),
+                        ..Default::default()
+                    },
                     name: "cooldowns".to_string(),
                     title: Some("Cooldowns".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(30),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1249,10 +1392,13 @@ impl Config {
 
             "active_spells" => Some(WindowDef::ActiveEffects {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(30),
+                        ..Default::default()
+                    },
                     name: "active_spells".to_string(),
                     title: Some("Active Spells".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(30),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1266,10 +1412,13 @@ impl Config {
             // ticking, no new renderer.
             "alert_timers" => Some(WindowDef::ActiveEffects {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(30),
+                        ..Default::default()
+                    },
                     name: "alert_timers".to_string(),
                     title: Some("Timers".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(30),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1280,10 +1429,13 @@ impl Config {
 
             "active_effects_custom" => Some(WindowDef::ActiveEffects {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(30),
+                        ..Default::default()
+                    },
                     name: String::new(), // Auto-generated by WindowEditor
                     title: Some("Custom".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(30),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1294,15 +1446,18 @@ impl Config {
 
             "left" => Some(WindowDef::Hand {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        min_rows: Some(3),
+                        max_rows: Some(3),
+                        ..Default::default()
+                    },
                     name: "left".to_string(),
                     title: Some("Left Hand".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
-                    min_rows: Some(3),
-                    max_rows: Some(3),
                     ..base_defaults.clone()
                 },
                 data: HandWidgetData {
@@ -1315,15 +1470,18 @@ impl Config {
 
             "right" => Some(WindowDef::Hand {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        min_rows: Some(3),
+                        max_rows: Some(3),
+                        ..Default::default()
+                    },
                     name: "right".to_string(),
                     title: Some("Right Hand".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
-                    min_rows: Some(3),
-                    max_rows: Some(3),
                     ..base_defaults.clone()
                 },
                 data: HandWidgetData {
@@ -1336,15 +1494,18 @@ impl Config {
 
             "spell" => Some(WindowDef::Hand {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3),
+                        cols: Width::new(20),
+                        min_rows: Some(3),
+                        max_rows: Some(3),
+                        ..Default::default()
+                    },
                     name: "spell".to_string(),
                     title: Some("Spell".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3),
-                    cols: Width::new(20),
                     show_border: true,
-                    min_rows: Some(3),
-                    max_rows: Some(3),
                     ..base_defaults.clone()
                 },
                 data: HandWidgetData {
@@ -1358,10 +1519,13 @@ impl Config {
             // Text window templates for common streams
             "thoughts" => Some(WindowDef::Text {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(40),
+                        ..Default::default()
+                    },
                     name: "thoughts".to_string(),
                     title: Some("Thoughts".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1377,10 +1541,13 @@ impl Config {
 
             "speech" => Some(WindowDef::Text {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(40),
+                        ..Default::default()
+                    },
                     name: "speech".to_string(),
                     title: Some("Speech".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1396,10 +1563,13 @@ impl Config {
 
             "bestiary" => Some(WindowDef::Text {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(24),
+                        cols: Width::new(69),
+                        ..Default::default()
+                    },
                     name: "bestiary".to_string(),
                     title: Some("Bestiary".to_string()),
-                    rows: Height::new(24),
-                    cols: Width::new(69),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1418,10 +1588,13 @@ impl Config {
 
             "announcements" => Some(WindowDef::Text {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(50),
+                        ..Default::default()
+                    },
                     name: "announcements".to_string(),
                     title: Some("Announcements".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(50),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1437,10 +1610,13 @@ impl Config {
 
             "loot" => Some(WindowDef::Text {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(40),
+                        ..Default::default()
+                    },
                     name: "loot".to_string(),
                     title: Some("Loot".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1456,10 +1632,13 @@ impl Config {
 
             "death" => Some(WindowDef::Text {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(40),
+                        ..Default::default()
+                    },
                     name: "death".to_string(),
                     title: Some("Death".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1475,10 +1654,13 @@ impl Config {
 
             "logons" => Some(WindowDef::Text {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(40),
+                        ..Default::default()
+                    },
                     name: "logons".to_string(),
                     title: Some("Logons".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1494,10 +1676,13 @@ impl Config {
 
             "familiar" => Some(WindowDef::Text {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(40),
+                        ..Default::default()
+                    },
                     name: "familiar".to_string(),
                     title: Some("Familiar".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1513,10 +1698,13 @@ impl Config {
 
             "ambients" => Some(WindowDef::Text {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(40),
+                        ..Default::default()
+                    },
                     name: "ambients".to_string(),
                     title: Some("Ambients".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1532,10 +1720,13 @@ impl Config {
 
             "bounty" => Some(WindowDef::Text {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(15),
+                        cols: Width::new(50),
+                        ..Default::default()
+                    },
                     name: "bounty".to_string(),
                     title: Some("Bounties".to_string()),
-                    rows: Height::new(15),
-                    cols: Width::new(50),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1551,10 +1742,13 @@ impl Config {
 
             "society" => Some(WindowDef::Text {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(15),
+                        cols: Width::new(50),
+                        ..Default::default()
+                    },
                     name: "society".to_string(),
                     title: Some("Society Tasks".to_string()),
-                    rows: Height::new(15),
-                    cols: Width::new(50),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1570,10 +1764,13 @@ impl Config {
 
             "text_custom" => Some(WindowDef::Text {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(40),
+                        ..Default::default()
+                    },
                     name: String::new(),
                     title: None,
-                    rows: Height::new(10),
-                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1589,10 +1786,13 @@ impl Config {
 
             "spells" => Some(WindowDef::Spells {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(20),
+                        cols: Width::new(40),
+                        ..Default::default()
+                    },
                     name: "spells".to_string(),
                     title: Some("Spells".to_string()),
-                    rows: Height::new(20),
-                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1601,10 +1801,13 @@ impl Config {
 
             "chat" => Some(WindowDef::TabbedText {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(60),
+                        ..Default::default()
+                    },
                     name: "chat".to_string(),
                     title: Some("Chat".to_string()),
-                    rows: Height::new(10),
-                    cols: Width::new(60),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1668,10 +1871,13 @@ impl Config {
             }),
             "tabbedtext_custom" => Some(WindowDef::TabbedText {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(10),
+                        cols: Width::new(60),
+                        ..Default::default()
+                    },
                     name: String::new(),
                     title: None,
-                    rows: Height::new(10),
-                    cols: Width::new(60),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1698,11 +1904,14 @@ impl Config {
 
             "spacer" => Some(WindowDef::Spacer {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        rows: Height::new(2),
+                        cols: Width::new(2),
+                        ..Default::default()
+                    },
                     name: String::new(), // Will be set by caller with auto-generated name
-                    rows: Height::new(2),
-                    cols: Width::new(2),
-                    show_border: false,            // Spacers never show borders
-                    show_title: false,             // Spacers never show titles
+                    show_border: false,  // Spacers never show borders
+                    show_title: false,   // Spacers never show titles
                     transparent_background: false, // Respects theme background color
                     ..base_defaults
                 },
@@ -1711,28 +1920,34 @@ impl Config {
 
             "multiaccount" => Some(WindowDef::MultiAccount {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(12),
+                        cols: Width::new(46),
+                        min_rows: Some(6),
+                        min_cols: Some(24),
+                        ..Default::default()
+                    },
                     name: "multiaccount".to_string(),
                     title: Some("Characters".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(12),
-                    cols: Width::new(46),
-                    min_rows: Some(6),
-                    min_cols: Some(24),
                     ..base_defaults.clone()
                 },
                 data: MultiAccountWidgetData::default(),
             }),
             "missingspells" => Some(WindowDef::MissingSpells {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(8),
+                        cols: Width::new(28),
+                        min_rows: Some(3),
+                        min_cols: Some(14),
+                        ..Default::default()
+                    },
                     name: "missingspells".to_string(),
                     title: Some("Missing Spells".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(8),
-                    cols: Width::new(28),
-                    min_rows: Some(3),
-                    min_cols: Some(14),
                     ..base_defaults.clone()
                 },
                 data: MissingSpellsWidgetData {},
@@ -1740,14 +1955,17 @@ impl Config {
             // Managed-inventory container tree (extended feed, .invsync)
             "containers" => Some(WindowDef::Containers {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(20),
+                        cols: Width::new(40),
+                        min_rows: Some(5),
+                        min_cols: Some(20),
+                        ..Default::default()
+                    },
                     name: "containers".to_string(),
                     title: Some("Containers".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(20),
-                    cols: Width::new(40),
-                    min_rows: Some(5),
-                    min_cols: Some(20),
                     ..base_defaults.clone()
                 },
                 data: ContainersWidgetData {},
@@ -1755,28 +1973,34 @@ impl Config {
             // Bestiary browser (GUI app-style pages over the bundled codex)
             "bestiaryview" => Some(WindowDef::BestiaryView {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(24),
+                        cols: Width::new(60),
+                        min_rows: Some(8),
+                        min_cols: Some(30),
+                        ..Default::default()
+                    },
                     name: "bestiaryview".to_string(),
                     title: Some("Bestiary Browser".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(24),
-                    cols: Width::new(60),
-                    min_rows: Some(8),
-                    min_cols: Some(30),
                     ..base_defaults.clone()
                 },
                 data: BestiaryViewWidgetData {},
             }),
             "perception" => Some(WindowDef::Perception {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(20),
+                        cols: Width::new(40),
+                        min_rows: Some(5),
+                        min_cols: Some(20),
+                        ..Default::default()
+                    },
                     name: "perception".to_string(),
                     title: Some("Perceptions".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(20),
-                    cols: Width::new(40),
-                    min_rows: Some(5),
-                    min_cols: Some(20),
                     ..base_defaults.clone()
                 },
                 data: PerceptionWidgetData {
@@ -1791,14 +2015,17 @@ impl Config {
             // DR-specific: Experience window (skill training status)
             "experience" => Some(WindowDef::Experience {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(20),
+                        cols: Width::new(35),
+                        min_rows: Some(5),
+                        min_cols: Some(20),
+                        ..Default::default()
+                    },
                     name: "experience".to_string(),
                     title: Some("Experience".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(20),
-                    cols: Width::new(35),
-                    min_rows: Some(5),
-                    min_cols: Some(20),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1809,15 +2036,18 @@ impl Config {
 
             "gs4_experience" => Some(WindowDef::GS4Experience {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(5), // 3 default content rows (level, mind, exp) + 2 borders
+                        cols: Width::new(30),
+                        min_rows: Some(3), // 1 content row + borders (fields are toggleable)
+                        max_rows: Some(7), // 5 content rows (level, mind, exp, total, ascension) + borders
+                        min_cols: Some(20),
+                        ..Default::default()
+                    },
                     name: "gs4_experience".to_string(),
                     title: Some("Experience".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(5), // 3 default content rows (level, mind, exp) + 2 borders
-                    cols: Width::new(30),
-                    min_rows: Some(3), // 1 content row + borders (fields are toggleable)
-                    max_rows: Some(7), // 5 content rows (level, mind, exp, total, ascension) + borders
-                    min_cols: Some(20),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1835,15 +2065,18 @@ impl Config {
 
             "encum" => Some(WindowDef::Encumbrance {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(4), // 1 bar + 1 label + 2 borders = 4 total
+                        cols: Width::new(25),
+                        min_rows: Some(3), // 1 content row + borders (bar/label are toggleable)
+                        max_rows: Some(4), // Maximum with borders + label
+                        min_cols: Some(15),
+                        ..Default::default()
+                    },
                     name: "encum".to_string(),
                     title: Some("Encumbrance".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(4), // 1 bar + 1 label + 2 borders = 4 total
-                    cols: Width::new(25),
-                    min_rows: Some(3), // 1 content row + borders (bar/label are toggleable)
-                    max_rows: Some(4), // Maximum with borders + label
-                    min_cols: Some(15),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1860,15 +2093,18 @@ impl Config {
 
             "minivitals" => Some(WindowDef::MiniVitals {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(3), // 1 content row + 2 borders = 3 total
+                        cols: Width::new(80), // Wide to fit 4 bars
+                        min_rows: Some(3),
+                        max_rows: Some(3),
+                        min_cols: Some(40),
+                        ..Default::default()
+                    },
                     name: "minivitals".to_string(),
-                    title: None, // No title shown (like Wrayth Stats)
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(3), // 1 content row + 2 borders = 3 total
-                    cols: Width::new(80), // Wide to fit 4 bars
-                    min_rows: Some(3),
-                    max_rows: Some(3),
-                    min_cols: Some(40),
+                    title: None,       // No title shown (like Wrayth Stats)
                     show_border: true, // Borders enabled by default
                     ..base_defaults
                 },
@@ -1887,15 +2123,18 @@ impl Config {
 
             "betrayer" => Some(WindowDef::Betrayer {
                 base: WindowBase {
+                    placement: TuiPlacement {
+                        row: Row::new(0),
+                        col: Col::new(0),
+                        rows: Height::new(4), // 1 bar + 1 item + 2 borders
+                        cols: Width::new(30),
+                        min_rows: Some(3),  // bar + borders (when show_items=false)
+                        max_rows: Some(12), // Allow growth for more items
+                        min_cols: Some(20),
+                        ..Default::default()
+                    },
                     name: "betrayer".to_string(),
                     title: Some("Betrayer".to_string()),
-                    row: Row::new(0),
-                    col: Col::new(0),
-                    rows: Height::new(4), // 1 bar + 1 item + 2 borders
-                    cols: Width::new(30),
-                    min_rows: Some(3),  // bar + borders (when show_items=false)
-                    max_rows: Some(12), // Allow growth for more items
-                    min_cols: Some(20),
                     show_border: true,
                     ..base_defaults
                 },
@@ -1920,12 +2159,12 @@ impl Config {
                 let mut base = base_defaults.clone();
                 base.name = tpl.key();
                 base.title = Some(tpl.title_or_id());
-                base.rows = Height::new(1);
-                base.cols = Width::new(1);
-                base.min_rows = Some(1);
-                base.max_rows = Some(1);
-                base.min_cols = Some(1);
-                base.max_cols = Some(1);
+                base.placement.rows = Height::new(1);
+                base.placement.cols = Width::new(1);
+                base.placement.min_rows = Some(1);
+                base.placement.max_rows = Some(1);
+                base.placement.min_cols = Some(1);
+                base.placement.max_cols = Some(1);
 
                 WindowDef::Indicator {
                     base,
@@ -2228,7 +2467,7 @@ impl Config {
                         !layout
                             .windows
                             .iter()
-                            .any(|w| w.name() == *name && w.base().visibility.is_shown())
+                            .any(|w| w.name() == *name && w.base().placement.visibility.is_shown())
                     })
                     .collect();
                 (category, available)
@@ -2257,8 +2496,9 @@ impl Config {
         include_hidden: bool,
     ) -> HashMap<WidgetCategory, Vec<String>> {
         let all_by_category = Self::get_templates_by_category();
-        let included =
-            |w: &crate::config::WindowDef| include_hidden || w.base().visibility.is_shown();
+        let included = |w: &crate::config::WindowDef| {
+            include_hidden || w.base().placement.visibility.is_shown()
+        };
 
         let mut visible_by_category: HashMap<WidgetCategory, Vec<String>> = all_by_category
             .into_iter()
@@ -2345,7 +2585,7 @@ impl Config {
         layout
             .windows
             .iter()
-            .filter(|w| w.base().visibility.is_shown())
+            .filter(|w| w.base().placement.visibility.is_shown())
             .map(|w| w.name().to_string())
             .collect()
     }

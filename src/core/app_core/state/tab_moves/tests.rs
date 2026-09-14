@@ -19,7 +19,7 @@ fn line(text: String) -> StyledLine {
 fn tabbed(name: &str, tabs: &[(&str, &[&str])], buffer_size: usize) -> WindowDef {
     let mut def = crate::core::local_catalog::seed("tabbedtext_custom").expect("seed");
     def.base_mut().name = name.to_string();
-    def.base_mut().visibility = WindowVisibility::Shown;
+    def.base_mut().placement.visibility = WindowVisibility::Shown;
     if let WindowDef::TabbedText { data, .. } = &mut def {
         data.tabs = tabs
             .iter()
@@ -42,7 +42,7 @@ fn tabbed(name: &str, tabs: &[(&str, &[&str])], buffer_size: usize) -> WindowDef
 fn text(name: &str, streams: &[&str], buffer_size: usize) -> WindowDef {
     let mut def = crate::core::local_catalog::seed(CUSTOM_TEXT_SEED).expect("seed");
     def.base_mut().name = name.to_string();
-    def.base_mut().visibility = WindowVisibility::Shown;
+    def.base_mut().placement.visibility = WindowVisibility::Shown;
     if let WindowDef::Text { data, .. } = &mut def {
         data.streams = streams.iter().map(|s| s.to_string()).collect();
         data.buffer_size = buffer_size;
@@ -66,7 +66,9 @@ fn tab_ids(core: &AppCore, window: &str) -> Vec<TabId> {
 
 fn tab_names(core: &AppCore, window: &str) -> Vec<String> {
     match core.layout.windows.iter().find(|w| w.name() == window) {
-        Some(WindowDef::TabbedText { data, .. }) => data.tabs.iter().map(|t| t.name.clone()).collect(),
+        Some(WindowDef::TabbedText { data, .. }) => {
+            data.tabs.iter().map(|t| t.name.clone()).collect()
+        }
         _ => panic!("'{window}' is not a tabbed def"),
     }
 }
@@ -80,7 +82,8 @@ fn def_buffer_size(core: &AppCore, window: &str) -> usize {
 }
 
 fn tab_content<'a>(core: &'a AppCore, window: &str, id: TabId) -> &'a TextContent {
-    let Some(WindowContent::TabbedText(tabbed)) = core.ui_state.windows.get(window).map(|w| &w.content)
+    let Some(WindowContent::TabbedText(tabbed)) =
+        core.ui_state.windows.get(window).map(|w| &w.content)
     else {
         panic!("'{window}' is not a live tabbed window");
     };
@@ -106,7 +109,11 @@ fn push_tab_lines(core: &mut AppCore, window: &str, id: TabId, n: usize) {
 }
 
 fn push_text_lines(core: &mut AppCore, window: &str, n: usize) {
-    let Some(WindowContent::Text(content)) = core.ui_state.windows.get_mut(window).map(|w| &mut w.content)
+    let Some(WindowContent::Text(content)) = core
+        .ui_state
+        .windows
+        .get_mut(window)
+        .map(|w| &mut w.content)
     else {
         panic!("'{window}' is not a live text window");
     };
@@ -127,7 +134,9 @@ fn select(core: &mut AppCore, window: &str, id: TabId) {
 }
 
 fn subscribers(core: &AppCore, stream: &str) -> Vec<String> {
-    core.message_processor.get_stream_subscribers(stream).to_vec()
+    core.message_processor
+        .get_stream_subscribers(stream)
+        .to_vec()
 }
 
 fn custom_windows(core: &AppCore) -> Vec<String> {
@@ -256,7 +265,10 @@ fn tear_out_moves_the_scrollback_and_the_streams() {
 
     let receipt = core.tear_out_tab("chat", 2).unwrap();
     assert_eq!(receipt.kind, TabMoveKind::TearOut);
-    let new_window = receipt.created_window.clone().expect("a window was created");
+    let new_window = receipt
+        .created_window
+        .clone()
+        .expect("a window was created");
     assert!(new_window.starts_with("custom-"));
     assert_eq!(receipt.window, new_window);
     assert_eq!(receipt.old_scroll_id, "chat::tab#2");
@@ -266,7 +278,11 @@ fn tear_out_moves_the_scrollback_and_the_streams() {
     assert_eq!(moved.lines.len(), 3);
     assert_eq!(moved.generation, before.generation);
     assert_eq!(moved.scroll_offset, before.scroll_offset);
-    assert_eq!(moved.streams, vec!["combat", "death"], "routing streams installed");
+    assert_eq!(
+        moved.streams,
+        vec!["combat", "death"],
+        "routing streams installed"
+    );
     assert_eq!(moved.title, "Combat");
 
     assert_eq!(tab_names(&core, "chat"), vec!["Main"]);
@@ -337,13 +353,22 @@ fn tear_out_never_names_the_window_after_the_tab() {
     // A built-in "familiar" window exists; the tab is titled "Familiar".
     let mut core = core_with(vec![
         text("familiar", &["familiar"], 100),
-        tabbed("chat", &[("Main", &["main"]), ("Familiar", &["thoughts"])], 100),
+        tabbed(
+            "chat",
+            &[("Main", &["main"]), ("Familiar", &["thoughts"])],
+            100,
+        ),
     ]);
     let receipt = core.tear_out_tab("chat", 2).unwrap();
     let created = receipt.created_window.unwrap();
     assert!(created.starts_with("custom-"));
     assert_ne!(created, "familiar");
-    let def = core.layout.windows.iter().find(|w| w.name() == created).unwrap();
+    let def = core
+        .layout
+        .windows
+        .iter()
+        .find(|w| w.name() == created)
+        .unwrap();
     assert_eq!(def.base().title.as_deref(), Some("Familiar"));
     // The built-in is untouched.
     assert_eq!(subscribers(&core, "familiar"), vec!["familiar"]);
@@ -356,7 +381,11 @@ fn tear_out_copies_the_source_appearance() {
     source.base_mut().text_color = Some("#abcdef".into());
     source.base_mut().show_title = false;
     let mut core = core_with(vec![source]);
-    let created = core.tear_out_tab("chat", 2).unwrap().created_window.unwrap();
+    let created = core
+        .tear_out_tab("chat", 2)
+        .unwrap()
+        .created_window
+        .unwrap();
     let base = core
         .layout
         .windows
@@ -368,7 +397,11 @@ fn tear_out_copies_the_source_appearance() {
     assert_eq!(base.border_color.as_deref(), Some("red"));
     assert_eq!(base.text_color.as_deref(), Some("#abcdef"));
     assert!(!base.show_title);
-    assert_eq!(def_buffer_size(&core, &created), 100, "capacity follows the source");
+    assert_eq!(
+        def_buffer_size(&core, &created),
+        100,
+        "capacity follows the source"
+    );
 }
 
 #[test]
@@ -381,7 +414,10 @@ fn tear_out_rejects_bad_targets() {
         core.tear_out_tab("nope", 1),
         Err(TabMoveError::NoSuchWindow("nope".into()))
     );
-    assert_eq!(core.tear_out_tab("loot", 1), Err(TabMoveError::NotTabbed("loot".into())));
+    assert_eq!(
+        core.tear_out_tab("loot", 1),
+        Err(TabMoveError::NotTabbed("loot".into()))
+    );
     assert_eq!(
         core.tear_out_tab("chat", 9),
         Err(TabMoveError::NoSuchTab {
@@ -409,7 +445,11 @@ fn join_moves_the_scrollback_in_and_removes_the_source() {
     assert_eq!(receipt.old_scroll_id, "combat");
     assert_eq!(receipt.new_scroll_id, format!("chat::tab#{id}"));
 
-    assert_eq!(tab_names(&core, "chat"), vec!["Main", "combat", "Loot"], "insert_at");
+    assert_eq!(
+        tab_names(&core, "chat"),
+        vec!["Main", "combat", "Loot"],
+        "insert_at"
+    );
     assert_eq!(active_id(&core, "chat"), Some(id), "the new tab is active");
     let moved = tab_content(&core, "chat", id);
     assert_eq!(moved.lines.len(), 4);
@@ -458,11 +498,22 @@ fn join_raises_the_target_capacity_instead_of_trimming() {
 
     let receipt = core.join_window_as_tab("big", "chat", None).unwrap();
     let id = receipt.tab_id.unwrap();
-    assert_eq!(receipt.capacity_changed, vec![("chat".to_string(), 5000, 8000)]);
+    assert_eq!(
+        receipt.capacity_changed,
+        vec![("chat".to_string(), 5000, 8000)]
+    );
     assert_eq!(def_buffer_size(&core, "chat"), 8000);
-    assert_eq!(tab_content(&core, "chat", id).lines.len(), 8000, "nothing trimmed");
+    assert_eq!(
+        tab_content(&core, "chat", id).lines.len(),
+        8000,
+        "nothing trimmed"
+    );
     assert_eq!(tab_content(&core, "chat", id).max_lines, 8000);
-    assert_eq!(tab_content(&core, "chat", 1).max_lines, 8000, "every tab follows");
+    assert_eq!(
+        tab_content(&core, "chat", 1).max_lines,
+        8000,
+        "every tab follows"
+    );
 
     // One in, one out from here on.
     push_tab_lines(&mut core, "chat", id, 1);
@@ -491,7 +542,10 @@ fn wrap_then_convert_back_round_trips() {
     let receipt = core.wrap_text_as_tabbed("loot").unwrap();
     assert_eq!(receipt.kind, TabMoveKind::WrappedInPlace);
     assert_eq!(receipt.tab_id, Some(1));
-    assert_eq!(core.ui_state.windows["loot"].widget_type, WidgetType::TabbedText);
+    assert_eq!(
+        core.ui_state.windows["loot"].widget_type,
+        WidgetType::TabbedText
+    );
     assert_eq!(tab_content(&core, "loot", 1).lines.len(), 5);
     assert_eq!(tab_content(&core, "loot", 1).streams, vec!["loot"]);
     assert_eq!(subscribers(&core, "loot"), vec!["loot"]);
@@ -516,7 +570,10 @@ fn reorder_keeps_buffers_and_selection_by_id() {
     assert_eq!(tab_names(&core, "chat"), vec!["C", "A", "B"]);
     assert_eq!(active_id(&core, "chat"), Some(2));
     assert_eq!(tab_content(&core, "chat", 1).lines.len(), 2);
-    assert!(core.reorder_tabs("chat", &[1, 2]).is_err(), "must be a permutation");
+    assert!(
+        core.reorder_tabs("chat", &[1, 2]).is_err(),
+        "must be a permutation"
+    );
 }
 
 // ---- undo ------------------------------------------------------------------
@@ -530,17 +587,28 @@ fn undo_tear_out_restores_the_tab_at_its_index_with_its_buffer() {
     )]);
     push_tab_lines(&mut core, "chat", 2, 3);
     select(&mut core, "chat", 2);
-    let created = core.tear_out_tab("chat", 2).unwrap().created_window.unwrap();
+    let created = core
+        .tear_out_tab("chat", 2)
+        .unwrap()
+        .created_window
+        .unwrap();
 
     let outcome = core.undo_tab_move().unwrap();
-    assert_eq!(outcome.receipt.removed_window.as_deref(), Some(created.as_str()));
+    assert_eq!(
+        outcome.receipt.removed_window.as_deref(),
+        Some(created.as_str())
+    );
     assert_eq!(tab_ids(&core, "chat"), vec![1, 2, 3], "same id, same index");
     assert_eq!(tab_content(&core, "chat", 2).lines.len(), 3);
     assert_eq!(active_id(&core, "chat"), Some(2), "selection restored");
     assert!(!core.ui_state.windows.contains_key(&created));
     assert!(custom_windows(&core).is_empty());
     assert_eq!(subscribers(&core, "b"), vec!["chat"]);
-    assert_eq!(core.undo_tab_move(), Err(TabMoveError::NothingToUndo), "single level");
+    assert_eq!(
+        core.undo_tab_move(),
+        Err(TabMoveError::NothingToUndo),
+        "single level"
+    );
 }
 
 #[test]
@@ -555,8 +623,14 @@ fn undo_in_place_conversion_restores_the_tabbed_definition() {
     assert!(is_text_def(&core, "chat"));
     core.undo_tab_move().unwrap();
 
-    assert_eq!(core.layout.windows[0], original, "definition byte-identical");
-    assert_eq!(core.ui_state.windows["chat"].widget_type, WidgetType::TabbedText);
+    assert_eq!(
+        core.layout.windows[0], original,
+        "definition byte-identical"
+    );
+    assert_eq!(
+        core.ui_state.windows["chat"].widget_type,
+        WidgetType::TabbedText
+    );
     assert_eq!(tab_content(&core, "chat", 1).lines.len(), 2);
     assert_eq!(subscribers(&core, "combat"), vec!["chat"]);
 }
@@ -590,11 +664,23 @@ fn undo_join_recreates_the_source_under_its_own_name() {
     let outcome = core.undo_tab_move().unwrap();
 
     assert_eq!(outcome.receipt.created_window.as_deref(), Some("combat"));
-    let restored = core.layout.windows.iter().find(|w| w.name() == "combat").unwrap();
-    assert_eq!(restored, &original, "name, title, colours, capacity all back");
+    let restored = core
+        .layout
+        .windows
+        .iter()
+        .find(|w| w.name() == "combat")
+        .unwrap();
+    assert_eq!(
+        restored, &original,
+        "name, title, colours, capacity all back"
+    );
     assert_eq!(text_content(&core, "combat").lines.len(), 4);
     assert_eq!(tab_names(&core, "chat"), vec!["Main", "Loot"]);
-    assert_eq!(active_id(&core, "chat"), Some(2), "target's prior selection");
+    assert_eq!(
+        active_id(&core, "chat"),
+        Some(2),
+        "target's prior selection"
+    );
     assert_eq!(subscribers(&core, "combat"), vec!["combat"]);
     assert!(custom_windows(&core).is_empty());
 }
@@ -608,7 +694,11 @@ fn undo_join_reconciles_capacity_for_both_windows() {
     // The source holds far more than its own cap says (its cap was raised
     // earlier); model that directly.
     {
-        let Some(WindowContent::Text(c)) = core.ui_state.windows.get_mut("combat").map(|w| &mut w.content)
+        let Some(WindowContent::Text(c)) = core
+            .ui_state
+            .windows
+            .get_mut("combat")
+            .map(|w| &mut w.content)
         else {
             unreachable!()
         };
@@ -628,10 +718,18 @@ fn undo_join_reconciles_capacity_for_both_windows() {
     assert_eq!(tab_content(&core, "chat", 2).lines.len(), 5100);
 
     let outcome = core.undo_tab_move().unwrap();
-    assert_eq!(def_buffer_size(&core, "chat"), 5100, "what the survivors need");
+    assert_eq!(
+        def_buffer_size(&core, "chat"),
+        5100,
+        "what the survivors need"
+    );
     assert_eq!(tab_content(&core, "chat", 2).lines.len(), 5100);
     assert_eq!(tab_content(&core, "chat", 2).max_lines, 5100);
-    assert_eq!(def_buffer_size(&core, "combat"), 6000, "what the source holds");
+    assert_eq!(
+        def_buffer_size(&core, "combat"),
+        6000,
+        "what the source holds"
+    );
     assert_eq!(text_content(&core, "combat").lines.len(), 6000);
     assert_eq!(text_content(&core, "combat").max_lines, 6000);
     let mut changed = outcome.receipt.capacity_changed.clone();
@@ -687,7 +785,11 @@ fn undo_refuses_after_any_definition_change() {
         data.tabs[0].name = "Y".into();
     }
     assert_eq!(core.undo_tab_move(), Err(TabMoveError::LayoutChanged));
-    assert_eq!(core.undo_tab_move(), Err(TabMoveError::NothingToUndo), "record cleared");
+    assert_eq!(
+        core.undo_tab_move(),
+        Err(TabMoveError::NothingToUndo),
+        "record cleared"
+    );
 }
 
 #[test]
@@ -696,7 +798,10 @@ fn undo_survives_gui_only_state_but_not_a_reload() {
     core.tear_out_tab("chat", 2).unwrap();
     // GUI placement is not in the layout defs.
     core.set_tab_undo_gui(serde_json::json!({ "rect": [1, 2, 3, 4] }));
-    assert_eq!(core.layout_hash(), core.last_tab_move.as_ref().unwrap().layout_hash);
+    assert_eq!(
+        core.layout_hash(),
+        core.last_tab_move.as_ref().unwrap().layout_hash
+    );
 
     // A reload rebuilds every buffer: nothing to restore onto.
     core.init_windows(120, 40);
@@ -716,7 +821,10 @@ fn undo_join_refuses_when_the_source_name_is_taken() {
         "combat".into(),
         crate::data::window::WindowState::new_text("combat", 10),
     );
-    assert_eq!(core.undo_tab_move(), Err(TabMoveError::NameTaken("combat".into())));
+    assert_eq!(
+        core.undo_tab_move(),
+        Err(TabMoveError::NameTaken("combat".into()))
+    );
 }
 
 #[test]
@@ -730,7 +838,6 @@ fn undo_hands_back_the_gui_placement_blob() {
     let outcome = core.undo_tab_move().unwrap();
     assert_eq!(outcome.gui["zone"], "left");
 }
-
 
 // ---- move_tab (tab-to-tab) ---------------------------------------------------
 
@@ -761,7 +868,11 @@ fn move_tab_carries_buffer_and_undo_restores_order() {
     assert_eq!(tab_names(&core, "b"), vec!["x"]);
     assert_eq!(tab_ids(&core, "a"), ids_a, "original ids come back");
     assert_eq!(tab_content(&core, "a", ids_a[1]).lines.len(), 80);
-    assert_eq!(def_buffer_size(&core, "b"), 50, "target capacity back to what x needs");
+    assert_eq!(
+        def_buffer_size(&core, "b"),
+        50,
+        "target capacity back to what x needs"
+    );
 }
 
 #[test]
@@ -792,7 +903,13 @@ fn move_tab_rejects_same_window_and_text_targets() {
         text("t", &["combat"], 100),
     ]);
     let id = tab_ids(&core, "a")[0];
-    assert!(matches!(core.move_tab("a", id, "a", None), Err(TabMoveError::SameWindow(_))));
-    assert!(matches!(core.move_tab("a", id, "t", None), Err(TabMoveError::NotTabbed(_))));
+    assert!(matches!(
+        core.move_tab("a", id, "a", None),
+        Err(TabMoveError::SameWindow(_))
+    ));
+    assert!(matches!(
+        core.move_tab("a", id, "t", None),
+        Err(TabMoveError::NotTabbed(_))
+    ));
     assert_eq!(tab_names(&core, "a"), vec!["one", "two"], "nothing changed");
 }

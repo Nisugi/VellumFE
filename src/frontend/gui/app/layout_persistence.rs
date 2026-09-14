@@ -40,9 +40,9 @@ impl VellumGuiApp {
         layout.ui_font = self.ui_font.clone();
         layout.ui_settings = self.ui_settings.clone();
         // The theme rides with the layout (like the skin), so a checkpoint
-        // loaded on another profile reproduces the saver's look. The live
-        // source of truth is config.active_theme; stamp it at save time.
-        layout.ui_settings.active_theme = Some(self.app_core.config.active_theme.clone());
+        // loaded on another profile reproduces the saver's look. It IS the
+        // GUI's theme slot now (see `gui_theme_id`), already in ui_settings
+        // — no stamp from the TUI's config slot.
         layout.tab_settings = {
             let mut entries: Vec<TabSettingsEntry> = self
                 .tab_settings
@@ -251,6 +251,25 @@ impl VellumGuiApp {
         }
     }
 
+    /// Tell the user about catalog windows `restore_layout_state` just
+    /// hid because this GUI checkpoint never placed them (see
+    /// `RestoredLayoutState::newly_hidden_catalog_windows`) — shared by
+    /// startup restore (`VellumGuiApp::new`) and the runtime `.loadlayout`
+    /// path below, rather than silently dropping them from view.
+    pub(super) fn report_newly_hidden_catalog_windows(
+        app_core: &mut crate::core::AppCore,
+        names: &[String],
+    ) {
+        if names.is_empty() {
+            return;
+        }
+        app_core.add_system_message(&format!(
+            "{} window(s) from the shared layout are available but not placed: {} — open Windows to show them.",
+            names.len(),
+            names.join(", ")
+        ));
+    }
+
     /// Apply a saved layout snapshot to the live app — the runtime half of
     /// `.loadlayout`. Reuses the constructor's reconciliation, so tabs the
     /// file doesn't know keep working and saved tabs missing this session
@@ -304,6 +323,10 @@ impl VellumGuiApp {
             restored.main_window_rects.len(),
             restored.tab_zones.len()
         );
+        Self::report_newly_hidden_catalog_windows(
+            &mut self.app_core,
+            &restored.newly_hidden_catalog_windows,
+        );
         self.hidden_tabs = restored.hidden_tabs;
         self.main_window_rects = restored.main_window_rects;
         self.window_anchors = restored.window_anchors;
@@ -346,18 +369,16 @@ impl VellumGuiApp {
         // (preset semantics: a layout/checkpoint carries a look, loading
         // it applies the look by writing the store).
         self.sync_appearance_from_ui_settings();
-        // Theme: config.active_theme is the live source of truth (the frame
-        // loop's apply_theme_if_changed watches it). A recorded theme mirrors
-        // in; None (legacy file) keeps the current theme. A custom theme the
-        // target profile lacks is reported by apply_theme_if_changed's warn
-        // path and the current visuals stay.
+        // Theme: the GUI's slot IS `ui_settings.active_theme`, which the
+        // restore above just replaced wholesale — so the checkpoint's theme
+        // is already live and the frame loop's apply_theme_if_changed will
+        // pick it up. Nothing is written to the TUI's `config` slot. A
+        // custom theme the target profile lacks is reported by
+        // apply_theme_if_changed's warn path and the current visuals stay.
         if !keep_skin {
-            if let Some(theme) = self.ui_settings.active_theme.clone() {
-                if self.app_core.config.active_theme != theme {
-                    self.app_core.config.active_theme = theme;
-                    self.save_config_after_skin_change();
-                }
-            }
+            // Force a re-apply next frame even if the id string is unchanged
+            // in name but the preset table has moved underneath us.
+            self.applied_theme_id = None;
         }
         self.tab_settings = restored.tab_settings;
         // Checkpoints can predate the move of per-window text size/font/wrap
@@ -539,13 +560,161 @@ impl VellumGuiApp {
 
     pub(super) fn list_layout_checkpoints(&mut self) {
         let names = list_named_layouts();
-        if names.is_empty() {
+        // The two pools live side by side in the same folder: GUI JSON
+        // checkpoints and the TUI's cell-based `<name>.toml` layouts. Both
+        // are loadable here (a TOML one unions its window defs into the
+        // shared catalog), so list both, marking the TUI pool.
+        let toml_names: Vec<String> = crate::config::Config::list_layouts()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|name| !names.contains(name))
+            .map(|name| format!("{name} (TUI)"))
+            .collect();
+        let mut all = names;
+        all.extend(toml_names);
+        if all.is_empty() {
             self.app_core.add_system_message(
                 "No saved GUI layouts. Save the current arrangement with .savelayout <name>",
             );
         } else {
             self.app_core
-                .add_system_message(&format!("Saved GUI layouts: {}", names.join(", ")));
+                .add_system_message(&format!("Saved layouts: {}", all.join(", ")));
         }
+    }
+
+    /// Runtime `.loadlayout <name>`: apply the GUI JSON checkpoint if there
+    /// is one, otherwise fall back to the TUI pool's `<name>.toml` (window
+    /// definitions only, see `load_tui_layout_into_catalog`).
+    pub(super) fn load_layout_by_name(&mut self, name: &str, keep_skin: bool) {
+        match load_named_layout(name) {
+            Ok(layout) => {
+                self.apply_layout_snapshot(&layout, keep_skin);
+                // Persist the loaded arrangement to the auto-save slot RIGHT
+                // NOW, not just via the 2s debounce. Loading a layout is a
+                // deliberate, infrequent choice, and a user who X-es or kills
+                // the window before the debounce fires would otherwise lose it
+                // — the exact "it never saves my .loadlayout" report. Also
+                // persist the core TOML (window defs) so a rebuilt window set
+                // survives too.
+                self.save_layout_state();
+                self.app_core.autosave_layout();
+                self.layout_dirty = false;
+                self.layout_dirty_since = None;
+                self.app_core.add_system_message(&format!(
+                    "Loaded GUI layout '{}'{}.",
+                    name,
+                    if keep_skin {
+                        " (keeping your skin/theme)"
+                    } else {
+                        ""
+                    }
+                ));
+            }
+            Err(err) => {
+                if !self.load_tui_layout_into_catalog(name) {
+                    self.app_core
+                        .add_system_message(&format!("Failed to load layout: {}", err));
+                    self.list_layout_checkpoints();
+                }
+            }
+        }
+    }
+
+    /// `.loadlayout <name>` when there is no `<name>.json` but the TUI pool
+    /// has a `<name>.toml`.
+    ///
+    /// A TUI layout is cell geometry plus a set of window DEFINITIONS. Only
+    /// the definitions mean anything to the GUI, so this is a pure
+    /// APPEND-ONLY union into the shared catalog — the same rule as
+    /// `materialize_missing_windows`, never `Layout::merge_loaded`: defs
+    /// already present by name are left exactly as they are, and no
+    /// existing window's `placement.visibility` (the TUI's selection) is
+    /// touched. Nothing else is applied: no theme, no geometry, no skin. The
+    /// GUI has no placement for the new windows, so the existing
+    /// never-placed rule files them into `hidden_tabs` and
+    /// `report_newly_hidden_catalog_windows` names them.
+    ///
+    /// Returns false when no such TOML layout exists.
+    pub(super) fn load_tui_layout_into_catalog(&mut self, name: &str) -> bool {
+        let Ok(path) = crate::config::Config::layout_path(name) else {
+            return false;
+        };
+        if !path.exists() {
+            return false;
+        }
+        let loaded = match crate::config::Layout::load_from_file(&path) {
+            Ok(layout) => layout,
+            Err(err) => {
+                self.app_core
+                    .add_system_message(&format!("Failed to load TUI layout '{name}': {err}"));
+                return true;
+            }
+        };
+        let existing: std::collections::HashSet<String> = self
+            .app_core
+            .layout
+            .windows
+            .iter()
+            .map(|w| w.name().to_string())
+            .collect();
+        let new_defs: Vec<crate::config::WindowDef> = loaded
+            .windows
+            .into_iter()
+            .filter(|def| !existing.contains(def.name()))
+            .collect();
+        if new_defs.is_empty() {
+            self.app_core.add_system_message(&format!(
+                "TUI layout '{name}' adds no new windows — every window it defines is already in the catalog."
+            ));
+            return true;
+        }
+        let (w, h) = self.core_layout_size;
+        let created = self.app_core.materialize_missing_windows(&new_defs, w, h);
+        // Rebuild the tab list so the new windows become tabs, then let the
+        // never-placed rule hide them (no GUI placement exists for them).
+        self.available_tabs_fingerprint = None;
+        self.refresh_available_tabs_if_needed();
+        let newly_hidden = self.hide_unplaced_catalog_tabs();
+        self.app_core.add_system_message(&format!(
+            "Loaded TUI layout '{}' into the window catalog: {} window(s) added ({}). They are not placed — open Windows to show them.",
+            name,
+            created.len(),
+            created.join(", ")
+        ));
+        Self::report_newly_hidden_catalog_windows(&mut self.app_core, &newly_hidden);
+        // Persist both halves exactly as the JSON path does.
+        self.save_layout_state();
+        self.app_core.autosave_layout();
+        self.layout_dirty = false;
+        self.layout_dirty_since = None;
+        true
+    }
+
+    /// Hide every live tab the GUI has no placement for — the runtime twin of
+    /// `restore_layout_state`'s never-placed rule, for windows that entered
+    /// the catalog mid-session. Returns the window names newly hidden.
+    fn hide_unplaced_catalog_tabs(&mut self) -> Vec<String> {
+        let unplaced: Vec<(TabKey, String)> = self
+            .available_tabs
+            .iter()
+            .filter(|(key, _)| **key != TabKey::TextMain && **key != TabKey::CommandInput)
+            .filter(|(key, _)| !self.hidden_tabs.contains(*key))
+            .filter(|(key, _)| {
+                !self.main_window_rects.contains_key(*key)
+                    && !self.detached_tabs.contains_key(*key)
+                    && !self
+                        .tab_groups
+                        .iter()
+                        .any(|group| group.members.contains(*key))
+            })
+            .map(|(key, tab)| (key.clone(), tab.window_name.clone()))
+            .collect();
+        let mut names: Vec<String> = Vec::new();
+        for (key, name) in unplaced {
+            self.gui_set_tab_shown(&key, false);
+            names.push(name);
+        }
+        names.sort();
+        names
     }
 }

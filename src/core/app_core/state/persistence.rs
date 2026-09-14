@@ -27,10 +27,10 @@ impl AppCore {
             tracing::debug!(
                 "Window '{}' BEFORE capture: pos=({},{}) size={}x{}",
                 window_name,
-                base.col.get(),
-                base.row.get(),
-                base.cols.get(),
-                base.rows.get()
+                base.placement.col.get(),
+                base.placement.row.get(),
+                base.placement.cols.get(),
+                base.placement.rows.get()
             );
 
             if let Some(window_state) = self.ui_state.windows.get(&window_name) {
@@ -51,13 +51,13 @@ impl AppCore {
                 // Ensure width doesn't exceed available space
                 // Use window's min_cols constraint (default 1) instead of hardcoded 10
                 let max_width = terminal_width.saturating_sub(clamped_x);
-                let min_width = base.min_cols.unwrap_or(1);
+                let min_width = base.placement.min_cols.unwrap_or(1);
                 let clamped_width = ui_pos.width.get().min(max_width).max(min_width);
 
                 // Ensure height doesn't exceed available space
                 // Use window's min_rows constraint (default 1)
                 let max_height = terminal_height.saturating_sub(clamped_y);
-                let min_height = base.min_rows.unwrap_or(1);
+                let min_height = base.placement.min_rows.unwrap_or(1);
                 let clamped_height = ui_pos.height.get().min(max_height).max(min_height);
 
                 if clamped_x != ui_pos.x.get()
@@ -82,18 +82,18 @@ impl AppCore {
                 }
 
                 let base = window_def.base_mut();
-                base.row = crate::data::geometry::Row::new(clamped_y);
-                base.col = crate::data::geometry::Col::new(clamped_x);
-                base.rows = crate::data::geometry::Height::new(clamped_height);
-                base.cols = crate::data::geometry::Width::new(clamped_width);
+                base.placement.row = crate::data::geometry::Row::new(clamped_y);
+                base.placement.col = crate::data::geometry::Col::new(clamped_x);
+                base.placement.rows = crate::data::geometry::Height::new(clamped_height);
+                base.placement.cols = crate::data::geometry::Width::new(clamped_width);
 
                 tracing::debug!(
                     "Window '{}' AFTER capture: pos=({},{}) size={}x{}",
                     window_name,
-                    base.col.get(),
-                    base.row.get(),
-                    base.cols.get(),
-                    base.rows.get()
+                    base.placement.col.get(),
+                    base.placement.row.get(),
+                    base.placement.cols.get(),
+                    base.placement.rows.get()
                 );
             } else {
                 tracing::warn!(
@@ -276,10 +276,10 @@ impl AppCore {
 
                 // Clamp to min/max
                 let new_rows = ideal_rows
-                    .max(base.min_rows.unwrap_or(1))
-                    .min(base.max_rows.unwrap_or(u16::MAX));
+                    .max(base.placement.min_rows.unwrap_or(1))
+                    .min(base.placement.max_rows.unwrap_or(u16::MAX));
 
-                if base.rows.get() != new_rows {
+                if base.placement.rows.get() != new_rows {
                     changes.push((base.name.clone(), new_rows));
                 }
             }
@@ -291,7 +291,7 @@ impl AppCore {
             for window_def in &mut self.layout.windows {
                 if window_def.name() == name {
                     if let crate::config::WindowDef::Betrayer { base, .. } = window_def {
-                        base.rows = crate::data::geometry::Height::new(new_rows);
+                        base.placement.rows = crate::data::geometry::Height::new(new_rows);
                     }
                     break;
                 }

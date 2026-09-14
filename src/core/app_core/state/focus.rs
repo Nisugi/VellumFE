@@ -218,7 +218,7 @@ impl AppCore {
             }
         } else {
             for window_def in &self.layout.windows {
-                if !window_def.base().visibility.is_shown() {
+                if !window_def.base().placement.visibility.is_shown() {
                     continue;
                 }
                 let name = window_def.name();

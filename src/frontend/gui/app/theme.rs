@@ -1,7 +1,7 @@
 //! Theme integration for the GUI.
 //!
 //! Maps the shared `AppTheme` (themes/ presets + custom themes, selected by
-//! `config.active_theme`) onto `egui::Visuals`, and resolves config color
+//! the GUI theme slot, `ui_settings.active_theme`) onto `egui::Visuals`, and resolves config color
 //! strings (hex or names) to egui colors.
 
 use super::*;
@@ -278,15 +278,48 @@ pub(crate) fn build_font_definitions(
 }
 
 impl VellumGuiApp {
-    /// Re-apply visuals when `config.active_theme` changes (startup, .settheme,
-    /// layout-driven theme switches).
+    /// The GUI's active theme id, with the ONE first-run fallback to the
+    /// TUI's slot.
+    ///
+    /// Theme is presentation, so it is per-frontend: the TUI's slot is
+    /// `config.active_theme` (per-character config.toml), the GUI's is
+    /// `ui_settings.active_theme` in its own `layout_v1.json`. On the first
+    /// run after upgrade the GUI slot is None, so it INHERITS the TUI's
+    /// theme once and then owns its own — persisted immediately so the
+    /// fallback never fires again.
+    ///
+    /// This is deliberately the only place in `frontend/gui` that reads
+    /// `config.active_theme`, and nowhere in `frontend/gui` may assign it
+    /// (enforced by `gui_does_not_assign_config_active_theme` in
+    /// tests/architecture.rs).
+    pub(super) fn gui_theme_id(&mut self) -> String {
+        if let Some(theme) = self.ui_settings.active_theme.clone() {
+            return theme;
+        }
+        let inherited = self.app_core.config.active_theme.clone();
+        self.ui_settings.active_theme = Some(inherited.clone());
+        // Own it from now on: persist the GUI slot at once so a crash before
+        // the next debounce can't lose the inheritance.
+        self.layout_dirty = true;
+        self.save_layout_state();
+        inherited
+    }
+
+    /// Set the GUI's theme slot (never the TUI's `config.active_theme`) and
+    /// schedule its persistence.
+    pub(super) fn set_gui_theme_id(&mut self, name: &str) {
+        self.ui_settings.active_theme = Some(name.to_string());
+        self.layout_dirty = true;
+        self.save_layout_state();
+    }
+
+    /// Re-apply visuals when the GUI's theme slot changes (startup,
+    /// .settheme, layout-driven theme switches).
     pub(super) fn apply_theme_if_changed(&mut self, ctx: &egui::Context) {
-        let theme_unchanged =
-            self.applied_theme_id.as_deref() == Some(self.app_core.config.active_theme.as_str());
-        if theme_unchanged {
+        let active = self.gui_theme_id();
+        if self.applied_theme_id.as_deref() == Some(active.as_str()) {
             return;
         }
-        let active = self.app_core.config.active_theme.clone();
 
         let presets =
             crate::theme::ThemePresets::all_with_custom(self.app_core.config.character.as_deref());
@@ -323,14 +356,8 @@ impl VellumGuiApp {
             return;
         }
 
-        self.app_core.config.active_theme = name.to_string();
-        if let Err(err) = self
-            .app_core
-            .config
-            .save(self.app_core.config.character.as_deref())
-        {
-            tracing::warn!("Failed to save config after theme switch: {}", err);
-        }
+        // The GUI's slot ONLY — `config.active_theme` stays the TUI's.
+        self.set_gui_theme_id(name);
         // Force re-apply on the next frame.
         self.applied_theme_id = None;
         self.app_core

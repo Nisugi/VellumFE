@@ -1247,17 +1247,17 @@ impl TuiFrontend {
                     .find(|w| w.name() == drag_state.window_name)
                 {
                     let base = window_def.base_mut();
-                    base.col = window.position.x;
-                    base.row = window.position.y;
-                    base.cols = window.position.width;
-                    base.rows = window.position.height;
+                    base.placement.col = window.position.x;
+                    base.placement.row = window.position.y;
+                    base.placement.cols = window.position.width;
+                    base.placement.rows = window.position.height;
                     tracing::info!(
                         "Synced mouse resize/move for '{}' to layout: pos=({},{}) size={}x{}",
                         drag_state.window_name,
-                        base.col.get(),
-                        base.row.get(),
-                        base.cols.get(),
-                        base.rows.get()
+                        base.placement.col.get(),
+                        base.placement.row.get(),
+                        base.placement.cols.get(),
+                        base.placement.rows.get()
                     );
                     window_layout_changed = true;
                 }
@@ -2954,7 +2954,8 @@ impl TuiFrontend {
                 .windows
                 .iter()
                 .filter(|w| {
-                    w.base().visibility.is_shown() && matches!(w.widget_type(), "indicator")
+                    w.base().placement.visibility.is_shown()
+                        && matches!(w.widget_type(), "indicator")
                 })
                 .map(|w| w.name().to_string())
                 .collect::<Vec<String>>();

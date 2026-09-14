@@ -4,9 +4,53 @@
 
 use super::*;
 
+/// Which catalog windows a materialization pass brings to life.
+///
+/// `Layout.windows` is a CATALOG shared by every frontend; each frontend
+/// keeps its own SELECTION of what it shows. The TUI's selection is
+/// `placement.visibility`; the GUI's is `hidden_tabs` in its own
+/// `layout_v1.json`. So the TUI materializes only its selection, while the
+/// GUI materializes the whole catalog and filters at render time — that way
+/// a window the TUI layout happens to hide (e.g. `map`) is still a live GUI
+/// tab instead of silently vanishing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LivenessPolicy {
+    /// Honor `placement.visibility` (the TUI's selection).
+    TuiSelection,
+    /// Materialize every catalog window regardless of TUI visibility.
+    WholeCatalog,
+}
+
 impl AppCore {
-    /// Initialize windows based on current layout
+    /// Initialize windows based on current layout, honoring the TUI's
+    /// `placement.visibility` selection. The TUI (and every legacy caller)
+    /// entry point.
     pub fn init_windows(&mut self, terminal_width: u16, terminal_height: u16) {
+        self.init_windows_with_policy(
+            terminal_width,
+            terminal_height,
+            LivenessPolicy::TuiSelection,
+        );
+    }
+
+    /// Materialize EVERY catalog window (still skipping nothing but honoring
+    /// the same def list, which never contains `deleted_windows`). The GUI's
+    /// entry point: its own selection lives in `hidden_tabs`, so core
+    /// visibility must not gate which windows exist.
+    pub fn init_windows_all_catalog(&mut self, terminal_width: u16, terminal_height: u16) {
+        self.init_windows_with_policy(
+            terminal_width,
+            terminal_height,
+            LivenessPolicy::WholeCatalog,
+        );
+    }
+
+    fn init_windows_with_policy(
+        &mut self,
+        terminal_width: u16,
+        terminal_height: u16,
+        liveness: LivenessPolicy,
+    ) {
         // Every buffer below is rebuilt from scratch, so a pending tab-move
         // undo would restore onto content that no longer exists — the hash
         // gate can't see a reload that reproduces identical defs.
@@ -45,7 +89,9 @@ impl AppCore {
         for window_def in &self.layout.windows {
             // Skip hidden windows (except command_input under the TUI
             // force-show rule — the TUI has no fallback input bar).
-            if !window_def.base().visibility.is_shown() {
+            if liveness == LivenessPolicy::TuiSelection
+                && !window_def.base().placement.visibility.is_shown()
+            {
                 let force =
                     self.force_show_command_input && window_def.widget_type() == "command_input";
                 if !force {
@@ -479,10 +525,10 @@ impl AppCore {
         // Use exact position from window definition
         let base = window_def.base();
         let position = WindowPosition {
-            x: base.col,
-            y: base.row,
-            width: base.cols,
-            height: base.rows,
+            x: base.placement.col,
+            y: base.placement.row,
+            width: base.placement.cols,
+            height: base.placement.rows,
         };
 
         tracing::debug!(
@@ -861,10 +907,10 @@ impl AppCore {
     ) {
         let base = window_def.base();
         let position = WindowPosition {
-            x: base.col,
-            y: base.row,
-            width: base.cols,
-            height: base.rows,
+            x: base.placement.col,
+            y: base.placement.row,
+            width: base.placement.cols,
+            height: base.placement.rows,
         };
 
         if let Some(window_state) = self.ui_state.windows.get_mut(window_def.name()) {
@@ -971,11 +1017,11 @@ impl AppCore {
 
         for window_def in &self.layout.windows {
             // Use exact position and size from layout
-            let mut window_width = window_def.base().cols;
-            let mut window_height = window_def.base().rows;
+            let mut window_width = window_def.base().placement.cols;
+            let mut window_height = window_def.base().placement.rows;
 
             // Apply min/max constraints from window settings
-            if let Some(min_cols) = window_def.base().min_cols {
+            if let Some(min_cols) = window_def.base().placement.min_cols {
                 if window_width.get() < min_cols {
                     tracing::debug!(
                         "Window '{}': enforcing min_cols={} (was {})",
@@ -986,7 +1032,7 @@ impl AppCore {
                     window_width = crate::data::geometry::Width::new(min_cols);
                 }
             }
-            if let Some(max_cols) = window_def.base().max_cols {
+            if let Some(max_cols) = window_def.base().placement.max_cols {
                 if window_width.get() > max_cols {
                     tracing::debug!(
                         "Window '{}': enforcing max_cols={} (was {})",
@@ -997,7 +1043,7 @@ impl AppCore {
                     window_width = crate::data::geometry::Width::new(max_cols);
                 }
             }
-            if let Some(min_rows) = window_def.base().min_rows {
+            if let Some(min_rows) = window_def.base().placement.min_rows {
                 if window_height.get() < min_rows {
                     tracing::debug!(
                         "Window '{}': enforcing min_rows={} (was {})",
@@ -1008,7 +1054,7 @@ impl AppCore {
                     window_height = crate::data::geometry::Height::new(min_rows);
                 }
             }
-            if let Some(max_rows) = window_def.base().max_rows {
+            if let Some(max_rows) = window_def.base().placement.max_rows {
                 if window_height.get() > max_rows {
                     tracing::debug!(
                         "Window '{}': enforcing max_rows={} (was {})",
@@ -1023,8 +1069,8 @@ impl AppCore {
             tracing::debug!(
                 "Window '{}': pos=({},{}) size={}x{}",
                 window_def.name(),
-                window_def.base().col.get(),
-                window_def.base().row.get(),
+                window_def.base().placement.col.get(),
+                window_def.base().placement.row.get(),
                 window_width.get(),
                 window_height.get()
             );
@@ -1032,8 +1078,8 @@ impl AppCore {
             positions.insert(
                 window_def.name().to_string(),
                 WindowPosition {
-                    x: window_def.base().col,
-                    y: window_def.base().row,
+                    x: window_def.base().placement.col,
+                    y: window_def.base().placement.row,
                     width: window_width,
                     height: window_height,
                 },

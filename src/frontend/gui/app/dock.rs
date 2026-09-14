@@ -93,6 +93,12 @@ pub(super) struct RestoredLayoutState {
     pub(super) ui_settings: GuiUiSettings,
     pub(super) tab_settings: HashMap<TabKey, TabSettings>,
     pub(super) main_viewport: Option<MainViewportState>,
+    /// Window names newly added to `hidden_tabs` because the catalog (shared
+    /// across frontends, see `Layout::merge_loaded`) carries them but this
+    /// GUI checkpoint never placed them anywhere — not a rect, not a zone,
+    /// not a group, not a detached viewport. Reported to the user rather
+    /// than silently dropped; see `VellumGuiApp::new`.
+    pub(super) newly_hidden_catalog_windows: Vec<String>,
 }
 
 /// Save order for the main-surface windows: the cached live z-order first
@@ -284,6 +290,55 @@ impl VellumGuiApp {
             })
             .collect();
 
+        // A catalog window (shared across frontends; see `Layout::merge_loaded`)
+        // this GUI checkpoint never placed anywhere is hidden, not
+        // auto-placed onto the canvas — never-placed-ness is judged against
+        // the PERSISTED snapshot, before `tab_zones` above got its
+        // default-zone fill-in loop (every available tab gets a default
+        // zone, so post-fill membership can't distinguish "placed" from
+        // "just defaulted"). "Placed" means: a docked rect, a zone entry the
+        // file actually recorded, a tab group member, or a detached
+        // viewport. `TextMain`/`CommandInput` are exempt — same allowlist as
+        // `tabs_absent_from_layout` (layout_persistence.rs), the GUI's
+        // existing never-hide rule for those two windows.
+        let mut newly_hidden_catalog_windows = Vec::new();
+        if persisted_layout.is_some() {
+            let persisted_zone_keys: HashSet<&TabKey> = snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.tab_zones.iter().map(|entry| &entry.key).collect())
+                .unwrap_or_default();
+            let grouped_keys: HashSet<&TabKey> =
+                tab_groups.iter().flat_map(|g| g.members.iter()).collect();
+            // `visible_tabs` is the GUI's own literal record of what was on
+            // the main surface at save time (written every save from
+            // `current_main_surface_tab_keys`). It is the most direct
+            // evidence of placement there is, and it can name a tab whose
+            // rect/zone entry the snapshot filtered out — so a window listed
+            // here is placed, full stop.
+            let visible_keys: HashSet<&TabKey> = snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.visible_tabs.iter().collect())
+                .unwrap_or_default();
+            for (key, tab) in available_tabs {
+                if *key == TabKey::TextMain || *key == TabKey::CommandInput {
+                    continue;
+                }
+                if hidden_tabs.contains(key) {
+                    continue;
+                }
+                let placed = main_window_rects.contains_key(key)
+                    || persisted_zone_keys.contains(key)
+                    || grouped_keys.contains(key)
+                    || visible_keys.contains(key)
+                    || detached_tabs.contains_key(key);
+                if !placed {
+                    hidden_tabs.insert(key.clone());
+                    newly_hidden_catalog_windows.push(tab.window_name.clone());
+                }
+            }
+            newly_hidden_catalog_windows.sort();
+        }
+
         RestoredLayoutState {
             hidden_tabs,
             main_window_rects,
@@ -301,6 +356,7 @@ impl VellumGuiApp {
             ui_settings,
             tab_settings,
             main_viewport,
+            newly_hidden_catalog_windows,
         }
     }
 
@@ -1170,6 +1226,225 @@ mod tests {
             Some([250.0, 300.0, 400.0, 220.0]),
             "hidden tab keeps its saved rect for a later show"
         );
+    }
+
+    /// A catalog window this GUI checkpoint never placed (no rect, no
+    /// persisted zone entry, no group, no detached viewport) is hidden, not
+    /// auto-placed — the GUI half of the shared-catalog union (1c).
+    #[test]
+    fn restore_hides_never_placed_catalog_windows() {
+        let mut available_tabs = HashMap::new();
+        available_tabs.insert(
+            TabKey::Vitals,
+            GuiTab {
+                id: TabId::new(TabKey::Vitals),
+                window_name: "vitals".to_string(),
+            },
+        );
+        available_tabs.insert(
+            TabKey::Compass,
+            GuiTab {
+                id: TabId::new(TabKey::Compass),
+                window_name: "compass".to_string(),
+            },
+        );
+
+        // Only Vitals is placed (a rect); Compass is in available_tabs (the
+        // shared catalog union brought it in) but this checkpoint never put
+        // it anywhere.
+        let snapshot = DockStateSnapshot {
+            visible_tabs: Vec::new(),
+            main_window_rects: vec![MainWindowRectSnapshot {
+                key: TabKey::Vitals,
+                rect: [10.0, 10.0, 200.0, 100.0],
+                gap_above: 0.0,
+                anchors: None,
+                size_role: None,
+            }],
+            tab_zones: Vec::new(),
+            no_title_tabs: Vec::new(),
+            shell_layout: ShellLayoutSnapshot::default(),
+            tab_groups: Vec::new(),
+            free_sidebar_zones: Vec::new(),
+            pending_zones: Vec::new(),
+        };
+        let mut layout = GuiLayoutFileV1::new("profile", "character");
+        layout.dock_state_json = serde_json::to_value(snapshot).unwrap();
+
+        let restored = VellumGuiApp::restore_layout_state(Some(&layout), &available_tabs);
+
+        assert!(
+            !restored.hidden_tabs.contains(&TabKey::Vitals),
+            "placed window stays shown"
+        );
+        assert!(
+            restored.hidden_tabs.contains(&TabKey::Compass),
+            "never-placed catalog window is hidden"
+        );
+        assert_eq!(
+            restored.newly_hidden_catalog_windows,
+            vec!["compass".to_string()],
+            "reported so the user is told, not left silently missing"
+        );
+    }
+
+    /// Real-file shape (mirrors ~/.vellum-fe/layouts/alt1.json): every tab
+    /// appears in `visible_tabs` AND `main_window_rects` AND
+    /// `tab_zones`@center, both sidebars are free, and three of them form a
+    /// tab group. None of them may come back hidden — this is the
+    /// regression guard for the never-placed rule mistaking a fully placed
+    /// checkpoint for an empty one (Phase 1c hardening: `visible_tabs`
+    /// counts as placement).
+    #[test]
+    fn restore_keeps_a_fully_placed_real_shape_layout_shown() {
+        let keys: Vec<TabKey> = vec![
+            TabKey::TextMain,
+            TabKey::CommandInput,
+            TabKey::Vitals,
+            TabKey::Compass,
+            TabKey::Room,
+            TabKey::TextByName {
+                id: "thoughts".into(),
+            },
+            TabKey::TextByName {
+                id: "combat".into(),
+            },
+            TabKey::TextByName { id: "death".into() },
+            TabKey::Inventory { id: "inv".into() },
+            TabKey::ActiveEffects { id: "buffs".into() },
+            TabKey::ProgressBar {
+                id: "stance".into(),
+            },
+            TabKey::Quickbar {
+                id: "quickbar_1".into(),
+            },
+        ];
+        assert_eq!(keys.len(), 12);
+        let available_tabs: HashMap<TabKey, GuiTab> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, key)| {
+                (
+                    key.clone(),
+                    GuiTab {
+                        id: TabId::new(key.clone()),
+                        window_name: format!("window_{i}"),
+                    },
+                )
+            })
+            .collect();
+
+        let snapshot = DockStateSnapshot {
+            visible_tabs: keys.clone(),
+            main_window_rects: keys
+                .iter()
+                .enumerate()
+                .map(|(i, key)| MainWindowRectSnapshot {
+                    key: key.clone(),
+                    rect: [10.0 * i as f32, 20.0, 300.0, 150.0],
+                    gap_above: 0.0,
+                    anchors: None,
+                    size_role: None,
+                })
+                .collect(),
+            tab_zones: keys
+                .iter()
+                .map(|key| TabZoneSnapshot {
+                    key: key.clone(),
+                    zone: GuiShellZone::Center,
+                })
+                .collect(),
+            no_title_tabs: Vec::new(),
+            shell_layout: ShellLayoutSnapshot::default(),
+            tab_groups: vec![serde_json::from_value(serde_json::json!({
+                "members": keys[2..5].to_vec(),
+            }))
+            .expect("tab group fixture")],
+            free_sidebar_zones: vec![GuiShellZone::LeftSidebar, GuiShellZone::RightSidebar],
+            pending_zones: Vec::new(),
+        };
+        let mut layout = GuiLayoutFileV1::new("profile", "character");
+        layout.dock_state_json = serde_json::to_value(snapshot).unwrap();
+
+        let restored = VellumGuiApp::restore_layout_state(Some(&layout), &available_tabs);
+
+        assert!(
+            restored.hidden_tabs.is_empty(),
+            "a fully placed layout hides nothing, got: {:?}",
+            restored.hidden_tabs
+        );
+        assert!(restored.newly_hidden_catalog_windows.is_empty());
+    }
+
+    /// `visible_tabs` ALONE is placement: a tab the snapshot listed as on
+    /// the main surface stays shown even if its rect/zone entry is absent.
+    #[test]
+    fn restore_treats_visible_tabs_as_placement() {
+        let mut available_tabs = HashMap::new();
+        available_tabs.insert(
+            TabKey::Compass,
+            GuiTab {
+                id: TabId::new(TabKey::Compass),
+                window_name: "compass".to_string(),
+            },
+        );
+        let snapshot = DockStateSnapshot {
+            visible_tabs: vec![TabKey::Compass],
+            ..Default::default()
+        };
+        let mut layout = GuiLayoutFileV1::new("profile", "character");
+        layout.dock_state_json = serde_json::to_value(snapshot).unwrap();
+
+        let restored = VellumGuiApp::restore_layout_state(Some(&layout), &available_tabs);
+        assert!(!restored.hidden_tabs.contains(&TabKey::Compass));
+    }
+
+    #[test]
+    fn restore_does_not_hide_anything_on_first_run() {
+        // persisted_layout: None (no checkpoint yet) must behave exactly as
+        // before — nothing gets hidden just because it's unplaced.
+        let mut available_tabs = HashMap::new();
+        available_tabs.insert(
+            TabKey::Compass,
+            GuiTab {
+                id: TabId::new(TabKey::Compass),
+                window_name: "compass".to_string(),
+            },
+        );
+
+        let restored = VellumGuiApp::restore_layout_state(None, &available_tabs);
+
+        assert!(!restored.hidden_tabs.contains(&TabKey::Compass));
+        assert!(restored.newly_hidden_catalog_windows.is_empty());
+    }
+
+    #[test]
+    fn restore_never_hides_main_or_command_input() {
+        let mut available_tabs = HashMap::new();
+        available_tabs.insert(
+            TabKey::TextMain,
+            GuiTab {
+                id: TabId::new(TabKey::TextMain),
+                window_name: "main".to_string(),
+            },
+        );
+        available_tabs.insert(
+            TabKey::CommandInput,
+            GuiTab {
+                id: TabId::new(TabKey::CommandInput),
+                window_name: "command_input".to_string(),
+            },
+        );
+
+        // Neither is placed anywhere in this (otherwise-empty) checkpoint.
+        let mut layout = GuiLayoutFileV1::new("profile", "character");
+        layout.dock_state_json = serde_json::to_value(DockStateSnapshot::default()).unwrap();
+
+        let restored = VellumGuiApp::restore_layout_state(Some(&layout), &available_tabs);
+
+        assert!(!restored.hidden_tabs.contains(&TabKey::TextMain));
+        assert!(!restored.hidden_tabs.contains(&TabKey::CommandInput));
+        assert!(restored.newly_hidden_catalog_windows.is_empty());
     }
 
     #[test]

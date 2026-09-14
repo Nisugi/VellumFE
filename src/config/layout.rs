@@ -5,6 +5,7 @@
 //! and window add/hide/remove live here.
 
 use super::*;
+use std::collections::HashSet;
 
 // CommandInputConfig removed - command_input is now a regular window in the windows array
 
@@ -113,6 +114,75 @@ fn default_windows() -> Vec<WindowDef> {
 }
 
 impl Layout {
+    /// Union a freshly-loaded layout (`loaded`, e.g. from `.loadlayout` or a
+    /// GUI checkpoint) into `self`, the current catalog, WITHOUT ever
+    /// shrinking it. This is what makes the window catalog shared across
+    /// frontends safe to load into from either one:
+    ///
+    /// - A window named in `loaded` replaces the existing def of the same
+    ///   name entirely (the loaded file is authoritative for a window it
+    ///   defines — streams, buffer size, binding, AND placement all come
+    ///   from the loaded def, not just its placement). New names are
+    ///   appended.
+    /// - A window in `self` but NOT in `loaded` is kept, but hidden (its
+    ///   `placement.visibility` is forced to `Hidden`) — the loading
+    ///   frontend didn't ask for it, so it drops out of view without being
+    ///   destroyed. A window already `Ephemeral` (session-only, never
+    ///   persisted) is left untouched: it isn't a catalog entry to union.
+    /// - `deleted_windows` unions the same way (loaded entries win by name,
+    ///   anything else already stashed is kept) so an explicit delete made
+    ///   in one frontend survives a load from the other.
+    /// - `terminal_width`/`terminal_height`/`base_layout`/`theme` come from
+    ///   `loaded` — those are properties of the loaded file, not per-window
+    ///   catalog state.
+    pub fn merge_loaded(&mut self, loaded: Layout) {
+        let mut merged: Vec<WindowDef> =
+            Vec::with_capacity(self.windows.len() + loaded.windows.len());
+        let loaded_names: HashSet<String> = loaded
+            .windows
+            .iter()
+            .map(|w| w.name().to_string())
+            .collect();
+
+        // Existing windows not present in the loaded file: keep, but hide
+        // (unless Ephemeral, which is session-only and not a catalog entry).
+        for existing in self.windows.drain(..) {
+            if loaded_names.contains(existing.name()) {
+                continue; // superseded below by the loaded def
+            }
+            let mut existing = existing;
+            if existing.base().placement.visibility != WindowVisibility::Ephemeral {
+                existing.base_mut().placement.visibility = WindowVisibility::Hidden;
+            }
+            merged.push(existing);
+        }
+
+        // Loaded windows: the loaded def wins entirely for any name it defines.
+        merged.extend(loaded.windows);
+
+        self.windows = merged;
+
+        // Union deleted_windows the same way: loaded entries win by name.
+        let loaded_deleted_names: HashSet<String> = loaded
+            .deleted_windows
+            .iter()
+            .map(|w| w.name().to_string())
+            .collect();
+        self.deleted_windows
+            .retain(|w| !loaded_deleted_names.contains(w.name()));
+        self.deleted_windows.extend(loaded.deleted_windows);
+
+        self.terminal_width = loaded.terminal_width;
+        self.terminal_height = loaded.terminal_height;
+        self.base_layout = loaded.base_layout;
+        self.theme = loaded.theme;
+        // unknown_windows: keep whatever the loaded file carried forward;
+        // this build still can't deserialize them, so there's nothing to
+        // union at the def level — replace wholesale like the other
+        // loaded-file properties.
+        self.unknown_windows = loaded.unknown_windows;
+    }
+
     /// Load layout from file using new profile-based structure
     /// Priority: character auto-save → saved "default" checkpoint → default profile auto-save → embedded
     pub fn load(character: Option<&str>) -> Result<Self> {
@@ -255,49 +325,51 @@ impl Layout {
             let window_type = window.widget_type().to_string();
 
             let base = window.base_mut();
-            let old_col = base.col;
-            let old_row = base.row;
-            let old_cols = base.cols;
-            let old_rows = base.rows;
+            let old_col = base.placement.col;
+            let old_row = base.placement.row;
+            let old_cols = base.placement.cols;
+            let old_rows = base.placement.rows;
 
-            base.col =
-                crate::data::geometry::Col::new((base.col.get() as f32 * scale_x).round() as u16);
-            base.row =
-                crate::data::geometry::Row::new((base.row.get() as f32 * scale_y).round() as u16);
-            base.cols = crate::data::geometry::Width::new(
-                (base.cols.get() as f32 * scale_x).round() as u16,
+            base.placement.col = crate::data::geometry::Col::new(
+                (base.placement.col.get() as f32 * scale_x).round() as u16,
             );
-            base.rows = crate::data::geometry::Height::new(
-                (base.rows.get() as f32 * scale_y).round() as u16,
+            base.placement.row = crate::data::geometry::Row::new(
+                (base.placement.row.get() as f32 * scale_y).round() as u16,
+            );
+            base.placement.cols = crate::data::geometry::Width::new(
+                (base.placement.cols.get() as f32 * scale_x).round() as u16,
+            );
+            base.placement.rows = crate::data::geometry::Height::new(
+                (base.placement.rows.get() as f32 * scale_y).round() as u16,
             );
 
             // Ensure minimum sizes
-            if base.cols.get() < 1 {
-                base.cols = crate::data::geometry::Width::new(1);
+            if base.placement.cols.get() < 1 {
+                base.placement.cols = crate::data::geometry::Width::new(1);
             }
-            if base.rows.get() < 1 {
-                base.rows = crate::data::geometry::Height::new(1);
+            if base.placement.rows.get() < 1 {
+                base.placement.rows = crate::data::geometry::Height::new(1);
             }
 
             // Respect min/max constraints if set
-            if let Some(min_cols) = base.min_cols {
-                if base.cols.get() < min_cols {
-                    base.cols = crate::data::geometry::Width::new(min_cols);
+            if let Some(min_cols) = base.placement.min_cols {
+                if base.placement.cols.get() < min_cols {
+                    base.placement.cols = crate::data::geometry::Width::new(min_cols);
                 }
             }
-            if let Some(max_cols) = base.max_cols {
-                if base.cols.get() > max_cols {
-                    base.cols = crate::data::geometry::Width::new(max_cols);
+            if let Some(max_cols) = base.placement.max_cols {
+                if base.placement.cols.get() > max_cols {
+                    base.placement.cols = crate::data::geometry::Width::new(max_cols);
                 }
             }
-            if let Some(min_rows) = base.min_rows {
-                if base.rows.get() < min_rows {
-                    base.rows = crate::data::geometry::Height::new(min_rows);
+            if let Some(min_rows) = base.placement.min_rows {
+                if base.placement.rows.get() < min_rows {
+                    base.placement.rows = crate::data::geometry::Height::new(min_rows);
                 }
             }
-            if let Some(max_rows) = base.max_rows {
-                if base.rows.get() > max_rows {
-                    base.rows = crate::data::geometry::Height::new(max_rows);
+            if let Some(max_rows) = base.placement.max_rows {
+                if base.placement.rows.get() > max_rows {
+                    base.placement.rows = crate::data::geometry::Height::new(max_rows);
                 }
             }
 
@@ -307,12 +379,12 @@ impl Layout {
                 window_type,
                 old_col.get(),
                 old_row.get(),
-                base.col.get(),
-                base.row.get(),
+                base.placement.col.get(),
+                base.placement.row.get(),
                 old_cols.get(),
                 old_rows.get(),
-                base.cols.get(),
-                base.rows.get()
+                base.placement.cols.get(),
+                base.placement.rows.get()
             );
         }
 
@@ -509,12 +581,12 @@ impl Layout {
         let shown: std::collections::HashSet<(String, String)> = layout
             .windows
             .iter()
-            .filter(|w| w.base().visibility == WindowVisibility::Shown)
+            .filter(|w| w.base().placement.visibility == WindowVisibility::Shown)
             .map(|w| (w.name().to_string(), w.widget_type().to_string()))
             .collect();
         let before = layout.windows.len();
         layout.windows.retain(|w| {
-            let keep = w.base().visibility == WindowVisibility::Shown
+            let keep = w.base().placement.visibility == WindowVisibility::Shown
                 || !shown.contains(&(w.name().to_string(), w.widget_type().to_string()));
             if !keep {
                 tracing::info!(
@@ -568,11 +640,12 @@ impl Layout {
         {
             // Command input exists but might have invalid values (cols=0, rows=0, etc)
             let cmd_input_base = layout.windows[idx].base_mut();
-            if cmd_input_base.cols.get() == 0 || cmd_input_base.rows.get() == 0 {
+            if cmd_input_base.placement.cols.get() == 0 || cmd_input_base.placement.rows.get() == 0
+            {
                 tracing::warn!(
                     "Command input has invalid size ({}x{}), fixing with defaults",
-                    cmd_input_base.rows.get(),
-                    cmd_input_base.cols.get()
+                    cmd_input_base.placement.rows.get(),
+                    cmd_input_base.placement.cols.get()
                 );
                 // Get defaults from default_windows()
                 if let Some(default_cmd) = default_windows()
@@ -580,10 +653,10 @@ impl Layout {
                     .find(|w| w.widget_type() == "command_input")
                 {
                     let default_base = default_cmd.base();
-                    cmd_input_base.row = default_base.row;
-                    cmd_input_base.col = default_base.col;
-                    cmd_input_base.rows = default_base.rows;
-                    cmd_input_base.cols = default_base.cols;
+                    cmd_input_base.placement.row = default_base.placement.row;
+                    cmd_input_base.placement.col = default_base.placement.col;
+                    cmd_input_base.placement.rows = default_base.placement.rows;
+                    cmd_input_base.placement.cols = default_base.placement.cols;
                 }
             }
         } else {
@@ -815,11 +888,11 @@ impl Layout {
             let base = window.base();
 
             // Check for zero dimensions
-            if base.rows.get() == 0 {
+            if base.placement.rows.get() == 0 {
                 eprintln!("✗ Error: Window '{}' has zero height", name);
                 errors += 1;
             }
-            if base.cols.get() == 0 {
+            if base.placement.cols.get() == 0 {
                 eprintln!("✗ Error: Window '{}' has zero width", name);
                 errors += 1;
             }
@@ -831,12 +904,12 @@ impl Layout {
             }
 
             // Warn about very small windows
-            if base.rows.get() == 1 && base.cols.get() < 10 {
+            if base.placement.rows.get() == 1 && base.placement.cols.get() < 10 {
                 eprintln!(
                     "⚠ Warning: Window '{}' is very small ({}x{})",
                     name,
-                    base.cols.get(),
-                    base.rows.get()
+                    base.placement.cols.get(),
+                    base.placement.rows.get()
                 );
                 warnings += 1;
             }
@@ -931,7 +1004,7 @@ impl Layout {
         // Check if window already exists in layout
         if let Some(existing) = self.windows.iter_mut().find(|w| w.name() == name) {
             // Just make it visible
-            existing.base_mut().visibility = crate::config::WindowVisibility::Shown;
+            existing.base_mut().placement.visibility = crate::config::WindowVisibility::Shown;
             tracing::info!("Window '{}' already exists, setting visible=true", name);
             return Ok(name.to_string());
         }
@@ -957,7 +1030,7 @@ impl Layout {
         }
 
         // Set visible
-        window_def.base_mut().visibility = crate::config::WindowVisibility::Shown;
+        window_def.base_mut().placement.visibility = crate::config::WindowVisibility::Shown;
 
         // A seed's tabs carry no ids; assign them before the def can reach
         // runtime state (template instantiation is a def→runtime boundary).
@@ -1030,7 +1103,7 @@ impl Layout {
         window_def.base_mut().name = name.clone();
         window_def.base_mut().binding = Some(binding);
         // Discovered windows start Hidden: known but not shown/auto-spawned.
-        window_def.base_mut().visibility = crate::config::WindowVisibility::Hidden;
+        window_def.base_mut().placement.visibility = crate::config::WindowVisibility::Hidden;
         self.windows.push(window_def);
         tracing::info!("Registered discovered window '{}' (hidden)", name);
         Some(name)
@@ -1044,7 +1117,7 @@ impl Layout {
             .find(|w| w.name() == name)
             .ok_or_else(|| anyhow::anyhow!("Window not found: {}", name))?;
 
-        window.base_mut().visibility = crate::config::WindowVisibility::Hidden;
+        window.base_mut().placement.visibility = crate::config::WindowVisibility::Hidden;
         tracing::info!("Window '{}' hidden (visible=false)", name);
         Ok(())
     }
@@ -1078,6 +1151,175 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn window_toml(name: &str, extra: &str) -> String {
+        format!(
+            r#"
+[[windows]]
+widget_type = "text"
+name = "{name}"
+row = 0
+col = 0
+rows = 10
+cols = 20
+{extra}
+"#
+        )
+    }
+
+    fn layout_of(defs: &[&str]) -> Layout {
+        let toml = defs.join("\n");
+        Layout::parse_tolerant(&toml, "test").unwrap()
+    }
+
+    #[test]
+    fn merge_loaded_unions_and_hides_unmentioned() {
+        // (1) load A={x,y} then B={y,z} -> windows {x:Hidden, y:B's def, z:Shown}
+        let x = window_toml("x", "");
+        let y_a = window_toml("y", "");
+        let mut a = layout_of(&[&x, &y_a]);
+
+        let y_b = window_toml("y", "streams = [\"thoughts\"]");
+        let z = window_toml("z", "");
+        let b = layout_of(&[&y_b, &z]);
+
+        a.merge_loaded(b);
+
+        let names: Vec<&str> = a.windows.iter().map(|w| w.name()).collect();
+        assert!(names.contains(&"x"));
+        assert!(names.contains(&"y"));
+        assert!(names.contains(&"z"));
+
+        let get = |l: &Layout, n: &str| l.windows.iter().find(|w| w.name() == n).unwrap().clone();
+        assert_eq!(
+            get(&a, "x").base().placement.visibility,
+            WindowVisibility::Hidden,
+            "x dropped from the loaded file must be hidden, not removed"
+        );
+        assert_eq!(
+            get(&a, "y").base().placement.visibility,
+            WindowVisibility::Shown,
+            "y named in B keeps B's (Shown) def"
+        );
+        if let WindowDef::Text { data, .. } = get(&a, "y") {
+            assert_eq!(
+                data.streams,
+                vec!["thoughts".to_string()],
+                "B's def wins entirely, not just placement"
+            );
+        } else {
+            panic!("y should be a Text def");
+        }
+        assert_eq!(
+            get(&a, "z").base().placement.visibility,
+            WindowVisibility::Shown,
+            "z is new, appended as Shown"
+        );
+    }
+
+    #[test]
+    fn merge_loaded_reload_of_a_restores_x_and_rehides_z() {
+        // (2) then load A again -> x Shown at A's placement, z Hidden
+        let x = window_toml("x", "");
+        let y_a = window_toml("y", "");
+        let a = layout_of(&[&x, &y_a]);
+
+        let y_b = window_toml("y", "");
+        let z = window_toml("z", "");
+        let b = layout_of(&[&y_b, &z]);
+
+        let mut merged = a.clone();
+        merged.merge_loaded(b);
+        // Now reload A.
+        merged.merge_loaded(a);
+
+        let get = |l: &Layout, n: &str| l.windows.iter().find(|w| w.name() == n).unwrap().clone();
+        assert_eq!(
+            get(&merged, "x").base().placement.visibility,
+            WindowVisibility::Shown,
+            "x comes back Shown at A's placement"
+        );
+        assert_eq!(
+            get(&merged, "z").base().placement.visibility,
+            WindowVisibility::Hidden,
+            "z, absent from A, is hidden rather than destroyed"
+        );
+    }
+
+    #[test]
+    fn merge_loaded_never_touches_ephemeral_windows() {
+        // (3) Ephemeral untouched
+        let mut existing = layout_of(&[&window_toml("panel_1", "")]);
+        existing.windows[0].base_mut().placement.visibility = WindowVisibility::Ephemeral;
+
+        let loaded = layout_of(&[&window_toml("other", "")]);
+        existing.merge_loaded(loaded);
+
+        let panel = existing
+            .windows
+            .iter()
+            .find(|w| w.name() == "panel_1")
+            .unwrap();
+        assert_eq!(
+            panel.base().placement.visibility,
+            WindowVisibility::Ephemeral,
+            "an Ephemeral window is session-only and must not be forced Hidden"
+        );
+    }
+
+    #[test]
+    fn merge_loaded_def_replaces_streams_and_buffer_not_just_placement() {
+        // (4) loaded def replaces streams/buffer_size, not just placement
+        let mut existing = layout_of(&[&window_toml(
+            "thoughts",
+            "streams = [\"thoughts\"]\nbuffer_size = 500",
+        )]);
+        // buffer_size isn't part of the base TOML fixture helper; set directly.
+        if let WindowDef::Text { data, .. } = &mut existing.windows[0] {
+            data.buffer_size = 500;
+        }
+
+        let loaded = layout_of(&[&window_toml(
+            "thoughts",
+            "streams = [\"thoughts\", \"voln\"]\nbuffer_size = 2000",
+        )]);
+
+        existing.merge_loaded(loaded);
+
+        let merged = existing
+            .windows
+            .iter()
+            .find(|w| w.name() == "thoughts")
+            .unwrap();
+        if let WindowDef::Text { data, .. } = merged {
+            assert_eq!(
+                data.streams,
+                vec!["thoughts".to_string(), "voln".to_string()]
+            );
+            assert_eq!(data.buffer_size, 2000);
+        } else {
+            panic!("thoughts should be a Text def");
+        }
+    }
+
+    #[test]
+    fn merge_loaded_unions_deleted_windows_by_name() {
+        let mut existing = layout_of(&[&window_toml("a", "")]);
+        existing
+            .deleted_windows
+            .push(layout_of(&[&window_toml("gone1", "")]).windows.remove(0));
+
+        let mut loaded = layout_of(&[&window_toml("b", "")]);
+        loaded
+            .deleted_windows
+            .push(layout_of(&[&window_toml("gone2", "")]).windows.remove(0));
+
+        existing.merge_loaded(loaded);
+
+        let deleted_names: Vec<&str> = existing.deleted_windows.iter().map(|w| w.name()).collect();
+        assert!(deleted_names.contains(&"gone1"));
+        assert!(deleted_names.contains(&"gone2"));
+    }
 
     const MIXED_LAYOUT: &str = r#"
 terminal_width = 120
@@ -1188,7 +1430,11 @@ border_color = "#807f80"
                 .iter()
                 .find(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
                 .unwrap();
-            assert_eq!(w.base().visibility, WindowVisibility::Hidden, "{id}");
+            assert_eq!(
+                w.base().placement.visibility,
+                WindowVisibility::Hidden,
+                "{id}"
+            );
         }
         // Feed wiring survived.
         let thoughts = reloaded
@@ -1368,10 +1614,17 @@ border_color = "#807f80"
         WindowDef::Text {
             base: WindowBase {
                 name: name.to_string(),
-                row: crate::data::geometry::Row::new(row),
-                col: crate::data::geometry::Col::new(col),
-                rows: crate::data::geometry::Height::new(rows),
-                cols: crate::data::geometry::Width::new(cols),
+                placement: crate::config::TuiPlacement {
+                    row: crate::data::geometry::Row::new(row),
+                    col: crate::data::geometry::Col::new(col),
+                    rows: crate::data::geometry::Height::new(rows),
+                    cols: crate::data::geometry::Width::new(cols),
+                    min_rows: None,
+                    max_rows: None,
+                    min_cols: None,
+                    max_cols: None,
+                    visibility: crate::config::WindowVisibility::Shown,
+                },
                 show_border: false,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -1382,11 +1635,6 @@ border_color = "#807f80"
                 text_color: None,
                 transparent_background: false,
                 locked: false,
-                min_rows: None,
-                max_rows: None,
-                min_cols: None,
-                max_cols: None,
-                visibility: crate::config::WindowVisibility::Shown,
                 binding: None,
                 content_align: None,
                 tts_speak: false,
@@ -1453,7 +1701,12 @@ border_color = "#807f80"
         // Geometry preserved.
         let b = healed.base();
         assert_eq!(
-            (b.col.get(), b.row.get(), b.cols.get(), b.rows.get()),
+            (
+                b.placement.col.get(),
+                b.placement.row.get(),
+                b.placement.cols.get(),
+                b.placement.rows.get()
+            ),
             (5, 6, 40, 10)
         );
         assert_eq!(b.binding, Some(WindowBinding::Stream("Spells".to_string())));
@@ -1488,7 +1741,12 @@ border_color = "#807f80"
 
         let b = layout.windows[1].base();
         assert_eq!(
-            (b.col.get(), b.row.get(), b.cols.get(), b.rows.get()),
+            (
+                b.placement.col.get(),
+                b.placement.row.get(),
+                b.placement.cols.get(),
+                b.placement.rows.get()
+            ),
             (80, 24, 80, 24)
         );
         assert_eq!(layout.terminal_width, Some(160));
@@ -1503,9 +1761,9 @@ border_color = "#807f80"
         layout.scale_to_terminal_size(100, 24);
 
         let b = layout.windows[0].base();
-        assert_eq!(b.cols.get(), 13); // 10 * 1.25 = 12.5 -> 13
-        assert_eq!(b.col.get(), 10); // 8 * 1.25 = 10.0 -> 10
-        assert_eq!(b.rows.get(), 24); // height unchanged (1.0x)
+        assert_eq!(b.placement.cols.get(), 13); // 10 * 1.25 = 12.5 -> 13
+        assert_eq!(b.placement.col.get(), 10); // 8 * 1.25 = 10.0 -> 10
+        assert_eq!(b.placement.rows.get(), 24); // height unchanged (1.0x)
     }
 
     /// Shrinking never produces a zero-size window: cols/rows floor at 1.
@@ -1516,22 +1774,30 @@ border_color = "#807f80"
         layout.scale_to_terminal_size(10, 10);
 
         let b = layout.windows[0].base();
-        assert!(b.cols.get() >= 1, "cols floored at 1, got {}", b.cols.get());
-        assert!(b.rows.get() >= 1, "rows floored at 1, got {}", b.rows.get());
+        assert!(
+            b.placement.cols.get() >= 1,
+            "cols floored at 1, got {}",
+            b.placement.cols.get()
+        );
+        assert!(
+            b.placement.rows.get() >= 1,
+            "rows floored at 1, got {}",
+            b.placement.rows.get()
+        );
     }
 
     /// min/max constraints override the scaled result.
     #[test]
     fn scale_to_terminal_size_respects_min_max_constraints() {
         let mut def = scale_text_def("clamped", 0, 0, 40, 10);
-        def.base_mut().max_cols = Some(50); // cap growth
-        def.base_mut().min_rows = Some(15); // floor shrink
+        def.base_mut().placement.max_cols = Some(50); // cap growth
+        def.base_mut().placement.min_rows = Some(15); // floor shrink
         let mut layout = scale_layout(vec![def], 80, 24);
         layout.scale_to_terminal_size(160, 12); // 2x width, 0.5x height
 
         let b = layout.windows[0].base();
-        assert_eq!(b.cols.get(), 50); // 40*2=80 capped at max_cols 50
-        assert_eq!(b.rows.get(), 15); // 10*0.5=5 raised to min_rows 15
+        assert_eq!(b.placement.cols.get(), 50); // 40*2=80 capped at max_cols 50
+        assert_eq!(b.placement.rows.get(), 15); // 10*0.5=5 raised to min_rows 15
     }
 
     // ==================== Redesign Phase 2: binding backfill ====================
@@ -1655,14 +1921,14 @@ border_color = "#807f80"
         let mut layout = Layout::parse_tolerant("windows = []", "test").unwrap();
         layout.windows.push(template("room"));
         let mut duplicate = template("room");
-        duplicate.base_mut().visibility = WindowVisibility::Hidden;
+        duplicate.base_mut().placement.visibility = WindowVisibility::Hidden;
         duplicate.base_mut().binding = Some(B::Stream("room".into()));
         layout.windows.push(duplicate);
 
         assert_eq!(Layout::heal_duplicate_name_windows(&mut layout), 1);
         assert_eq!(layout.windows.len(), 1);
         assert_eq!(
-            layout.windows[0].base().visibility,
+            layout.windows[0].base().placement.visibility,
             WindowVisibility::Shown,
             "the shown copy is the keeper"
         );
@@ -1676,7 +1942,7 @@ border_color = "#807f80"
         // A hidden window with a unique name is never touched.
         let mut untouched = Layout::parse_tolerant("windows = []", "test").unwrap();
         let mut lone_hidden = template("thoughts");
-        lone_hidden.base_mut().visibility = WindowVisibility::Hidden;
+        lone_hidden.base_mut().placement.visibility = WindowVisibility::Hidden;
         untouched.windows.push(lone_hidden);
         assert_eq!(Layout::heal_duplicate_name_windows(&mut untouched), 0);
         assert_eq!(untouched.windows.len(), 1);

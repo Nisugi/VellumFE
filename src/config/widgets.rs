@@ -201,14 +201,18 @@ impl WindowBase {
 
     /// Rows available for the widget's interior content
     pub fn content_rows(&self) -> u16 {
-        self.rows
+        self.placement
+            .rows
             .get()
             .saturating_sub(self.horizontal_border_units())
     }
 
     /// Columns available for the widget's interior content
     pub fn content_cols(&self) -> u16 {
-        self.cols.get().saturating_sub(self.vertical_border_units())
+        self.placement
+            .cols
+            .get()
+            .saturating_sub(self.vertical_border_units())
     }
 
     /// Apply new border visibility/sides while keeping interior size the same.
@@ -218,20 +222,34 @@ impl WindowBase {
         let prev_vertical = self.vertical_border_units();
 
         // Calculate content dimensions (interior without borders)
-        let content_rows = self.rows.get().saturating_sub(prev_horizontal).max(1);
-        let content_cols = self.cols.get().saturating_sub(prev_vertical).max(1);
+        let content_rows = self
+            .placement
+            .rows
+            .get()
+            .saturating_sub(prev_horizontal)
+            .max(1);
+        let content_cols = self
+            .placement
+            .cols
+            .get()
+            .saturating_sub(prev_vertical)
+            .max(1);
 
         // Calculate content-based min/max (if set) - None stays None
         let content_min_rows = self
+            .placement
             .min_rows
             .map(|m| m.saturating_sub(prev_horizontal).max(1));
         let content_max_rows = self
+            .placement
             .max_rows
             .map(|m| m.saturating_sub(prev_horizontal).max(1));
         let content_min_cols = self
+            .placement
             .min_cols
             .map(|m| m.saturating_sub(prev_vertical).max(1));
         let content_max_cols = self
+            .placement
             .max_cols
             .map(|m| m.saturating_sub(prev_vertical).max(1));
 
@@ -244,34 +262,34 @@ impl WindowBase {
         let new_vertical = Self::vertical_border_units_for(self.show_border, &self.border_sides);
 
         // Adjust rows/cols (minimum 1)
-        self.rows = Height::new((content_rows + new_horizontal).max(1));
-        self.cols = Width::new((content_cols + new_vertical).max(1));
+        self.placement.rows = Height::new((content_rows + new_horizontal).max(1));
+        self.placement.cols = Width::new((content_cols + new_vertical).max(1));
 
         // Adjust min/max if set (minimum 1, None stays None)
-        self.min_rows = content_min_rows.map(|m| (m + new_horizontal).max(1));
-        self.max_rows = content_max_rows.map(|m| (m + new_horizontal).max(1));
-        self.min_cols = content_min_cols.map(|m| (m + new_vertical).max(1));
-        self.max_cols = content_max_cols.map(|m| (m + new_vertical).max(1));
+        self.placement.min_rows = content_min_rows.map(|m| (m + new_horizontal).max(1));
+        self.placement.max_rows = content_max_rows.map(|m| (m + new_horizontal).max(1));
+        self.placement.min_cols = content_min_cols.map(|m| (m + new_vertical).max(1));
+        self.placement.max_cols = content_max_cols.map(|m| (m + new_vertical).max(1));
 
         // Enforce constraints on rows/cols
-        if let Some(min_rows) = self.min_rows {
-            if self.rows.get() < min_rows {
-                self.rows = Height::new(min_rows);
+        if let Some(min_rows) = self.placement.min_rows {
+            if self.placement.rows.get() < min_rows {
+                self.placement.rows = Height::new(min_rows);
             }
         }
-        if let Some(max_rows) = self.max_rows {
-            if self.rows.get() > max_rows {
-                self.rows = Height::new(max_rows);
+        if let Some(max_rows) = self.placement.max_rows {
+            if self.placement.rows.get() > max_rows {
+                self.placement.rows = Height::new(max_rows);
             }
         }
-        if let Some(min_cols) = self.min_cols {
-            if self.cols.get() < min_cols {
-                self.cols = Width::new(min_cols);
+        if let Some(min_cols) = self.placement.min_cols {
+            if self.placement.cols.get() < min_cols {
+                self.placement.cols = Width::new(min_cols);
             }
         }
-        if let Some(max_cols) = self.max_cols {
-            if self.cols.get() > max_cols {
-                self.cols = Width::new(max_cols);
+        if let Some(max_cols) = self.placement.max_cols {
+            if self.placement.cols.get() > max_cols {
+                self.placement.cols = Width::new(max_cols);
             }
         }
     }
@@ -287,30 +305,38 @@ impl WindowBase {
         let delta: i16 = if new_show { 1 } else { -1 };
 
         // Adjust rows (minimum 1)
-        self.rows = Height::new((self.rows.get() as i16 + delta).max(1) as u16);
+        self.placement.rows = Height::new((self.placement.rows.get() as i16 + delta).max(1) as u16);
 
         // Adjust min/max if set (minimum 1, None stays None)
-        self.min_rows = self.min_rows.map(|m| (m as i16 + delta).max(1) as u16);
-        self.max_rows = self.max_rows.map(|m| (m as i16 + delta).max(1) as u16);
+        self.placement.min_rows = self
+            .placement
+            .min_rows
+            .map(|m| (m as i16 + delta).max(1) as u16);
+        self.placement.max_rows = self
+            .placement
+            .max_rows
+            .map(|m| (m as i16 + delta).max(1) as u16);
 
         // Enforce constraints
-        if let Some(min_rows) = self.min_rows {
-            if self.rows.get() < min_rows {
-                self.rows = Height::new(min_rows);
+        if let Some(min_rows) = self.placement.min_rows {
+            if self.placement.rows.get() < min_rows {
+                self.placement.rows = Height::new(min_rows);
             }
         }
-        if let Some(max_rows) = self.max_rows {
-            if self.rows.get() > max_rows {
-                self.rows = Height::new(max_rows);
+        if let Some(max_rows) = self.placement.max_rows {
+            if self.placement.rows.get() > max_rows {
+                self.placement.rows = Height::new(max_rows);
             }
         }
     }
 }
 
-/// Base configuration shared by ALL widget types
+/// TUI-only per-window state: terminal-cell geometry and the TUI's own
+/// show/hide selection. Flattened into `WindowBase` so layout.toml is
+/// byte-for-byte unchanged; the type boundary exists so the GUI cannot
+/// reach these (enforced by tests/architecture.rs).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WindowBase {
-    pub name: String,
+pub struct TuiPlacement {
     #[serde(default)]
     pub row: crate::data::geometry::Row,
     #[serde(default)]
@@ -319,28 +345,6 @@ pub struct WindowBase {
     pub rows: crate::data::geometry::Height,
     #[serde(default = "default_cols")]
     pub cols: crate::data::geometry::Width,
-    #[serde(default = "default_show_border")]
-    pub show_border: bool,
-    #[serde(default = "default_border_style")]
-    pub border_style: String, // "single", "double", "rounded", "thick", "plain"
-    #[serde(default)]
-    pub border_sides: BorderSides,
-    #[serde(default)]
-    pub border_color: Option<String>,
-    #[serde(default = "default_show_title")]
-    pub show_title: bool,
-    #[serde(default)]
-    pub title: Option<String>,
-    #[serde(default = "default_title_position")]
-    pub title_position: String,
-    #[serde(default)]
-    pub background_color: Option<String>,
-    #[serde(default)]
-    pub text_color: Option<String>,
-    #[serde(default = "default_transparent_background")]
-    pub transparent_background: bool,
-    #[serde(default)]
-    pub locked: bool,
     #[serde(default)]
     pub min_rows: Option<u16>,
     #[serde(default)]
@@ -355,27 +359,203 @@ pub struct WindowBase {
     /// Deserialize compat), defaulting to Shown.
     #[serde(default, alias = "visible")]
     pub visibility: WindowVisibility,
+}
+
+impl Default for TuiPlacement {
+    fn default() -> Self {
+        Self {
+            row: Default::default(),
+            col: Default::default(),
+            rows: default_rows(),
+            cols: default_cols(),
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
+            visibility: WindowVisibility::default(),
+        }
+    }
+}
+
+/// Base configuration shared by ALL widget types.
+///
+/// Serialization is hand-rolled (via `WindowBaseShadow` below) rather than
+/// using `#[serde(flatten)]` on `placement`. `#[serde(flatten)]` would
+/// serialize all of `TuiPlacement`'s fields as one contiguous block
+/// wherever `placement` appears in field order, but on disk those fields
+/// are historically INTERLEAVED with other `WindowBase` fields (e.g.
+/// `min_rows`/`max_rows`/`visibility` appear after `locked`, not next to
+/// `row`/`col`/`rows`/`cols`). The shadow struct reproduces the exact
+/// original TOML field order so layout.toml stays byte-for-byte
+/// unchanged; see `tests/template_characterization.rs`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindowBase {
+    pub name: String,
+    pub placement: TuiPlacement,
+    pub show_border: bool,
+    pub border_style: String, // "single", "double", "rounded", "thick", "plain"
+    pub border_sides: BorderSides,
+    pub border_color: Option<String>,
+    pub show_title: bool,
+    pub title: Option<String>,
+    pub title_position: String,
+    pub background_color: Option<String>,
+    pub text_color: Option<String>,
+    pub transparent_background: bool,
+    pub locked: bool,
     /// Game source this window is bound to (dialog/stream/container id), so
     /// feeds resolve to the right window(s) regardless of display name.
     /// None for hand-placed/custom windows with no game binding.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding: Option<WindowBinding>,
     /// Content alignment within widget area
-    #[serde(default)]
     pub content_align: Option<String>,
     /// Speak new lines routed to this window via TTS (accessibility).
     /// Off by default; the classic thoughts/speech/main config toggles
     /// still apply on top for backward compatibility.
-    #[serde(default)]
     pub tts_speak: bool,
     /// GUI: per-window text size override in points; None uses the global
     /// text size. The TUI ignores it (terminals have no text size).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_size: Option<f32>,
     /// GUI: per-window font family name; None uses the default font.
     /// The TUI ignores it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_family: Option<String>,
+}
+
+/// Serde shadow for `WindowBase` matching the on-disk field order exactly
+/// (pre-`TuiPlacement`-split layout.toml layout). See `WindowBase` doc.
+#[derive(Serialize, Deserialize)]
+struct WindowBaseShadow {
+    name: String,
+    #[serde(default)]
+    row: crate::data::geometry::Row,
+    #[serde(default)]
+    col: crate::data::geometry::Col,
+    #[serde(default = "default_rows")]
+    rows: crate::data::geometry::Height,
+    #[serde(default = "default_cols")]
+    cols: crate::data::geometry::Width,
+    #[serde(default = "default_show_border")]
+    show_border: bool,
+    #[serde(default = "default_border_style")]
+    border_style: String,
+    #[serde(default)]
+    border_sides: BorderSides,
+    #[serde(default)]
+    border_color: Option<String>,
+    #[serde(default = "default_show_title")]
+    show_title: bool,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default = "default_title_position")]
+    title_position: String,
+    #[serde(default)]
+    background_color: Option<String>,
+    #[serde(default)]
+    text_color: Option<String>,
+    #[serde(default = "default_transparent_background")]
+    transparent_background: bool,
+    #[serde(default)]
+    locked: bool,
+    #[serde(default)]
+    min_rows: Option<u16>,
+    #[serde(default)]
+    max_rows: Option<u16>,
+    #[serde(default)]
+    min_cols: Option<u16>,
+    #[serde(default)]
+    max_cols: Option<u16>,
+    #[serde(default, alias = "visible")]
+    visibility: WindowVisibility,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    binding: Option<WindowBinding>,
+    #[serde(default)]
+    content_align: Option<String>,
+    #[serde(default)]
+    tts_speak: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    font_family: Option<String>,
+}
+
+impl From<&WindowBase> for WindowBaseShadow {
+    fn from(b: &WindowBase) -> Self {
+        Self {
+            name: b.name.clone(),
+            row: b.placement.row,
+            col: b.placement.col,
+            rows: b.placement.rows,
+            cols: b.placement.cols,
+            show_border: b.show_border,
+            border_style: b.border_style.clone(),
+            border_sides: b.border_sides.clone(),
+            border_color: b.border_color.clone(),
+            show_title: b.show_title,
+            title: b.title.clone(),
+            title_position: b.title_position.clone(),
+            background_color: b.background_color.clone(),
+            text_color: b.text_color.clone(),
+            transparent_background: b.transparent_background,
+            locked: b.locked,
+            min_rows: b.placement.min_rows,
+            max_rows: b.placement.max_rows,
+            min_cols: b.placement.min_cols,
+            max_cols: b.placement.max_cols,
+            visibility: b.placement.visibility,
+            binding: b.binding.clone(),
+            content_align: b.content_align.clone(),
+            tts_speak: b.tts_speak,
+            text_size: b.text_size,
+            font_family: b.font_family.clone(),
+        }
+    }
+}
+
+impl From<WindowBaseShadow> for WindowBase {
+    fn from(s: WindowBaseShadow) -> Self {
+        Self {
+            name: s.name,
+            placement: TuiPlacement {
+                row: s.row,
+                col: s.col,
+                rows: s.rows,
+                cols: s.cols,
+                min_rows: s.min_rows,
+                max_rows: s.max_rows,
+                min_cols: s.min_cols,
+                max_cols: s.max_cols,
+                visibility: s.visibility,
+            },
+            show_border: s.show_border,
+            border_style: s.border_style,
+            border_sides: s.border_sides,
+            border_color: s.border_color,
+            show_title: s.show_title,
+            title: s.title,
+            title_position: s.title_position,
+            background_color: s.background_color,
+            text_color: s.text_color,
+            transparent_background: s.transparent_background,
+            locked: s.locked,
+            binding: s.binding,
+            content_align: s.content_align,
+            tts_speak: s.tts_speak,
+            text_size: s.text_size,
+            font_family: s.font_family,
+        }
+    }
+}
+
+impl Serialize for WindowBase {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        WindowBaseShadow::from(self).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for WindowBase {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        WindowBaseShadow::deserialize(deserializer).map(WindowBase::from)
+    }
 }
 
 /// Text widget specific data
@@ -598,9 +778,7 @@ impl TabbedTextTab {
             streams: self.get_streams(),
             show_timestamps: self.show_timestamps.unwrap_or(false),
             ignore_activity: self.ignore_activity.unwrap_or(false),
-            timestamp_position: self
-                .timestamp_position
-                .unwrap_or(global_timestamp_position),
+            timestamp_position: self.timestamp_position.unwrap_or(global_timestamp_position),
         }
     }
 }
@@ -1913,34 +2091,37 @@ mod visibility_tests {
     fn legacy_visible_bool_still_loads() {
         // Existing layout.toml files carry `visible = true|false`.
         assert_eq!(
-            parse_base("visible = true").visibility,
+            parse_base("visible = true").placement.visibility,
             WindowVisibility::Shown
         );
         assert_eq!(
-            parse_base("visible = false").visibility,
+            parse_base("visible = false").placement.visibility,
             WindowVisibility::Hidden
         );
         // Absent → default Shown.
-        assert_eq!(parse_base("").visibility, WindowVisibility::Shown);
+        assert_eq!(parse_base("").placement.visibility, WindowVisibility::Shown);
     }
 
     #[test]
     fn new_visibility_string_loads_and_roundtrips() {
         assert_eq!(
-            parse_base("visibility = \"hidden\"").visibility,
+            parse_base("visibility = \"hidden\"").placement.visibility,
             WindowVisibility::Hidden
         );
         assert_eq!(
-            parse_base("visibility = \"shown\"").visibility,
+            parse_base("visibility = \"shown\"").placement.visibility,
             WindowVisibility::Shown
         );
         // Round-trip through TOML preserves it.
         let mut base = parse_base("");
-        base.visibility = WindowVisibility::Hidden;
+        base.placement.visibility = WindowVisibility::Hidden;
         let s = toml::to_string(&base).unwrap();
         assert!(s.contains("visibility = \"hidden\""), "serialized: {s}");
         assert_eq!(
-            toml::from_str::<WindowBase>(&s).unwrap().visibility,
+            toml::from_str::<WindowBase>(&s)
+                .unwrap()
+                .placement
+                .visibility,
             WindowVisibility::Hidden
         );
     }

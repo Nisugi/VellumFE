@@ -215,10 +215,10 @@ impl AppCore {
                         idx,
                         window_def.name(),
                         window_def.widget_type(),
-                        base.col.get(),
-                        base.row.get(),
-                        base.cols.get(),
-                        base.rows.get()
+                        base.placement.col.get(),
+                        base.placement.row.get(),
+                        base.placement.cols.get(),
+                        base.placement.rows.get()
                     );
                 }
 
@@ -226,8 +226,16 @@ impl AppCore {
                 let mut terminal_too_small = false;
                 for window_def in &new_layout.windows {
                     let base = window_def.base();
-                    let required_width = base.col.get().saturating_add(base.cols.get());
-                    let required_height = base.row.get().saturating_add(base.rows.get());
+                    let required_width = base
+                        .placement
+                        .col
+                        .get()
+                        .saturating_add(base.placement.cols.get());
+                    let required_height = base
+                        .placement
+                        .row
+                        .get()
+                        .saturating_add(base.placement.rows.get());
                     if terminal_width < required_width || terminal_height < required_height {
                         terminal_too_small = true;
                         tracing::error!(
@@ -236,8 +244,8 @@ impl AppCore {
                             window_def.widget_type(),
                             required_width,
                             required_height,
-                            base.col.get(),
-                            base.row.get(),
+                            base.placement.col.get(),
+                            base.placement.row.get(),
                             terminal_width,
                             terminal_height
                         );
@@ -346,7 +354,7 @@ impl AppCore {
             .layout
             .windows
             .iter()
-            .filter(|w| w.base().visibility.is_shown())
+            .filter(|w| w.base().placement.visibility.is_shown())
         {
             let base = window_def.base();
             match window_def.widget_type() {
@@ -368,12 +376,12 @@ impl AppCore {
                 baseline
                     .windows
                     .iter()
-                    .filter(|w| w.base().visibility.is_shown())
+                    .filter(|w| w.base().placement.visibility.is_shown())
                     .map(|w| {
                         (
                             w.name().to_string(),
-                            w.base().row.get(),
-                            w.base().rows.get(),
+                            w.base().placement.row.get(),
+                            w.base().placement.rows.get(),
                         )
                     })
                     .collect()
@@ -381,12 +389,12 @@ impl AppCore {
                 self.layout
                     .windows
                     .iter()
-                    .filter(|w| w.base().visibility.is_shown())
+                    .filter(|w| w.base().placement.visibility.is_shown())
                     .map(|w| {
                         (
                             w.base().name.clone(),
-                            w.base().row.get(),
-                            w.base().rows.get(),
+                            w.base().placement.row.get(),
+                            w.base().placement.rows.get(),
                         )
                     })
                     .collect()
@@ -408,13 +416,13 @@ impl AppCore {
             .layout
             .windows
             .iter_mut()
-            .filter(|w| w.base().visibility.is_shown())
+            .filter(|w| w.base().placement.visibility.is_shown())
         {
             let base = window_def.base_mut();
-            let max_col = crate::data::geometry::Col::new(terminal_width) - base.cols;
-            let max_row = crate::data::geometry::Row::new(terminal_height) - base.rows;
-            base.col = base.col.min(max_col);
-            base.row = base.row.min(max_row);
+            let max_col = crate::data::geometry::Col::new(terminal_width) - base.placement.cols;
+            let max_row = crate::data::geometry::Row::new(terminal_height) - base.placement.rows;
+            base.placement.col = base.placement.col.min(max_col);
+            base.placement.row = base.placement.row.min(max_row);
         }
 
         // Update layout terminal size to current
@@ -426,10 +434,10 @@ impl AppCore {
             if let Some(window_state) = self.ui_state.windows.get_mut(window_def.name()) {
                 let base = window_def.base();
                 window_state.position = WindowPosition {
-                    x: base.col,
-                    y: base.row,
-                    width: base.cols,
-                    height: base.rows,
+                    x: base.placement.col,
+                    y: base.placement.row,
+                    width: base.placement.cols,
+                    height: base.placement.rows,
                 };
                 match &mut window_state.content {
                     WindowContent::Text(text) => {
@@ -449,10 +457,10 @@ impl AppCore {
                 tracing::debug!(
                     "Applied to UI: '{}' @ ({},{}) size {}x{}",
                     base.name,
-                    base.col.get(),
-                    base.row.get(),
-                    base.cols.get(),
-                    base.rows.get()
+                    base.placement.col.get(),
+                    base.placement.row.get(),
+                    base.placement.cols.get(),
+                    base.placement.rows.get()
                 );
             }
         }
@@ -497,8 +505,8 @@ impl AppCore {
             let (default_min_cols, default_min_rows) =
                 self.widget_min_size(window_def.widget_type());
             let base = window_def.base();
-            let min_cols = base.min_cols.unwrap_or(default_min_cols);
-            let min_rows = base.min_rows.unwrap_or(default_min_rows);
+            let min_cols = base.placement.min_cols.unwrap_or(default_min_cols);
+            let min_rows = base.placement.min_rows.unwrap_or(default_min_rows);
             (min_cols, min_rows)
         } else {
             self.widget_min_size("text")
@@ -525,10 +533,13 @@ impl AppCore {
             .layout
             .windows
             .iter()
-            .filter(|w| w.base().visibility.is_shown())
+            .filter(|w| w.base().placement.visibility.is_shown())
             .map(|w| {
                 let base = w.base();
-                (base.name.clone(), (base.row.get(), base.rows.get()))
+                (
+                    base.name.clone(),
+                    (base.placement.row.get(), base.placement.rows.get()),
+                )
             })
             .collect();
 
@@ -537,10 +548,13 @@ impl AppCore {
             .layout
             .windows
             .iter()
-            .filter(|w| w.base().visibility.is_shown())
+            .filter(|w| w.base().placement.visibility.is_shown())
             .map(|w| {
                 let base = w.base();
-                base.col.get().saturating_add(base.cols.get())
+                base.placement
+                    .col
+                    .get()
+                    .saturating_add(base.placement.cols.get())
             })
             .max()
             .unwrap_or(0);
@@ -557,11 +571,16 @@ impl AppCore {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visibility.is_shown())
+                .filter(|w| w.base().placement.visibility.is_shown())
                 .filter_map(|w| {
                     let base = w.base();
-                    if base.col.get() <= current_col
-                        && base.col.get().saturating_add(base.cols.get()) > current_col
+                    if base.placement.col.get() <= current_col
+                        && base
+                            .placement
+                            .col
+                            .get()
+                            .saturating_add(base.placement.cols.get())
+                            > current_col
                     {
                         Some(base.name.clone())
                     } else {
@@ -598,7 +617,10 @@ impl AppCore {
                         if let Some(w) = self.layout.windows.iter().find(|w| w.name() == name) {
                             let base = w.base();
                             let (_, min_rows) = self.widget_min_size(w.widget_type());
-                            (base.min_rows.unwrap_or(min_rows), base.max_rows)
+                            (
+                                base.placement.min_rows.unwrap_or(min_rows),
+                                base.placement.max_rows,
+                            )
                         } else {
                             (0, None)
                         };
@@ -629,16 +651,21 @@ impl AppCore {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visibility.is_shown())
+                .filter(|w| w.base().placement.visibility.is_shown())
                 .filter_map(|w| {
                     let base = w.base();
-                    if base.col.get() <= current_col
-                        && base.col.get().saturating_add(base.cols.get()) > current_col
+                    if base.placement.col.get() <= current_col
+                        && base
+                            .placement
+                            .col
+                            .get()
+                            .saturating_add(base.placement.cols.get())
+                            > current_col
                     {
                         let (orig_row, orig_rows) = baseline_rows
                             .get(&base.name)
                             .copied()
-                            .unwrap_or((base.row.get(), base.rows.get()));
+                            .unwrap_or((base.placement.row.get(), base.placement.rows.get()));
                         Some((base.name.clone(), orig_row, orig_rows))
                     } else {
                         None
@@ -664,7 +691,12 @@ impl AppCore {
                 if height_applied.contains(&window_name) {
                     // Already sized at an earlier column: keep it, advance cursor.
                     if let Some(w) = self.layout.windows.iter().find(|w| w.name() == window_name) {
-                        current_row = w.base().row.get().saturating_add(w.base().rows.get());
+                        current_row = w
+                            .base()
+                            .placement
+                            .row
+                            .get()
+                            .saturating_add(w.base().placement.rows.get());
                     }
                     continue;
                 }
@@ -679,8 +711,8 @@ impl AppCore {
                     .find(|w| w.name() == window_name)
                 {
                     let base = w.base_mut();
-                    base.row = crate::data::geometry::Row::new(current_row);
-                    base.rows = crate::data::geometry::Height::new(new_rows);
+                    base.placement.row = crate::data::geometry::Row::new(current_row);
+                    base.placement.rows = crate::data::geometry::Height::new(new_rows);
                     height_applied.insert(window_name.clone());
                 }
 
@@ -712,10 +744,13 @@ impl AppCore {
             .layout
             .windows
             .iter()
-            .filter(|w| w.base().visibility.is_shown())
+            .filter(|w| w.base().placement.visibility.is_shown())
             .map(|w| {
                 let base = w.base();
-                (base.name.clone(), (base.col.get(), base.cols.get()))
+                (
+                    base.name.clone(),
+                    (base.placement.col.get(), base.placement.cols.get()),
+                )
             })
             .collect();
 
@@ -724,10 +759,13 @@ impl AppCore {
             .layout
             .windows
             .iter()
-            .filter(|w| w.base().visibility.is_shown())
+            .filter(|w| w.base().placement.visibility.is_shown())
             .map(|w| {
                 let base = w.base();
-                base.row.get().saturating_add(base.rows.get())
+                base.placement
+                    .row
+                    .get()
+                    .saturating_add(base.placement.rows.get())
             })
             .max()
             .unwrap_or(0);
@@ -744,11 +782,16 @@ impl AppCore {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visibility.is_shown())
+                .filter(|w| w.base().placement.visibility.is_shown())
                 .filter_map(|w| {
                     let base = w.base();
-                    if base.row.get() <= current_row
-                        && base.row.get().saturating_add(base.rows.get()) > current_row
+                    if base.placement.row.get() <= current_row
+                        && base
+                            .placement
+                            .row
+                            .get()
+                            .saturating_add(base.placement.rows.get())
+                            > current_row
                     {
                         Some(base.name.clone())
                     } else {
@@ -784,7 +827,10 @@ impl AppCore {
                         if let Some(w) = self.layout.windows.iter().find(|w| w.name() == name) {
                             let base = w.base();
                             let (min_cols, _) = self.widget_min_size(w.widget_type());
-                            (base.min_cols.unwrap_or(min_cols), base.max_cols)
+                            (
+                                base.placement.min_cols.unwrap_or(min_cols),
+                                base.placement.max_cols,
+                            )
                         } else {
                             (0, None)
                         };
@@ -814,16 +860,21 @@ impl AppCore {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visibility.is_shown())
+                .filter(|w| w.base().placement.visibility.is_shown())
                 .filter_map(|w| {
                     let base = w.base();
-                    if base.row.get() <= current_row
-                        && base.row.get().saturating_add(base.rows.get()) > current_row
+                    if base.placement.row.get() <= current_row
+                        && base
+                            .placement
+                            .row
+                            .get()
+                            .saturating_add(base.placement.rows.get())
+                            > current_row
                     {
                         let (orig_col, orig_cols) = baseline_cols
                             .get(&base.name)
                             .copied()
-                            .unwrap_or((base.col.get(), base.cols.get()));
+                            .unwrap_or((base.placement.col.get(), base.placement.cols.get()));
                         Some((base.name.clone(), orig_col, orig_cols))
                     } else {
                         None
@@ -846,7 +897,12 @@ impl AppCore {
 
                 if width_applied.contains(&window_name) {
                     if let Some(w) = self.layout.windows.iter().find(|w| w.name() == window_name) {
-                        current_col_pos = w.base().col.get().saturating_add(w.base().cols.get());
+                        current_col_pos = w
+                            .base()
+                            .placement
+                            .col
+                            .get()
+                            .saturating_add(w.base().placement.cols.get());
                     }
                     continue;
                 }
@@ -861,8 +917,8 @@ impl AppCore {
                     .find(|w| w.name() == window_name)
                 {
                     let base = w.base_mut();
-                    base.col = crate::data::geometry::Col::new(current_col_pos);
-                    base.cols = crate::data::geometry::Width::new(new_cols);
+                    base.placement.col = crate::data::geometry::Col::new(current_col_pos);
+                    base.placement.cols = crate::data::geometry::Width::new(new_cols);
                     width_applied.insert(window_name.clone());
                 }
 
@@ -895,7 +951,7 @@ impl AppCore {
             .layout
             .windows
             .iter()
-            .filter(|w| w.base().visibility.is_shown())
+            .filter(|w| w.base().placement.visibility.is_shown())
             .map(|w| w.name().to_string())
             .collect();
 
@@ -915,17 +971,17 @@ impl AppCore {
             let base = window_def.base();
 
             // Skip windows that shouldn't render (Hidden)
-            if !base.visibility.is_shown() {
+            if !base.placement.visibility.is_shown() {
                 tracing::debug!("Skipping hidden window '{}'", window_name);
                 continue;
             }
 
             // Use exact position from layout file
             let position = WindowPosition {
-                x: base.col,
-                y: base.row,
-                width: base.cols,
-                height: base.rows,
+                x: base.placement.col,
+                y: base.placement.row,
+                width: base.placement.cols,
+                height: base.placement.rows,
             };
 
             tracing::debug!(
@@ -1063,18 +1119,28 @@ impl AppCore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{BorderSides, Layout, SpacerWidgetData, WindowBase, WindowDef};
+    use crate::config::{
+        BorderSides, Layout, SpacerWidgetData, TuiPlacement, WindowBase, WindowDef,
+    };
 
     // ========== Test helpers ==========
 
     /// Helper to create a minimal WindowBase for testing
     fn test_window_base(name: &str, col: u16, row: u16, cols: u16, rows: u16) -> WindowBase {
         WindowBase {
+            placement: TuiPlacement {
+                row: crate::data::geometry::Row::new(row),
+                col: crate::data::geometry::Col::new(col),
+                rows: crate::data::geometry::Height::new(rows),
+                cols: crate::data::geometry::Width::new(cols),
+                min_rows: None,
+                max_rows: None,
+                min_cols: None,
+                max_cols: None,
+                visibility: crate::config::WindowVisibility::Shown,
+                ..Default::default()
+            },
             name: name.to_string(),
-            row: crate::data::geometry::Row::new(row),
-            col: crate::data::geometry::Col::new(col),
-            rows: crate::data::geometry::Height::new(rows),
-            cols: crate::data::geometry::Width::new(cols),
             show_border: false,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
@@ -1085,11 +1151,6 @@ mod tests {
             text_color: None,
             transparent_background: false,
             locked: false,
-            min_rows: None,
-            max_rows: None,
-            min_cols: None,
-            max_cols: None,
-            visibility: crate::config::WindowVisibility::Shown,
             binding: None,
             content_align: None,
             tts_speak: false,
@@ -1634,19 +1695,19 @@ mod tests {
             data: SpacerWidgetData {},
         };
         let b = spacer.base();
-        assert_eq!(b.col.get(), 10);
-        assert_eq!(b.row.get(), 20);
-        assert_eq!(b.cols.get(), 40);
-        assert_eq!(b.rows.get(), 15);
+        assert_eq!(b.placement.col.get(), 10);
+        assert_eq!(b.placement.row.get(), 20);
+        assert_eq!(b.placement.cols.get(), 40);
+        assert_eq!(b.placement.rows.get(), 15);
     }
 
     #[test]
     fn test_window_base_visibility() {
         let mut base = test_window_base("test", 0, 0, 10, 10);
-        assert!(base.visibility.is_shown());
+        assert!(base.placement.visibility.is_shown());
 
-        base.visibility = crate::config::WindowVisibility::Hidden;
-        assert!(!base.visibility.is_shown());
+        base.placement.visibility = crate::config::WindowVisibility::Hidden;
+        assert!(!base.placement.visibility.is_shown());
     }
 
     // ========== Layout window collection tests ==========
@@ -1672,7 +1733,7 @@ mod tests {
     #[test]
     fn test_layout_visible_windows() {
         let mut hidden_base = test_window_base("hidden", 0, 0, 10, 10);
-        hidden_base.visibility = crate::config::WindowVisibility::Hidden;
+        hidden_base.placement.visibility = crate::config::WindowVisibility::Hidden;
 
         let windows = vec![
             WindowDef::Spacer {
@@ -1693,7 +1754,7 @@ mod tests {
         let visible_count = layout
             .windows
             .iter()
-            .filter(|w| w.base().visibility.is_shown())
+            .filter(|w| w.base().placement.visibility.is_shown())
             .count();
         assert_eq!(visible_count, 2);
     }
@@ -1719,10 +1780,10 @@ mod tests {
     fn test_window_position_from_base() {
         let base = test_window_base("test", 15, 5, 50, 18);
         let pos = WindowPosition {
-            x: base.col,
-            y: base.row,
-            width: base.cols,
-            height: base.rows,
+            x: base.placement.col,
+            y: base.placement.row,
+            width: base.placement.cols,
+            height: base.placement.rows,
         };
         assert_eq!(pos.x.get(), 15);
         assert_eq!(pos.y.get(), 5);
@@ -1812,8 +1873,8 @@ mod tests {
     /// mirroring the default layout's bottom bar.
     fn command_input_def(name: &str, col: u16, row: u16, cols: u16, rows: u16) -> WindowDef {
         let mut base = test_window_base(name, col, row, cols, rows);
-        base.min_rows = Some(rows);
-        base.max_rows = Some(rows);
+        base.placement.min_rows = Some(rows);
+        base.placement.max_rows = Some(rows);
         WindowDef::CommandInput {
             base,
             data: crate::config::CommandInputWidgetData::default(),
@@ -1865,20 +1926,20 @@ mod tests {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visibility.is_shown())
+                .filter(|w| w.base().placement.visibility.is_shown())
             {
                 let b = w.base();
                 assert!(
-                    b.row.get() + b.rows.get() <= h,
+                    b.placement.row.get() + b.placement.rows.get() <= h,
                     "h={h}: '{}' bottom edge {} > {h}",
                     b.name,
-                    b.row.get() + b.rows.get()
+                    b.placement.row.get() + b.placement.rows.get()
                 );
                 assert!(
-                    b.col.get() + b.cols.get() <= 120,
+                    b.placement.col.get() + b.placement.cols.get() <= 120,
                     "h={h}: '{}' right edge {} > 120",
                     b.name,
-                    b.col.get() + b.cols.get()
+                    b.placement.col.get() + b.placement.cols.get()
                 );
             }
             // command_input specifically keeps its fixed 3-row height.
@@ -1895,7 +1956,7 @@ mod tests {
             .find(|w| w.name() == name)
             .unwrap()
             .base();
-        (b.row.get(), b.rows.get())
+        (b.placement.row.get(), b.placement.rows.get())
     }
 
     /// (col, cols).
@@ -1907,7 +1968,7 @@ mod tests {
             .find(|w| w.name() == name)
             .unwrap()
             .base();
-        (b.col.get(), b.cols.get())
+        (b.placement.col.get(), b.placement.cols.get())
     }
 
     /// Two stacked full-width text windows grow proportionally and the
@@ -2012,7 +2073,7 @@ mod tests {
     #[test]
     fn resize_min_clamp_stops_at_min_and_recouples_to_sibling() {
         let mut top = text_def("top", 0, 0, 80, 6);
-        top.base_mut().min_rows = Some(5);
+        top.base_mut().placement.min_rows = Some(5);
         let mut core = core_with_baseline(vec![top, text_def("bottom", 0, 6, 80, 18)], 80, 24);
         core.resize_windows(80, 12); // -12
 
@@ -2097,7 +2158,7 @@ mod tests {
     #[test]
     fn resize_min_clamp_preserves_total_height() {
         let mut top = text_def("top", 0, 0, 80, 6);
-        top.base_mut().min_rows = Some(5);
+        top.base_mut().placement.min_rows = Some(5);
         let mut core = core_with_baseline(vec![top, text_def("bottom", 0, 6, 80, 18)], 80, 24);
         core.resize_windows(80, 12); // target total height = 12
 
@@ -2138,9 +2199,9 @@ mod tests {
     #[test]
     fn resize_mixed_min_and_max_clamps_conserve() {
         let mut top = text_def("top", 0, 0, 80, 8);
-        top.base_mut().min_rows = Some(7);
+        top.base_mut().placement.min_rows = Some(7);
         let mut mid = text_def("mid", 0, 8, 80, 8);
-        mid.base_mut().max_rows = Some(8);
+        mid.base_mut().placement.max_rows = Some(8);
         let mut core = core_with_baseline(vec![top, mid, text_def("bot", 0, 16, 80, 8)], 80, 24);
         core.resize_windows(80, 18); // -6
 
@@ -2210,7 +2271,7 @@ mod tests {
     #[test]
     fn resize_max_clamp_on_grow_recouples_to_sibling() {
         let mut cap = text_def("cap", 0, 0, 80, 10);
-        cap.base_mut().max_rows = Some(12);
+        cap.base_mut().placement.max_rows = Some(12);
         let mut core = core_with_baseline(vec![cap, text_def("rest", 0, 10, 80, 14)], 80, 24);
         core.resize_windows(80, 44); // +20
 

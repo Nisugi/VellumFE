@@ -75,24 +75,13 @@ impl VellumGuiApp {
         });
     }
 
-    fn window_shown_in_core(&self, name: &str) -> bool {
-        self.app_core
-            .layout
-            .windows
-            .iter()
-            .find(|w| w.name() == name)
-            .map(|w| w.base().visibility == crate::config::WindowVisibility::Shown)
-            .unwrap_or(true)
-    }
-
     /// Everything the switcher can reach, unfiltered.
     fn switcher_catalogue(&self) -> Vec<SwitcherItem> {
         let mut items = Vec::new();
         let mut windows: Vec<(&TabKey, &GuiTab)> = self.available_tabs.iter().collect();
         windows.sort_by(|a, b| a.1.id.title.cmp(&b.1.id.title));
         for (key, tab) in windows {
-            let hidden = self.hidden_tabs.contains(key)
-                || !self.window_shown_in_core(&tab.window_name);
+            let hidden = self.hidden_tabs.contains(key);
             items.push(SwitcherItem {
                 title: tab.id.title.clone(),
                 detail: if hidden {
@@ -196,7 +185,10 @@ impl VellumGuiApp {
         let mut clicked_outside = false;
         let response = egui::Area::new(egui::Id::new("gui_quick_switcher"))
             .order(egui::Order::Foreground)
-            .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, screen.height() * 0.12))
+            .anchor(
+                egui::Align2::CENTER_TOP,
+                Vec2::new(0.0, screen.height() * 0.12),
+            )
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
                     .corner_radius(8.0)
@@ -272,9 +264,7 @@ impl VellumGuiApp {
                         ui.weak("↑↓ choose · Enter run · Esc close");
                     });
             });
-        if ctx.input(|i| i.pointer.any_click())
-            && !response.response.contains_pointer()
-        {
+        if ctx.input(|i| i.pointer.any_click()) && !response.response.contains_pointer() {
             clicked_outside = true;
         }
         match chosen {
@@ -287,11 +277,12 @@ impl VellumGuiApp {
     fn run_switcher_action(&mut self, action: SwitcherAction) {
         match action {
             SwitcherAction::Window(name) => {
-                let (w, h) = self.core_layout_size;
-                if !self.window_shown_in_core(&name) {
-                    self.app_core.set_known_window_shown(&name, true, w, h);
-                }
-                if let Some(key) = self.find_tab_key_by_name(&name) {
+                // GUI selection only (hidden_tabs); conjures the window
+                // first when the name isn't a live tab yet.
+                if let Some(key) = self.gui_show_window_by_name(&name) {
+                    self.pending_raise_tab = Some(key);
+                } else if let Some(key) = self.find_tab_key_by_name(&name) {
+                    // Just conjured: it became a tab only now.
                     self.hidden_tabs.remove(&key);
                     self.pending_raise_tab = Some(key);
                 }
@@ -318,6 +309,9 @@ mod tests {
         assert!(prefix > sub && sub > subseq);
         assert_eq!(match_score("xyz", "story"), None);
         assert_eq!(match_score("", "anything"), Some(0));
-        assert!(match_score("Lay", "loadlayout").is_some(), "case-insensitive");
+        assert!(
+            match_score("Lay", "loadlayout").is_some(),
+            "case-insensitive"
+        );
     }
 }

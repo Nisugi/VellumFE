@@ -91,7 +91,8 @@ pub use widgets::{
     ProgressWidgetData, QuickbarDefinition, QuickbarEntryConfig, QuickbarWidgetData,
     QuickbarsConfig, RoomWidgetData, SortDirection, SpacerWidgetData, SpellsWidgetData,
     TabbedTextTab, TabbedTextWidgetData, TargetsWidgetData, TextReplacement, TextWidgetData,
-    WebUiWidgetData, WindowBase, WindowBinding, WindowVisibility, DEFAULT_INJURY_PALETTE,
+    TuiPlacement, WebUiWidgetData, WindowBase, WindowBinding, WindowVisibility,
+    DEFAULT_INJURY_PALETTE,
 };
 pub use window_def::WindowDef;
 pub use window_registry::{RegistryBinding, WindowRegistry};

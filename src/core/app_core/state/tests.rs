@@ -3,7 +3,7 @@
 //! `use super::*` semantics are identical to the inline mod.
 
 use super::*;
-use crate::config::{BorderSides, Layout, SpacerWidgetData, WindowBase, WindowDef};
+use crate::config::{BorderSides, Layout, SpacerWidgetData, TuiPlacement, WindowBase, WindowDef};
 
 #[test]
 fn reconnect_request_flag_is_consumed_exactly_once() {
@@ -48,11 +48,19 @@ fn remote_combat_target_menu_normalizes_protocol_prefixed_id() {
 // Test helper to create a minimal WindowBase
 fn test_window_base(name: &str) -> WindowBase {
     WindowBase {
+        placement: TuiPlacement {
+            row: crate::data::geometry::Row::new(0),
+            col: crate::data::geometry::Col::new(0),
+            rows: crate::data::geometry::Height::new(2),
+            cols: crate::data::geometry::Width::new(5),
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
+            visibility: crate::config::WindowVisibility::Shown,
+            ..Default::default()
+        },
         name: name.to_string(),
-        row: crate::data::geometry::Row::new(0),
-        col: crate::data::geometry::Col::new(0),
-        rows: crate::data::geometry::Height::new(2),
-        cols: crate::data::geometry::Width::new(5),
         show_border: false,
         border_style: "single".to_string(),
         border_sides: BorderSides::default(),
@@ -63,11 +71,6 @@ fn test_window_base(name: &str) -> WindowBase {
         text_color: None,
         transparent_background: false,
         locked: false,
-        min_rows: None,
-        max_rows: None,
-        min_cols: None,
-        max_cols: None,
-        visibility: crate::config::WindowVisibility::Shown,
         binding: None,
         content_align: None,
         tts_speak: false,
@@ -82,7 +85,7 @@ fn test_edit_picker_reaches_hidden_windows() {
     // A hidden spacer must appear in the edit picker's template map when
     // include_hidden is set, and stay out of the visible-only map.
     let mut base = test_window_base("spacer_1");
-    base.visibility = crate::config::WindowVisibility::Hidden;
+    base.placement.visibility = crate::config::WindowVisibility::Hidden;
     let layout = Layout {
         windows: vec![WindowDef::Spacer {
             base,
@@ -250,10 +253,10 @@ fn test_generate_spacer_name_ignores_non_spacers() {
 fn test_generate_spacer_name_with_hidden_spacers() {
     // RED: Hidden spacers should be considered (widgets can be hidden, not deleted)
     let mut visible_base = test_window_base("spacer_1");
-    visible_base.visibility = crate::config::WindowVisibility::Shown;
+    visible_base.placement.visibility = crate::config::WindowVisibility::Shown;
 
     let mut hidden_base = test_window_base("spacer_2");
-    hidden_base.visibility = crate::config::WindowVisibility::Hidden;
+    hidden_base.placement.visibility = crate::config::WindowVisibility::Hidden;
 
     let visible_spacer = WindowDef::Spacer {
         base: visible_base,
@@ -331,10 +334,10 @@ fn test_generate_spacer_name_large_numbers() {
 
 fn positioned_text_def(name: &str, col: u16, row: u16, cols: u16, rows: u16) -> WindowDef {
     let mut base = test_window_base(name);
-    base.col = crate::data::geometry::Col::new(col);
-    base.row = crate::data::geometry::Row::new(row);
-    base.cols = crate::data::geometry::Width::new(cols);
-    base.rows = crate::data::geometry::Height::new(rows);
+    base.placement.col = crate::data::geometry::Col::new(col);
+    base.placement.row = crate::data::geometry::Row::new(row);
+    base.placement.cols = crate::data::geometry::Width::new(cols);
+    base.placement.rows = crate::data::geometry::Height::new(rows);
     WindowDef::Text {
         base,
         data: crate::config::TextWidgetData {
@@ -362,6 +365,47 @@ fn core_with_layout(windows: Vec<WindowDef>) -> AppCore {
     core
 }
 
+/// B1: the GUI materializes the WHOLE catalog. `Layout.windows` is shared
+/// with the TUI, and `placement.visibility` there is the TUI's selection —
+/// so a window the TUI layout hides (e.g. `map`) must still be live for the
+/// GUI, which filters with its own `hidden_tabs`. Meanwhile the TUI entry
+/// point keeps honoring visibility exactly as before.
+#[test]
+fn init_windows_all_catalog_materializes_tui_hidden_windows() {
+    let mut hidden = positioned_text_def("map", 10, 2, 20, 10);
+    hidden.base_mut().placement.visibility = crate::config::WindowVisibility::Hidden;
+    let defs = vec![positioned_text_def("main", 0, 0, 40, 24), hidden];
+
+    // TUI policy: the hidden window is NOT live.
+    let mut tui = core_with_layout(defs.clone());
+    tui.init_windows(80, 24);
+    assert!(tui.ui_state.windows.contains_key("main"));
+    assert!(
+        !tui.ui_state.windows.contains_key("map"),
+        "TUI path unchanged: its own selection still gates liveness"
+    );
+
+    // GUI policy: everything in the catalog is live.
+    let mut gui = core_with_layout(defs);
+    gui.init_windows_all_catalog(80, 24);
+    assert!(gui.ui_state.windows.contains_key("main"));
+    assert!(
+        gui.ui_state.windows.contains_key("map"),
+        "GUI path materializes the whole catalog"
+    );
+    // ...and it did not rewrite the TUI's selection to do so.
+    let map = gui
+        .layout
+        .windows
+        .iter()
+        .find(|w| w.name() == "map")
+        .expect("map def");
+    assert!(
+        !map.base().placement.visibility.is_shown(),
+        "core visibility (the TUI's selection) is untouched"
+    );
+}
+
 #[test]
 fn delete_and_stash_then_restore_roundtrips_the_exact_def() {
     let mut core = core_with_layout(vec![
@@ -384,10 +428,10 @@ fn delete_and_stash_then_restore_roundtrips_the_exact_def() {
         .iter()
         .find(|w| w.name() == "my_notes")
         .expect("restored def present");
-    assert_eq!(def.base().col.get(), 5);
-    assert_eq!(def.base().row.get(), 5);
-    assert_eq!(def.base().cols.get(), 20);
-    assert!(def.base().visibility.is_shown());
+    assert_eq!(def.base().placement.col.get(), 5);
+    assert_eq!(def.base().placement.row.get(), 5);
+    assert_eq!(def.base().placement.cols.get(), 20);
+    assert!(def.base().placement.visibility.is_shown());
     assert!(core.ui_state.windows.contains_key("my_notes"));
     // Stash is now empty.
     assert!(core.deleted_window_names().is_empty());
@@ -489,8 +533,8 @@ fn calculate_window_positions_uses_exact_values() {
 #[test]
 fn calculate_window_positions_applies_min_max_constraints() {
     let mut narrow = positioned_text_def("narrow", 0, 0, 4, 30);
-    narrow.base_mut().min_cols = Some(10); // widen up to min
-    narrow.base_mut().max_rows = Some(20); // cap height
+    narrow.base_mut().placement.min_cols = Some(10); // widen up to min
+    narrow.base_mut().placement.max_rows = Some(20); // cap height
     let core = core_with_layout(vec![narrow]);
 
     let p = &core.calculate_window_positions(80, 24)["narrow"];
@@ -669,6 +713,7 @@ fn set_known_window_shown_flips_layout_visibility() {
             .find(|w| w.name() == "thoughts")
             .unwrap()
             .base()
+            .placement
             .visibility
     };
     assert_eq!(vis(&core), WindowVisibility::Hidden);
@@ -695,7 +740,7 @@ fn showing_a_dialog_window_syncs_shown_dialog_ids() {
     let mut bank = crate::core::local_catalog::seed("stance").unwrap();
     bank.base_mut().name = "bank".to_string();
     bank.base_mut().binding = Some(WindowBinding::Dialog("bank".to_string()));
-    bank.base_mut().visibility = crate::config::WindowVisibility::Hidden;
+    bank.base_mut().placement.visibility = crate::config::WindowVisibility::Hidden;
     core.layout.windows.push(bank);
 
     assert!(!core.ui_state.shown_dialog_ids.contains("bank"));
@@ -703,6 +748,47 @@ fn showing_a_dialog_window_syncs_shown_dialog_ids() {
     assert!(core.ui_state.shown_dialog_ids.contains("bank"));
     core.set_known_window_shown("bank", false, 80, 24);
     assert!(!core.ui_state.shown_dialog_ids.contains("bank"));
+}
+
+/// B2: the dialog-popup allow-set is frontend-agnostic bookkeeping, so it
+/// is reachable on its own — the GUI calls it from its `hidden_tabs`-only
+/// show/hide instead of `set_known_window_shown`, which would also write
+/// the TUI's `placement.visibility`.
+#[test]
+fn sync_dialog_popup_allow_set_is_callable_without_touching_visibility() {
+    use crate::config::WindowBinding;
+    let mut core = core_with_layout(vec![]);
+    let mut bank = crate::core::local_catalog::seed("stance").unwrap();
+    bank.base_mut().name = "bank".to_string();
+    bank.base_mut().binding = Some(WindowBinding::Dialog("bank".to_string()));
+    bank.base_mut().placement.visibility = crate::config::WindowVisibility::Hidden;
+    core.layout.windows.push(bank);
+
+    core.sync_dialog_popup_allow_set("bank", true);
+    assert!(core.ui_state.shown_dialog_ids.contains("bank"));
+    let vis = |core: &AppCore| {
+        core.layout
+            .windows
+            .iter()
+            .find(|w| w.name() == "bank")
+            .unwrap()
+            .base()
+            .placement
+            .visibility
+    };
+    assert_eq!(
+        vis(&core),
+        crate::config::WindowVisibility::Hidden,
+        "the TUI's selection is not touched"
+    );
+
+    core.sync_dialog_popup_allow_set("bank", false);
+    assert!(!core.ui_state.shown_dialog_ids.contains("bank"));
+    assert_eq!(vis(&core), crate::config::WindowVisibility::Hidden);
+
+    // An unknown name is a no-op, not a panic.
+    core.sync_dialog_popup_allow_set("nope", true);
+    assert!(!core.ui_state.shown_dialog_ids.contains("nope"));
 }
 
 #[test]
@@ -769,7 +855,7 @@ fn deleting_a_shown_dialog_window_clears_the_popup_allow_set() {
     let mut win = crate::core::local_catalog::seed("stance").unwrap();
     win.base_mut().name = "activespells".to_string();
     win.base_mut().binding = Some(WindowBinding::Dialog("activespells".to_string()));
-    win.base_mut().visibility = crate::config::WindowVisibility::Hidden;
+    win.base_mut().placement.visibility = crate::config::WindowVisibility::Hidden;
     core.layout.windows.push(win);
 
     core.set_known_window_shown("activespells", true, 80, 24);
@@ -803,7 +889,7 @@ fn rediscovery_of_a_persisted_window_is_idempotent() {
     let mut combat = crate::core::local_catalog::seed("stance").unwrap();
     combat.base_mut().name = "combat".to_string();
     combat.base_mut().binding = Some(WindowBinding::Dialog("combat".to_string()));
-    combat.base_mut().visibility = WindowVisibility::Hidden;
+    combat.base_mut().placement.visibility = WindowVisibility::Hidden;
     core.layout.windows.push(combat);
     assert_eq!(core.layout.windows.len(), 1);
 
@@ -827,6 +913,7 @@ fn rediscovery_of_a_persisted_window_is_idempotent() {
             .find(|w| w.name() == "combat")
             .unwrap()
             .base()
+            .placement
             .visibility,
         WindowVisibility::Hidden
     );
@@ -937,7 +1024,11 @@ fn window_discoveries_register_as_bound_hidden_layout_entries() {
             .iter()
             .find(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
             .unwrap();
-        assert_eq!(w.base().visibility, WindowVisibility::Hidden, "{id} hidden");
+        assert_eq!(
+            w.base().placement.visibility,
+            WindowVisibility::Hidden,
+            "{id} hidden"
+        );
     }
     // The stream window subscribes to its stream id.
     let stream_win = core
@@ -1070,7 +1161,7 @@ fn enumerate_known_windows_covers_layout_and_ephemeral() {
     combat.base_mut().name = "combat".to_string();
     combat.base_mut().title = Some("Combat".to_string());
     combat.base_mut().binding = Some(crate::config::WindowBinding::Dialog("combat".to_string()));
-    combat.base_mut().visibility = crate::config::WindowVisibility::Hidden;
+    combat.base_mut().placement.visibility = crate::config::WindowVisibility::Hidden;
     core.layout.windows.push(combat);
     core.layout
         .windows
@@ -1140,7 +1231,7 @@ fn set_known_window_shown_conjures_template_not_in_layout() {
     assert!(core
         .layout
         .get_window("compass")
-        .map(|w| w.base().visibility.is_shown())
+        .map(|w| w.base().placement.visibility.is_shown())
         .unwrap_or(false));
     assert!(core.ui_state.windows.contains_key("compass"));
 }
@@ -1238,6 +1329,23 @@ fn materialize_missing_windows_creates_only_the_absent() {
             .count(),
         1
     );
+    // And its TUI selection is untouched: a GUI checkpoint load must never
+    // hide catalog windows it doesn't name (that is `merge_loaded`'s job, for
+    // the TUI's own `.loadlayout` only). Regression: routing this through
+    // `merge_loaded` marked every pre-existing window Hidden, which the GUI
+    // couldn't see but the next autosave persisted — the TUI then booted
+    // with everything hidden.
+    let story = core
+        .layout
+        .windows
+        .iter()
+        .find(|w| w.name() == "story")
+        .expect("story stays in the catalog");
+    assert_eq!(
+        story.base().placement.visibility,
+        crate::config::WindowVisibility::Shown,
+        "GUI checkpoint load must not touch TUI visibility of existing windows"
+    );
 }
 
 /// A text window subscribed to the main stream.
@@ -1265,6 +1373,7 @@ fn hide_window_gates_on_main_stream_invariant() {
         .get_window("main")
         .unwrap()
         .base()
+        .placement
         .visibility
         .is_shown());
 
@@ -1279,6 +1388,7 @@ fn hide_window_gates_on_main_stream_invariant() {
         .get_window("main")
         .unwrap()
         .base()
+        .placement
         .visibility
         .is_shown());
 
@@ -1335,7 +1445,7 @@ fn delete_window_gates_on_main_stream_invariant() {
 fn command_input_hidden_flag_vs_tui_force_show() {
     let cmd = {
         let mut base = test_window_base("command_input");
-        base.visibility = crate::config::WindowVisibility::Hidden;
+        base.placement.visibility = crate::config::WindowVisibility::Hidden;
         WindowDef::CommandInput {
             base,
             data: crate::config::CommandInputWidgetData::default(),
@@ -1353,13 +1463,14 @@ fn command_input_hidden_flag_vs_tui_force_show() {
     assert!(core.ui_state.windows.contains_key("command_input"));
 
     // Hiding under force-show flips the layout flag but keeps the UI.
-    core.layout.windows[0].base_mut().visibility = crate::config::WindowVisibility::Shown;
+    core.layout.windows[0].base_mut().placement.visibility = crate::config::WindowVisibility::Shown;
     core.hide_window("command_input");
     assert!(!core
         .layout
         .get_window("command_input")
         .unwrap()
         .base()
+        .placement
         .visibility
         .is_shown());
     assert!(core.ui_state.windows.contains_key("command_input"));
@@ -1538,7 +1649,7 @@ fn registry_bindings_join_known_windows_and_conjure_bound_windows() {
         win.base().binding,
         Some(crate::config::WindowBinding::Stream("voln".into()))
     );
-    assert!(win.base().visibility.is_shown());
+    assert!(win.base().placement.visibility.is_shown());
     assert_eq!(win.widget_type(), "text");
 
     core.set_known_window_shown("combat", true, 80, 24);
@@ -1585,7 +1696,7 @@ fn expose_lifecycle_show_dismiss_reshow_and_user_block() {
                 .as_ref()
                 .is_some_and(|b| b.id() == "charprofile")
         })
-        .map(|w| (w.name().to_string(), w.base().visibility))
+        .map(|w| (w.name().to_string(), w.base().placement.visibility))
         .expect("expose registered a bound window");
     assert!(vis.1.is_shown(), "expose default is SHOWN");
     assert!(
@@ -1614,6 +1725,7 @@ fn expose_lifecycle_show_dismiss_reshow_and_user_block() {
         .find(|w| w.name() == vis.0)
         .unwrap()
         .base()
+        .placement
         .visibility
         .is_shown();
     assert!(still_shown, "persisted visibility untouched by game close");
@@ -1673,12 +1785,12 @@ fn declared_size_hint_shapes_new_windows_but_never_dedicated_views() {
         })
         .expect("expose registered");
     assert_eq!(
-        def.base().rows.get(),
+        def.base().placement.rows.get(),
         320 / 16 + 1,
         "declared height in cells"
     );
     assert_eq!(
-        def.base().cols.get(),
+        def.base().placement.cols.get(),
         400 / 8 + 2,
         "declared width in cells"
     );
@@ -1708,10 +1820,11 @@ fn declared_size_hint_shapes_new_windows_but_never_dedicated_views() {
     let template_rows = crate::core::local_catalog::seed("inventory")
         .unwrap()
         .base()
+        .placement
         .rows
         .get();
     assert_eq!(
-        inv.base().rows.get(),
+        inv.base().placement.rows.get(),
         template_rows,
         "dedicated view untouched"
     );

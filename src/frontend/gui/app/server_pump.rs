@@ -470,8 +470,7 @@ impl VellumGuiApp {
                     .unwrap_or_else(|| {
                         format!("panel_{}", dialog_id.replace(' ', "_").to_lowercase())
                     });
-                let (w, h) = self.core_layout_size;
-                self.app_core.set_known_window_shown(&name, false, w, h);
+                self.core_hide_window_by_name(&name);
                 continue;
             }
             self.dispatch_raw_command(command);

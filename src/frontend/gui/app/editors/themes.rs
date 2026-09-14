@@ -53,7 +53,7 @@ impl VellumGuiApp {
         let mut open = true;
         let mut apply_request: Option<String> = None;
         let mut edit_request: Option<AppTheme> = None;
-        let active = self.app_core.config.active_theme.clone();
+        let active = self.gui_theme_id();
 
         egui::Window::new("Themes")
             .id(egui::Id::new("gui_theme_browser"))
@@ -299,7 +299,7 @@ impl VellumGuiApp {
                 Ok(name) => {
                     if save_and_apply {
                         self.apply_theme_by_name(&name);
-                    } else if name == self.app_core.config.active_theme {
+                    } else if Some(name.as_str()) == self.ui_settings.active_theme.as_deref() {
                         // Editing the active theme: re-apply on the next frame.
                         self.applied_theme_id = None;
                     }
