@@ -647,9 +647,14 @@ impl VellumGuiApp {
     }
 
     /// Accent (border) color for a window. Precedence: the per-window GUI
-    /// accent (context menu), else the shared layout definition's
-    /// border_color — so a border color set in the window editor or the
-    /// TUI finally shows here too — else the theme frame (None).
+    /// accent (context menu, a GUI-only layer the shared resolver doesn't
+    /// know about), else the def/user-ui layers of the shared
+    /// `window_style::resolve_window_colors` precedence (window def ->
+    /// colors.toml ui.border_color the user actually changed) — so a border
+    /// color OR NAME set in the window editor or the TUI finally shows here
+    /// too — else the theme frame (None; left to the skin/theme's own frame
+    /// stroke instead of a computed fallback, since the border-plan/skin
+    /// layers painted after this one already handle "nothing set").
     pub(super) fn accent_color_for_tab(&self, key: &TabKey) -> Option<Color32> {
         if let Some(accent) = self
             .tab_settings
@@ -667,10 +672,13 @@ impl VellumGuiApp {
             .iter()
             .find(|window| window.name() == *window_name)?
             .base();
-        if let Some(color) = match base.border_color.as_deref() {
-            None | Some("-") | Some("") => None,
-            Some(color) => widgets::parse_hex_color(color),
-        } {
+        if let Some(color) = crate::core::window_style::normalize_color(
+            &base.border_color,
+            crate::frontend::common::color::parse_color_flexible,
+        )
+        .as_deref()
+        .and_then(widgets::parse_hex_color)
+        {
             return Some(color);
         }
         // colors.toml ui.border_color, only when actually changed from the
@@ -680,6 +688,8 @@ impl VellumGuiApp {
             .colors
             .ui
             .user_border_color()
+            .and_then(crate::frontend::common::color::parse_color_flexible)
+            .as_deref()
             .and_then(widgets::parse_hex_color)
     }
 }

@@ -1876,6 +1876,45 @@ impl VellumGuiApp {
             self.apply_border_plan_to_frame(&border_plan, &mut docked_window_frame);
             let skin_sides = self.skin_border_sides_for_tab(&tab.id.key);
             self.apply_skin_border_to_frame(&tab.id.key, skin_sides, &mut docked_window_frame);
+            // Background: gate strictly on the window DEF's own fields, never
+            // on the resolver's always-Some result (it falls back through
+            // colors.toml ui.* to the theme, which would blindly repaint
+            // every window's fill and fight the skin/theme visuals below).
+            // transparent_background wins outright; else an explicit, actually
+            // -set def background_color paints the resolved color; anything
+            // else leaves frame.fill exactly as `egui::Frame::window` set it
+            // (skin/theme default), so a window with no def color renders
+            // exactly as today. Skin nine-slice art
+            // (apply_skin_border_to_frame / paint_skin_border, called above
+            // and again at paint time) still paints over whichever fill is
+            // chosen here — expected, since skin border art is layered on
+            // top of the frame fill, not a replacement for it.
+            let def_base = self
+                .app_core
+                .layout
+                .windows
+                .iter()
+                .find(|window| window.name() == tab.window_name)
+                .map(|window| window.base());
+            if let Some(def_base) = def_base {
+                if def_base.transparent_background {
+                    docked_window_frame.fill = Color32::TRANSPARENT;
+                } else if crate::core::window_style::normalize_color(
+                    &def_base.background_color,
+                    crate::frontend::common::color::parse_color_flexible,
+                )
+                .is_some()
+                {
+                    if let Some(background) = self
+                        .resolved_window_colors(&tab)
+                        .background
+                        .as_deref()
+                        .and_then(widgets::parse_hex_color)
+                    {
+                        docked_window_frame.fill = background;
+                    }
+                }
+            }
             // A skinned title bar replaces egui's, which reclaims the top space
             // for content. Reserve the band's height as top inset so content
             // starts BELOW the painted title bar instead of under it.

@@ -55,6 +55,7 @@ pub(crate) mod theme;
 mod webui_bridge;
 mod webui_panel;
 pub(crate) mod widgets;
+mod window_colors;
 mod window_config;
 mod window_manager;
 mod zones;

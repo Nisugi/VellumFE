@@ -534,10 +534,22 @@ impl VellumGuiApp {
         // Game content is NOT UI chrome: a skin's [ui] palette colors menus and
         // editors (its `text` can be an accent like stealth's orange), but story
         // / spells / room / inventory text must stay in the theme's own text
-        // color, never the chrome accent. Pin the game text color here so every
-        // window's content is immune to the global chrome `override_text_color`;
-        // explicit per-span colors (highlights, links, stream colors) still win.
-        let game_text = theme::color32(self.current_theme.text_primary);
+        // color (or this window's own def override), never the chrome accent.
+        // Pin the game text color here so every window's content is immune to
+        // the global chrome `override_text_color`; explicit per-span colors
+        // (highlights, links, stream colors) still win. Resolved through
+        // `window_style` (core/window_style.rs, precedence: window def ->
+        // user-changed colors.toml ui.text_color -> theme), which falls
+        // through to exactly `theme.text_primary` when the def sets nothing —
+        // same pin as before, plus a per-window override on top. A grouped
+        // window's members share this one `ui`, so (as before) they all take
+        // the leader tab's resolved color; there is no per-member override.
+        let game_text = self
+            .resolved_window_colors(tab)
+            .text
+            .as_deref()
+            .and_then(widgets::parse_hex_color)
+            .unwrap_or_else(|| theme::color32(self.current_theme.text_primary));
         ui.visuals_mut().override_text_color = Some(game_text);
         ui.visuals_mut().widgets.noninteractive.fg_stroke.color = game_text;
         let members: Vec<GuiTab> = match self.group_for_tab(&tab.id.key) {
