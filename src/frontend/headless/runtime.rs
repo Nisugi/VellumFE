@@ -2436,6 +2436,9 @@ fn dispatch_ui_action(app_core: &mut AppCore, action: crate::data::UiAction) -> 
         | A::WebUiOpen(_)
         | A::LauncherEditor
         | A::CreatureFieldEdit
+        | A::UndoLayout
+        | A::RedoLayout
+        | A::QuickSwitcher
         | A::SnapDebug => desktop_only(app_core),
     }
 }

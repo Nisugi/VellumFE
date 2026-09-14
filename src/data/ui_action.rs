@@ -132,6 +132,13 @@ pub enum UiAction {
     PrevTab,
     NextUnread,
 
+    // GUI layout history and navigation
+    /// Restore the arrangement from before the last autosave (GUI).
+    UndoLayout,
+    RedoLayout,
+    /// The quick switcher: windows, commands, layouts, settings (GUI).
+    QuickSwitcher,
+
     // Window management
     AddWindowPicker,
     /// None = open the picker; Some = edit that window.
@@ -367,6 +374,9 @@ impl UiAction {
             "nexttab" => UiAction::NextTab,
             "prevtab" => UiAction::PrevTab,
             "nextunread" => UiAction::NextUnread,
+            "undolayout" => UiAction::UndoLayout,
+            "redolayout" => UiAction::RedoLayout,
+            "switcher" => UiAction::QuickSwitcher,
             "addwindow" => UiAction::AddWindowPicker,
             "editwindow" => UiAction::EditWindow(None),
             "hidewindow" => UiAction::HideWindow(None),
@@ -438,6 +448,9 @@ impl std::fmt::Display for UiAction {
             UiAction::NextTab => write!(f, "action:nexttab"),
             UiAction::PrevTab => write!(f, "action:prevtab"),
             UiAction::NextUnread => write!(f, "action:nextunread"),
+            UiAction::UndoLayout => write!(f, "action:undolayout"),
+            UiAction::RedoLayout => write!(f, "action:redolayout"),
+            UiAction::QuickSwitcher => write!(f, "action:switcher"),
             UiAction::AddWindowPicker => write!(f, "action:addwindow"),
             UiAction::EditWindow(None) => write!(f, "action:editwindow"),
             UiAction::EditWindow(Some(name)) => write!(f, "action:editwindow:{name}"),
@@ -554,6 +567,9 @@ mod tests {
             UiAction::NextTab,
             UiAction::PrevTab,
             UiAction::NextUnread,
+            UiAction::UndoLayout,
+            UiAction::RedoLayout,
+            UiAction::QuickSwitcher,
             UiAction::AddWindowPicker,
             UiAction::EditWindow(None),
             UiAction::EditWindow(Some("main".into())),

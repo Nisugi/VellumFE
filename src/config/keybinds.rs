@@ -294,6 +294,11 @@ pub enum KeyAction {
     PrevTab,       // Switch to previous tab
     NextUnreadTab, // Jump to next tab with unread messages
 
+    // GUI layout history and navigation (routed to the frontend)
+    UndoLayout,
+    RedoLayout,
+    QuickSwitcher,
+
     // Clipboard actions
     Copy,      // Copy selected text to clipboard
     Paste,     // Paste from clipboard
@@ -611,6 +616,27 @@ impl KeyAction {
             action: KeyAction::PrevTab,
             label: "Previous Tab",
             category: "Tabs",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "undo_layout",
+            action: KeyAction::UndoLayout,
+            label: "Undo Layout Change",
+            category: "Layout",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "redo_layout",
+            action: KeyAction::RedoLayout,
+            label: "Redo Layout Change",
+            category: "Layout",
+            scope: ActionScope::Keyboard,
+        },
+        ActionDef {
+            name: "quick_switcher",
+            action: KeyAction::QuickSwitcher,
+            label: "Quick Switcher",
+            category: "Navigation",
             scope: ActionScope::Keyboard,
         },
         ActionDef {
@@ -3191,6 +3217,12 @@ impl Config {
 /// Get default keybindings (based on ProfanityFE defaults)
 pub fn default_keybinds() -> HashMap<String, KeyBindAction> {
     let mut map = HashMap::new();
+
+    // Quick switcher (GUI): windows, commands, layouts, settings.
+    map.insert(
+        "ctrl+k".to_string(),
+        KeyBindAction::Action("quick_switcher".to_string()),
+    );
 
     // Basic command input
     map.insert(

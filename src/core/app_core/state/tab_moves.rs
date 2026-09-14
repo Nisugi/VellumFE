@@ -38,6 +38,8 @@ pub enum TabMoveKind {
     Join,
     /// A text window became a one-tab tabbed window.
     WrappedInPlace,
+    /// A tab moved from one tabbed window straight into another.
+    Move,
     /// Tabs changed order within one window.
     Reorder,
 }
@@ -132,6 +134,22 @@ pub enum UndoTabMove {
         window: String,
         tab_ids_before: Vec<TabId>,
         prev_active: Option<TabId>,
+    },
+    Move {
+        /// The source window's whole definition before the move (still
+        /// holding the tab); re-inserted wholesale when the move emptied
+        /// and removed the window.
+        source_def: WindowDef,
+        source_removed: bool,
+        /// The tab as it was in the source, and where.
+        tab_def: TabbedTextTab,
+        source_index: usize,
+        prev_active_source: Option<TabId>,
+        target: String,
+        /// The id the tab was given in the target.
+        target_tab_id: TabId,
+        prev_active_target: Option<TabId>,
+        prev_target_buffer_size: usize,
     },
 }
 
@@ -637,6 +655,121 @@ impl AppCore {
         })
     }
 
+    /// Move one tab from `source` straight into `target` (spec §1, the
+    /// tab-to-tab gesture). The tab keeps its buffer, scroll position and
+    /// settings and gets a fresh id in the target. When it was the source's
+    /// last tab the source window ceases to exist, as a join's source does.
+    pub fn move_tab(
+        &mut self,
+        source: &str,
+        tab_id: TabId,
+        target: &str,
+        insert_at: Option<usize>,
+    ) -> Result<TabMoveReceipt, TabMoveError> {
+        if source == target {
+            return Err(TabMoveError::SameWindow(source.to_string()));
+        }
+        // Both ends must be tabbed before anything is touched.
+        let (source_def, source_index, tab_def, source_count) = {
+            let def = self
+                .layout
+                .windows
+                .iter_mut()
+                .find(|w| w.name() == source)
+                .ok_or_else(|| TabMoveError::NoSuchWindow(source.to_string()))?;
+            let WindowDef::TabbedText { data, .. } = def else {
+                return Err(TabMoveError::NotTabbed(source.to_string()));
+            };
+            data.normalize_tab_ids();
+            let index = data.index_of_tab(tab_id).ok_or(TabMoveError::NoSuchTab {
+                window: source.to_string(),
+                tab_id,
+            })?;
+            let tab = data.tabs[index].clone();
+            let count = data.tabs.len();
+            (def.clone(), index, tab, count)
+        };
+        self.tabbed_def_mut(target)?;
+
+        // Lift the live tab.
+        let (lifted, prev_active_source) = {
+            let tabbed = self.live_tabbed_mut(source)?;
+            let prev_active = tabbed.active_tab_id();
+            let live_index = tabbed.index_of(tab_id).ok_or(TabMoveError::NoSuchTab {
+                window: source.to_string(),
+                tab_id,
+            })?;
+            (tabbed.tabs[live_index].clone(), prev_active)
+        };
+        let streams = tab_def.get_streams();
+
+        // Target: allocate a tab, reconcile capacity.
+        let prev_active_target = self.live_tabbed_mut(target)?.active_tab_id();
+        let (target_tab_id, prev_target_buffer_size, target_buffer_size) = {
+            let data = self.tabbed_def_mut(target)?;
+            data.normalize_tab_ids();
+            let new_id = data.alloc_tab_id();
+            let at = insert_at.unwrap_or(data.tabs.len()).min(data.tabs.len());
+            let mut moved = tab_def.clone();
+            moved.id = new_id;
+            data.tabs.insert(at, moved);
+            let prev = data.buffer_size;
+            data.buffer_size = reconcile_capacity(prev, lifted.content.lines.len());
+            (new_id, prev, data.buffer_size)
+        };
+
+        // Source: drop the tab; an emptied window goes away entirely.
+        let source_removed = source_count == 1;
+        if source_removed {
+            self.layout.windows.retain(|w| w.name() != source);
+            self.remove_window(source);
+        } else {
+            self.tabbed_def_mut(source)?.tabs.remove(source_index);
+            self.sync_tabbed_window_tabs_keep(source, prev_active_source);
+        }
+
+        // Materialise the tab in the target, hand it the lifted buffer.
+        self.sync_tabbed_window_tabs_keep(target, Some(target_tab_id));
+        {
+            let tabbed = self.live_tabbed_mut(target)?;
+            let live_index = tabbed.index_of(target_tab_id).ok_or_else(|| {
+                TabMoveError::Layout(format!("tab {target_tab_id} was not created"))
+            })?;
+            let mut buffer = lifted.content;
+            install_text_buffer(&mut buffer, &streams, &tab_def.name, target_buffer_size);
+            tabbed.tabs[live_index].content = buffer;
+        }
+        self.finish_tab_move();
+        self.record_tab_undo(UndoTabMove::Move {
+            source_def,
+            source_removed,
+            tab_def,
+            source_index,
+            prev_active_source,
+            target: target.to_string(),
+            target_tab_id,
+            prev_active_target,
+            prev_target_buffer_size,
+        });
+
+        let capacity_changed = if target_buffer_size != prev_target_buffer_size {
+            vec![(target.to_string(), prev_target_buffer_size, target_buffer_size)]
+        } else {
+            Vec::new()
+        };
+        Ok(TabMoveReceipt {
+            kind: TabMoveKind::Move,
+            window: target.to_string(),
+            tab_id: Some(target_tab_id),
+            old_scroll_id: scroll_id_for_tab(source, tab_id),
+            new_scroll_id: scroll_id_for_tab(target, target_tab_id),
+            affected_windows: vec![source.to_string(), target.to_string()],
+            capacity_changed,
+            removed_window: source_removed.then(|| source.to_string()),
+            created_window: None,
+        })
+    }
+
     /// Reorder `window`'s tabs to `tab_ids` (a permutation of the current
     /// ids). Buffers and the active tab follow their ids.
     pub fn reorder_tabs(
@@ -908,6 +1041,121 @@ impl AppCore {
                     capacity_changed,
                     removed_window: None,
                     created_window: Some(source),
+                }
+            }
+
+            UndoTabMove::Move {
+                source_def,
+                source_removed,
+                tab_def,
+                source_index,
+                prev_active_source,
+                target,
+                target_tab_id,
+                prev_active_target,
+                prev_target_buffer_size,
+            } => {
+                let source = source_def.name().to_string();
+                if source_removed
+                    && (self.layout.windows.iter().any(|w| w.name() == source)
+                        || self.ui_state.windows.contains_key(&source))
+                {
+                    return Err(TabMoveError::NameTaken(source));
+                }
+                // Lift from the target, note what the survivors hold.
+                let (lifted, survivors_max) = {
+                    let tabbed = self.live_tabbed_mut(&target)?;
+                    let live_index =
+                        tabbed
+                            .index_of(target_tab_id)
+                            .ok_or(TabMoveError::NoSuchTab {
+                                window: target.clone(),
+                                tab_id: target_tab_id,
+                            })?;
+                    let lifted = tabbed.tabs[live_index].content.clone();
+                    let survivors_max = tabbed
+                        .tabs
+                        .iter()
+                        .filter(|t| t.definition.id != target_tab_id)
+                        .map(|t| t.content.lines.len())
+                        .max()
+                        .unwrap_or(0);
+                    (lifted, survivors_max)
+                };
+                let (target_cap_before, target_cap_after) = {
+                    let data = self.tabbed_def_mut(&target)?;
+                    let at = data
+                        .index_of_tab(target_tab_id)
+                        .ok_or(TabMoveError::NoSuchTab {
+                            window: target.clone(),
+                            tab_id: target_tab_id,
+                        })?;
+                    data.tabs.remove(at);
+                    let before = data.buffer_size;
+                    data.buffer_size = reconcile_capacity(prev_target_buffer_size, survivors_max);
+                    (before, data.buffer_size)
+                };
+                self.sync_tabbed_window_tabs_keep(&target, prev_active_target);
+
+                // Source: recreate wholesale, or slot the tab back in.
+                let streams = tab_def.get_streams();
+                let (source_cap_before, source_cap_after) = if source_removed {
+                    let mut restored = source_def;
+                    let (before, after) = {
+                        let WindowDef::TabbedText { data, .. } = &mut restored else {
+                            return Err(TabMoveError::Layout(
+                                "saved definition is not a tabbed window".to_string(),
+                            ));
+                        };
+                        let before = data.buffer_size;
+                        data.buffer_size = reconcile_capacity(before, lifted.lines.len());
+                        (before, data.buffer_size)
+                    };
+                    self.layout.windows.push(restored.clone());
+                    self.add_new_window(&restored, 0, 0);
+                    (before, after)
+                } else {
+                    let data = self.tabbed_def_mut(&source)?;
+                    if data.index_of_tab(tab_def.id).is_some() {
+                        return Err(TabMoveError::Layout(format!(
+                            "tab {} is already back in '{source}'",
+                            tab_def.id
+                        )));
+                    }
+                    let at = source_index.min(data.tabs.len());
+                    data.tabs.insert(at, tab_def.clone());
+                    let before = data.buffer_size;
+                    data.buffer_size = reconcile_capacity(before, lifted.lines.len());
+                    (before, data.buffer_size)
+                };
+                self.sync_tabbed_window_tabs_keep(&source, prev_active_source.or(Some(tab_def.id)));
+                {
+                    let tabbed = self.live_tabbed_mut(&source)?;
+                    let live_index = tabbed.index_of(tab_def.id).ok_or_else(|| {
+                        TabMoveError::Layout(format!("tab {} was not restored", tab_def.id))
+                    })?;
+                    let mut buffer = lifted;
+                    install_text_buffer(&mut buffer, &streams, &tab_def.name, source_cap_after);
+                    tabbed.tabs[live_index].content = buffer;
+                }
+
+                let mut capacity_changed = Vec::new();
+                if target_cap_after != target_cap_before {
+                    capacity_changed.push((target.clone(), target_cap_before, target_cap_after));
+                }
+                if source_cap_after != source_cap_before {
+                    capacity_changed.push((source.clone(), source_cap_before, source_cap_after));
+                }
+                TabMoveReceipt {
+                    kind: TabMoveKind::Move,
+                    window: source.clone(),
+                    tab_id: Some(tab_def.id),
+                    old_scroll_id: scroll_id_for_tab(&target, target_tab_id),
+                    new_scroll_id: scroll_id_for_tab(&source, tab_def.id),
+                    affected_windows: vec![target, source.clone()],
+                    capacity_changed,
+                    removed_window: None,
+                    created_window: source_removed.then_some(source),
                 }
             }
 

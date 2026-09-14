@@ -973,7 +973,7 @@ impl MessageProcessor {
                             added_here = true;
                             // Mark tab as unread if it's not the active tab and activity tracking is enabled
                             if tab_index != active_tab_index && !tab.definition.ignore_activity {
-                                tab.has_unread = true;
+                                tab.mark_unread();
                             }
                         }
                     }
@@ -1132,7 +1132,7 @@ impl MessageProcessor {
                                             if tab_index != active_tab_index
                                                 && !tab.definition.ignore_activity
                                             {
-                                                tab.has_unread = true;
+                                                tab.mark_unread();
                                             }
                                             delivered = true;
                                         }

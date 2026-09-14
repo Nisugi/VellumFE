@@ -3191,6 +3191,22 @@ impl AppCore {
                 }
             }
 
+            // Open a game object's link menu by id, as clicking its link
+            // would. Hotbar buttons made by dropping a link use this.
+            "menuof" => {
+                let Some(exist_id) = parts.get(1) else {
+                    self.add_system_message("Usage: .menuof <exist_id> [noun]");
+                    return Ok(CommandOutcome::Handled);
+                };
+                let noun = parts.get(2..).map(|rest| rest.join(" ")).unwrap_or_default();
+                let outbound = self.request_menu_from(
+                    exist_id.to_string(),
+                    noun,
+                    crate::core::remote::MenuOrigin::Local,
+                );
+                return Ok(CommandOutcome::Game(outbound.trim_end().to_string()));
+            }
+
             // Tab navigation
             "nexttab" => {
                 return Ok(CommandOutcome::Ui(UiAction::NextTab));
@@ -3200,6 +3216,15 @@ impl AppCore {
             }
             "gonew" | "nextunread" => {
                 return Ok(CommandOutcome::Ui(UiAction::NextUnread));
+            }
+            "undolayout" => {
+                return Ok(CommandOutcome::Ui(UiAction::UndoLayout));
+            }
+            "redolayout" => {
+                return Ok(CommandOutcome::Ui(UiAction::RedoLayout));
+            }
+            "switcher" | "palette" => {
+                return Ok(CommandOutcome::Ui(UiAction::QuickSwitcher));
             }
 
             // Settings
@@ -4518,6 +4543,10 @@ mod tests {
             (".prevtab", UiAction::PrevTab),
             (".gonew", UiAction::NextUnread),
             (".nextunread", UiAction::NextUnread),
+            (".undolayout", UiAction::UndoLayout),
+            (".redolayout", UiAction::RedoLayout),
+            (".switcher", UiAction::QuickSwitcher),
+            (".palette", UiAction::QuickSwitcher),
             (".settings", UiAction::Settings),
             (
                 ".editwindow main",

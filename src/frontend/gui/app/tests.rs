@@ -1347,6 +1347,7 @@ fn search_targets_list_every_searchable_window_and_name_tabs() {
         },
         content: TextContent::new(name, 100),
         has_unread: false,
+        unread_count: 0,
     };
     tabbed.content = WindowContent::TabbedText(TabbedTextContent {
         tabs: vec![tab_of("story"), tab_of("thoughts")],

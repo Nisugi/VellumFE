@@ -68,6 +68,10 @@ impl VellumGuiApp {
         None
     }
 
+    /// Sentinel exist_id for a game link dropped onto a hotbar; noun is
+    /// "<bar_name>|<exist_id>|<noun>|<link text>".
+    pub(in crate::frontend::gui::app) const HOTBAR_DROP_SENTINEL: &'static str = "_hotbar_drop_";
+
     /// Sentinel exist_id for switching the active tab of a tabbedtext window;
     /// noun is "<window_name>|<tab_index>".
     pub(in crate::frontend::gui::app) const TABBED_SWITCH_SENTINEL: &'static str =
@@ -81,11 +85,16 @@ impl VellumGuiApp {
         tabbed: &TabbedTextContent,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) -> Option<GuiLinkClick> {
-        // A `Text` window being dragged turns every other strip into a
-        // drop band, single-tab strips included (spec §7); otherwise a
-        // single tab has no strip.
+        // A `Text` window being dragged, or a tab dragged from ANOTHER
+        // tabbed window, turns this strip into a drop band, single-tab
+        // strips included (spec §7); otherwise a single tab has no strip.
         let join_source = super::super::tab_join::join_drag_source(ui.ctx());
-        let is_drop_band = join_source.as_deref().is_some_and(|source| source != window_name);
+        let foreign_tab = egui::DragAndDrop::payload::<super::super::tab_drag::TabDragPayload>(
+            ui.ctx(),
+        )
+        .filter(|payload| payload.window != window_name);
+        let is_drop_band = join_source.as_deref().is_some_and(|source| source != window_name)
+            || foreign_tab.is_some();
         if tabbed.tabs.len() < 2 && !is_drop_band {
             Self::render_single_tab_grip(ui, window_name, tabbed);
             return None;
@@ -93,91 +102,169 @@ impl VellumGuiApp {
         // A skin skins tabs with `[controls.tab]` (+ optional `tab.active`);
         // without it, tabs fall back to egui selectable_labels.
         let tab_art = skin_art.and_then(|art| art.control_border("tab", "normal"));
-        // Tab label colors follow the theme (None = default text colors);
-        // the legacy skin [ui] palette that once overrode them is gone.
-        let (tab_text, tab_active_text, tab_unread_text): (
-            Option<egui::Color32>,
-            Option<egui::Color32>,
-            Option<egui::Color32>,
-        ) = (None, None, None);
+        // Unread tabs read in the theme's accent (the hyperlink colour is the
+        // one accent every theme defines) with a count badge; the rest keep
+        // the default text colours.
+        let unread_color = ui.visuals().hyperlink_color;
         let mut clicked = None;
         let mut tab_rects: Vec<(crate::data::widget::TabId, egui::Rect)> = Vec::new();
-        let strip = ui.horizontal_wrapped(|ui| {
-            for (index, tab_state) in tabbed.tabs.iter().enumerate() {
-                let is_active = index == tabbed.active_tab_index;
-                let unread = tab_state.has_unread && !is_active;
-                let mut label = RichText::new(&tab_state.definition.name);
-                // Color precedence: active > unread (accent) > idle (muted).
-                let color = if is_active {
-                    tab_active_text
-                } else if unread {
-                    tab_unread_text
-                } else {
-                    tab_text
-                };
-                if let Some(color) = color {
-                    label = label.color(color);
-                }
-                if unread {
-                    label = label.strong();
-                }
-                let hit = if tab_art.is_some() {
-                    // Skinned tab: content-sized rect, nine-slice behind a
-                    // frameless label, active/normal state-keyed.
-                    // Measure with the SAME text style the label renders in —
-                    // a hardcoded size clipped tab names for users running a
-                    // larger UI font (accessibility sizes must always fit).
-                    let font = egui::TextStyle::Body.resolve(ui.style());
-                    let galley = ui.painter().layout_no_wrap(
-                        tab_state.definition.name.clone(),
-                        font,
-                        ui.visuals().text_color(),
-                    );
-                    let size = galley.size() + egui::vec2(16.0, 6.0);
-                    let (rect, resp) =
-                        ui.allocate_exact_size(size, egui::Sense::click_and_drag());
-                    let state = if is_active {
-                        "active"
-                    } else if resp.hovered() {
-                        "hover"
-                    } else {
-                        "normal"
-                    };
-                    if let Some(border) = skin_art.and_then(|art| art.control_border("tab", state))
-                    {
-                        crate::frontend::gui::skin::paint_nine_slice_filled(
-                            ui.painter(),
-                            rect,
-                            border,
-                        );
-                    }
-                    ui.put(rect, egui::Label::new(label).selectable(false));
-                    tab_rects.push((tab_state.definition.id, rect));
-                    Self::arm_tab_drag(&resp, window_name, tab_state);
-                    resp.clicked()
-                } else {
-                    let resp = ui.selectable_label(is_active, label);
-                    tab_rects.push((tab_state.definition.id, resp.rect));
-                    // Re-register with a drag sense so a press that travels
-                    // becomes a tear-out; a stationary click still selects.
-                    Self::arm_tab_drag(&resp.interact(egui::Sense::drag()), window_name, tab_state);
-                    resp.clicked()
-                };
-                if hit && !is_active {
-                    clicked = Some(GuiLinkClick {
-                        link_data: LinkData {
-                            exist_id: Self::TABBED_SWITCH_SENTINEL.to_string(),
-                            noun: format!("{}|{}", window_name, index),
-                            text: String::new(),
-                            coord: None,
-                        },
-                        click_pos: (0, 0),
+
+        // One row that scrolls sideways (scrollbar hidden) instead of
+        // wrapping into the content area. When the row is wider than the
+        // window a chevron at the right lists every tab. The chevron's
+        // room is reserved from the previous frame's measurement.
+        let overflow_id = ui.id().with(("tab_strip_overflow", window_name));
+        let overflowed_last_frame: bool = ui
+            .ctx()
+            .data(|data| data.get_temp(overflow_id))
+            .unwrap_or(false);
+        let chevron_width = 22.0;
+        let full_width = ui.available_width();
+        let row_width = if overflowed_last_frame {
+            (full_width - chevron_width - 4.0).max(40.0)
+        } else {
+            full_width
+        };
+        let mut active_rect: Option<egui::Rect> = None;
+        let mut active_visible = true;
+        let strip = ui.horizontal(|ui| {
+            let scroll = egui::ScrollArea::horizontal()
+                .id_salt(("tab_strip_scroll", window_name))
+                .max_width(row_width)
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for (index, tab_state) in tabbed.tabs.iter().enumerate() {
+                            let is_active = index == tabbed.active_tab_index;
+                            let unread = tab_state.has_unread && !is_active;
+                            let mut text = tab_state.definition.name.clone();
+                            if unread && tab_state.unread_count > 0 {
+                                let shown = if tab_state.unread_count > 99 {
+                                    "99+".to_string()
+                                } else {
+                                    tab_state.unread_count.to_string()
+                                };
+                                text = format!("{text} ({shown})");
+                            }
+                            let mut label = RichText::new(&text);
+                            if unread {
+                                label = label.color(unread_color).strong();
+                            }
+                            let hit = if tab_art.is_some() {
+                                // Skinned tab: content-sized rect, nine-slice
+                                // behind a frameless label, state-keyed.
+                                // Measured in the label's own text style so
+                                // larger accessibility fonts still fit.
+                                let font = egui::TextStyle::Body.resolve(ui.style());
+                                let galley = ui.painter().layout_no_wrap(
+                                    text.clone(),
+                                    font,
+                                    ui.visuals().text_color(),
+                                );
+                                let size = galley.size() + egui::vec2(16.0, 6.0);
+                                let (rect, resp) =
+                                    ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+                                let state = if is_active {
+                                    "active"
+                                } else if resp.hovered() {
+                                    "hover"
+                                } else {
+                                    "normal"
+                                };
+                                if let Some(border) =
+                                    skin_art.and_then(|art| art.control_border("tab", state))
+                                {
+                                    crate::frontend::gui::skin::paint_nine_slice_filled(
+                                        ui.painter(),
+                                        rect,
+                                        border,
+                                    );
+                                }
+                                ui.put(rect, egui::Label::new(label).selectable(false));
+                                tab_rects.push((tab_state.definition.id, rect));
+                                if is_active {
+                                    active_rect = Some(rect);
+                                    active_visible = ui.clip_rect().contains_rect(rect);
+                                }
+                                Self::arm_tab_drag(&resp, window_name, tab_state);
+                                resp.clicked()
+                            } else {
+                                let resp = ui.selectable_label(is_active, label);
+                                tab_rects.push((tab_state.definition.id, resp.rect));
+                                if is_active {
+                                    active_rect = Some(resp.rect);
+                                    active_visible = ui.clip_rect().contains_rect(resp.rect);
+                                }
+                                // Re-register with a drag sense so a press that
+                                // travels becomes a tear-out; a click selects.
+                                Self::arm_tab_drag(
+                                    &resp.interact(egui::Sense::drag()),
+                                    window_name,
+                                    tab_state,
+                                );
+                                resp.clicked()
+                            };
+                            if hit && !is_active {
+                                clicked = Some(Self::tab_switch_click(window_name, index));
+                            }
+                        }
                     });
+                });
+            let overflowed = scroll.content_size.x > scroll.inner_rect.width() + 0.5;
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(overflow_id, overflowed));
+            // The active tab scrolled out of the row (a keybind cycled to
+            // it, or a new tab was appended): bring it back into view.
+            if let (Some(rect), false) = (active_rect, active_visible) {
+                // Content-space x extent of the active tab.
+                let mut state = scroll.state;
+                let min_x = rect.min.x - scroll.inner_rect.min.x + state.offset.x;
+                let max_x = rect.max.x - scroll.inner_rect.min.x + state.offset.x;
+                let visible_w = scroll.inner_rect.width();
+                if min_x < state.offset.x {
+                    state.offset.x = min_x;
+                } else if max_x > state.offset.x + visible_w {
+                    state.offset.x = max_x - visible_w;
                 }
+                state.store(ui.ctx(), scroll.id);
+                ui.ctx().request_repaint();
+            }
+            if overflowed {
+                let unread_total = tabbed
+                    .tabs
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, t)| *i != tabbed.active_tab_index && t.has_unread)
+                    .count();
+                let mut chevron = RichText::new("»");
+                if unread_total > 0 {
+                    chevron = chevron.color(unread_color).strong();
+                }
+                ui.menu_button(chevron, |ui| {
+                    ui.set_min_width(140.0);
+                    for (index, tab_state) in tabbed.tabs.iter().enumerate() {
+                        let is_active = index == tabbed.active_tab_index;
+                        let unread = tab_state.has_unread && !is_active;
+                        let mut text = tab_state.definition.name.clone();
+                        if unread && tab_state.unread_count > 0 {
+                            text = format!("{text} ({})", tab_state.unread_count);
+                        }
+                        let mut label = RichText::new(text);
+                        if unread {
+                            label = label.color(unread_color).strong();
+                        }
+                        if ui.selectable_label(is_active, label).clicked() {
+                            if !is_active {
+                                clicked = Some(Self::tab_switch_click(window_name, index));
+                            }
+                            ui.close();
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("All tabs");
             }
         });
-        // The strip's rect, so a tab released back onto its own strip is a
-        // reorder rather than a tear-out (tab-tear-out spec §6 registry).
         // Widen the recorded strip to the window's full width so the band
         // (and the dwell hit test) covers the whole row, not just the labels.
         let mut strip_rect = strip.response.rect;
@@ -186,36 +273,52 @@ impl VellumGuiApp {
         super::super::tab_drag::record_tab_strip_rect(ui.ctx(), window_name, strip_rect);
         super::super::tab_drag::record_tab_rects(ui.ctx(), window_name, tab_rects);
         if is_drop_band {
-            let dwell = super::super::tab_join::join_dwell_target(ui.ctx())
-                .filter(|(target, _)| target == window_name);
-            let (fill, stroke) = match dwell {
-                Some((_, true)) => (
+            // A foreign tab arms the instant it is over the row; a window
+            // join arms after its dwell.
+            let armed = if foreign_tab.is_some() {
+                ui.rect_contains_pointer(strip_rect)
+            } else {
+                super::super::tab_join::join_dwell_target(ui.ctx())
+                    .is_some_and(|(target, armed)| target == window_name && armed)
+            };
+            let hovering = ui.rect_contains_pointer(strip_rect);
+            let (fill, stroke) = if armed {
+                (
                     Color32::from_rgba_unmultiplied(70, 180, 90, 70),
                     egui::Stroke::new(2.0, Color32::from_rgb(90, 200, 110)),
-                ),
-                Some((_, false)) => (
+                )
+            } else if hovering {
+                (
                     Color32::from_rgba_unmultiplied(70, 130, 220, 60),
                     egui::Stroke::new(1.5, Color32::from_rgb(90, 150, 240)),
-                ),
-                None => (
+                )
+            } else {
+                (
                     Color32::from_rgba_unmultiplied(70, 130, 220, 28),
                     egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(90, 150, 240, 120)),
-                ),
+                )
             };
             let band = strip_rect.expand2(egui::vec2(0.0, 2.0));
-            ui.painter().rect(
-                band,
-                3.0,
-                fill,
-                stroke,
-                egui::StrokeKind::Inside,
-            );
+            ui.painter()
+                .rect(band, 3.0, fill, stroke, egui::StrokeKind::Inside);
         }
         // No divider line under the tab strip — the window mesh flows
-        // uninterrupted into the text area (skin look). egui's separator draws
-        // the theme's noninteractive stroke, which reads as a hard cyan line
-        // over a dark skin.
+        // uninterrupted into the text area (skin look).
         clicked
+    }
+
+    /// The click that switches `window_name` to tab `index`, routed through
+    /// the link path like every other in-window click.
+    fn tab_switch_click(window_name: &str, index: usize) -> GuiLinkClick {
+        GuiLinkClick {
+            link_data: LinkData {
+                exist_id: Self::TABBED_SWITCH_SENTINEL.to_string(),
+                noun: format!("{}|{}", window_name, index),
+                text: String::new(),
+                coord: None,
+            },
+            click_pos: (0, 0),
+        }
     }
 
     /// A single-tab window has no strip, so its only tab would be
@@ -492,7 +595,111 @@ impl VellumGuiApp {
         } else {
             ui.horizontal_wrapped(render_buttons);
         }
+
+        // A game link (Ctrl+drag) held over the bar can be dropped to make
+        // a button for it: the band shows while the drag is over the bar,
+        // and the release hands the shell a request to add the button.
+        if let Some(link) = egui::DragAndDrop::payload::<LinkData>(ui.ctx()) {
+            let bar_rect = ui.min_rect().expand(4.0);
+            if ui.rect_contains_pointer(bar_rect) && Self::link_is_draggable(&link) {
+                ui.painter().rect(
+                    bar_rect,
+                    4.0,
+                    Color32::from_rgba_unmultiplied(70, 180, 90, 50),
+                    egui::Stroke::new(1.5, Color32::from_rgb(90, 200, 110)),
+                    egui::StrokeKind::Inside,
+                );
+                if let Some(pos) = ui.input(|input| input.pointer.latest_pos()) {
+                    egui::Area::new(egui::Id::new(("hotbar_drop_hint", bar_name)))
+                        .order(egui::Order::Tooltip)
+                        .fixed_pos(pos + egui::vec2(16.0, 16.0))
+                        .interactable(false)
+                        .show(ui.ctx(), |ui| {
+                            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                                ui.label(format!(
+                                    "Release to add a '{}' button",
+                                    link.text.trim()
+                                ));
+                            });
+                        });
+                }
+                if ui.input(|input| input.pointer.any_released()) && clicked.is_none() {
+                    let label = if link.text.trim().is_empty() {
+                        link.noun.clone()
+                    } else {
+                        link.text.trim().to_string()
+                    };
+                    clicked = Some(GuiLinkClick {
+                        link_data: LinkData {
+                            exist_id: Self::HOTBAR_DROP_SENTINEL.to_string(),
+                            noun: format!(
+                                "{}|{}|{}|{}",
+                                bar_name,
+                                link.exist_id.trim_start_matches('#'),
+                                link.noun,
+                                label
+                            ),
+                            text: String::new(),
+                            coord: None,
+                        },
+                        click_pos: (0, 0),
+                    });
+                }
+            }
+        }
         clicked
+    }
+
+    /// Add a button for a dropped game link to `bar_name` and persist it in
+    /// whichever hotbars file (character or global) defines the bar.
+    pub(in crate::frontend::gui::app) fn add_hotbar_button_for_link(
+        app_core: &mut AppCore,
+        bar_name: &str,
+        exist_id: &str,
+        noun: &str,
+        label: &str,
+    ) {
+        use crate::config::{Config, HotbarButton, HotbarsConfig};
+        let Some(mut bar) = app_core.config.hotbars.find_bar(bar_name).cloned() else {
+            app_core.add_system_message(&format!("Hotbar '{bar_name}' is not defined."));
+            return;
+        };
+        let character = app_core.config.character.clone();
+        // The bar lives in the character file if that file defines it,
+        // otherwise in the global one (the same merge order the loader uses).
+        let is_global = !Config::hotbars_path(character.as_deref())
+            .ok()
+            .filter(|path| path.exists())
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| toml::from_str::<HotbarsConfig>(&text).ok())
+            .is_some_and(|cfg| cfg.find_bar(bar_name).is_some());
+        let mut id = format!("link_{exist_id}");
+        while bar.buttons.iter().any(|b| b.id == id) {
+            id.push('x');
+        }
+        let command = if noun.trim().is_empty() {
+            format!(".menuof {exist_id}")
+        } else {
+            format!(".menuof {exist_id} {noun}")
+        };
+        bar.buttons.push(HotbarButton {
+            id,
+            label: label.to_string(),
+            command,
+            tooltip: Some(format!("Menu for {label} (as clicking its link)")),
+            ..Default::default()
+        });
+        match Config::save_hotbar(&bar, is_global, character.as_deref()) {
+            Ok(()) => {
+                app_core.reload_hotbars();
+                app_core.add_system_message(&format!(
+                    "Added '{label}' to hotbar '{bar_name}'. Edit or remove it in .hotbars."
+                ));
+            }
+            Err(err) => {
+                app_core.add_system_message(&format!("Failed to save hotbar '{bar_name}': {err}"));
+            }
+        }
     }
 
     /// Icon face edge for a bar: its configured size (clamped sane) or the

@@ -120,7 +120,11 @@ impl VellumGuiApp {
     }
 
     /// The visible tabbedtext window whose strip contains the pointer.
-    fn tabbed_strip_under_pointer(&self, ctx: &egui::Context, pointer: Pos2) -> Option<String> {
+    pub(super) fn tabbed_strip_under_pointer(
+        &self,
+        ctx: &egui::Context,
+        pointer: Pos2,
+    ) -> Option<String> {
         self.available_tabs
             .iter()
             .filter(|(key, _)| !self.hidden_tabs.contains(key))

@@ -365,6 +365,9 @@ impl VellumGuiApp {
                 | "next_tab"
                 | "prev_tab"
                 | "next_unread_tab"
+                | "undo_layout"
+                | "redo_layout"
+                | "quick_switcher"
                 | "switch_current_window"
                 | "start_search"
                 | "next_search_match"
@@ -635,6 +638,9 @@ impl VellumGuiApp {
             "next_tab" => self.cycle_tabbed_tabs(true),
             "prev_tab" => self.cycle_tabbed_tabs(false),
             "next_unread_tab" => self.goto_unread_tab(),
+            "undo_layout" => self.undo_layout(),
+            "redo_layout" => self.redo_layout(),
+            "quick_switcher" => self.open_quick_switcher(),
             "switch_current_window" => self.cycle_focused_window(),
             "start_search" => {
                 self.app_core.start_search_mode();

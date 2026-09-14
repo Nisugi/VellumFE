@@ -216,9 +216,77 @@ pub(in super::super) struct SettingsEditorState {
     /// the named section is forced open and scrolled into view on the
     /// next frame, then the request is consumed.
     focus_section: Option<String>,
+    /// Search box text: when non-empty the window shows one flat list of
+    /// every setting whose label, key or description matches, instead of
+    /// the sections.
+    filter: String,
 }
 
 impl SettingsEditorState {
+    /// Registry settings the search box matches, in registry order.
+    fn search_hits(&self) -> Vec<&'static SettingDef> {
+        let needle = self.filter.trim().to_ascii_lowercase();
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        registry::registry()
+            .iter()
+            .filter(|def| def.frontend.includes_gui())
+            .filter(|def| !HIDDEN_KEYS.contains(&def.key))
+            .filter(|def| {
+                def.label.to_ascii_lowercase().contains(&needle)
+                    || def.key.to_ascii_lowercase().contains(&needle)
+                    || def.category.to_ascii_lowercase().contains(&needle)
+                    || def.description.to_ascii_lowercase().contains(&needle)
+            })
+            .collect()
+    }
+
+    /// The flat search view: matching rows grouped under their category
+    /// name, plus any bespoke section whose title matches as a jump link.
+    fn render_search_results(&mut self, ui: &mut egui::Ui, focus: &mut Option<String>) {
+        let hits = self.search_hits();
+        let needle = self.filter.trim().to_ascii_lowercase();
+        let sections: Vec<&'static str> = settings_sections()
+            .into_iter()
+            .filter(|title| title.to_ascii_lowercase().contains(&needle))
+            .collect();
+        if hits.is_empty() && sections.is_empty() {
+            ui.weak("No settings match.");
+            return;
+        }
+        if !sections.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.weak("Sections:");
+                for title in sections {
+                    if ui.link(title).clicked() {
+                        self.filter.clear();
+                        *focus = Some(title.to_string());
+                    }
+                }
+            });
+            ui.separator();
+        }
+        let mut current_category = "";
+        let mut grid_open = false;
+        for def in hits {
+            if def.category != current_category {
+                current_category = def.category;
+                ui.strong(def.category);
+            }
+            let _ = grid_open;
+            grid_open = true;
+            egui::Grid::new(("settings_search_row", def.key))
+                .num_columns(3)
+                .show(ui, |ui| {
+                    self.render_setting_row(ui, def);
+                    ui.end_row();
+                });
+            ui.weak(def.description);
+            ui.add_space(4.0);
+        }
+    }
+
     fn from_config(
         config: &Config,
         theme_names: Vec<String>,
@@ -261,6 +329,7 @@ impl SettingsEditorState {
             },
             gui_settings,
             focus_section: None,
+            filter: String::new(),
         }
     }
 
@@ -829,9 +898,30 @@ impl VellumGuiApp {
             .default_width(440.0)
             .collapsible(false)
             .show(ctx, |ui| {
+                // Search: filters every registered setting by label, key,
+                // category or description; sections whose title matches
+                // become jump links.
+                ui.horizontal(|ui| {
+                    let edit = egui::TextEdit::singleline(&mut state.filter)
+                        .hint_text("Search settings…")
+                        .desired_width(f32::INFINITY);
+                    let resp = ui.add(edit);
+                    if resp.changed() {
+                        focus_section = None;
+                    }
+                    if !state.filter.is_empty() && ui.small_button("✕").clicked() {
+                        state.filter.clear();
+                    }
+                });
+                ui.separator();
+                let searching = !state.filter.trim().is_empty();
                 egui::ScrollArea::vertical()
                     .id_salt("settings_editor_scroll")
                     .show(ui, |ui| {
+                        if searching {
+                            state.render_search_results(ui, &mut focus_section);
+                            return;
+                        }
                         for category in ordered_categories() {
                             match category {
                                 "Connection" => {

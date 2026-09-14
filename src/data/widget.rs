@@ -589,6 +589,22 @@ pub struct TabState {
     pub definition: TabDefinition,
     pub content: TextContent,
     pub has_unread: bool, // Whether tab has unread messages
+    /// Lines that arrived while the tab was not showing; the strip badge.
+    pub unread_count: usize,
+}
+
+impl TabState {
+    /// A line landed while this tab was not showing.
+    pub fn mark_unread(&mut self) {
+        self.has_unread = true;
+        self.unread_count = self.unread_count.saturating_add(1);
+    }
+
+    /// The tab is showing (or was dismissed): nothing is unread.
+    pub fn clear_unread(&mut self) {
+        self.has_unread = false;
+        self.unread_count = 0;
+    }
 }
 
 /// Tabbed text window content
@@ -651,6 +667,7 @@ impl TabbedTextContent {
             definition,
             content,
             has_unread: false,
+            unread_count: 0,
         }
     }
 
@@ -675,7 +692,7 @@ impl TabbedTextContent {
         match self.index_of(id) {
             Some(index) => {
                 self.active_tab_index = index;
-                self.tabs[index].has_unread = false;
+                self.tabs[index].clear_unread();
                 true
             }
             None => false,
@@ -687,7 +704,7 @@ impl TabbedTextContent {
         if let Some(tab) = self.tabs.get_mut(tab_index) {
             // Only mark as unread if not the active tab and activity tracking is enabled
             if tab_index != self.active_tab_index && !tab.definition.ignore_activity {
-                tab.has_unread = true;
+                tab.mark_unread();
             }
         }
     }
@@ -695,7 +712,7 @@ impl TabbedTextContent {
     /// Clear unread status for a specific tab (called when user switches to it)
     pub fn clear_tab_unread(&mut self, tab_index: usize) {
         if let Some(tab) = self.tabs.get_mut(tab_index) {
-            tab.has_unread = false;
+            tab.clear_unread();
         }
     }
 
@@ -801,7 +818,7 @@ impl TabbedTextContent {
                 .min(self.tabs.len().saturating_sub(1));
             self.active_tab_index = fallback;
             if let Some(tab) = self.tabs.get_mut(fallback) {
-                tab.has_unread = false;
+                tab.clear_unread();
             }
         }
 

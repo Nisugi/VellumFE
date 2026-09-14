@@ -46,6 +46,8 @@ mod server_pump;
 mod skins;
 mod snap;
 mod status_icons;
+mod layout_undo;
+mod quick_switcher;
 mod tab_drag;
 mod tab_join;
 mod tabs;
@@ -687,6 +689,14 @@ pub struct VellumGuiApp {
     /// Toast after a tab move: what happened, capacity notes, an Undo
     /// button. Auto-dismisses.
     tab_move_toast: Option<tab_drag::TabMoveToast>,
+    /// Layout undo points (autosave boundaries), newest last.
+    layout_undo_stack: Vec<GuiLayoutFileV1>,
+    layout_redo_stack: Vec<GuiLayoutFileV1>,
+    /// The arrangement as last written, the baseline the next undo point
+    /// is cut from.
+    last_saved_layout: Option<GuiLayoutFileV1>,
+    /// The quick switcher (`.switcher`, Ctrl+K) while open.
+    quick_switcher: Option<quick_switcher::QuickSwitcherState>,
     /// Sticky per press: set once egui is observed resizing a window this
     /// press (its rendered size diverged from the pinned size), cleared on
     /// release. A resize-edge drag can't be seen through pointer travel —
@@ -1173,6 +1183,10 @@ impl VellumGuiApp {
             drag_start_placement: None,
             join_dwell: None,
             tab_move_toast: None,
+            layout_undo_stack: Vec::new(),
+            layout_redo_stack: Vec::new(),
+            last_saved_layout: None,
+            quick_switcher: None,
             zone_resize_active: false,
             zone_snap_drag: None,
             zone_snap_guides: Vec::new(),
@@ -1442,7 +1456,7 @@ impl VellumGuiApp {
             if let WindowContent::TabbedText(tabbed) = &mut window.content {
                 if index < tabbed.tabs.len() {
                     tabbed.active_tab_index = index;
-                    tabbed.tabs[index].has_unread = false;
+                    tabbed.tabs[index].clear_unread();
                     self.app_core.needs_render = true;
                 }
             }
@@ -1465,7 +1479,7 @@ impl VellumGuiApp {
                     (tabbed.active_tab_index + count - 1) % count
                 };
                 tabbed.active_tab_index = next;
-                tabbed.tabs[next].has_unread = false;
+                tabbed.tabs[next].clear_unread();
                 any = true;
             }
         }
@@ -1482,7 +1496,7 @@ impl VellumGuiApp {
             if let WindowContent::TabbedText(tabbed) = &mut window.content {
                 if let Some(index) = tabbed.tabs.iter().position(|tab| tab.has_unread) {
                     tabbed.active_tab_index = index;
-                    tabbed.tabs[index].has_unread = false;
+                    tabbed.tabs[index].clear_unread();
                     self.app_core.needs_render = true;
                     return;
                 }
@@ -1634,6 +1648,9 @@ impl VellumGuiApp {
             A::NextTab => self.cycle_tabbed_tabs(true),
             A::PrevTab => self.cycle_tabbed_tabs(false),
             A::NextUnread => self.goto_unread_tab(),
+            A::UndoLayout => self.undo_layout(),
+            A::RedoLayout => self.redo_layout(),
+            A::QuickSwitcher => self.open_quick_switcher(),
             A::HideWindow(Some(name)) => {
                 // Hide = the Windows-window uncheck (core visibility layer).
                 if self.app_core.ui_state.windows.contains_key(&name) {
@@ -1967,6 +1984,15 @@ impl VellumGuiApp {
                     let window_name = window_name.to_string();
                     self.switch_tabbed_tab(&window_name, index);
                 }
+            }
+            return;
+        }
+        if click.link_data.exist_id == Self::HOTBAR_DROP_SENTINEL {
+            let mut parts = click.link_data.noun.splitn(4, '|');
+            if let (Some(bar), Some(exist_id), Some(noun), Some(label)) =
+                (parts.next(), parts.next(), parts.next(), parts.next())
+            {
+                Self::add_hotbar_button_for_link(&mut self.app_core, bar, exist_id, noun, label);
             }
             return;
         }
@@ -3288,6 +3314,7 @@ impl eframe::App for VellumGuiApp {
             self.handle_join_drop(&ctx, request);
         }
         self.render_tab_move_toast(&ctx);
+        self.render_quick_switcher(&ctx);
         if let Some(request) = zone_actions.window_menu_request {
             // While a window is in Move mode the pointer belongs to placement.
             if self.window_move_state.is_none() {
@@ -3376,8 +3403,10 @@ impl eframe::App for VellumGuiApp {
             self.layout_dirty = false;
             self.layout_dirty_since = Some(Instant::now());
         }
+        self.seed_layout_undo_baseline();
         if let Some(dirty_since) = self.layout_dirty_since {
             if dirty_since.elapsed() >= LAYOUT_SAVE_DEBOUNCE {
+                self.push_layout_undo_point();
                 self.save_layout_state();
                 self.layout_dirty_since = None;
             }

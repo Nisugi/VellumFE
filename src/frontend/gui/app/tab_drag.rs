@@ -71,6 +71,14 @@ fn tab_rects(ctx: &egui::Context, window: &str) -> Vec<(CoreTabId, Rect)> {
 
 // ---- reorder within a strip (§8) ---------------------------------------------
 
+/// Slot a foreign tab would take in a strip: before the first tab whose
+/// centre lies right of the pointer. `None` (append) past the last.
+pub(super) fn reorder_insert_index(rects: &[(CoreTabId, Rect)], pointer_x: f32) -> Option<usize> {
+    rects
+        .iter()
+        .position(|(_, rect)| pointer_x < rect.center().x)
+}
+
 /// Where a tab released at `pointer_x` lands: the new id order and the
 /// x of the insertion caret. The dragged tab slots in before the first
 /// tab (itself excluded) whose centre lies right of the pointer. `None`
@@ -161,6 +169,16 @@ pub(super) struct TabMoveToast {
 impl TabMoveToast {
     const LIFETIME: Duration = Duration::from_secs(8);
 
+    /// A toast with no undo button (layout undo/redo confirmations).
+    pub(super) fn plain(headline: impl Into<String>, notes: Vec<String>) -> Self {
+        Self {
+            headline: headline.into(),
+            notes,
+            shown_at: Instant::now(),
+            undoable: false,
+        }
+    }
+
     fn for_receipt(receipt: &TabMoveReceipt) -> Self {
         let headline = match receipt.kind {
             TabMoveKind::TearOut => format!("Opened '{}' as its own window", receipt.window),
@@ -171,6 +189,10 @@ impl TabMoveToast {
             },
             TabMoveKind::WrappedInPlace => format!("'{}' is a tabbed window now", receipt.window),
             TabMoveKind::Reorder => format!("Reordered tabs in '{}'", receipt.window),
+            TabMoveKind::Move => match &receipt.removed_window {
+                Some(source) => format!("Moved the last tab of '{source}' into '{}'", receipt.window),
+                None => format!("Moved a tab into '{}'", receipt.window),
+            },
         };
         let notes = receipt
             .capacity_changed
@@ -512,7 +534,10 @@ impl VellumGuiApp {
             ));
         }
         self.tab_move_toast = Some(TabMoveToast::for_receipt(receipt));
-        if receipt.kind == TabMoveKind::TearOut || receipt.kind == TabMoveKind::Join {
+        if matches!(
+            receipt.kind,
+            TabMoveKind::TearOut | TabMoveKind::Join | TabMoveKind::Move
+        ) {
             self.close_popup_menus_if_host_gone();
         }
         self.layout_dirty = true;
@@ -652,16 +677,31 @@ impl VellumGuiApp {
         let over_own_strip = pointer.is_some_and(|pos| {
             tab_strip_rect(ctx, &payload.window).is_some_and(|rect| rect.contains(pos))
         });
+        let over_other_strip = pointer
+            .and_then(|pos| self.tabbed_strip_under_pointer(ctx, pos))
+            .filter(|target| *target != payload.window);
         let skin_tab = self
             .skin_state
             .widget_art()
             .and_then(|art| art.control_border("tab", "active").cloned());
         if let Some(pointer_pos) = pointer {
-            if over_own_strip {
-                if let Some((_, caret_x)) =
-                    reorder_for_drop(&tab_rects(ctx, &payload.window), payload.tab_id, pointer_pos.x)
-                {
-                    if let Some(strip) = tab_strip_rect(ctx, &payload.window) {
+            let caret_target = if over_own_strip {
+                Some((payload.window.clone(), true))
+            } else {
+                over_other_strip.clone().map(|target| (target, false))
+            };
+            if let Some((strip_window, own)) = caret_target {
+                let rects = tab_rects(ctx, &strip_window);
+                let caret = if own {
+                    reorder_for_drop(&rects, payload.tab_id, pointer_pos.x).map(|(_, x)| x)
+                } else {
+                    match reorder_insert_index(&rects, pointer_pos.x) {
+                        Some(i) => rects.get(i).map(|(_, r)| r.min.x),
+                        None => rects.last().map(|(_, r)| r.max.x),
+                    }
+                };
+                if let Some(caret_x) = caret {
+                    if let Some(strip) = tab_strip_rect(ctx, &strip_window) {
                         ctx.layer_painter(egui::LayerId::new(
                             egui::Order::Tooltip,
                             egui::Id::new("gui_tab_reorder_caret"),
@@ -719,10 +759,10 @@ impl VellumGuiApp {
                     ui.painter()
                         .galley(text_pos, galley, ui.visuals().strong_text_color());
                     ui.add_space(2.0);
-                    ui.weak(if over_own_strip {
-                        "Release to reorder"
-                    } else {
-                        "Release to open in its own window"
+                    ui.weak(match (&over_other_strip, over_own_strip) {
+                        (Some(target), _) => format!("Release to move into '{target}'"),
+                        (None, true) => "Release to reorder".to_string(),
+                        (None, false) => "Release to open in its own window".to_string(),
                     });
                 });
             ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -763,6 +803,37 @@ impl VellumGuiApp {
                     None,
                     zone_rects,
                 ),
+                Err(e) => self.app_core.add_system_message(&format!("{e}")),
+            }
+            return;
+        }
+        // Onto another tabbed window's strip: a straight move.
+        if let Some(target) = self
+            .tabbed_strip_under_pointer(ctx, request.pointer)
+            .filter(|target| *target != request.window)
+        {
+            let old_keys = self.window_keys_by_name();
+            let capture = self.capture_placement(&request.window);
+            let insert_at = reorder_insert_index(&tab_rects(ctx, &target), request.pointer.x);
+            match self
+                .app_core
+                .move_tab(&request.window, request.tab_id, &target, insert_at)
+            {
+                Ok(receipt) => {
+                    // The source may have ceased to exist; undo needs its
+                    // placement to bring it back where it was.
+                    if let Ok(value) = serde_json::to_value(&capture) {
+                        self.app_core.set_tab_undo_gui(value);
+                    }
+                    self.apply_tab_move_receipt(
+                        ctx,
+                        &receipt,
+                        GestureContext { drop: None, size: None },
+                        &old_keys,
+                        None,
+                        zone_rects,
+                    );
+                }
                 Err(e) => self.app_core.add_system_message(&format!("{e}")),
             }
             return;

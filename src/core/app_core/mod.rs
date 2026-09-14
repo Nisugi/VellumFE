@@ -5,7 +5,7 @@
 //! that frontends read from.
 
 mod automation;
-mod command_help;
+pub(crate) mod command_help;
 mod commands;
 mod config_editor;
 mod haptics;

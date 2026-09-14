@@ -730,3 +730,69 @@ fn undo_hands_back_the_gui_placement_blob() {
     let outcome = core.undo_tab_move().unwrap();
     assert_eq!(outcome.gui["zone"], "left");
 }
+
+
+// ---- move_tab (tab-to-tab) ---------------------------------------------------
+
+#[test]
+fn move_tab_carries_buffer_and_undo_restores_order() {
+    let mut core = core_with(vec![
+        tabbed("a", &[("one", &["thoughts"]), ("two", &["speech"])], 100),
+        tabbed("b", &[("x", &["combat"])], 50),
+    ]);
+    let ids_a = tab_ids(&core, "a");
+    push_tab_lines(&mut core, "a", ids_a[1], 80);
+    let receipt = core.move_tab("a", ids_a[1], "b", None).expect("move");
+    assert_eq!(receipt.kind, TabMoveKind::Move);
+    assert_eq!(receipt.window, "b");
+    assert_eq!(receipt.removed_window, None);
+    assert_eq!(tab_names(&core, "a"), vec!["one"]);
+    assert_eq!(tab_names(&core, "b"), vec!["x", "two"]);
+    let moved_id = receipt.tab_id.expect("id in target");
+    assert_eq!(tab_content(&core, "b", moved_id).lines.len(), 80);
+    assert_eq!(active_id(&core, "b"), Some(moved_id));
+    // Capacity raised, never trimmed.
+    assert_eq!(def_buffer_size(&core, "b"), 80);
+    assert_eq!(receipt.capacity_changed, vec![("b".to_string(), 50, 80)]);
+
+    let outcome = core.undo_tab_move().expect("undo");
+    assert_eq!(outcome.receipt.kind, TabMoveKind::Move);
+    assert_eq!(tab_names(&core, "a"), vec!["one", "two"]);
+    assert_eq!(tab_names(&core, "b"), vec!["x"]);
+    assert_eq!(tab_ids(&core, "a"), ids_a, "original ids come back");
+    assert_eq!(tab_content(&core, "a", ids_a[1]).lines.len(), 80);
+    assert_eq!(def_buffer_size(&core, "b"), 50, "target capacity back to what x needs");
+}
+
+#[test]
+fn moving_the_last_tab_removes_the_source_and_undo_recreates_it() {
+    let mut core = core_with(vec![
+        tabbed("solo", &[("only", &["thoughts"])], 100),
+        tabbed("b", &[("x", &["combat"])], 100),
+    ]);
+    let only = tab_ids(&core, "solo")[0];
+    push_tab_lines(&mut core, "solo", only, 5);
+    let receipt = core.move_tab("solo", only, "b", Some(0)).expect("move");
+    assert_eq!(receipt.removed_window.as_deref(), Some("solo"));
+    assert!(core.layout.windows.iter().all(|w| w.name() != "solo"));
+    assert!(!core.ui_state.windows.contains_key("solo"));
+    assert_eq!(tab_names(&core, "b"), vec!["only", "x"]);
+
+    let outcome = core.undo_tab_move().expect("undo");
+    assert_eq!(outcome.receipt.created_window.as_deref(), Some("solo"));
+    assert_eq!(tab_names(&core, "solo"), vec!["only"]);
+    assert_eq!(tab_content(&core, "solo", only).lines.len(), 5);
+    assert_eq!(tab_names(&core, "b"), vec!["x"]);
+}
+
+#[test]
+fn move_tab_rejects_same_window_and_text_targets() {
+    let mut core = core_with(vec![
+        tabbed("a", &[("one", &["thoughts"]), ("two", &["speech"])], 100),
+        text("t", &["combat"], 100),
+    ]);
+    let id = tab_ids(&core, "a")[0];
+    assert!(matches!(core.move_tab("a", id, "a", None), Err(TabMoveError::SameWindow(_))));
+    assert!(matches!(core.move_tab("a", id, "t", None), Err(TabMoveError::NotTabbed(_))));
+    assert_eq!(tab_names(&core, "a"), vec!["one", "two"], "nothing changed");
+}

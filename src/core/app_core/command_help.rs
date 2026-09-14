@@ -161,8 +161,15 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
             entry!(
                 &["undotabmove"],
                 "",
-                "Undo the last tab tear-out, join, conversion, or reorder"
+                "Undo the last tab tear-out, join, move, conversion, or reorder"
             ),
+            entry!(
+                &["undolayout"],
+                "",
+                "Put the windows back the way they were before the last change (GUI)",
+                &["One step per autosave; up to 30 steps. Keybind action: undo_layout."]
+            ),
+            entry!(&["redolayout"], "", "Re-apply a layout change you undid (GUI)"),
             entry!(
                 &["resize"],
                 "[name]",
@@ -475,6 +482,17 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                 &["gonew", "nextunread"],
                 "",
                 "Jump to next tab with unread messages"
+            ),
+            entry!(
+                &["menuof"],
+                "<exist_id> [noun]",
+                "Open a game object's link menu by id (what a hotbar button made from a dropped link runs)"
+            ),
+            entry!(
+                &["switcher", "palette"],
+                "",
+                "Quick switcher: type to find a window, command, layout or setting (GUI)",
+                &["Default keybind Ctrl+K (action quick_switcher)."]
             ),
         ],
     },

@@ -237,6 +237,9 @@ impl AppCore {
             }
 
             // Tab navigation actions - need to be handled in main.rs (require frontend access)
+            KeyAction::UndoLayout | KeyAction::RedoLayout | KeyAction::QuickSwitcher => {
+                tracing::debug!("{action:?} handled in the GUI frontend");
+            }
             KeyAction::NextTab | KeyAction::PrevTab | KeyAction::NextUnreadTab => {
                 // These actions must be routed to frontend in main.rs
                 // execute_key_action doesn't have frontend access
