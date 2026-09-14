@@ -331,8 +331,9 @@ impl WindowBase {
     }
 }
 
-/// TUI-only per-window state: terminal-cell geometry and the TUI's own
-/// show/hide selection. Flattened into `WindowBase` so layout.toml is
+/// TUI-only per-window state: terminal-cell geometry, the TUI's show/hide
+/// selection, and the TUI's border-title chrome (`show_title`,
+/// `title_position`). Flattened into `WindowBase` so layout.toml is
 /// byte-for-byte unchanged; the type boundary exists so the GUI cannot
 /// reach these (enforced by tests/architecture.rs).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -359,6 +360,10 @@ pub struct TuiPlacement {
     /// Deserialize compat), defaulting to Shown.
     #[serde(default, alias = "visible")]
     pub visibility: WindowVisibility,
+    #[serde(default = "default_show_title")]
+    pub show_title: bool,
+    #[serde(default = "default_title_position")]
+    pub title_position: String,
 }
 
 impl Default for TuiPlacement {
@@ -373,6 +378,8 @@ impl Default for TuiPlacement {
             min_cols: None,
             max_cols: None,
             visibility: WindowVisibility::default(),
+            show_title: default_show_title(),
+            title_position: default_title_position(),
         }
     }
 }
@@ -396,9 +403,7 @@ pub struct WindowBase {
     pub border_style: String, // "single", "double", "rounded", "thick", "plain"
     pub border_sides: BorderSides,
     pub border_color: Option<String>,
-    pub show_title: bool,
     pub title: Option<String>,
-    pub title_position: String,
     pub background_color: Option<String>,
     pub text_color: Option<String>,
     pub transparent_background: bool,
@@ -490,9 +495,9 @@ impl From<&WindowBase> for WindowBaseShadow {
             border_style: b.border_style.clone(),
             border_sides: b.border_sides.clone(),
             border_color: b.border_color.clone(),
-            show_title: b.show_title,
+            show_title: b.placement.show_title,
             title: b.title.clone(),
-            title_position: b.title_position.clone(),
+            title_position: b.placement.title_position.clone(),
             background_color: b.background_color.clone(),
             text_color: b.text_color.clone(),
             transparent_background: b.transparent_background,
@@ -525,14 +530,14 @@ impl From<WindowBaseShadow> for WindowBase {
                 min_cols: s.min_cols,
                 max_cols: s.max_cols,
                 visibility: s.visibility,
+                show_title: s.show_title,
+                title_position: s.title_position,
             },
             show_border: s.show_border,
             border_style: s.border_style,
             border_sides: s.border_sides,
             border_color: s.border_color,
-            show_title: s.show_title,
             title: s.title,
-            title_position: s.title_position,
             background_color: s.background_color,
             text_color: s.text_color,
             transparent_background: s.transparent_background,

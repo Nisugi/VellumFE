@@ -819,6 +819,8 @@ mod blank_tests {
                 min_cols: None,
                 max_cols: None,
                 visibility: WindowVisibility::Shown,
+                show_title: true,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "test".to_string(),
@@ -826,9 +828,7 @@ mod blank_tests {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: true,
             title: Some("test".to_string()),
-            title_position: "top-left".to_string(),
             background_color: None,
             text_color: None,
             transparent_background: false,

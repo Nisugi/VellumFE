@@ -58,6 +58,8 @@ fn test_window_base(name: &str) -> WindowBase {
             min_cols: None,
             max_cols: None,
             visibility: crate::config::WindowVisibility::Shown,
+            show_title: false,
+            title_position: "top-left".to_string(),
             ..Default::default()
         },
         name: name.to_string(),
@@ -65,7 +67,6 @@ fn test_window_base(name: &str) -> WindowBase {
         border_style: "single".to_string(),
         border_sides: BorderSides::default(),
         border_color: None,
-        show_title: false,
         title: None,
         background_color: None,
         text_color: None,
@@ -76,7 +77,6 @@ fn test_window_base(name: &str) -> WindowBase {
         tts_speak: false,
         text_size: None,
         font_family: None,
-        title_position: "top-left".to_string(),
     }
 }
 

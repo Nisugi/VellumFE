@@ -75,6 +75,8 @@ fn gui_does_not_reference_tui_placement() {
     // (hidden_tabs, main_window_rects/zones/groups). Reaching `.placement`
     // or naming `TuiPlacement` from GUI code reintroduces the coupling that
     // caused loading a layout in one frontend to wreck the other's tab set.
+    // Fields behind this boundary: row/col/rows/cols/min_rows/max_rows/
+    // min_cols/max_cols/visibility/show_title/title_position.
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut violations = Vec::new();
     scan_dir(

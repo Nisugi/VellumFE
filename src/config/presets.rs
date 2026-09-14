@@ -225,14 +225,14 @@ impl Config {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: true,
+                title_position: default_title_position(),
             },
             show_border: true,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: true,
             title: None, // Will be overridden
-            title_position: default_title_position(),
             background_color: None,
             text_color: None,
             transparent_background: false,
@@ -362,12 +362,12 @@ impl Config {
                         cols: Width::new(120),
                         min_rows: Some(3),
                         max_rows: Some(3),
+                        show_title: false,
                         ..Default::default()
                     },
                     name: "quickbar".to_string(),
                     title: Some("Quickbar".to_string()),
                     show_border: true,
-                    show_title: false,
                     ..base_defaults.clone()
                 },
                 data: QuickbarWidgetData {},
@@ -380,12 +380,12 @@ impl Config {
                         cols: Width::new(60),
                         min_rows: Some(3),
                         max_rows: Some(3),
+                        show_title: false,
                         ..Default::default()
                     },
                     name: "hotkeybar".to_string(),
                     title: Some("Actions".to_string()),
                     show_border: true,
-                    show_title: false,
                     ..base_defaults.clone()
                 },
                 data: HotkeybarWidgetData {
@@ -1907,11 +1907,11 @@ impl Config {
                     placement: TuiPlacement {
                         rows: Height::new(2),
                         cols: Width::new(2),
+                        show_title: false, // Spacers never show titles
                         ..Default::default()
                     },
                     name: String::new(), // Will be set by caller with auto-generated name
                     show_border: false,  // Spacers never show borders
-                    show_title: false,   // Spacers never show titles
                     transparent_background: false, // Respects theme background color
                     ..base_defaults
                 },

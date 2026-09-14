@@ -603,7 +603,7 @@ impl WindowEditor {
             .get(0)
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| self.window_def.base().title_position.clone());
+            .unwrap_or_else(|| self.window_def.base().placement.title_position.clone());
 
         let len = TITLE_POSITION_OPTIONS.len();
         let current_idx = TITLE_POSITION_OPTIONS
@@ -624,7 +624,7 @@ impl WindowEditor {
         let mut ta = Self::create_textarea();
         ta.insert_str(new_value);
         self.title_position_input = ta;
-        self.window_def.base_mut().title_position = new_value.to_string();
+        self.window_def.base_mut().placement.title_position = new_value.to_string();
     }
 
     /// Cycle tab bar position for tabbed text windows

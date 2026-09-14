@@ -920,7 +920,7 @@ impl WindowEditor {
         self.render_checkbox_compact(
             FieldRef::ShowTitle.legacy_field_id(),
             "Show Title",
-            self.window_def.base().show_title,
+            self.window_def.base().placement.show_title,
             right_x,
             right_y,
             column_width,

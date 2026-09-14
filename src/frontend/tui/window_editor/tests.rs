@@ -18,6 +18,8 @@ fn test_base(name: &str) -> crate::config::WindowBase {
             min_cols: None,
             max_cols: None,
             visibility: crate::config::WindowVisibility::Shown,
+            show_title: true,
+            title_position: "top-left".to_string(),
             ..Default::default()
         },
         name: name.to_string(),
@@ -25,7 +27,6 @@ fn test_base(name: &str) -> crate::config::WindowBase {
         border_style: "single".to_string(),
         border_sides: crate::config::BorderSides::default(),
         border_color: None,
-        show_title: true,
         title: None,
         background_color: None,
         text_color: None,
@@ -36,7 +37,6 @@ fn test_base(name: &str) -> crate::config::WindowBase {
         tts_speak: false,
         text_size: None,
         font_family: None,
-        title_position: "top-left".to_string(),
     }
 }
 
@@ -161,6 +161,8 @@ fn test_new_window_spacer_auto_naming_existing_spacers() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: false,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "spacer_1".to_string(),
@@ -168,7 +170,6 @@ fn test_new_window_spacer_auto_naming_existing_spacers() {
             border_style: "single".to_string(),
             border_sides: crate::config::BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -179,7 +180,6 @@ fn test_new_window_spacer_auto_naming_existing_spacers() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: SpacerWidgetData {},
     };

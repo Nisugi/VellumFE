@@ -70,7 +70,10 @@ pub struct TabMoveReceipt {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TabMoveError {
     NoSuchWindow(String),
-    NoSuchTab { window: String, tab_id: TabId },
+    NoSuchTab {
+        window: String,
+        tab_id: TabId,
+    },
     NotTabbed(String),
     NotText(String),
     SameWindow(String),
@@ -219,8 +222,8 @@ fn copy_appearance(from: &crate::config::WindowBase, to: &mut crate::config::Win
     to.border_style = from.border_style.clone();
     to.border_sides = from.border_sides.clone();
     to.border_color = from.border_color.clone();
-    to.show_title = from.show_title;
-    to.title_position = from.title_position.clone();
+    to.placement.show_title = from.placement.show_title;
+    to.placement.title_position = from.placement.title_position.clone();
     to.background_color = from.background_color.clone();
     to.text_color = from.text_color.clone();
     to.transparent_background = from.transparent_background;
@@ -753,7 +756,11 @@ impl AppCore {
         });
 
         let capacity_changed = if target_buffer_size != prev_target_buffer_size {
-            vec![(target.to_string(), prev_target_buffer_size, target_buffer_size)]
+            vec![(
+                target.to_string(),
+                prev_target_buffer_size,
+                target_buffer_size,
+            )]
         } else {
             Vec::new()
         };
@@ -793,10 +800,7 @@ impl AppCore {
             }
             let mut by_id: std::collections::HashMap<TabId, TabbedTextTab> =
                 data.tabs.drain(..).map(|t| (t.id, t)).collect();
-            data.tabs = tab_ids
-                .iter()
-                .filter_map(|id| by_id.remove(id))
-                .collect();
+            data.tabs = tab_ids.iter().filter_map(|id| by_id.remove(id)).collect();
             before
         };
         self.sync_tabbed_window_tabs_keep(window, prev_active);
@@ -828,7 +832,10 @@ impl AppCore {
     /// record — if the layout defs changed since, or if the windows the
     /// record names are no longer what it expects.
     pub fn undo_tab_move(&mut self) -> Result<UndoOutcome, TabMoveError> {
-        let record = self.last_tab_move.take().ok_or(TabMoveError::NothingToUndo)?;
+        let record = self
+            .last_tab_move
+            .take()
+            .ok_or(TabMoveError::NothingToUndo)?;
         if self.layout_hash() != record.layout_hash {
             return Err(TabMoveError::LayoutChanged);
         }
@@ -936,7 +943,11 @@ impl AppCore {
                 let title = base.title.clone().unwrap_or_else(|| window.clone());
                 let mut buffer = lifted;
                 install_text_buffer(&mut buffer, &data.streams, &title, data.buffer_size);
-                self.retype_window_in_place(&window, text_def.clone(), WindowContent::Text(buffer))?;
+                self.retype_window_in_place(
+                    &window,
+                    text_def.clone(),
+                    WindowContent::Text(buffer),
+                )?;
                 TabMoveReceipt {
                     kind: TabMoveKind::ConvertedInPlace,
                     window: window.clone(),
@@ -1013,11 +1024,9 @@ impl AppCore {
                 self.layout.windows.push(restored.clone());
                 self.add_new_window(&restored, 0, 0);
                 {
-                    let window = self
-                        .ui_state
-                        .windows
-                        .get_mut(&source)
-                        .ok_or_else(|| TabMoveError::Layout(format!("'{source}' was not recreated")))?;
+                    let window = self.ui_state.windows.get_mut(&source).ok_or_else(|| {
+                        TabMoveError::Layout(format!("'{source}' was not recreated"))
+                    })?;
                     let mut buffer = lifted;
                     install_text_buffer(&mut buffer, &streams, &title, source_cap_after);
                     window.content = WindowContent::Text(buffer);

@@ -83,7 +83,7 @@ impl TuiFrontend {
                             tw.set_text_color(colors.text.clone());
                             tw.set_content_align(def.base().content_align.clone());
                             tw.set_title_position(super::title_position::TitlePosition::from_str(
-                                &def.base().title_position,
+                                &def.base().placement.title_position,
                             ));
                             if let crate::config::WindowDef::Text { data, .. } = def {
                                 tw.set_show_timestamps(data.show_timestamps);
@@ -126,7 +126,7 @@ impl TuiFrontend {
                         text_window.set_background_color(colors.background.clone());
                         text_window.set_text_color(colors.text.clone());
                         text_window.set_content_align(def.base().content_align.clone());
-                        let title_text = if def.base().show_title {
+                        let title_text = if def.base().placement.show_title {
                             def.base().title.clone().unwrap_or_default()
                         } else {
                             String::new()
@@ -134,7 +134,7 @@ impl TuiFrontend {
                         text_window.set_title(title_text);
                         text_window.set_title_position(
                             super::title_position::TitlePosition::from_str(
-                                &def.base().title_position,
+                                &def.base().placement.title_position,
                             ),
                         );
                         if let crate::config::WindowDef::Text { data, .. } = def {
@@ -331,13 +331,13 @@ impl TuiFrontend {
                 .or_insert_with(|| {
                     let mut widget = command_input::CommandInput::new(100);
                     if let Some(base) = base_config.as_ref() {
-                        let title_text = if base.show_title {
+                        let title_text = if base.placement.show_title {
                             base.title.clone().unwrap_or_default()
                         } else {
                             String::new()
                         };
                         widget.set_title(title_text);
-                        widget.set_show_title(base.show_title);
+                        widget.set_show_title(base.placement.show_title);
                     } else {
                         widget.set_title("Command".to_string());
                     }
@@ -345,16 +345,16 @@ impl TuiFrontend {
                 });
 
             if let Some(base) = base_config.as_ref() {
-                let title_text = if base.show_title {
+                let title_text = if base.placement.show_title {
                     base.title.clone().unwrap_or_default()
                 } else {
                     String::new()
                 };
                 cmd_input.set_title(title_text);
                 cmd_input.set_title_position(super::title_position::TitlePosition::from_str(
-                    &base.title_position,
+                    &base.placement.title_position,
                 ));
-                cmd_input.set_show_title(base.show_title);
+                cmd_input.set_show_title(base.placement.show_title);
                 let border_color = normalize_color(&base.border_color)
                     .or_else(|| color_to_hex_string(&theme.window_border));
                 cmd_input.set_border_config(
@@ -363,7 +363,7 @@ impl TuiFrontend {
                     border_color,
                 );
                 cmd_input.set_border_sides(base.border_sides.clone());
-                cmd_input.set_show_title(base.show_title);
+                cmd_input.set_show_title(base.placement.show_title);
                 let background_color = if base.transparent_background {
                     None
                 } else {
@@ -459,7 +459,7 @@ impl TuiFrontend {
                         inv_window.set_transparent_background(def.base().transparent_background);
                         inv_window.set_background_color(colors.background.clone());
                         inv_window.set_text_color(colors.text.clone());
-                        let title_text = if def.base().show_title {
+                        let title_text = if def.base().placement.show_title {
                             def.base()
                                 .title
                                 .clone()
@@ -568,7 +568,7 @@ impl TuiFrontend {
                         spells_window.set_transparent_background(def.base().transparent_background);
                         spells_window.set_background_color(colors.background.clone());
                         spells_window.set_text_color(colors.text.clone());
-                        let title_text = if def.base().show_title {
+                        let title_text = if def.base().placement.show_title {
                             def.base()
                                 .title
                                 .clone()
@@ -645,7 +645,7 @@ impl TuiFrontend {
                 if !self.widget_manager.progress_bars.contains_key(name) {
                     let label = window_def
                         .and_then(|def| {
-                            if def.base().show_title {
+                            if def.base().placement.show_title {
                                 def.base().title.as_ref()
                             } else {
                                 None
@@ -685,7 +685,7 @@ impl TuiFrontend {
                         );
 
                         // Update title visibility
-                        if def.base().show_title {
+                        if def.base().placement.show_title {
                             progress_bar.set_title(def.base().title.clone().unwrap_or_default());
                         } else {
                             progress_bar.set_title(String::new());
@@ -782,7 +782,7 @@ impl TuiFrontend {
                 if !self.widget_manager.countdowns.contains_key(name) {
                     let label = window_def
                         .and_then(|def| {
-                            if def.base().show_title {
+                            if def.base().placement.show_title {
                                 def.base().title.as_ref()
                             } else {
                                 None
@@ -813,13 +813,14 @@ impl TuiFrontend {
                             colors.border.clone(),
                         );
                         countdown_widget.set_border_sides(def.base().border_sides.clone());
-                        let title_text = if def.base().show_title {
+                        let title_text = if def.base().placement.show_title {
                             def.base().title.clone().unwrap_or_default()
                         } else {
                             String::new()
                         };
                         countdown_widget.set_title(title_text);
-                        countdown_widget.set_title_position(def.base().title_position.clone());
+                        countdown_widget
+                            .set_title_position(def.base().placement.title_position.clone());
 
                         // Get icon from CountdownWidgetData
                         if let crate::config::WindowDef::Countdown { data, .. } = def {
@@ -871,7 +872,7 @@ impl TuiFrontend {
                 {
                     let label = window_def
                         .and_then(|def| {
-                            if def.base().show_title {
+                            if def.base().placement.show_title {
                                 def.base().title.as_ref()
                             } else {
                                 None
@@ -949,7 +950,7 @@ impl TuiFrontend {
                             colors.border.clone(),
                         );
                         widget.set_border_sides(def.base().border_sides.clone());
-                        let title_text = if def.base().show_title {
+                        let title_text = if def.base().placement.show_title {
                             def.base().title.clone().unwrap_or_default()
                         } else {
                             String::new()
@@ -1047,7 +1048,7 @@ impl TuiFrontend {
                     quickbar_widget.set_text_color(colors.text.clone());
                     quickbar_widget.set_transparent_background(def.base().transparent_background);
 
-                    let title_text = if def.base().show_title {
+                    let title_text = if def.base().placement.show_title {
                         let data_title = quickbar_data
                             .and_then(|data| data.title.clone())
                             .filter(|t| !t.trim().is_empty());
@@ -1127,7 +1128,10 @@ impl TuiFrontend {
                 // called out so the user sees the broken binding
                 let title = if bar_def.is_none() {
                     format!("{} (bar not found)", bar)
-                } else if window_def.map(|d| d.base().show_title).unwrap_or(true) {
+                } else if window_def
+                    .map(|d| d.base().placement.show_title)
+                    .unwrap_or(true)
+                {
                     bar_def
                         .and_then(|d| d.title.clone())
                         .unwrap_or_else(|| bar.clone())
@@ -1181,18 +1185,18 @@ impl TuiFrontend {
                                 // Prefer icon from data if provided; fall back to title or empty
                                 if let Some(ref icon_str) = data.icon {
                                     decode_icon(icon_str).unwrap_or_else(|| {
-                                        if window_def.base().show_title {
+                                        if window_def.base().placement.show_title {
                                             window_def.base().title.clone().unwrap_or_default()
                                         } else {
                                             String::new()
                                         }
                                     })
-                                } else if window_def.base().show_title {
+                                } else if window_def.base().placement.show_title {
                                     window_def.base().title.clone().unwrap_or_default()
                                 } else {
                                     String::new()
                                 }
-                            } else if window_def.base().show_title {
+                            } else if window_def.base().placement.show_title {
                                 window_def.base().title.clone().unwrap_or_default()
                             } else {
                                 String::new()
@@ -1336,7 +1340,7 @@ impl TuiFrontend {
                             .title
                             .clone()
                             .unwrap_or_else(|| name.clone());
-                        if window_def.base().show_title {
+                        if window_def.base().placement.show_title {
                             widget.set_title(&base_title);
                         } else {
                             widget.set_title("");
@@ -1396,7 +1400,7 @@ impl TuiFrontend {
                             .title
                             .clone()
                             .unwrap_or_else(|| name.clone());
-                        if window_def.base().show_title {
+                        if window_def.base().placement.show_title {
                             widget.set_title(&base_title);
                         } else {
                             widget.set_title("");
@@ -1495,7 +1499,7 @@ impl TuiFrontend {
                         widget.set_transparent_background(window_def.base().transparent_background);
 
                         // Set title from window def or fall back to container title
-                        if window_def.base().show_title {
+                        if window_def.base().placement.show_title {
                             if let Some(ref title) = window_def.base().title {
                                 widget.set_title(title.clone());
                             }
@@ -1625,7 +1629,7 @@ impl TuiFrontend {
                             .title
                             .clone()
                             .unwrap_or_else(|| name.clone());
-                        if window_def.base().show_title {
+                        if window_def.base().placement.show_title {
                             widget.set_title(&base_title);
                         } else {
                             widget.set_title("");
@@ -1690,7 +1694,7 @@ impl TuiFrontend {
                             .title
                             .clone()
                             .unwrap_or_else(|| name.clone());
-                        if window_def.base().show_title {
+                        if window_def.base().placement.show_title {
                             widget.set_title(&base_title);
                         } else {
                             widget.set_title("");
@@ -1738,7 +1742,7 @@ impl TuiFrontend {
                         widget.set_transparent_background(window_def.base().transparent_background);
                         widget.set_background_color(colors.background.clone());
                         widget.set_content_align(window_def.base().content_align.clone());
-                        let title_text = if window_def.base().show_title {
+                        let title_text = if window_def.base().placement.show_title {
                             window_def.base().title.clone().unwrap_or_default()
                         } else {
                             String::new()
@@ -1848,7 +1852,7 @@ impl TuiFrontend {
                                 colors.text.clone(),
                                 colors.background.clone(),
                             );
-                            let title_text = if def.base().show_title {
+                            let title_text = if def.base().placement.show_title {
                                 def.base().title.clone().unwrap_or_default()
                             } else {
                                 String::new()
@@ -1873,7 +1877,7 @@ impl TuiFrontend {
 
                             widget.set_title_position(
                                 super::title_position::TitlePosition::from_str(
-                                    &def.base().title_position,
+                                    &def.base().placement.title_position,
                                 ),
                             );
                         }
@@ -2007,7 +2011,7 @@ impl TuiFrontend {
                         widget.set_transparent_background(window_def.base().transparent_background);
                         widget.set_background_color(colors.background.clone());
                         widget.set_content_align(window_def.base().content_align.clone());
-                        let title_text = if window_def.base().show_title {
+                        let title_text = if window_def.base().placement.show_title {
                             window_def.base().title.clone().unwrap_or_default()
                         } else {
                             String::new()
@@ -2076,7 +2080,7 @@ impl TuiFrontend {
                         widget.set_border_sides(window_def.base().border_sides.clone());
                         widget.set_transparent_background(window_def.base().transparent_background);
                         widget.set_background_color(colors.background.clone());
-                        let title_text = if window_def.base().show_title {
+                        let title_text = if window_def.base().placement.show_title {
                             window_def.base().title.clone().unwrap_or_default()
                         } else {
                             String::new()
@@ -2172,7 +2176,7 @@ impl TuiFrontend {
 
             if let Some(base) = base.as_ref() {
                 let colors = resolve_window_colors(base, &app_core.config.colors.ui, theme);
-                let title = if base.show_title {
+                let title = if base.placement.show_title {
                     base.title.clone().unwrap_or_default()
                 } else {
                     String::new()
@@ -2240,7 +2244,7 @@ impl TuiFrontend {
                             colors.border.clone(),
                         );
                         hand_widget.set_border_sides(window_def.base().border_sides.clone());
-                        let title_text = if window_def.base().show_title {
+                        let title_text = if window_def.base().placement.show_title {
                             window_def.base().title.clone().unwrap_or_default()
                         } else {
                             String::new()
@@ -2560,7 +2564,7 @@ impl TuiFrontend {
                         perception_window.set_background_color(colors.background.clone());
                         perception_window.set_text_color(colors.text.clone());
 
-                        let _title_text = if def.base().show_title {
+                        let _title_text = if def.base().placement.show_title {
                             def.base()
                                 .title
                                 .clone()
@@ -2735,7 +2739,9 @@ impl TuiFrontend {
 
                 // Update show_border, show_title, border_sides on every sync
                 let show_border = window_def.map(|wd| wd.base().show_border).unwrap_or(true);
-                let show_title = window_def.map(|wd| wd.base().show_title).unwrap_or(true);
+                let show_title = window_def
+                    .map(|wd| wd.base().placement.show_title)
+                    .unwrap_or(true);
                 let border_sides = window_def
                     .map(|wd| wd.base().border_sides.clone())
                     .unwrap_or_default();
@@ -2839,7 +2845,9 @@ impl TuiFrontend {
 
                 // Update show_border, show_title, border_sides on every sync
                 let show_border = window_def.map(|wd| wd.base().show_border).unwrap_or(true);
-                let show_title = window_def.map(|wd| wd.base().show_title).unwrap_or(true);
+                let show_title = window_def
+                    .map(|wd| wd.base().placement.show_title)
+                    .unwrap_or(true);
                 let border_sides = window_def
                     .map(|wd| wd.base().border_sides.clone())
                     .unwrap_or_default();
@@ -2940,7 +2948,9 @@ impl TuiFrontend {
 
                 // Get show_border, show_title, and border_sides from WindowDef
                 let show_border = window_def.map(|wd| wd.base().show_border).unwrap_or(false);
-                let show_title = window_def.map(|wd| wd.base().show_title).unwrap_or(true);
+                let show_title = window_def
+                    .map(|wd| wd.base().placement.show_title)
+                    .unwrap_or(true);
                 let border_sides = window_def
                     .map(|wd| wd.base().border_sides.clone())
                     .unwrap_or_default();

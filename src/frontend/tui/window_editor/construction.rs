@@ -486,7 +486,7 @@ impl WindowEditor {
         let mut completion_color_input = Self::create_textarea();
         let mut tab_bar_position_input = Self::create_textarea();
         let mut title_position_input = Self::create_textarea();
-        title_position_input.insert_str(&window_def.base().title_position);
+        title_position_input.insert_str(&window_def.base().placement.title_position);
         let mut tab_active_color_input = Self::create_textarea();
         let mut tab_inactive_color_input = Self::create_textarea();
         let mut tab_unread_color_input = Self::create_textarea();
@@ -1054,14 +1054,14 @@ impl WindowEditor {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: false,
+                title_position: "top-left".to_string(),
             },
             show_border: true,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
-            title_position: "top-left".to_string(),
             background_color: None,
             text_color: None,
             transparent_background: false,

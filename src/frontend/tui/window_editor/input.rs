@@ -219,8 +219,8 @@ impl WindowEditor {
     pub fn toggle_field(&mut self) {
         match self.focused_field {
             12 => {
-                let current = self.window_def.base().show_title;
-                self.window_def.base_mut().show_title = !current;
+                let current = self.window_def.base().placement.show_title;
+                self.window_def.base_mut().placement.show_title = !current;
             }
             13 => {
                 let current = self.window_def.base().locked;

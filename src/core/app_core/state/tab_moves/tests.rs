@@ -379,7 +379,7 @@ fn tear_out_copies_the_source_appearance() {
     let mut source = tabbed("chat", &[("A", &["a"]), ("B", &["b"])], 100);
     source.base_mut().border_color = Some("red".into());
     source.base_mut().text_color = Some("#abcdef".into());
-    source.base_mut().show_title = false;
+    source.base_mut().placement.show_title = false;
     let mut core = core_with(vec![source]);
     let created = core
         .tear_out_tab("chat", 2)
@@ -396,7 +396,7 @@ fn tear_out_copies_the_source_appearance() {
         .clone();
     assert_eq!(base.border_color.as_deref(), Some("red"));
     assert_eq!(base.text_color.as_deref(), Some("#abcdef"));
-    assert!(!base.show_title);
+    assert!(!base.placement.show_title);
     assert_eq!(
         def_buffer_size(&core, &created),
         100,

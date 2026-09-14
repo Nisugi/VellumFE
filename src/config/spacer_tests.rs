@@ -82,7 +82,7 @@ fn test_spacer_template_defaults() {
         assert!(!base.show_border);
 
         // Spacer should NOT show title
-        assert!(!base.show_title);
+        assert!(!base.placement.show_title);
 
         // Should NOT be transparent (respects theme background color)
         assert!(!base.transparent_background);
@@ -155,6 +155,8 @@ fn test_spacer_toml_serialization() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: false,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "spacer_1".to_string(),
@@ -162,7 +164,6 @@ fn test_spacer_toml_serialization() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -173,7 +174,6 @@ fn test_spacer_toml_serialization() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: SpacerWidgetData {},
     };
@@ -235,6 +235,8 @@ fn test_spacer_toml_round_trip() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: false,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "spacer_2".to_string(),
@@ -242,7 +244,6 @@ fn test_spacer_toml_round_trip() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -253,7 +254,6 @@ fn test_spacer_toml_round_trip() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: SpacerWidgetData {},
     };
@@ -290,7 +290,7 @@ fn test_spacer_toml_round_trip() {
     assert_eq!(base.placement.rows.get(), 4);
     assert_eq!(base.placement.cols.get(), 6);
     assert!(!base.show_border);
-    assert!(!base.show_title);
+    assert!(!base.placement.show_title);
     assert!(!base.transparent_background);
     assert!(base.placement.visibility.is_shown());
 }
@@ -310,6 +310,8 @@ fn test_multiple_spacers_toml_round_trip() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: false,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "spacer_1".to_string(),
@@ -317,7 +319,6 @@ fn test_multiple_spacers_toml_round_trip() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -328,7 +329,6 @@ fn test_multiple_spacers_toml_round_trip() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: SpacerWidgetData {},
     };
@@ -345,6 +345,8 @@ fn test_multiple_spacers_toml_round_trip() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: false,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "spacer_2".to_string(),
@@ -352,7 +354,6 @@ fn test_multiple_spacers_toml_round_trip() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -363,7 +364,6 @@ fn test_multiple_spacers_toml_round_trip() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: SpacerWidgetData {},
     };
@@ -405,6 +405,8 @@ fn test_hidden_spacer_toml_round_trip() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: false,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "spacer_1".to_string(),
@@ -412,7 +414,6 @@ fn test_hidden_spacer_toml_round_trip() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -423,7 +424,6 @@ fn test_hidden_spacer_toml_round_trip() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: SpacerWidgetData {},
     };
@@ -440,6 +440,8 @@ fn test_hidden_spacer_toml_round_trip() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Hidden,
+                show_title: false,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "spacer_2".to_string(),
@@ -447,7 +449,6 @@ fn test_hidden_spacer_toml_round_trip() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -458,7 +459,6 @@ fn test_hidden_spacer_toml_round_trip() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: SpacerWidgetData {},
     };
@@ -511,6 +511,8 @@ fn test_spacer_resize_scales_proportionally() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: false,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "widget_a".to_string(),
@@ -518,7 +520,6 @@ fn test_spacer_resize_scales_proportionally() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -529,7 +530,6 @@ fn test_spacer_resize_scales_proportionally() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: TextWidgetData {
             streams: vec!["main".to_string()],
@@ -553,6 +553,8 @@ fn test_spacer_resize_scales_proportionally() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: false,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "spacer_1".to_string(),
@@ -560,7 +562,6 @@ fn test_spacer_resize_scales_proportionally() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -571,7 +572,6 @@ fn test_spacer_resize_scales_proportionally() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: SpacerWidgetData {},
     };
@@ -588,6 +588,8 @@ fn test_spacer_resize_scales_proportionally() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: false,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "widget_b".to_string(),
@@ -595,7 +597,6 @@ fn test_spacer_resize_scales_proportionally() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -606,7 +607,6 @@ fn test_spacer_resize_scales_proportionally() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: TextWidgetData {
             streams: vec!["main".to_string()],
@@ -655,6 +655,8 @@ fn test_spacer_maintains_gap_after_resize() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: false,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "a".to_string(),
@@ -662,7 +664,6 @@ fn test_spacer_maintains_gap_after_resize() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -673,7 +674,6 @@ fn test_spacer_maintains_gap_after_resize() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: TextWidgetData {
             streams: vec!["main".to_string()],
@@ -697,6 +697,8 @@ fn test_spacer_maintains_gap_after_resize() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: false,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "spacer_1".to_string(),
@@ -704,7 +706,6 @@ fn test_spacer_maintains_gap_after_resize() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -715,7 +716,6 @@ fn test_spacer_maintains_gap_after_resize() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: SpacerWidgetData {},
     };
@@ -732,6 +732,8 @@ fn test_spacer_maintains_gap_after_resize() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: false,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "b".to_string(),
@@ -739,7 +741,6 @@ fn test_spacer_maintains_gap_after_resize() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -750,7 +751,6 @@ fn test_spacer_maintains_gap_after_resize() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: TextWidgetData {
             streams: vec!["main".to_string()],
@@ -815,6 +815,8 @@ fn test_spacer_no_widget_collision_after_resize() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: true,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "main".to_string(),
@@ -822,7 +824,6 @@ fn test_spacer_no_widget_collision_after_resize() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: true,
             title: Some("Main".to_string()),
             background_color: None,
             text_color: None,
@@ -833,7 +834,6 @@ fn test_spacer_no_widget_collision_after_resize() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: TextWidgetData {
             streams: vec!["main".to_string()],
@@ -864,7 +864,6 @@ fn test_spacer_no_widget_collision_after_resize() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: false,
             title: None,
             background_color: None,
             text_color: None,
@@ -875,7 +874,6 @@ fn test_spacer_no_widget_collision_after_resize() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: SpacerWidgetData {},
     };
@@ -892,6 +890,8 @@ fn test_spacer_no_widget_collision_after_resize() {
                 min_cols: None,
                 max_cols: None,
                 visibility: crate::config::WindowVisibility::Shown,
+                show_title: true,
+                title_position: "top-left".to_string(),
                 ..Default::default()
             },
             name: "status".to_string(),
@@ -899,7 +899,6 @@ fn test_spacer_no_widget_collision_after_resize() {
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
             border_color: None,
-            show_title: true,
             title: Some("Status".to_string()),
             background_color: None,
             text_color: None,
@@ -910,7 +909,6 @@ fn test_spacer_no_widget_collision_after_resize() {
             tts_speak: false,
             text_size: None,
             font_family: None,
-            title_position: "top-left".to_string(),
         },
         data: TextWidgetData {
             streams: vec!["status".to_string()],

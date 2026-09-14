@@ -43,7 +43,7 @@ impl WindowEditor {
             self.window_def.base_mut().text_color =
                 Some(self.text_color_input.lines()[0].to_string()).filter(|s| !s.is_empty());
         }
-        self.window_def.base_mut().title_position = self
+        self.window_def.base_mut().placement.title_position = self
             .title_position_input
             .lines()
             .get(0)
