@@ -19,15 +19,14 @@ pub(super) fn resolve_colors_for_base(
     // WindowBase has no Default (hand-rolled serde shadow); an
     // all-fields-unset instance built the same way window_style.rs's own
     // tests do stands in for "no catalog def" so every resolver layer
-    // above the def (user ui.*, theme) still applies.
-    let empty_base: crate::config::WindowBase;
-    let base = match base {
-        Some(base) => base,
-        None => {
-            empty_base = toml::from_str("name = \"\"").expect("minimal WindowBase from empty toml");
-            &empty_base
-        }
-    };
+    // above the def (user ui.*, theme) still applies. Built once: this
+    // runs per def-less window per frame.
+    static EMPTY_BASE: std::sync::OnceLock<crate::config::WindowBase> = std::sync::OnceLock::new();
+    let base = base.unwrap_or_else(|| {
+        EMPTY_BASE.get_or_init(|| {
+            toml::from_str("name = \"\"").expect("minimal WindowBase from empty toml")
+        })
+    });
     resolve_window_colors(
         base,
         ui,
