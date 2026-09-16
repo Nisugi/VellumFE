@@ -905,7 +905,7 @@ impl TuiFrontend {
                     // nothing to tick keep the plain generation.
                     let countdown_now = (app_core.config.ui.effect_countdown
                         && effects_content.effects.iter().any(|e| e.ticks()))
-                    .then(|| chrono::Utc::now().timestamp() + app_core.server_time_offset);
+                    .then(|| app_core.now_server());
                     let data_gen = match countdown_now {
                         // Generations are small counters; seconds in the high
                         // bits cannot collide with them.

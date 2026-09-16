@@ -136,7 +136,7 @@ impl VellumGuiApp {
         // countdown -- but this must be a LIVE clock, not
         // `game_state.game_time`, which only advances when a prompt arrives.
         // Using the prompt clock froze every peer's RT between prompts.
-        let now_server = chrono::Utc::now().timestamp() + app_core.server_time_offset;
+        let now_server = app_core.now_server();
         let my_room = app_core
             .nav_room_id
             .clone()

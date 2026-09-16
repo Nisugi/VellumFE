@@ -31,7 +31,7 @@ impl AppCore {
     /// Watch for state transitions and queue haptic events. Called once
     /// per frontend frame; cheap.
     pub fn poll_haptics(&mut self) {
-        let now = chrono::Utc::now().timestamp() + self.server_time_offset;
+        let now = self.now_server();
         let rt_active = self
             .game_state
             .roundtime_end

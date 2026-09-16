@@ -579,6 +579,7 @@ pub struct VellumGuiApp {
     touch_wheel_editor: Option<editors::TouchWheelEditorState>,
     launcher_editor: Option<editors::LauncherEditorState>,
     doll_calibration: Option<editors::DollCalibrationState>,
+    doll_sets_editor: Option<editors::DollSetsEditorState>,
     frame_calibration: Option<editors::FrameCalibrationState>,
     creature_calibration: Option<editors::CreatureCalibrationState>,
     scenery_calibration: Option<editors::SceneryCalibrationState>,
@@ -1151,6 +1152,7 @@ impl VellumGuiApp {
             touch_wheel_editor: None,
             launcher_editor: None,
             doll_calibration: None,
+            doll_sets_editor: None,
             frame_calibration: None,
             creature_calibration: None,
             scenery_calibration: None,
@@ -1291,7 +1293,7 @@ impl VellumGuiApp {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.as_secs() as i64)
             .unwrap_or(0);
-        let adjusted = now + self.app_core.server_time_offset;
+        let adjusted = now + self.app_core.server_time_offset();
         self.app_core
             .ui_state
             .windows

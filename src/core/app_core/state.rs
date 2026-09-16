@@ -79,8 +79,13 @@ pub struct AppCore {
     pub appearance_changed_externally: bool,
 
     // === Timing ===
-    /// Server time offset (server_time - local_time) for countdown calculations
-    pub server_time_offset: i64,
+    // NOTE: there is deliberately NO `server_time_offset` field on AppCore.
+    // The one true offset lives on `message_processor`; its only writer is
+    // the `<prompt time=...>` arm in `core/messages/element.rs`. A second
+    // copy lived here from the Beta 2 rewrite until 2026-09-16 and was never
+    // assigned, so every GUI countdown rendered with offset 0 and displayed
+    // roundtime was inflated by the machine's clock skew (the phantom-time
+    // bug). Read the live value through `AppCore::server_time_offset()`.
 
     // === Optional Features ===
     /// Command list for context menus (None if failed to load)
@@ -418,6 +423,25 @@ pub struct AppCore {
 }
 
 impl AppCore {
+    /// Server clock offset in whole seconds (`server_time - local_time`),
+    /// read from the single source of truth on the message processor.
+    ///
+    /// Countdown end stamps (roundtime, casttime, ...) arrive as absolute
+    /// timestamps in the SERVER clock domain, so anything comparing them
+    /// against the local wall clock must add this offset. Forgetting to
+    /// inflates every timer by the machine's clock skew.
+    #[inline]
+    pub fn server_time_offset(&self) -> i64 {
+        self.message_processor.server_time_offset
+    }
+
+    /// Server "now" as a unix timestamp: the local clock corrected onto the
+    /// game server's clock. Use this to compare against countdown end stamps.
+    #[inline]
+    pub fn now_server(&self) -> i64 {
+        chrono::Utc::now().timestamp() + self.server_time_offset()
+    }
+
     /// Item classifier (gameobj-data.xml), built on first use from the
     /// data pack: Lich folder > local store > bundled snapshot.
     pub fn gameobj_data(&mut self) -> std::sync::Arc<crate::core::gameobj_data::GameObjData> {
@@ -525,7 +549,6 @@ impl AppCore {
             discard_current_stream: false,
             stream_buffer: String::new(),
             appearance_changed_externally: false,
-            server_time_offset: 0,
             cmdlist: None,
             menu_request_counter: 0,
             pending_menu_requests: HashMap::new(),
@@ -739,7 +762,6 @@ impl AppCore {
             discard_current_stream: false,
             stream_buffer: String::new(),
             appearance_changed_externally: false,
-            server_time_offset: 0,
             cmdlist,
             menu_request_counter: 0,
             pending_menu_requests: HashMap::new(),

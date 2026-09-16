@@ -440,14 +440,14 @@ impl VellumGuiApp {
             .unwrap_or(0.0);
         let remaining = Self::countdown_remaining_seconds(
             countdown.end_time,
-            app_core.server_time_offset,
+            app_core.server_time_offset(),
             (now_f * 1000.0) as i64,
         );
         // Window timers (count_past_zero) run negative after expiry: whole
         // seconds overdue, matching the TUI widget's signed math.
         let overdue: i64 = if countdown.count_past_zero && countdown.end_time > 0 {
             let remaining_ms = countdown.end_time * 1000
-                - ((now_f * 1000.0) as i64 + app_core.server_time_offset * 1000);
+                - ((now_f * 1000.0) as i64 + app_core.server_time_offset() * 1000);
             if remaining_ms < 0 {
                 ((-remaining_ms) / 1000).min(99)
             } else {
@@ -469,7 +469,7 @@ impl VellumGuiApp {
         const FULL_BAR_SECONDS: u32 = 10;
         let remaining_f = Self::countdown_remaining_seconds_f(
             countdown.end_time,
-            app_core.server_time_offset,
+            app_core.server_time_offset(),
             now_f,
         );
         let fraction = remaining_f.min(FULL_BAR_SECONDS as f32) / FULL_BAR_SECONDS as f32;

@@ -322,3 +322,38 @@ fn catalog_access_goes_through_the_seams() {
         violations.join("\n")
     );
 }
+
+/// The server clock offset must have exactly ONE owning field: the one on
+/// `MessageProcessor`, written by the `<prompt time=...>` arm. A second copy
+/// lived on AppCore from the Beta 2 rewrite until 2026-09-16 and was never
+/// assigned, so every GUI countdown silently rendered with an offset of 0 and
+/// displayed roundtime was inflated by the machine's clock skew. Two fields
+/// that must agree will drift again; one field cannot.
+///
+/// Frontends read the live value via `AppCore::server_time_offset()`. Passing
+/// the offset into a pure helper as a parameter stays fine - what must never
+/// come back is a struct that STORES its own copy.
+#[test]
+fn server_time_offset_has_a_single_owning_field() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut hits = Vec::new();
+    scan_dir(&src, &["pub server_time_offset:"], &mut hits);
+
+    // A stored copy is a struct field declaration. Function parameters share
+    // the `name: i64` shape but never carry the `pub ` prefix, so this needle
+    // matches owning fields only.
+    assert_eq!(
+        hits.len(),
+        1,
+        "exactly one struct may own a server_time_offset field (MessageProcessor); found:{}{}",
+        if hits.is_empty() { " none" } else { "
+" },
+        hits.join("
+")
+    );
+    assert!(
+        hits[0].replace(char::from(92u8), "/").contains("/core/messages.rs"),
+        "the owning field must stay on MessageProcessor, found at {}",
+        hits[0]
+    );
+}

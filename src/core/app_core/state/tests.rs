@@ -1829,3 +1829,58 @@ fn declared_size_hint_shapes_new_windows_but_never_dedicated_views() {
         "dedicated view untouched"
     );
 }
+
+/// Regression: the server clock offset the frontends read MUST be the live
+/// one the parser writes.
+///
+/// AppCore used to carry its own `server_time_offset` field that nothing ever
+/// assigned. The GUI countdown renderer read that dead copy, so every timer
+/// was computed against the raw local clock and displayed roundtime was
+/// inflated by the machine's clock skew (reported as 4-6s of "phantom time"
+/// added to a 2s action). The arithmetic helpers were correct and tested; only
+/// the wiring was wrong, which is why no test caught it. This pins the wiring.
+#[test]
+fn server_time_offset_reads_through_to_the_message_processor() {
+    let mut core = AppCore::new_for_test();
+    assert_eq!(core.server_time_offset(), 0, "fresh core has no offset yet");
+
+    // The `<prompt time=...>` arm is the only writer of the real offset.
+    core.message_processor.server_time_offset = 7;
+    assert_eq!(
+        core.server_time_offset(),
+        7,
+        "AppCore must expose the processor's offset, never a stale copy"
+    );
+
+    // ...and the derived server clock must move with it.
+    let local = chrono::Utc::now().timestamp();
+    assert_eq!(core.now_server() - local, 7, "now_server applies the offset");
+}
+
+/// The user-visible symptom, end to end: a 2 second roundtime on a machine
+/// whose clock runs 5 seconds behind the game server must still display 2
+/// seconds, not 7.
+#[test]
+fn countdown_is_not_inflated_by_local_clock_skew() {
+    let mut core = AppCore::new_for_test();
+
+    // Machine clock is 5s BEHIND the server, so server_time - local_time = +5.
+    const SKEW: i64 = 5;
+    core.message_processor.server_time_offset = SKEW;
+
+    // A 2 second action: the server sends the absolute end stamp in ITS clock.
+    let now_server = chrono::Utc::now().timestamp() + SKEW;
+    let end_time = now_server + 2;
+
+    // What the frontends compute for the remaining whole seconds.
+    let remaining = end_time - core.now_server();
+    assert_eq!(
+        remaining, 2,
+        "a 2s roundtime must read 2s regardless of local clock skew"
+    );
+
+    // Guard the specific regression: using the raw local clock (offset 0, the
+    // old dead-field behavior) would have shown 2 + SKEW.
+    let buggy = end_time - chrono::Utc::now().timestamp();
+    assert_eq!(buggy, 2 + SKEW, "sanity: skew is what produced phantom time");
+}

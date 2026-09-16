@@ -133,7 +133,7 @@ impl AppCore {
         if spec.timer.is_none() && spec.cancels.is_empty() {
             return;
         }
-        let now_server = chrono::Utc::now().timestamp() + self.server_time_offset;
+        let now_server = self.now_server();
         let store = self
             .game_state
             .effects
@@ -167,7 +167,7 @@ impl AppCore {
     /// server to do the removing and client timers have no server.
     pub fn tick_alert_timers(&mut self) {
         use crate::core::alert_timers::{self, TIMERS_CATEGORY};
-        let now_server = chrono::Utc::now().timestamp() + self.server_time_offset;
+        let now_server = self.now_server();
         let Some(store) = self.game_state.effects.get_mut(TIMERS_CATEGORY) else {
             return;
         };
@@ -248,7 +248,7 @@ impl AppCore {
         // Collect first, fire second: evaluation borrows game_state
         // immutably while firing needs &mut self.
         let now = std::time::Instant::now();
-        let now_server = chrono::Utc::now().timestamp() + self.server_time_offset;
+        let now_server = self.now_server();
         let gameobj = self.gameobj_data_cached();
 
         // Pass 1: evaluate every gate while `game_state` and the config are
