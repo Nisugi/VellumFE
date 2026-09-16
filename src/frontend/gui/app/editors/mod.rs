@@ -12,6 +12,7 @@ mod scenery_calibration;
 mod custom_windows;
 mod dashboard;
 mod doll_calibration;
+mod doll_sets;
 mod frame_calibration;
 mod hand_icons;
 mod highlights;
@@ -41,6 +42,7 @@ pub(crate) use creature_calibration::CreatureCalibrationState;
 pub(super) use creature_field::CreatureFieldEditorState;
 pub(crate) use scenery_calibration::SceneryCalibrationState;
 pub(super) use doll_calibration::DollCalibrationState;
+pub(crate) use doll_sets::DollSetsEditorState;
 pub(crate) use frame_calibration::FrameCalibrationState;
 pub(super) use hand_icons::HandIconsEditorState;
 pub(super) use highlights::HighlightEditorState;
@@ -89,6 +91,29 @@ impl VellumGuiApp {
         self.pending_editor_raise = Some(window_id);
     }
 
+    /// Effect-name suggestions for the shared condition builder
+    /// ([`hotbars::render_condition_group`]): the live effect names in
+    /// each category, so the rule editors offer what the character
+    /// actually has rather than a blank text field.
+    pub(super) fn condition_suggestions(
+        &self,
+    ) -> std::collections::HashMap<&'static str, Vec<String>> {
+        crate::config::EffectCategory::ALL
+            .iter()
+            .map(|c| {
+                (
+                    c.state_key(),
+                    self.app_core
+                        .game_state
+                        .effects
+                        .get(c.state_key())
+                        .map(|store| store.effects.iter().map(|e| e.text.clone()).collect())
+                        .unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
     /// Render whichever editors are open. Called once per frame.
     pub(super) fn render_editors(&mut self, ctx: &eframe::egui::Context) {
         // Raise a re-requested editor before rendering it, so it draws on
@@ -122,6 +147,7 @@ impl VellumGuiApp {
         self.render_launcher_editor(ctx);
         self.render_touch_wheel_editor(ctx);
         self.render_doll_calibration(ctx);
+        self.render_doll_sets(ctx);
         self.render_frame_calibration(ctx);
         self.render_creature_calibration(ctx);
         self.render_scenery_calibration(ctx);

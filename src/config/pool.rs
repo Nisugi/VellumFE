@@ -289,6 +289,187 @@ pub fn set_members(category: &str, set: &str) -> HashMap<String, String> {
     members
 }
 
+/// One discovered doll overlay layer: which body part it paints, at which
+/// severity, and where the art lives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DollLayer {
+    /// Canonical body part key, lowercase ("chest", "leftarm", "nsys").
+    pub part: String,
+    /// Severity level: 0 = healthy, 1-3 wounds, 4-6 scars. Same scale as
+    /// `skins::severity_level_from_key`.
+    pub level: u8,
+    /// Pool-relative path to the layer art.
+    pub pool_path: String,
+    pub abs_path: PathBuf,
+}
+
+/// Overlay layers belonging to a base doll, by filename convention:
+/// `<base>_<part>_<severity>.<ext>` beside the base image.
+///
+/// So `dolls/nisugi.png` owns `dolls/nisugi_chest_injury2.png` and
+/// `dolls/nisugi_nsys_scar1.png`. Parts and severity keys use the doll
+/// vocabulary (`skins::DOLL_PARTS`, `severity_level_from_key`), matched
+/// case-insensitively so `leftArm` and `leftarm` both resolve.
+///
+/// Convention rather than a manifest: the art IS the configuration, so a
+/// doll pack drops in and works, and the editor never has to ask which of
+/// forty files is the left arm's rank-2 wound. Anything that does not
+/// parse as `<part>_<severity>` is ignored — it is simply another doll.
+///
+/// Note the part-then-severity order matters for parsing: part names
+/// themselves contain no underscore, so the LAST underscore separates the
+/// severity key and everything between base and that is the part.
+pub fn doll_layers(base_pool_path: &str) -> Vec<DollLayer> {
+    let Some(stem) = doll_stem(base_pool_path) else {
+        return Vec::new();
+    };
+    let images = list_category("dolls");
+    // Own layers first. A doll that draws ANY of its own art is treated as
+    // having its own layout, so it never borrows from the group — a
+    // standing chest wound painted onto a prone body would land in the
+    // wrong place. Parts it leaves undrawn fall back to a generated dot at
+    // that doll's own calibrated anchor, which is correct at any pose.
+    let own = layers_with_prefix(&images, stem);
+    if !own.is_empty() {
+        return sorted(own);
+    }
+    // Otherwise inherit the group's: everything up to the LAST underscore,
+    // so `nisugi_swords` and `nisugi_bow` share one set of `nisugi_*`
+    // layers instead of each needing an identical copy.
+    let Some((group, _)) = stem.rsplit_once('_') else {
+        return Vec::new();
+    };
+    sorted(layers_with_prefix(&images, group))
+}
+
+/// File stem of a pool image path ("dolls/nisugi_bow.png" -> "nisugi_bow").
+fn doll_stem(pool_path: &str) -> Option<&str> {
+    pool_path
+        .rsplit('/')
+        .next()
+        .and_then(|file| file.rsplit_once('.').map(|(stem, _)| stem))
+}
+
+/// Every layer named `<prefix>_<part>_<severity>` among `images`.
+///
+/// A file only qualifies when the middle segment is a real body part and
+/// the tail a real severity key, which is what keeps sibling DOLLS out of
+/// their group's layer set: `nisugi_prone_chest_injury2` under prefix
+/// "nisugi" yields part "prone_chest", not a body part, so it is rejected
+/// here rather than by accident further down.
+fn layers_with_prefix(images: &[PoolImage], prefix: &str) -> Vec<DollLayer> {
+    let mut layers: Vec<DollLayer> = Vec::new();
+    for image in images {
+        let stem = image.stem();
+        if stem.eq_ignore_ascii_case(prefix) {
+            continue; // the image itself, not a layer of itself
+        }
+        let Some(rest) = strip_prefix_ci(stem, prefix).and_then(|r| r.strip_prefix('_')) else {
+            continue;
+        };
+        let Some((part_raw, severity_raw)) = rest.rsplit_once('_') else {
+            continue;
+        };
+        let Some(level) = super::skins::severity_level_from_key(&severity_raw.to_ascii_lowercase())
+        else {
+            continue;
+        };
+        let part = part_raw.to_ascii_lowercase();
+        if !super::skins::DOLL_PARTS
+            .iter()
+            .any(|(key, _, _)| key.eq_ignore_ascii_case(&part))
+        {
+            continue;
+        }
+        layers.push(DollLayer {
+            part,
+            level,
+            pool_path: image.pool_path.clone(),
+            abs_path: image.abs_path.clone(),
+        });
+    }
+    layers
+}
+
+/// Part order as the doll renders them, then severity ascending.
+fn sorted(mut layers: Vec<DollLayer>) -> Vec<DollLayer> {
+    layers.sort_by(|a, b| {
+        let rank = |p: &str| {
+            super::skins::DOLL_PARTS
+                .iter()
+                .position(|(key, _, _)| key.eq_ignore_ascii_case(p))
+                .unwrap_or(usize::MAX)
+        };
+        rank(&a.part)
+            .cmp(&rank(&b.part))
+            .then_with(|| a.level.cmp(&b.level))
+    });
+    layers
+}
+
+/// True when this image is overlay art rather than a doll in its own
+/// right — i.e. its name ends in `_<part>_<severity>`.
+///
+/// Decided by the name alone, so it does not depend on which other files
+/// happen to be present (and costs no pool re-scan per image).
+pub fn is_doll_layer_file(pool_path: &str) -> bool {
+    let Some(stem) = doll_stem(pool_path) else {
+        return false;
+    };
+    let Some((head, severity)) = stem.rsplit_once('_') else {
+        return false;
+    };
+    if super::skins::severity_level_from_key(&severity.to_ascii_lowercase()).is_none() {
+        return false;
+    }
+    // The segment before the severity must be a real body part; a doll
+    // called `nisugi_prone` has no severity tail and never reaches here,
+    // and one called `nisugi_bow` fails because "bow" is not a part.
+    head.rsplit_once('_')
+        .map(|(_, part)| part)
+        .is_some_and(|part| {
+            super::skins::DOLL_PARTS
+                .iter()
+                .any(|(key, _, _)| key.eq_ignore_ascii_case(part))
+        })
+}
+
+/// Which doll name a layer set belongs to for a given doll: the doll
+/// itself when it draws its own art, else its group. This is what the
+/// editor must show, so "where do my files go?" has one answer.
+pub fn doll_layer_owner(base_pool_path: &str) -> Option<String> {
+    let stem = doll_stem(base_pool_path)?;
+    let images = list_category("dolls");
+    if !layers_with_prefix(&images, stem).is_empty() {
+        return Some(stem.to_owned());
+    }
+    match stem.rsplit_once('_') {
+        Some((group, _)) if !layers_with_prefix(&images, group).is_empty() => {
+            Some(group.to_owned())
+        }
+        // Nothing drawn yet: new art belongs to the doll itself.
+        _ => Some(stem.to_owned()),
+    }
+}
+
+/// The filename a layer must have to be discovered — the naming rule
+/// stated once, so the editor can tell the user exactly what to write.
+pub fn doll_layer_file_name(base_pool_path: &str, part: &str, level: u8) -> Option<String> {
+    let base_stem = base_pool_path
+        .rsplit('/')
+        .next()
+        .and_then(|file| file.rsplit_once('.').map(|(stem, _)| stem))?;
+    let severity = super::skins::severity_key_from_level(level)?;
+    Some(format!("{base_stem}_{part}_{severity}.png"))
+}
+
+/// Case-insensitive `strip_prefix`.
+fn strip_prefix_ci<'a>(haystack: &'a str, prefix: &str) -> Option<&'a str> {
+    (haystack.len() >= prefix.len()
+        && haystack[..prefix.len()].eq_ignore_ascii_case(prefix))
+    .then(|| &haystack[prefix.len()..])
+}
+
 /// Pool categories whose art groups into sets, and so gets foldered.
 ///
 /// `hands` is a set category even though its pieces are chosen
@@ -465,6 +646,24 @@ pub struct DollSidecar {
     pub anchors: HashMap<String, [f32; 2]>,
     #[serde(default)]
     pub dots: DollDotSpec,
+    /// When this art should replace the default doll, using the shared
+    /// condition vocabulary (`hand_holds`, `indicator`, `injury`, ...).
+    /// Present = this image is a variant candidate; absent = it is only
+    /// selectable by name, exactly as before.
+    ///
+    /// Variants live on the artwork rather than in skins.toml so the
+    /// calibrator that already writes this file can author them, and so a
+    /// shared doll pack carries its own selection rule. The skin's
+    /// `[[injury_doll.variants]]` list still wins where both exist — a
+    /// hand-authored skin is never overridden by pool art.
+    #[serde(default)]
+    pub when: Option<crate::config::Condition>,
+    /// Tie-break for sidecar variants, low to high; equal priorities fall
+    /// back to pool path order so the list is always deterministic.
+    /// Condition matching is first-match-wins, so a specific rule (a named
+    /// bow) needs a lower number than a general one (any weapon).
+    #[serde(default)]
+    pub priority: i32,
 }
 
 impl SidecarKind for DollSidecar {
@@ -796,6 +995,47 @@ pub fn write_doll_sidecar(
     })
 }
 
+/// Rewrite a doll sidecar's variant selection (`when` + `priority`),
+/// leaving anchors, dots, and anything else byte-for-byte. Separate from
+/// [`write_doll_sidecar`] so the doll-sets editor can save a condition
+/// without holding (or clobbering) that image's calibration.
+///
+/// `when: None` removes the key, demoting the image back to a plain
+/// name-selectable doll.
+pub fn write_doll_variant(
+    image_abs_path: &Path,
+    when: Option<&crate::config::Condition>,
+    priority: i32,
+) -> anyhow::Result<()> {
+    use toml_edit::{value, Item};
+    write_sidecar_tables(image_abs_path, DollSidecar::KIND, |doc| {
+        match when {
+            Some(cond) => {
+                // Round-trip through the serde model: the condition tree is
+                // a tagged enum, and hand-building its toml_edit shape would
+                // duplicate that schema (and drift from it).
+                let rendered = toml::to_string(cond).map_err(|err| {
+                    anyhow::anyhow!("cannot serialize doll variant condition: {err}")
+                })?;
+                let parsed: toml_edit::DocumentMut = rendered.parse().map_err(|err| {
+                    anyhow::anyhow!("serialized condition is not valid TOML: {err}")
+                })?;
+                let mut table = toml_edit::Table::new();
+                for (key, item) in parsed.as_table().iter() {
+                    table.insert(key, item.clone());
+                }
+                doc.insert("when", Item::Table(table));
+                doc.insert("priority", value(priority as i64));
+            }
+            None => {
+                doc.remove("when");
+                doc.remove("priority");
+            }
+        }
+        Ok(())
+    })
+}
+
 /// Rewrite (or create) a creature sidecar: anchors, footprint, and the
 /// per-image field-scale fields, preserving any other content.
 pub fn write_creature_sidecar(
@@ -1049,6 +1289,259 @@ mod tests {
         assert_eq!(parsed.anchors["head"], [0.5, 0.1]);
         assert_eq!(parsed.anchors["chest"], [0.5, 0.3]);
         assert_eq!(parsed.dots.wound_color, "#aa0000");
+    }
+
+    /// The real-world layout: three weapon poses sharing one wound set,
+    /// plus a prone doll with its own.
+    #[test]
+    fn doll_layers_share_by_group_and_own_layers_win() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+        invalidate_cache();
+
+        let cat = Config::global_image_category_dir("dolls").unwrap();
+        std::fs::create_dir_all(&cat).unwrap();
+        for name in [
+            // Three dolls, same pose, different weapon.
+            "nisugi_empty.png",
+            "nisugi_swords.png",
+            "nisugi_bow.png",
+            // One shared wound set for all three.
+            "nisugi_chest_injury2.png",
+            "nisugi_leftArm_injury1.png",
+            "nisugi_nsys_injury3.png",
+            // A fourth doll with its own layout, partly drawn.
+            "nisugi_prone.png",
+            "nisugi_prone_leftArm_injury1.png",
+            "nisugi_prone_rightLeg_injury2.png",
+        ] {
+            std::fs::write(cat.join(name), b"x").unwrap();
+        }
+        invalidate_cache();
+
+        // All three weapon poses inherit the SAME shared set.
+        let shared: Vec<(String, u8)> = doll_layers("dolls/nisugi_swords.png")
+            .iter()
+            .map(|l| (l.part.clone(), l.level))
+            .collect();
+        assert_eq!(
+            shared,
+            vec![
+                ("chest".to_string(), 2),
+                ("leftarm".to_string(), 1),
+                ("nsys".to_string(), 3),
+            ],
+            "swords should inherit the nisugi group: {shared:?}"
+        );
+        for doll in ["dolls/nisugi_empty.png", "dolls/nisugi_bow.png"] {
+            let got: Vec<(String, u8)> = doll_layers(doll)
+                .iter()
+                .map(|l| (l.part.clone(), l.level))
+                .collect();
+            assert_eq!(got, shared, "{doll} should match the shared set");
+        }
+
+        // Prone draws its own, so it uses ONLY its own — the standing
+        // chest art must not be borrowed onto a prone body.
+        let prone: Vec<(String, u8)> = doll_layers("dolls/nisugi_prone.png")
+            .iter()
+            .map(|l| (l.part.clone(), l.level))
+            .collect();
+        assert_eq!(
+            prone,
+            vec![("leftarm".to_string(), 1), ("rightleg".to_string(), 2)],
+            "prone should use only its own layers: {prone:?}"
+        );
+        // Chest has no prone art, so it renders as a dot, not as the
+        // standing chest wound.
+        assert!(!prone.iter().any(|(part, _)| part == "chest"));
+
+        // Ownership, as the editor reports it.
+        assert_eq!(
+            doll_layer_owner("dolls/nisugi_swords.png").as_deref(),
+            Some("nisugi")
+        );
+        assert_eq!(
+            doll_layer_owner("dolls/nisugi_prone.png").as_deref(),
+            Some("nisugi_prone")
+        );
+
+        std::env::remove_var("VELLUM_FE_DIR");
+        invalidate_cache();
+    }
+
+    #[test]
+    fn doll_layers_discovers_by_filename_and_ignores_the_rest() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+        invalidate_cache();
+
+        let cat = Config::global_image_category_dir("dolls").unwrap();
+        std::fs::create_dir_all(&cat).unwrap();
+        for name in [
+            "nisugi.png",                  // the base
+            "nisugi_chest_injury2.png",    // a layer
+            "nisugi_leftArm_scar1.png",    // mixed-case part
+            "nisugi_nsys_injury3.png",     // the underlay part
+            "nisugi_chest_injury9.png",    // severity off the scale
+            "nisugi_elbow_injury1.png",    // not a body part
+            "nisugi_prone.png",            // another doll, not a layer
+            "nisugi.toml",                 // sidecar, not an image
+            "other.png",                   // an unrelated doll
+            "other_chest_injury1.png",     // belongs to `other`
+        ] {
+            std::fs::write(cat.join(name), b"x").unwrap();
+        }
+        invalidate_cache();
+
+        let layers = doll_layers("dolls/nisugi.png");
+        let found: Vec<(String, u8)> = layers
+            .iter()
+            .map(|l| (l.part.clone(), l.level))
+            .collect();
+        // DOLL_PARTS order (chest before leftarm before nsys), severity
+        // ascending within a part.
+        assert_eq!(
+            found,
+            vec![
+                ("chest".to_string(), 2),
+                ("leftarm".to_string(), 4),
+                ("nsys".to_string(), 3),
+            ],
+            "unexpected layers: {found:?}"
+        );
+
+        // A different base picks up only its own art.
+        let other: Vec<String> = doll_layers("dolls/other.png")
+            .iter()
+            .map(|l| l.part.clone())
+            .collect();
+        assert_eq!(other, vec!["chest".to_string()]);
+
+        // A sibling doll that draws none of its own INHERITS the group's
+        // (that is the point of the shared prefix) — it does not pick up
+        // unrelated art from elsewhere in the pool.
+        let prone: Vec<String> = doll_layers("dolls/nisugi_prone.png")
+            .iter()
+            .map(|l| l.part.clone())
+            .collect();
+        assert_eq!(prone, vec!["chest".to_string(), "leftarm".to_string(), "nsys".to_string()]);
+        // A doll with no group and no own art gets nothing at all.
+        assert!(doll_layers("dolls/unrelated.png").is_empty());
+
+        std::env::remove_var("VELLUM_FE_DIR");
+        invalidate_cache();
+    }
+
+    #[test]
+    fn is_doll_layer_file_separates_dolls_from_their_art() {
+        // Dolls, including the user's weapon-pose naming.
+        for doll in [
+            "dolls/nisugi.png",
+            "dolls/nisugi_empty.png",
+            "dolls/nisugi_swords.png",
+            "dolls/nisugi_bow.png",
+            "dolls/nisugi_prone.png",
+        ] {
+            assert!(!is_doll_layer_file(doll), "{doll} is a doll, not a layer");
+        }
+        // Layer art, shared-group and doll-specific alike.
+        for layer in [
+            "dolls/nisugi_chest_injury2.png",
+            "dolls/nisugi_nsys_injury3.png",
+            "dolls/nisugi_prone_leftArm_injury1.png",
+            "dolls/nisugi_leftEye_scar3.png",
+        ] {
+            assert!(is_doll_layer_file(layer), "{layer} is layer art");
+        }
+        // Near-misses: real severity but no real part, and vice versa.
+        assert!(!is_doll_layer_file("dolls/nisugi_elbow_injury1.png"));
+        assert!(!is_doll_layer_file("dolls/nisugi_chest_injury9.png"));
+    }
+
+    #[test]
+    fn doll_layer_file_name_states_the_convention() {
+        assert_eq!(
+            doll_layer_file_name("dolls/nisugi.png", "chest", 2).as_deref(),
+            Some("nisugi_chest_injury2.png")
+        );
+        assert_eq!(
+            doll_layer_file_name("dolls/nisugi.png", "nsys", 4).as_deref(),
+            Some("nisugi_nsys_scar1.png")
+        );
+        // Level 7 is off the 0-6 scale.
+        assert!(doll_layer_file_name("dolls/nisugi.png", "chest", 7).is_none());
+    }
+
+    #[test]
+    fn strip_prefix_ci_is_case_insensitive_and_bounded() {
+        assert_eq!(strip_prefix_ci("NisugiBow_chest", "nisugibow"), Some("_chest"));
+        assert_eq!(strip_prefix_ci("short", "muchlonger"), None);
+        // A prefix that merely shares a start must not match.
+        assert_eq!(strip_prefix_ci("nisugi", "nisugi_bow"), None);
+    }
+
+    #[test]
+    fn doll_variant_roundtrips_and_preserves_calibration() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("ranger_bow.png");
+        std::fs::write(&image, b"png").unwrap();
+
+        // Calibrate first: the two writers touch the same file, and the
+        // doll-sets editor must not clobber anchors it never loaded.
+        let mut anchors = HashMap::new();
+        anchors.insert("head".to_string(), [0.5, 0.1]);
+        write_doll_sidecar(&image, &anchors, &DollDotSpec::default()).unwrap();
+
+        let when = crate::config::Condition::HandHolds {
+            hand: crate::config::HandSlot::Either,
+            item_type: None,
+            name: Some("bow".to_string()),
+            name_match: crate::config::NameMatch::Contains,
+        };
+        write_doll_variant(&image, Some(&when), -5).unwrap();
+
+        let parsed: DollSidecar = read_sidecar(&image).unwrap();
+        assert_eq!(parsed.when.as_ref(), Some(&when));
+        assert_eq!(parsed.priority, -5);
+        // Calibration survived the variant write.
+        assert_eq!(parsed.anchors["head"], [0.5, 0.1]);
+
+        // And the calibrator still round-trips without dropping the rule.
+        write_doll_sidecar(&image, &anchors, &DollDotSpec::default()).unwrap();
+        let reparsed: DollSidecar = read_sidecar(&image).unwrap();
+        assert_eq!(reparsed.when.as_ref(), Some(&when));
+        assert_eq!(reparsed.priority, -5);
+    }
+
+    #[test]
+    fn doll_variant_none_removes_the_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("plain.png");
+        std::fs::write(&image, b"png").unwrap();
+        write_doll_variant(&image, Some(&crate::config::Condition::RtActive), 3).unwrap();
+        assert!(read_sidecar::<DollSidecar>(&image).unwrap().when.is_some());
+
+        write_doll_variant(&image, None, 0).unwrap();
+        let parsed: DollSidecar = read_sidecar(&image).unwrap();
+        assert!(parsed.when.is_none());
+        assert_eq!(parsed.priority, 0);
+    }
+
+    #[test]
+    fn doll_sidecar_without_a_rule_is_not_a_variant() {
+        // The common case: existing calibrated art must keep parsing, and
+        // must not become a variant that matches everything.
+        let sidecar: DollSidecar =
+            toml::from_str("kind = \"doll\"\n[anchors]\nhead = [0.5, 0.1]\n").unwrap();
+        assert!(sidecar.when.is_none());
+        assert_eq!(sidecar.priority, 0);
     }
 
     #[test]

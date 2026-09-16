@@ -11,7 +11,9 @@ use eframe::egui;
 use crate::core::state::{Creature, CreatureFlags, CRTR_STATUS_FLAGS};
 use crate::core::AppCore;
 
-use super::app::editors::{CalibrationOutcome, CreatureCalibrationState, FrameCalibrationState};
+use super::app::editors::{
+    CalibrationOutcome, CreatureCalibrationState, DollSetsEditorState, FrameCalibrationState,
+};
 use super::app::{theme as app_theme, widgets};
 use super::persistence::FontRef;
 use super::skin;
@@ -107,6 +109,7 @@ enum StudioMode {
 enum AnchorTab {
     Frames,
     Creatures,
+    DollSets,
 }
 
 pub struct StudioApp {
@@ -115,11 +118,13 @@ pub struct StudioApp {
     anchor_tab: AnchorTab,
     frame_calibration: Option<FrameCalibrationState>,
     creature_calibration: Option<CreatureCalibrationState>,
+    doll_sets: Option<DollSetsEditorState>,
     scenery_calibration: Option<super::app::editors::SceneryCalibrationState>,
     /// Auto-open happens once per tab; after the user closes a calibrator
     /// it stays closed until Refresh, so the X isn't fought every frame.
     frames_opened: bool,
     creatures_opened: bool,
+    doll_sets_opened: bool,
     status: Vec<String>,
     styled: bool,
     /// Built lazily on first Stage entry (AppCore::new is FS-only here).
@@ -1310,9 +1315,11 @@ impl Default for StudioApp {
             anchor_tab: AnchorTab::Frames,
             frame_calibration: None,
             creature_calibration: None,
+            doll_sets: None,
             scenery_calibration: None,
             frames_opened: false,
             creatures_opened: false,
+            doll_sets_opened: false,
             status: Vec::new(),
             styled: false,
             stage: None,
@@ -1370,6 +1377,16 @@ impl StudioApp {
         self.drain_outcome(outcome);
     }
 
+    fn open_doll_sets(&mut self) {
+        // Studio has no game session, so the condition builder's
+        // effect-name suggestions are empty here; every condition type is
+        // still authorable, names are just typed rather than picked.
+        let (state, outcome) = DollSetsEditorState::open(Default::default());
+        self.doll_sets = state;
+        self.doll_sets_opened = true;
+        self.drain_outcome(outcome);
+    }
+
     fn anchorer_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             if ui
@@ -1385,6 +1402,13 @@ impl StudioApp {
                 self.anchor_tab = AnchorTab::Creatures;
             }
             if ui
+                .selectable_label(self.anchor_tab == AnchorTab::DollSets, "Doll sets")
+                .on_hover_text("Give each pool doll the game state that selects it")
+                .clicked()
+            {
+                self.anchor_tab = AnchorTab::DollSets;
+            }
+            if ui
                 .button("Refresh")
                 .on_hover_text("Re-scan the pool and reopen the calibrator")
                 .clicked()
@@ -1392,6 +1416,7 @@ impl StudioApp {
                 match self.anchor_tab {
                     AnchorTab::Frames => self.open_frames(),
                     AnchorTab::Creatures => self.open_creatures(),
+                    AnchorTab::DollSets => self.open_doll_sets(),
                 }
             }
         });
@@ -1422,6 +1447,18 @@ impl StudioApp {
                     let outcome = state.ui(ctx);
                     if outcome.closed {
                         self.creature_calibration = None;
+                    }
+                    self.drain_outcome(outcome);
+                }
+            }
+            AnchorTab::DollSets => {
+                if !self.doll_sets_opened {
+                    self.open_doll_sets();
+                }
+                if let Some(state) = self.doll_sets.as_mut() {
+                    let outcome = state.ui(ctx);
+                    if outcome.closed {
+                        self.doll_sets = None;
                     }
                     self.drain_outcome(outcome);
                 }

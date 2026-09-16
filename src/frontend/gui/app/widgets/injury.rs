@@ -63,10 +63,11 @@ impl VellumGuiApp {
     /// Another player's doll must pass `None` and an empty set to
     /// `render_injury_doll` instead — these conditions read self state,
     /// so your prone flag must never swap or hide someone else's doll.
-    /// `named_set` is the window's `doll_set` binding: when it resolves to
-    /// a named set, that set's art is pinned (condition variants are
-    /// skipped) and its own `hidden_when` conditions evaluate instead. An
-    /// unresolvable name falls back to the default resolution.
+    /// `named_set` is the window's `doll_set` binding. A variant that
+    /// varies THAT doll still applies (so a pinned window follows posture
+    /// and weapon swaps); with none matching, the bound set's art is used
+    /// and its own `hidden_when` conditions evaluate. An unresolvable name
+    /// falls back to the default resolution.
     pub(super) fn resolve_doll_render(
         app_core: &AppCore,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
@@ -78,9 +79,22 @@ impl VellumGuiApp {
         let now_server =
             chrono::Utc::now().timestamp() + app_core.message_processor.server_time_offset;
         let gameobj = app_core.gameobj_data_cached();
-        if let Some(set) = named_set.and_then(|name| art.doll_set_named(name)) {
-            let hidden = set.hidden_parts(&app_core.game_state, now_server, gameobj);
-            return (None, hidden);
+        if let Some(name) = named_set {
+            // A pinned window still follows the variants OF THAT DOLL, so
+            // binding a window to one doll does not opt it out of posture
+            // and weapon swaps. Variants of other dolls stay ignored.
+            if let Some(variant) =
+                art.resolve_doll_variant_for(name, &app_core.game_state, now_server, gameobj)
+            {
+                let hidden = art
+                    .doll_set(Some(variant))
+                    .hidden_parts(&app_core.game_state, now_server, gameobj);
+                return (Some(variant), hidden);
+            }
+            if let Some(set) = art.doll_set_named(name) {
+                let hidden = set.hidden_parts(&app_core.game_state, now_server, gameobj);
+                return (None, hidden);
+            }
         }
         let variant = art.resolve_doll_variant(&app_core.game_state, now_server, gameobj);
         let hidden = art
@@ -109,10 +123,14 @@ impl VellumGuiApp {
         // `[injury_doll]`), then per part either a hand-drawn state
         // overlay (authored on the base's canvas so it stacks in place) or
         // a generated dot at the part's calibrated anchor point.
-        let set = skin_art.map(|art| {
-            named_set
+        // A matched variant wins over the window's binding: the resolver
+        // only returns one that varies the bound doll, so honoring it is
+        // what lets a pinned window swap on posture or weapon.
+        let set = skin_art.map(|art| match doll_variant {
+            Some(_) => art.doll_set(doll_variant),
+            None => named_set
                 .and_then(|name| art.doll_set_named(name))
-                .unwrap_or_else(|| art.doll_set(doll_variant))
+                .unwrap_or_else(|| art.doll_set(None)),
         });
         if let Some(set) = set.filter(|set| set.base.is_some()) {
             let base = set.base.unwrap();

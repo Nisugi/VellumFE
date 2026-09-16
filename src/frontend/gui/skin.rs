@@ -131,6 +131,12 @@ struct LoadedDollVariant {
     name: String,
     when: crate::config::Condition,
     set: LoadedDollSet,
+    /// For sidecar variants: the doll (or shared group) this one varies,
+    /// so a window PINNED to that base still gets its variants. Without
+    /// it, binding a window to `nisugi` would freeze it on the standing
+    /// art and a prone rule could never fire. `None` for skin-manifest
+    /// variants, which belong to the skin as a whole.
+    base: Option<String>,
 }
 
 /// One fully loaded doll set's art and metadata — the shape shared by
@@ -447,6 +453,39 @@ impl SkinWidgetArt {
     ) -> Option<usize> {
         self.doll_variants.iter().position(|variant| {
             crate::core::conditions::eval_condition(&variant.when, gs, now_server, gameobj)
+        })
+    }
+
+    /// Variant index for a window PINNED to `bound` (its `doll_set`), or
+    /// `None` when nothing applies and the pinned art should render.
+    ///
+    /// A binding names which doll the window shows, not a wish to freeze
+    /// it: the variants that vary that doll (or its shared group) still
+    /// apply, so a window pinned to `nisugi` swaps to `nisugi_prone` when
+    /// the prone rule fires. Variants belonging to some OTHER base are
+    /// ignored, which is what keeps two doll windows independent.
+    pub fn resolve_doll_variant_for(
+        &self,
+        bound: &str,
+        gs: &crate::core::state::GameState,
+        now_server: i64,
+        gameobj: Option<&crate::core::gameobj_data::GameObjData>,
+    ) -> Option<usize> {
+        let stem = bound
+            .rsplit('/')
+            .next()
+            .and_then(|file| file.rsplit_once('.').map(|(s, _)| s))
+            .unwrap_or(bound);
+        self.doll_variants.iter().position(|variant| {
+            // Only variants of this doll, and never the pinned doll
+            // varying itself.
+            let varies_this = variant
+                .base
+                .as_deref()
+                .is_some_and(|base| base.eq_ignore_ascii_case(stem));
+            varies_this
+                && !variant.name.eq_ignore_ascii_case(stem)
+                && crate::core::conditions::eval_condition(&variant.when, gs, now_server, gameobj)
         })
     }
 
@@ -1519,6 +1558,25 @@ impl SkinState {
                         }
                         None => art.doll_dots = ResolvedDotStyle::default(),
                     }
+                    // Overlay layers discovered beside the base by
+                    // filename: a part with art renders hand-drawn instead
+                    // of taking a generated dot.
+                    for layer in crate::config::pool::doll_layers(path) {
+                        if let Some(texture) = tex(&layer.pool_path) {
+                            art.doll_parts
+                                .entry(layer.part.clone())
+                                .or_default()
+                                .insert(layer.level, texture);
+                        }
+                        if self.gray_doll {
+                            if let Some(gray) = tex(&format!("{}#gray", layer.pool_path)) {
+                                art.doll_parts_gray
+                                    .entry(layer.part.clone())
+                                    .or_default()
+                                    .insert(layer.level, gray);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1564,32 +1622,65 @@ impl SkinState {
 
         // Pool dolls bound per-window load as named sets keyed by their
         // pool path — two doll windows can show two different pool dolls.
-        // Base from the pool image, anchors/dots from its sidecar,
-        // severity as generated dots (like the global override).
         for path in &self.needed_pool_dolls {
-            let Some(texture) = tex(path) else {
-                continue;
-            };
-            let abs = skins::resolve_image_path(&self.root, path);
-            let sidecar = crate::config::pool::read_sidecar::<crate::config::pool::DollSidecar>(
-                &abs,
-            )
-            .unwrap_or_default();
-            let mut set = LoadedDollSet {
-                base: Some(texture),
-                dots: ResolvedDotStyle::from_spec(&sidecar.dots),
-                ..Default::default()
-            };
-            for (part, anchor) in &sidecar.anchors {
-                set.anchors.insert(
-                    part.to_ascii_lowercase(),
-                    egui::vec2(anchor[0].clamp(0.0, 1.0), anchor[1].clamp(0.0, 1.0)),
-                );
+            if let Some(set) = self.load_pool_doll_set(path, &tex) {
+                art.doll_sets.insert(path.clone(), set);
             }
-            if self.gray_doll {
-                set.base_gray = tex(&format!("{path}#gray"));
+        }
+
+        // Sidecar-authored variants (the Doll Sets editor): a pool doll
+        // whose sidecar carries a `when` becomes a condition variant, so
+        // swapping art by wielded weapon or posture needs no skins.toml.
+        //
+        // Precedence: a skin's own `[[injury_doll.variants]]` is
+        // authoritative, so these only apply when the skin declares none.
+        // Otherwise installing a doll pack could silently reorder a
+        // hand-authored skin's first-match-wins list.
+        if art.doll_variants.is_empty() {
+            let mut sidecar_variants: Vec<(i32, String, LoadedDollVariant)> = Vec::new();
+            for image in crate::config::pool::list_category("dolls") {
+                let sidecar = match crate::config::pool::read_sidecar::<
+                    crate::config::pool::DollSidecar,
+                >(&image.abs_path)
+                {
+                    Some(sidecar) => sidecar,
+                    None => continue,
+                };
+                let Some(when) = sidecar.when else {
+                    continue;
+                };
+                let Some(set) = self.load_pool_doll_set(&image.pool_path, &tex) else {
+                    continue;
+                };
+                let name = image
+                    .pool_path
+                    .rsplit('/')
+                    .next()
+                    .and_then(|file| file.rsplit_once('.').map(|(stem, _)| stem))
+                    .unwrap_or(&image.pool_path)
+                    .to_owned();
+                // The doll this one varies: its shared group when it has
+                // one (`nisugi_prone` varies `nisugi`), else itself.
+                let base = name
+                    .rsplit_once('_')
+                    .map(|(group, _)| group.to_owned())
+                    .unwrap_or_else(|| name.clone());
+                sidecar_variants.push((
+                    sidecar.priority,
+                    image.pool_path.clone(),
+                    LoadedDollVariant {
+                        name,
+                        when,
+                        set,
+                        base: Some(base),
+                    },
+                ));
             }
-            art.doll_sets.insert(path.clone(), set);
+            // First match wins, so order is semantic: priority low to
+            // high, pool path as the deterministic tie-break.
+            sidecar_variants.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+            art.doll_variants
+                .extend(sidecar_variants.into_iter().map(|(_, _, variant)| variant));
         }
 
         if art.is_empty() {
@@ -1597,6 +1688,90 @@ impl SkinState {
         } else {
             Some(std::sync::Arc::new(art))
         }
+    }
+
+    /// Build one pool doll's set: base art, sidecar anchors and dots, and
+    /// the per-part overlay layers discovered beside it by filename
+    /// (`<base>_<part>_<severity>.png`, see `pool::doll_layers`).
+    ///
+    /// Overlay loading is what makes a pool doll a first-class doll rather
+    /// than a bare silhouette: a part with any layer art renders hand-drawn
+    /// at every severity instead of taking a generated dot.
+    fn load_pool_doll_set(
+        &self,
+        pool_path: &str,
+        tex: &impl Fn(&String) -> Option<SkinTexture>,
+    ) -> Option<LoadedDollSet> {
+        let base = tex(&pool_path.to_owned())?;
+        let abs = skins::resolve_image_path(&self.root, pool_path);
+        let sidecar =
+            crate::config::pool::read_sidecar::<crate::config::pool::DollSidecar>(&abs)
+                .unwrap_or_default();
+        let mut set = LoadedDollSet {
+            base: Some(base),
+            dots: ResolvedDotStyle::from_spec(&sidecar.dots),
+            ..Default::default()
+        };
+        for (part, anchor) in &sidecar.anchors {
+            set.anchors.insert(
+                part.to_ascii_lowercase(),
+                egui::vec2(anchor[0].clamp(0.0, 1.0), anchor[1].clamp(0.0, 1.0)),
+            );
+        }
+        for layer in crate::config::pool::doll_layers(pool_path) {
+            if let Some(texture) = tex(&layer.pool_path) {
+                set.parts
+                    .entry(layer.part.clone())
+                    .or_default()
+                    .insert(layer.level, texture);
+            }
+            if self.gray_doll {
+                if let Some(gray) = tex(&format!("{}#gray", layer.pool_path)) {
+                    set.parts_gray
+                        .entry(layer.part.clone())
+                        .or_default()
+                        .insert(layer.level, gray);
+                }
+            }
+        }
+        if self.gray_doll {
+            set.base_gray = tex(&format!("{pool_path}#gray"));
+        }
+        Some(set)
+    }
+
+    /// Pool paths of every doll whose sidecar declares a `when` — the
+    /// variant art the Doll Sets editor authored. Reads the cached pool
+    /// listing (invalidated on sidecar write), so this is a map over
+    /// in-memory entries rather than a per-frame disk walk.
+    fn sidecar_variant_doll_paths() -> Vec<String> {
+        crate::config::pool::list_category("dolls")
+            .into_iter()
+            .filter(|image| {
+                crate::config::pool::read_sidecar::<crate::config::pool::DollSidecar>(
+                    &image.abs_path,
+                )
+                .is_some_and(|sidecar| sidecar.when.is_some())
+            })
+            .map(|image| image.pool_path)
+            .collect()
+    }
+
+    /// Overlay-layer art for the dolls actually in play. Layers are found
+    /// by filename beside their base, so nothing else would request them,
+    /// and without residency `load_pool_doll_set` finds no texture and the
+    /// part silently falls back to a generated dot.
+    fn doll_layer_paths(&self) -> Vec<String> {
+        let mut bases: Vec<String> = self.needed_pool_dolls.clone();
+        bases.extend(self.doll_override.iter().cloned());
+        bases.extend(Self::sidecar_variant_doll_paths());
+        bases.sort();
+        bases.dedup();
+        bases
+            .iter()
+            .flat_map(|base| crate::config::pool::doll_layers(base))
+            .map(|layer| layer.pool_path)
+            .collect()
     }
 
     /// Sync the texture store to everything the pool sets and declared
@@ -1610,6 +1785,11 @@ impl SkinState {
         images.extend(self.needed_pool_icons.iter().cloned());
         images.extend(self.needed_pool_dolls.iter().cloned());
         images.extend(self.doll_override.iter().cloned());
+        // Sidecar-authored doll variants: their art must be resident for
+        // `build_widget_art` to find it, and the user never "selects" them
+        // (a condition does), so nothing else would request these.
+        images.extend(Self::sidecar_variant_doll_paths());
+        images.extend(self.doll_layer_paths());
         images.extend(self.pool_status_icons.values().cloned());
         images.extend(self.pool_compass.values().cloned());
         images.extend(self.pool_edges.values().cloned());
@@ -1643,6 +1823,8 @@ impl SkinState {
         if self.gray_doll {
             gray_paths.extend(self.needed_pool_dolls.iter().cloned());
             gray_paths.extend(self.doll_override.iter().cloned());
+            gray_paths.extend(Self::sidecar_variant_doll_paths());
+            gray_paths.extend(self.doll_layer_paths());
         }
         // One wanted list: bases first, then gray twins (order lets the
         // store skip a twin whose base failed). Keys stay the manifest /
@@ -3031,6 +3213,56 @@ cell = 32
         assert!(!updated.contains("[sheets]\n[sheets."));
     }
 
+    /// A window bound to one doll must still follow the variants of THAT
+    /// doll — binding names which doll it shows, not a wish to freeze it.
+    #[test]
+    fn bound_window_still_follows_its_own_variants() {
+        let mut art = SkinWidgetArt::default();
+        art.doll_variants.push(LoadedDollVariant {
+            base: Some("nisugi".to_string()),
+            name: "nisugi_prone".to_string(),
+            when: crate::config::Condition::Indicator {
+                id: "prone".to_string(),
+                active: true,
+            },
+            set: LoadedDollSet::default(),
+        });
+        // A variant of a DIFFERENT doll, which must never fire here.
+        art.doll_variants.push(LoadedDollVariant {
+            base: Some("dwarf".to_string()),
+            name: "dwarf_prone".to_string(),
+            when: crate::config::Condition::Indicator {
+                id: "prone".to_string(),
+                active: true,
+            },
+            set: LoadedDollSet::default(),
+        });
+
+        let mut gs = crate::core::state::GameState::default();
+        // Not prone: the binding stands, nothing varies.
+        assert_eq!(
+            art.resolve_doll_variant_for("dolls/nisugi.png", &gs, 0, None),
+            None
+        );
+
+        gs.status.set("prone", true);
+        // Prone: the variant of THIS doll wins, by index.
+        assert_eq!(
+            art.resolve_doll_variant_for("dolls/nisugi.png", &gs, 0, None),
+            Some(0)
+        );
+        // A window bound to the prone art itself does not re-vary into it.
+        assert_eq!(
+            art.resolve_doll_variant_for("dolls/nisugi_prone.png", &gs, 0, None),
+            None
+        );
+        // And a window bound to some unrelated doll gets nothing.
+        assert_eq!(
+            art.resolve_doll_variant_for("dolls/base.png", &gs, 0, None),
+            None
+        );
+    }
+
     #[test]
     fn doll_set_named_resolves_sets_then_variants_case_insensitively() {
         let texture = SkinTexture {
@@ -3046,6 +3278,7 @@ cell = 32
             },
         );
         art.doll_variants.push(LoadedDollVariant {
+            base: None,
             name: "downed".to_string(),
             when: crate::config::Condition::Injury {
                 area: "leftLeg".to_string(),
@@ -3079,6 +3312,7 @@ cell = 32
             level,
         };
         let empty_variant = |name: &str, when: crate::config::Condition| LoadedDollVariant {
+            base: None,
             name: name.to_string(),
             when,
             set: LoadedDollSet {

@@ -78,6 +78,8 @@ pub(super) enum GuiWindowMenuCommand {
     SetDollImage(Option<String>),
     /// Open the doll calibrator (injury doll windows).
     CalibrateDoll,
+    /// Open the doll-sets editor (condition rules over pool doll art).
+    EditDollSets,
     /// Open the frame calibrator (nine-slice geometry for pool frames).
     CalibrateFrames,
     /// Global decorative edge-overlay set (pool `edges/<set>/`); None
@@ -541,6 +543,7 @@ impl VellumGuiApp {
             | C::DissolveGroup
             | C::OpenMapExplorer
             | C::CalibrateDoll
+            | C::EditDollSets
             | C::CalibrateFrames
             | C::CalibrateCreatures
             | C::CalibrateScenery
@@ -748,6 +751,7 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetDollImage(_)
             | GuiWindowMenuCommand::SetDollSet(_)
             | GuiWindowMenuCommand::CalibrateDoll
+            | GuiWindowMenuCommand::EditDollSets
             | GuiWindowMenuCommand::CalibrateFrames
             | GuiWindowMenuCommand::CalibrateCreatures
             | GuiWindowMenuCommand::CalibrateScenery
@@ -975,6 +979,9 @@ impl VellumGuiApp {
             }
             GuiWindowMenuCommand::CalibrateDoll => {
                 self.open_doll_calibration();
+            }
+            GuiWindowMenuCommand::EditDollSets => {
+                self.open_doll_sets();
             }
             GuiWindowMenuCommand::CalibrateFrames => {
                 let current = self
@@ -2210,6 +2217,16 @@ impl VellumGuiApp {
         }
         if view.is_doll && ui.selectable_label(false, "Calibrate doll…").clicked() {
             command = Some(GuiWindowMenuCommand::CalibrateDoll);
+        }
+        if view.is_doll
+            && ui
+                .selectable_label(false, "Doll sets…")
+                .on_hover_text(
+                    "Give each pool doll the game state that selects it — wielded weapon,                      posture, injuries. First matching rule wins.",
+                )
+                .clicked()
+        {
+            command = Some(GuiWindowMenuCommand::EditDollSets);
         }
         if view.is_creature_field
             && ui
