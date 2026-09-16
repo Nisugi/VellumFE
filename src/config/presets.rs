@@ -5,6 +5,7 @@
 //! groupings used by the add-window menus.
 
 use super::*;
+use crate::config::widgets::default_indicator_inactive_color;
 use crate::data::geometry::{Col, Height, Row, Width};
 
 /// One condition-driven status icon state, mirroring `HandIconState`: while
@@ -664,7 +665,7 @@ impl Config {
                     // Skull and crossbones
                     icon: Some("".to_string()),
                     indicator_id: Some("POISONED".to_string()),
-                    inactive_color: None,
+                    inactive_color: default_indicator_inactive_color(),
                     active_color: Some("#00ff00".to_string()),
                     default_status: None,
                     default_color: Some("#00ff00".to_string()),
@@ -691,7 +692,7 @@ impl Config {
                 data: IndicatorWidgetData {
                     icon: Some("".to_string()), // Nerdfont bleeding icon
                     indicator_id: Some("BLEEDING".to_string()),
-                    inactive_color: None,
+                    inactive_color: default_indicator_inactive_color(),
                     active_color: Some("#ff0000".to_string()),
                     default_status: None,
                     default_color: Some("#ff0000".to_string()),
@@ -718,7 +719,7 @@ impl Config {
                 data: IndicatorWidgetData {
                     icon: Some("".to_string()), // Nerdfont diseased icon
                     indicator_id: Some("DISEASED".to_string()),
-                    inactive_color: None,
+                    inactive_color: default_indicator_inactive_color(),
                     active_color: Some("#8b4513".to_string()),
                     default_status: None,
                     default_color: Some("#8b4513".to_string()),
@@ -745,7 +746,7 @@ impl Config {
                 data: IndicatorWidgetData {
                     icon: Some("󱐌".to_string()), // Lightning bolt
                     indicator_id: Some("STUNNED".to_string()),
-                    inactive_color: None,
+                    inactive_color: default_indicator_inactive_color(),
                     active_color: Some("#ffff00".to_string()),
                     default_status: None,
                     default_color: Some("#ffff00".to_string()),
@@ -772,7 +773,7 @@ impl Config {
                 data: IndicatorWidgetData {
                     icon: Some("󰯊".to_string()), // Nerdfont web icon
                     indicator_id: Some("WEBBED".to_string()),
-                    inactive_color: None,
+                    inactive_color: default_indicator_inactive_color(),
                     active_color: Some("#cccccc".to_string()),
                     default_status: None,
                     default_color: Some("#cccccc".to_string()),
@@ -809,7 +810,7 @@ impl Config {
                 data: IndicatorWidgetData {
                     icon: Some("St".to_string()),
                     indicator_id: Some("STANDING".to_string()),
-                    inactive_color: None,
+                    inactive_color: default_indicator_inactive_color(),
                     active_color: Some("#55b86c".to_string()),
                     default_status: None,
                     default_color: Some("#55b86c".to_string()),
@@ -836,7 +837,7 @@ impl Config {
                 data: IndicatorWidgetData {
                     icon: Some("Kn".to_string()),
                     indicator_id: Some("KNEELING".to_string()),
-                    inactive_color: None,
+                    inactive_color: default_indicator_inactive_color(),
                     active_color: Some("#c9a54d".to_string()),
                     default_status: None,
                     default_color: Some("#c9a54d".to_string()),
@@ -863,7 +864,7 @@ impl Config {
                 data: IndicatorWidgetData {
                     icon: Some("Si".to_string()),
                     indicator_id: Some("SITTING".to_string()),
-                    inactive_color: None,
+                    inactive_color: default_indicator_inactive_color(),
                     active_color: Some("#c9a54d".to_string()),
                     default_status: None,
                     default_color: Some("#c9a54d".to_string()),
@@ -890,7 +891,7 @@ impl Config {
                 data: IndicatorWidgetData {
                     icon: Some("Pr".to_string()),
                     indicator_id: Some("PRONE".to_string()),
-                    inactive_color: None,
+                    inactive_color: default_indicator_inactive_color(),
                     active_color: Some("#d67d3e".to_string()),
                     default_status: None,
                     default_color: Some("#d67d3e".to_string()),
@@ -917,7 +918,7 @@ impl Config {
                 data: IndicatorWidgetData {
                     icon: Some("".to_string()), // Nerdfont eye-slash
                     indicator_id: Some("HIDDEN".to_string()),
-                    inactive_color: None,
+                    inactive_color: default_indicator_inactive_color(),
                     active_color: Some("#7a7aa8".to_string()),
                     default_status: None,
                     default_color: Some("#7a7aa8".to_string()),
@@ -944,7 +945,7 @@ impl Config {
                 data: IndicatorWidgetData {
                     icon: Some("".to_string()), // Nerdfont ghost
                     indicator_id: Some("INVISIBLE".to_string()),
-                    inactive_color: None,
+                    inactive_color: default_indicator_inactive_color(),
                     active_color: Some("#9a9ac0".to_string()),
                     default_status: None,
                     default_color: Some("#9a9ac0".to_string()),
@@ -971,7 +972,7 @@ impl Config {
                 data: IndicatorWidgetData {
                     icon: Some("".to_string()), // Nerdfont users/group
                     indicator_id: Some("JOINED".to_string()),
-                    inactive_color: None,
+                    inactive_color: default_indicator_inactive_color(),
                     active_color: Some("#5aa0d0".to_string()),
                     default_status: None,
                     default_color: Some("#5aa0d0".to_string()),
@@ -998,7 +999,7 @@ impl Config {
                 data: IndicatorWidgetData {
                     icon: Some("".to_string()), // Nerdfont skull
                     indicator_id: Some("DEAD".to_string()),
-                    inactive_color: None,
+                    inactive_color: default_indicator_inactive_color(),
                     active_color: Some("#cd4d4d".to_string()),
                     default_status: None,
                     default_color: Some("#cd4d4d".to_string()),

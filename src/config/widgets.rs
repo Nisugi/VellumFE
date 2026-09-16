@@ -1036,7 +1036,7 @@ fn default_indicator_active_color() -> Option<String> {
     Some("#00ff00".to_string())
 }
 
-fn default_indicator_inactive_color() -> Option<String> {
+pub(crate) fn default_indicator_inactive_color() -> Option<String> {
     Some("#555555".to_string())
 }
 

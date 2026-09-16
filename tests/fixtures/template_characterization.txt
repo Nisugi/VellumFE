@@ -603,6 +603,7 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   icon = ""
   indicator_id = "POISONED"
+  inactive_color = "#555555"
   active_color = "#00ff00"
   default_color = "#00ff00"
 
@@ -629,6 +630,7 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   icon = ""
   indicator_id = "BLEEDING"
+  inactive_color = "#555555"
   active_color = "#ff0000"
   default_color = "#ff0000"
 
@@ -655,6 +657,7 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   icon = ""
   indicator_id = "DISEASED"
+  inactive_color = "#555555"
   active_color = "#8b4513"
   default_color = "#8b4513"
 
@@ -681,6 +684,7 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   icon = "󱐌"
   indicator_id = "STUNNED"
+  inactive_color = "#555555"
   active_color = "#ffff00"
   default_color = "#ffff00"
 
@@ -707,6 +711,7 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   icon = "󰯊"
   indicator_id = "WEBBED"
+  inactive_color = "#555555"
   active_color = "#cccccc"
   default_color = "#cccccc"
 
@@ -733,6 +738,7 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   icon = "St"
   indicator_id = "STANDING"
+  inactive_color = "#555555"
   active_color = "#55b86c"
   default_color = "#55b86c"
 
@@ -759,6 +765,7 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   icon = "Kn"
   indicator_id = "KNEELING"
+  inactive_color = "#555555"
   active_color = "#c9a54d"
   default_color = "#c9a54d"
 
@@ -785,6 +792,7 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   icon = "Si"
   indicator_id = "SITTING"
+  inactive_color = "#555555"
   active_color = "#c9a54d"
   default_color = "#c9a54d"
 
@@ -811,6 +819,7 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   icon = "Pr"
   indicator_id = "PRONE"
+  inactive_color = "#555555"
   active_color = "#d67d3e"
   default_color = "#d67d3e"
 
@@ -837,6 +846,7 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   icon = ""
   indicator_id = "HIDDEN"
+  inactive_color = "#555555"
   active_color = "#7a7aa8"
   default_color = "#7a7aa8"
 
@@ -863,6 +873,7 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   icon = ""
   indicator_id = "INVISIBLE"
+  inactive_color = "#555555"
   active_color = "#9a9ac0"
   default_color = "#9a9ac0"
 
@@ -889,6 +900,7 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   icon = ""
   indicator_id = "JOINED"
+  inactive_color = "#555555"
   active_color = "#5aa0d0"
   default_color = "#5aa0d0"
 
@@ -915,6 +927,7 @@ TextWindow: main, thoughts, speech, bestiary, announcements, loot, death, logons
   tts_speak = false
   icon = ""
   indicator_id = "DEAD"
+  inactive_color = "#555555"
   active_color = "#cd4d4d"
   default_color = "#cd4d4d"
 
