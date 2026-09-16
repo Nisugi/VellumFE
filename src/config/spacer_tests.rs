@@ -952,3 +952,32 @@ fn test_spacer_no_widget_collision_after_resize() {
     assert!(a_end <= spacer_start, "A should not overlap spacer");
     assert!(spacer_end <= b_start, "Spacer should not overlap B");
 }
+
+/// The embedded catalog must parse and cover every key CATALOG lists.
+///
+/// `built_in_catalog()` panics on a malformed file — deliberately, since an
+/// empty catalog would silently offer the user no windows. This is the
+/// tripwire that turns that panic into a failing test instead of a broken
+/// build for whoever runs it next.
+#[test]
+fn built_in_catalog_parses_and_covers_the_catalog_table() {
+    let mut missing = Vec::new();
+    for (key, _game) in crate::config::presets::CATALOG {
+        if Config::get_window_template(key).is_none() {
+            missing.push(*key);
+        }
+    }
+    // Keys reached by NAME rather than through CATALOG. These have bitten
+    // once: generating the catalog from CATALOG alone dropped all three, and
+    // the failure surfaced as 36 unrelated headless-runtime tests panicking
+    // on `default_windows()` (layout.rs:112), not as anything template-shaped.
+    for extra in ["command_input", "performance", "injury_doll"] {
+        if Config::get_window_template(extra).is_none() {
+            missing.push(extra);
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "catalog keys with no definition in window_catalog.toml: {missing:?}"
+    );
+}

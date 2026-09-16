@@ -1,0 +1,2312 @@
+# Built-in window catalog — the definitions behind every window the user can
+# add from a menu, plus the bases discovery borrows from.
+#
+# GENERATED, then maintained by hand. Produced by serializing the former
+# 77-arm match in config/presets.rs so the extraction could be proven
+# faithful against tests/fixtures/template_characterization.txt.
+#
+# Each entry is a WindowDef exactly as layout.toml stores one, so the format
+# is already familiar and already round-trips.
+#
+# Order and per-game gating are NOT here: they live in the CATALOG table in
+# config/presets.rs, which stays the single ordered list of built-in keys.
+# This file answers only "what IS a compass", never "which windows exist".
+#
+# Editing: the golden fixture pins every template. Change something here and
+# tests/template_characterization.rs tells you precisely what moved.
+
+[templates.active_effects_custom]
+widget_type = "active_effects"
+name = ""
+row = 0
+col = 0
+rows = 10
+cols = 30
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Custom"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+category = ""
+
+[templates.active_spells]
+widget_type = "active_effects"
+name = "active_spells"
+row = 0
+col = 0
+rows = 10
+cols = 30
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Active Spells"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+category = "ActiveSpells"
+
+[templates.aimtime]
+widget_type = "countdown"
+name = "aimtime"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Aim"
+title_position = "top-left"
+text_color = "#FFA500"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+id = "aimtime"
+icon = ""
+
+[templates.alert_timers]
+widget_type = "active_effects"
+name = "alert_timers"
+row = 0
+col = 0
+rows = 10
+cols = 30
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Timers"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+category = "Timers"
+
+[templates.ambients]
+widget_type = "text"
+name = "ambients"
+row = 0
+col = 0
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Ambients"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+streams = ["ambients"]
+buffer_size = 500
+wordwrap = true
+show_timestamps = false
+compact = false
+
+[templates.announcements]
+widget_type = "text"
+name = "announcements"
+row = 0
+col = 0
+rows = 10
+cols = 50
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Announcements"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+streams = ["announcements"]
+buffer_size = 500
+wordwrap = true
+show_timestamps = false
+compact = false
+
+[templates.bestiary]
+widget_type = "text"
+name = "bestiary"
+row = 0
+col = 0
+rows = 24
+cols = 69
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Bestiary"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+streams = ["bestiary"]
+buffer_size = 10000
+wordwrap = false
+show_timestamps = false
+compact = false
+
+[templates.bestiaryview]
+widget_type = "bestiaryview"
+name = "bestiaryview"
+row = 0
+col = 0
+rows = 24
+cols = 60
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Bestiary Browser"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 8
+min_cols = 30
+visibility = "shown"
+tts_speak = false
+
+[templates.betrayer]
+widget_type = "betrayer"
+name = "betrayer"
+row = 0
+col = 0
+rows = 4
+cols = 30
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Betrayer"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 12
+min_cols = 20
+visibility = "shown"
+tts_speak = false
+show_items = true
+
+[templates.bleeding]
+widget_type = "indicator"
+name = "bleeding"
+row = 0
+col = 0
+rows = 2
+cols = 1
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Bleeding"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+min_cols = 1
+max_cols = 1
+visibility = "shown"
+tts_speak = false
+icon = ""
+indicator_id = "BLEEDING"
+inactive_color = "#555555"
+active_color = "#ff0000"
+default_color = "#ff0000"
+
+[templates.bounty]
+widget_type = "text"
+name = "bounty"
+row = 0
+col = 0
+rows = 15
+cols = 50
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Bounties"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+streams = ["bounty"]
+buffer_size = 10
+wordwrap = true
+show_timestamps = false
+compact = false
+
+[templates.buffs]
+widget_type = "active_effects"
+name = "buffs"
+row = 0
+col = 0
+rows = 10
+cols = 30
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Buffs"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+category = "Buffs"
+
+[templates.casttime]
+widget_type = "countdown"
+name = "casttime"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Cast"
+title_position = "top-left"
+text_color = "#00BFFF"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+id = "casttime"
+icon = ""
+
+[templates.chat]
+widget_type = "tabbedtext"
+name = "chat"
+row = 0
+col = 0
+rows = 10
+cols = 60
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Chat"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+buffer_size = 5000
+tab_bar_position = "top"
+tab_separator = true
+
+[[templates.chat.tabs]]
+name = "Thoughts"
+streams = ["thoughts"]
+ignore_activity = false
+
+[[templates.chat.tabs]]
+name = "Speech"
+streams = ["speech"]
+ignore_activity = false
+
+[[templates.chat.tabs]]
+name = "Announcements"
+streams = ["announcements"]
+ignore_activity = false
+
+[[templates.chat.tabs]]
+name = "Loot"
+streams = ["loot"]
+ignore_activity = false
+
+[[templates.chat.tabs]]
+name = "Ambients"
+streams = ["ambients"]
+ignore_activity = false
+
+[templates.command_input]
+widget_type = "command_input"
+name = "command_input"
+row = 0
+col = 0
+rows = 1
+cols = 120
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Command Input"
+title_position = "top-left"
+transparent_background = false
+locked = true
+min_rows = 1
+max_rows = 1
+visibility = "shown"
+tts_speak = false
+
+[templates.compass]
+widget_type = "compass"
+name = "compass"
+row = 0
+col = 0
+rows = 5
+cols = 9
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Compass"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+min_cols = 7
+visibility = "shown"
+content_align = "center"
+tts_speak = false
+active_color = "#00FF00"
+inactive_color = "#333333"
+
+[templates.concentration]
+widget_type = "progress"
+name = "concentration"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Concentration"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 3
+visibility = "shown"
+tts_speak = false
+id = "concentration"
+label = "Conc"
+color = "#00a0a0"
+numbers_only = false
+current_only = false
+
+[templates.containers]
+widget_type = "containers"
+name = "containers"
+row = 0
+col = 0
+rows = 20
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Containers"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 5
+min_cols = 20
+visibility = "shown"
+tts_speak = false
+
+[templates.cooldowns]
+widget_type = "active_effects"
+name = "cooldowns"
+row = 0
+col = 0
+rows = 10
+cols = 30
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Cooldowns"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+category = "Cooldowns"
+
+[templates.countdown_custom]
+widget_type = "countdown"
+name = ""
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Custom"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+icon = ""
+
+[templates.creaturefield]
+widget_type = "creaturefield"
+name = "creaturefield"
+row = 0
+col = 0
+rows = 16
+cols = 60
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Creature Field"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 8
+min_cols = 30
+visibility = "shown"
+tts_speak = false
+show_grid = true
+show_order = false
+cycle_wrap = true
+
+[templates.dashboard]
+widget_type = "dashboard"
+name = "dashboard"
+row = 0
+col = 0
+rows = 3
+cols = 10
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Dashboard"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 1
+min_cols = 1
+visibility = "shown"
+tts_speak = false
+dashboard_layout = "horizontal"
+dashboard_spacing = 1
+dashboard_hide_inactive = true
+dashboard_indicators = []
+
+[templates.dead]
+widget_type = "indicator"
+name = "dead"
+row = 0
+col = 0
+rows = 2
+cols = 1
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Dead"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+min_cols = 1
+max_cols = 1
+visibility = "shown"
+tts_speak = false
+icon = ""
+indicator_id = "DEAD"
+inactive_color = "#555555"
+active_color = "#cd4d4d"
+default_color = "#cd4d4d"
+
+[templates.death]
+widget_type = "text"
+name = "death"
+row = 0
+col = 0
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Death"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+streams = ["death"]
+buffer_size = 500
+wordwrap = true
+show_timestamps = false
+compact = false
+
+[templates.debuffs]
+widget_type = "active_effects"
+name = "debuffs"
+row = 0
+col = 0
+rows = 10
+cols = 30
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Debuffs"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+category = "Debuffs"
+
+[templates.diseased]
+widget_type = "indicator"
+name = "diseased"
+row = 0
+col = 0
+rows = 2
+cols = 1
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Diseased"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+min_cols = 1
+max_cols = 1
+visibility = "shown"
+tts_speak = false
+icon = ""
+indicator_id = "DISEASED"
+inactive_color = "#555555"
+active_color = "#8b4513"
+default_color = "#8b4513"
+
+[templates.encum]
+widget_type = "encum"
+name = "encum"
+row = 0
+col = 0
+rows = 4
+cols = 25
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Encumbrance"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 4
+min_cols = 15
+visibility = "shown"
+tts_speak = false
+align = "left"
+show_label = true
+show_bar = true
+
+[templates.entity_custom]
+widget_type = "targets"
+name = ""
+row = 0
+col = 0
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Custom"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 4
+min_cols = 20
+visibility = "shown"
+tts_speak = false
+entity_id = ""
+show_body_part_count = false
+
+[templates.experience]
+widget_type = "experience"
+name = "experience"
+row = 0
+col = 0
+rows = 20
+cols = 35
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Experience"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 5
+min_cols = 20
+visibility = "shown"
+tts_speak = false
+align = "left"
+
+[templates.familiar]
+widget_type = "text"
+name = "familiar"
+row = 0
+col = 0
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Familiar"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+streams = ["familiar"]
+buffer_size = 10000
+wordwrap = true
+show_timestamps = false
+compact = false
+
+[templates.gs4_experience]
+widget_type = "gs4_experience"
+name = "gs4_experience"
+row = 0
+col = 0
+rows = 5
+cols = 30
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Experience"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 7
+min_cols = 20
+visibility = "shown"
+tts_speak = false
+align = "center"
+show_level = true
+show_exp_bar = true
+show_mind_bar = true
+show_total_exp = false
+show_ascension_exp = false
+
+[templates.health]
+widget_type = "progress"
+name = "health"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Health"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 3
+visibility = "shown"
+tts_speak = false
+id = "health"
+label = "Health"
+color = "#6e0202"
+numbers_only = false
+current_only = false
+
+[templates.hidden]
+widget_type = "indicator"
+name = "hidden"
+row = 0
+col = 0
+rows = 2
+cols = 1
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Hidden"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+min_cols = 1
+max_cols = 1
+visibility = "shown"
+tts_speak = false
+icon = ""
+indicator_id = "HIDDEN"
+inactive_color = "#555555"
+active_color = "#7a7aa8"
+default_color = "#7a7aa8"
+
+[templates.hotkeybar]
+widget_type = "hotkeybar"
+name = "hotkeybar"
+row = 0
+col = 0
+rows = 3
+cols = 60
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = false
+title = "Actions"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 3
+visibility = "shown"
+tts_speak = false
+bar = "default"
+orientation = "horizontal"
+
+[templates.injuries]
+widget_type = "injury_doll"
+name = "injuries"
+row = 0
+col = 0
+rows = 8
+cols = 10
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Injuries"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 6
+min_cols = 8
+visibility = "shown"
+content_align = "center"
+tts_speak = false
+injury1_color = "#aa5500"
+injury2_color = "#ff8800"
+injury3_color = "#ff0000"
+scar1_color = "#999999"
+scar2_color = "#777777"
+scar3_color = "#555555"
+
+[templates.injury_doll]
+widget_type = "injury_doll"
+name = "injuries"
+row = 0
+col = 0
+rows = 8
+cols = 10
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Injuries"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 6
+min_cols = 8
+visibility = "shown"
+content_align = "center"
+tts_speak = false
+injury1_color = "#aa5500"
+injury2_color = "#ff8800"
+injury3_color = "#ff0000"
+scar1_color = "#999999"
+scar2_color = "#777777"
+scar3_color = "#555555"
+
+[templates.inventory]
+widget_type = "inventory"
+name = "inventory"
+row = 0
+col = 0
+rows = 20
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Inventory"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 4
+visibility = "shown"
+tts_speak = false
+streams = ["inv"]
+buffer_size = 0
+wordwrap = true
+show_timestamps = false
+
+[templates.invisible]
+widget_type = "indicator"
+name = "invisible"
+row = 0
+col = 0
+rows = 2
+cols = 1
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Invisible"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+min_cols = 1
+max_cols = 1
+visibility = "shown"
+tts_speak = false
+icon = ""
+indicator_id = "INVISIBLE"
+inactive_color = "#555555"
+active_color = "#9a9ac0"
+default_color = "#9a9ac0"
+
+[templates.items]
+widget_type = "items"
+name = "items"
+row = 0
+col = 0
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Items"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 4
+min_cols = 20
+visibility = "shown"
+tts_speak = false
+entity_id = "items"
+
+[templates.joined]
+widget_type = "indicator"
+name = "joined"
+row = 0
+col = 0
+rows = 2
+cols = 1
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Joined"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+min_cols = 1
+max_cols = 1
+visibility = "shown"
+tts_speak = false
+icon = ""
+indicator_id = "JOINED"
+inactive_color = "#555555"
+active_color = "#5aa0d0"
+default_color = "#5aa0d0"
+
+[templates.kneeling]
+widget_type = "indicator"
+name = "kneeling"
+row = 0
+col = 0
+rows = 2
+cols = 1
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Kneeling"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+min_cols = 1
+max_cols = 1
+visibility = "shown"
+tts_speak = false
+icon = "Kn"
+indicator_id = "KNEELING"
+inactive_color = "#555555"
+active_color = "#c9a54d"
+default_color = "#c9a54d"
+
+[templates.left]
+widget_type = "hand"
+name = "left"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Left Hand"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 3
+visibility = "shown"
+tts_speak = false
+icon = "L:"
+
+[templates.logons]
+widget_type = "text"
+name = "logons"
+row = 0
+col = 0
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Logons"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+streams = ["logons"]
+buffer_size = 500
+wordwrap = true
+show_timestamps = false
+compact = false
+
+[templates.loot]
+widget_type = "text"
+name = "loot"
+row = 0
+col = 0
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Loot"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+streams = ["loot"]
+buffer_size = 500
+wordwrap = true
+show_timestamps = false
+compact = false
+
+[templates.main]
+widget_type = "text"
+name = "main"
+row = 0
+col = 0
+rows = 37
+cols = 120
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Story"
+title_position = "top-left"
+transparent_background = false
+locked = true
+visibility = "shown"
+tts_speak = false
+streams = ["main"]
+buffer_size = 10000
+wordwrap = true
+show_timestamps = false
+compact = false
+
+[templates.mana]
+widget_type = "progress"
+name = "mana"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Mana"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 3
+visibility = "shown"
+tts_speak = false
+id = "mana"
+label = "Mana"
+color = "#08086d"
+numbers_only = false
+current_only = false
+
+[templates.map]
+widget_type = "map"
+name = "map"
+row = 0
+col = 0
+rows = 12
+cols = 30
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Map"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 5
+min_cols = 10
+visibility = "shown"
+tts_speak = false
+
+[templates.minivitals]
+widget_type = "minivitals"
+name = "minivitals"
+row = 0
+col = 0
+rows = 3
+cols = 80
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 3
+min_cols = 40
+visibility = "shown"
+tts_speak = false
+numbers_only = false
+current_only = false
+
+[templates.missingspells]
+widget_type = "missingspells"
+name = "missingspells"
+row = 0
+col = 0
+rows = 8
+cols = 28
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Missing Spells"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+min_cols = 14
+visibility = "shown"
+tts_speak = false
+
+[templates.multiaccount]
+widget_type = "multiaccount"
+name = "multiaccount"
+row = 0
+col = 0
+rows = 12
+cols = 46
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Characters"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 6
+min_cols = 24
+visibility = "shown"
+tts_speak = false
+show_vitals = true
+show_rt = true
+show_status = true
+show_injuries = true
+show_mind = false
+show_stance = false
+show_field_exp = false
+show_encumbrance = false
+show_room = true
+show_self = true
+show_absolute_vitals = true
+show_hands = false
+show_effects = true
+effect_categories = [
+    "Debuffs",
+    "Cooldowns",
+]
+effect_filter = []
+max_effects = 4
+merged_rows = ["status"]
+row_order = []
+card_column_weights = [1.0]
+sort_by = "group"
+columns = 0
+card_width = 150.0
+
+[templates.multiaccount.card_row_columns]
+
+[templates.perception]
+widget_type = "perception"
+name = "perception"
+row = 0
+col = 0
+rows = 20
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Perceptions"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 5
+min_cols = 20
+visibility = "shown"
+tts_speak = false
+stream = "percWindow"
+buffer_size = 100
+sort_direction = "descending"
+text_replacements = []
+use_short_spell_names = false
+
+[templates.performance]
+widget_type = "performance"
+name = "performance"
+row = 0
+col = 0
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Performance Stats"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 4
+min_cols = 20
+visibility = "shown"
+tts_speak = false
+enabled = true
+show_fps = true
+show_render_times = true
+show_ui_times = true
+show_wrap_times = true
+show_net = true
+show_parse = true
+show_events = true
+show_cpu = true
+show_memory = true
+show_lines = true
+show_uptime = true
+show_spike_log = true
+show_per_window = true
+sparklines = true
+
+[templates.players]
+widget_type = "players"
+name = "players"
+row = 0
+col = 0
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Players"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 4
+min_cols = 20
+visibility = "shown"
+tts_speak = false
+entity_id = "playercount"
+
+[templates.poisoned]
+widget_type = "indicator"
+name = "poisoned"
+row = 0
+col = 0
+rows = 2
+cols = 1
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Poisoned"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+min_cols = 1
+max_cols = 1
+visibility = "shown"
+tts_speak = false
+icon = ""
+indicator_id = "POISONED"
+inactive_color = "#555555"
+active_color = "#00ff00"
+default_color = "#00ff00"
+
+[templates.progress_custom]
+widget_type = "progress"
+name = ""
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Custom"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 3
+visibility = "shown"
+tts_speak = false
+numbers_only = false
+current_only = false
+
+[templates.prone]
+widget_type = "indicator"
+name = "prone"
+row = 0
+col = 0
+rows = 2
+cols = 1
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Prone"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+min_cols = 1
+max_cols = 1
+visibility = "shown"
+tts_speak = false
+icon = "Pr"
+indicator_id = "PRONE"
+inactive_color = "#555555"
+active_color = "#d67d3e"
+default_color = "#d67d3e"
+
+[templates.pulse]
+widget_type = "countdown"
+name = "pulse"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Pulse"
+title_position = "top-left"
+text_color = "#9370DB"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+id = "pulse"
+icon = ""
+show_when_zero = true
+count_past_zero = true
+
+[templates.quests]
+widget_type = "quests"
+name = "quests"
+row = 0
+col = 0
+rows = 14
+cols = 45
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Quests"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 4
+min_cols = 20
+visibility = "shown"
+tts_speak = false
+
+[templates.quickbar]
+widget_type = "quickbar"
+name = "quickbar"
+row = 0
+col = 0
+rows = 3
+cols = 120
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = false
+title = "Quickbar"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 3
+visibility = "shown"
+tts_speak = false
+
+[templates.reserve]
+widget_type = "reserve"
+name = "reserve"
+row = 0
+col = 0
+rows = 20
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Reserve"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 4
+visibility = "shown"
+tts_speak = false
+streams = ["reserve"]
+buffer_size = 0
+wordwrap = true
+show_timestamps = false
+
+[templates.right]
+widget_type = "hand"
+name = "right"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Right Hand"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 3
+visibility = "shown"
+tts_speak = false
+icon = "R:"
+
+[templates.room]
+widget_type = "room"
+name = "room"
+row = 0
+col = 0
+rows = 10
+cols = 80
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Room"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 5
+visibility = "shown"
+tts_speak = false
+buffer_size = 0
+show_desc = true
+show_objs = true
+show_players = true
+show_exits = true
+show_name = false
+
+[templates.roundtime]
+widget_type = "countdown"
+name = "roundtime"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "RT"
+title_position = "top-left"
+text_color = "#FF0000"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+id = "roundtime"
+icon = ""
+
+[templates.sitting]
+widget_type = "indicator"
+name = "sitting"
+row = 0
+col = 0
+rows = 2
+cols = 1
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Sitting"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+min_cols = 1
+max_cols = 1
+visibility = "shown"
+tts_speak = false
+icon = "Si"
+indicator_id = "SITTING"
+inactive_color = "#555555"
+active_color = "#c9a54d"
+default_color = "#c9a54d"
+
+[templates.society]
+widget_type = "text"
+name = "society"
+row = 0
+col = 0
+rows = 15
+cols = 50
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Society Tasks"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+streams = ["society"]
+buffer_size = 10
+wordwrap = true
+show_timestamps = false
+compact = false
+
+[templates.spacer]
+widget_type = "spacer"
+name = ""
+row = 0
+col = 0
+rows = 2
+cols = 2
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = false
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+
+[templates.speech]
+widget_type = "text"
+name = "speech"
+row = 0
+col = 0
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Speech"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+streams = ["speech"]
+buffer_size = 10000
+wordwrap = true
+show_timestamps = false
+compact = false
+
+[templates.spell]
+widget_type = "hand"
+name = "spell"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Spell"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 3
+visibility = "shown"
+tts_speak = false
+icon = "S:"
+
+[templates.spells]
+widget_type = "spells"
+name = "spells"
+row = 0
+col = 0
+rows = 20
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Spells"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+
+[templates.spirit]
+widget_type = "progress"
+name = "spirit"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Spirit"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 3
+visibility = "shown"
+tts_speak = false
+id = "spirit"
+label = "Spirit"
+color = "#6e727c"
+numbers_only = false
+current_only = false
+
+[templates.stamina]
+widget_type = "progress"
+name = "stamina"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Stamina"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 3
+visibility = "shown"
+tts_speak = false
+id = "stamina"
+label = "Stamina"
+color = "#bd7b00"
+numbers_only = false
+current_only = false
+
+[templates.stance]
+widget_type = "progress"
+name = "stance"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Stance"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 3
+max_rows = 3
+visibility = "shown"
+tts_speak = false
+id = "pbarStance"
+label = "Stance"
+color = "#000080"
+numbers_only = false
+current_only = false
+
+[templates.standing]
+widget_type = "indicator"
+name = "standing"
+row = 0
+col = 0
+rows = 2
+cols = 1
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Standing"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+min_cols = 1
+max_cols = 1
+visibility = "shown"
+tts_speak = false
+icon = "St"
+indicator_id = "STANDING"
+inactive_color = "#555555"
+active_color = "#55b86c"
+default_color = "#55b86c"
+
+[templates.stunned]
+widget_type = "indicator"
+name = "stunned"
+row = 0
+col = 0
+rows = 2
+cols = 1
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Stunned"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+min_cols = 1
+max_cols = 1
+visibility = "shown"
+tts_speak = false
+icon = "󱐌"
+indicator_id = "STUNNED"
+inactive_color = "#555555"
+active_color = "#ffff00"
+default_color = "#ffff00"
+
+[templates.stuntime]
+widget_type = "countdown"
+name = "stuntime"
+row = 0
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Stun"
+title_position = "top-left"
+text_color = "#FFFF00"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+id = "stuntime"
+icon = ""
+
+[templates.tabbedtext_custom]
+widget_type = "tabbedtext"
+name = ""
+row = 0
+col = 0
+rows = 10
+cols = 60
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+buffer_size = 5000
+tab_bar_position = "top"
+tab_separator = true
+
+[[templates.tabbedtext_custom.tabs]]
+name = "Main"
+streams = ["main"]
+ignore_activity = false
+
+[templates.targets]
+widget_type = "targets"
+name = "targets"
+row = 0
+col = 0
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Targets"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 4
+min_cols = 20
+visibility = "shown"
+tts_speak = false
+entity_id = "targetcount"
+show_body_part_count = false
+
+[templates.text_custom]
+widget_type = "text"
+name = ""
+row = 0
+col = 0
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+streams = ["custom"]
+buffer_size = 10000
+wordwrap = true
+show_timestamps = false
+compact = false
+
+[templates.thoughts]
+widget_type = "text"
+name = "thoughts"
+row = 0
+col = 0
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Thoughts"
+title_position = "top-left"
+transparent_background = false
+locked = false
+visibility = "shown"
+tts_speak = false
+streams = ["thoughts"]
+buffer_size = 10000
+wordwrap = true
+show_timestamps = false
+compact = false
+
+[templates.webbed]
+widget_type = "indicator"
+name = "webbed"
+row = 0
+col = 0
+rows = 2
+cols = 1
+show_border = false
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+show_title = true
+title = "Webbed"
+title_position = "top-left"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+min_cols = 1
+max_cols = 1
+visibility = "shown"
+tts_speak = false
+icon = "󰯊"
+indicator_id = "WEBBED"
+inactive_color = "#555555"
+active_color = "#cccccc"
+default_color = "#cccccc"
