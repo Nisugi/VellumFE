@@ -8,6 +8,20 @@
 //! Wire format owner: lich-5 `lib/webui/protocol.rb` + `lib/webui/dsl.rb`.
 //! Everything here is pure serde data - NO frontend imports.
 
+
+/// The component vocabulary, generated at build time from the contract
+/// export (`contracts/webui-contract.json`, produced by Lich's
+/// `WebUI::Export` from the same `Contract.schemas` its validator uses).
+///
+/// Renderers should match on [`contract::ComponentType`] rather than on the
+/// raw wire string: an exhaustive match is what turns a contract addition
+/// into a compile error instead of a component that silently renders as a
+/// placeholder. The hand-written vocabulary this replaces had drifted in
+/// both directions without anything noticing.
+pub mod contract {
+    include!(concat!(env!("OUT_DIR"), "/webui_contract.rs"));
+}
+
 use serde::{Deserialize, Serialize};
 
 /// Parsed `<LichWebUI .../>` handshake reply (sent by Lich in response to
@@ -636,5 +650,77 @@ mod tests {
         assert!(serde_json::to_string(&row)
             .unwrap()
             .contains(r#""value":1"#));
+    }
+
+    // ---- generated contract vocabulary -------------------------------
+
+    /// The generator must cover the whole contract, not a subset. If Lich
+    /// adds a type and the export is refreshed, this count moves and the
+    /// renderers stop compiling until they handle it — which is the entire
+    /// point of generating the vocabulary.
+    #[test]
+    fn contract_vocabulary_covers_every_type() {
+        use super::contract::ComponentType;
+        assert_eq!(
+            ComponentType::ALL.len(),
+            31,
+            "contract 2.15.x defines 31 component types; if this moved, the \
+             export was refreshed and every renderer needs a look"
+        );
+        // Spot-check the twelve VellumFE historically did not render, so a
+        // regression that drops them from the vocabulary is loud.
+        for tag in [
+            "composite", "dialog", "grid", "group", "menu", "menu_item", "overlay",
+            "scroll", "split", "stack", "textarea", "toggle",
+        ] {
+            assert!(
+                ComponentType::from_wire(tag).is_some(),
+                "contract type {tag} missing from the generated vocabulary"
+            );
+        }
+    }
+
+    /// Wire tags must round-trip, or `from_wire`/`as_wire` disagree and a
+    /// renderer silently mis-routes a component.
+    #[test]
+    fn contract_wire_tags_round_trip() {
+        use super::contract::ComponentType;
+        for ty in ComponentType::ALL {
+            assert_eq!(ComponentType::from_wire(ty.as_wire()), Some(*ty));
+        }
+    }
+
+    /// Types VellumFE invented are NOT contract types. They rendered here
+    /// and nowhere else, which is half of the drift the export exists to
+    /// stop; the vocabulary must not quietly bless them.
+    #[test]
+    fn vellum_invented_types_are_not_in_the_contract() {
+        use super::contract::ComponentType;
+        for tag in ["col", "header", "image_map", "tab"] {
+            assert!(
+                ComponentType::from_wire(tag).is_none(),
+                "{tag} is not a contract type - if it became one, drop it from this list"
+            );
+        }
+    }
+
+    /// Three of the five children kinds are not a list. A renderer that
+    /// assumes `children` is always an array mis-renders split/columns/tabs.
+    #[test]
+    fn contract_children_kinds_are_not_all_lists() {
+        use super::contract::{ChildrenKind, ComponentType};
+        let kind = |t: &str| ComponentType::from_wire(t).unwrap().children_kind();
+        assert_eq!(kind("divider"), ChildrenKind::None);
+        assert_eq!(kind("group"), ChildrenKind::Many);
+        assert_eq!(kind("split"), ChildrenKind::NamedSlots);
+        assert_eq!(kind("columns"), ChildrenKind::NamedDynamic);
+        assert_eq!(kind("tabs"), ChildrenKind::NamedFromProperty);
+    }
+
+    /// The negotiation handle the bridge compares against.
+    #[test]
+    fn contract_major_is_exposed_for_negotiation() {
+        assert_eq!(super::contract::CONTRACT_MAJOR, 2);
+        assert!(super::contract::CONTRACT_VERSION.starts_with("2."));
     }
 }
