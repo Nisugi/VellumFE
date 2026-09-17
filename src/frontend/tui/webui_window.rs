@@ -193,6 +193,83 @@ fn render_node(node: &WebUiNode, depth: usize, lines: &mut Vec<Line<'static>>) {
         "table" => {
             render_table(node, depth, lines);
         }
+        // A menu is a definition other components point at by key, opened
+        // with a secondary click the TUI has no way to deliver. Only a
+        // `bar` menu is a visible strip; the rest would be noise in an
+        // outline, so they are listed but not expanded.
+        "menu" => {
+            if node.bar.unwrap_or(false) {
+                for child in node.children() {
+                    render_node(child, depth, lines);
+                }
+            } else {
+                let label = node.label.clone().unwrap_or_default();
+                lines.push(Line::from(dim(format!("{pad}[menu {label}]"))));
+            }
+        }
+        "menu_item" => {
+            let label = node.label.clone().unwrap_or_default();
+            let text = match node.kind.as_deref() {
+                Some("separator") => format!("{pad}───"),
+                Some("check") | Some("radio") => {
+                    let mark = if node.active == Some(true) { "x" } else { " " };
+                    format!("{pad}[{mark}] {label}")
+                }
+                _ => format!("{pad}• {label}"),
+            };
+            lines.push(Line::from(Span::raw(text)));
+            for child in node.children() {
+                render_node(child, depth + 1, lines);
+            }
+        }
+        // Containers: the TUI renders an outline, so these are a heading
+        // (where there is one) plus the children indented under it.
+        "group" => {
+            let label = node.label.clone().unwrap_or_default();
+            let depth = if label.is_empty() {
+                depth
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!("{pad}{label}"),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )));
+                depth + 1
+            };
+            for child in node.children() {
+                render_node(child, depth, lines);
+            }
+        }
+        // stack/scroll/overlay carry no text of their own; in an outline
+        // they are their children. Scroll height and overlay z-order are
+        // presentation the TUI has no way to express, so they are dropped
+        // rather than faked.
+        "stack" | "scroll" | "overlay" => {
+            for child in node.children() {
+                render_node(child, depth, lines);
+            }
+        }
+        // Two named slots. The divider is worth showing because it tells
+        // the reader the halves are independent panes, not a sequence.
+        "split" => {
+            let children = node.children();
+            for (i, child) in children.iter().enumerate() {
+                if i == 1 {
+                    lines.push(Line::from(dim(format!("{pad}───"))));
+                }
+                render_node(child, depth, lines);
+            }
+        }
+        // Same state and shape as a checkbox; only the widget differs, and
+        // the TUI has no widgets.
+        "toggle" => {
+            let mark = if node.checked == Some(true) {
+                "[on ]"
+            } else {
+                "[off]"
+            };
+            let label = node.label.clone().unwrap_or_default();
+            lines.push(Line::from(Span::raw(format!("{pad}{mark} {label}"))));
+        }
         "expander" => {
             let label = node.label.clone().unwrap_or_default();
             let marker = if node.open == Some(true) {
@@ -440,5 +517,72 @@ mod tests {
         let out = text_of(&render_lines(&content));
         assert!(out.contains("[some_future_widget]"));
         assert!(out.contains("inner"));
+    }
+
+    /// The eight types added in Phase 5 must render something. A container
+    /// that silently produced nothing is exactly the failure the generated
+    /// vocabulary exists to prevent, so assert each one reaches the output
+    /// rather than the name-the-unknown arm.
+    #[test]
+    fn phase5_container_types_render_their_children() {
+        for tag in ["group", "stack", "scroll", "overlay", "split"] {
+            let mut content = WebUiPanelContent::new("demo/main", "Demo");
+            let mut page = node("page");
+            let mut container = node(tag);
+            let mut child = node("text");
+            child.text = Some("inner".into());
+            container.children = Some(vec![child]);
+            page.children = Some(vec![container]);
+            content.tree = Some(page);
+
+            let out = text_of(&render_lines(&content));
+            assert!(out.contains("inner"), "{tag} dropped its children: {out}");
+            assert!(
+                !out.contains(&format!("[{tag}]")),
+                "{tag} fell through to the unknown arm: {out}"
+            );
+        }
+    }
+
+    /// toggle carries the same state as a checkbox and must show it.
+    #[test]
+    fn toggle_shows_its_state() {
+        for (checked, want) in [(true, "[on ]"), (false, "[off]")] {
+            let mut content = WebUiPanelContent::new("demo/main", "Demo");
+            let mut page = node("page");
+            let mut toggle = node("toggle");
+            toggle.checked = Some(checked);
+            toggle.label = Some("Sound".into());
+            page.children = Some(vec![toggle]);
+            content.tree = Some(page);
+
+            let out = text_of(&render_lines(&content));
+            assert!(out.contains(want), "toggle({checked}) missing {want}: {out}");
+            assert!(out.contains("Sound"));
+        }
+    }
+
+    /// A bar menu is a visible strip, so its items render. A popup menu is a
+    /// definition opened by a gesture the TUI cannot deliver, so it is named
+    /// rather than expanded — listing its items inline would imply they are
+    /// on the page when they are not.
+    #[test]
+    fn menu_expands_only_when_it_is_a_bar() {
+        let build = |bar: bool| {
+            let mut content = WebUiPanelContent::new("demo/main", "Demo");
+            let mut page = node("page");
+            let mut menu = node("menu");
+            menu.bar = Some(bar);
+            let mut item = node("menu_item");
+            item.label = Some("Save".into());
+            menu.children = Some(vec![item]);
+            page.children = Some(vec![menu]);
+            content.tree = Some(page);
+            text_of(&render_lines(&content))
+        };
+        assert!(build(true).contains("Save"), "a bar menu shows its items");
+        let popup = build(false);
+        assert!(!popup.contains("Save"), "a popup menu is not on the page: {popup}");
+        assert!(popup.contains("menu"), "a popup menu still names itself: {popup}");
     }
 }

@@ -793,6 +793,178 @@ impl VellumGuiApp {
                 ui.add(bar);
             }
             "table" => Self::render_webui_table(ui, page, node, scratch_id("table")),
+            // A menu is a definition, not a place on the page: other
+            // components point at it by key via `context_menu`, and the
+            // viewer opens it with a secondary click. `bar: true` is the
+            // exception — that one is a visible strip.
+            "menu" => {
+                if node.bar.unwrap_or(false) {
+                    ui.horizontal_wrapped(|ui| {
+                        Self::render_webui_nodes(ui, page, node.children());
+                    });
+                }
+                // Non-bar menus render only when opened from their owner.
+            }
+            "menu_item" => {
+                let label = node.label.as_deref().unwrap_or("");
+                match node.kind.as_deref() {
+                    Some("separator") => {
+                        ui.separator();
+                    }
+                    Some("check") => {
+                        let mut on = node.active.unwrap_or(false);
+                        if ui.checkbox(&mut on, label).clicked() {
+                            queue_event(
+                                ui.ctx(),
+                                page,
+                                node.cid.as_deref(),
+                                serde_json::Value::Bool(on),
+                            );
+                        }
+                    }
+                    Some("radio") => {
+                        if ui.radio(node.active.unwrap_or(false), label).clicked() {
+                            queue_event(
+                                ui.ctx(),
+                                page,
+                                node.cid.as_deref(),
+                                serde_json::Value::Bool(true),
+                            );
+                        }
+                    }
+                    _ => {
+                        if ui.button(label).clicked() {
+                            queue_event(ui.ctx(), page, node.cid.as_deref(), serde_json::Value::Null);
+                        }
+                        // A submenu carries children; render them inline
+                        // rather than nesting popups, which egui would need
+                        // a persistent open-state to do properly.
+                        if !node.children().is_empty() {
+                            ui.indent(scratch_id("submenu"), |ui| {
+                                Self::render_webui_nodes(ui, page, node.children());
+                            });
+                        }
+                    }
+                }
+            }
+            // A plain grouping box. `label` titles it; `collapsible` folds
+            // it away, which is an expander in all but name, so it reuses
+            // that widget rather than growing a second one.
+            "group" => {
+                let label = node.label.as_deref().unwrap_or("");
+                if node.collapsible.unwrap_or(false) {
+                    egui::CollapsingHeader::new(label)
+                        .id_salt(scratch_id("group"))
+                        .default_open(node.open.unwrap_or(true))
+                        .show(ui, |ui| {
+                            Self::render_webui_nodes(ui, page, node.children());
+                        });
+                } else {
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        if !label.is_empty() {
+                            ui.label(RichText::new(label).strong());
+                        }
+                        Self::render_webui_nodes(ui, page, node.children());
+                    });
+                }
+            }
+            // Vertical run of children with an optional gap. The default
+            // layout is already vertical, so this is spacing plus nesting.
+            "stack" => {
+                let gap = node.gap;
+                ui.vertical(|ui| {
+                    if let Some(gap) = gap {
+                        ui.spacing_mut().item_spacing.y = gap.max(0.0);
+                    }
+                    Self::render_webui_nodes(ui, page, node.children());
+                });
+            }
+            // Children stacked on one axis with a scrollbar. max_height 0 or
+            // absent means "as tall as it wants".
+            "scroll" => {
+                let mut area = egui::ScrollArea::vertical().id_salt(scratch_id("scroll"));
+                if let Some(max) = node.max_height.filter(|h| *h > 0.0) {
+                    area = area.max_height(max);
+                }
+                area.show(ui, |ui| {
+                    Self::render_webui_nodes(ui, page, node.children());
+                });
+            }
+            // Children drawn at the same origin, last on top. egui has no
+            // z-stack primitive, so this paints them into one cell and lets
+            // later children cover earlier ones.
+            "overlay" => {
+                let children = node.children();
+                if children.is_empty() {
+                    return;
+                }
+                let origin = ui.cursor().min;
+                let mut extent = egui::Vec2::ZERO;
+                for child in children {
+                    let mut area = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(egui::Rect::from_min_size(origin, ui.available_size())),
+                    );
+                    Self::render_webui_node(&mut area, page, child);
+                    extent = extent.max(area.min_rect().size());
+                }
+                ui.allocate_space(extent);
+            }
+            // Two named slots (first, second) with a divider. The contract
+            // gives `position` as a fraction; egui has no splitter widget, so
+            // the fraction sizes the first slot and the rest goes to second.
+            "split" => {
+                let children = node.children();
+                let first = children.first();
+                let second = children.get(1);
+                let pos = node.position.unwrap_or(0.5).clamp(0.05, 0.95);
+                let horizontal = node.orientation.as_deref() != Some("vertical");
+                if horizontal {
+                    let total = ui.available_width();
+                    ui.horizontal_top(|ui| {
+                        if let Some(child) = first {
+                            let mut left = ui.new_child(egui::UiBuilder::new().max_rect(
+                                egui::Rect::from_min_size(
+                                    ui.cursor().min,
+                                    egui::vec2(total * pos, ui.available_height()),
+                                ),
+                            ));
+                            Self::render_webui_node(&mut left, page, child);
+                            ui.allocate_space(left.min_rect().size());
+                        }
+                        ui.separator();
+                        if let Some(child) = second {
+                            Self::render_webui_node(ui, page, child);
+                        }
+                    });
+                } else {
+                    ui.vertical(|ui| {
+                        if let Some(child) = first {
+                            Self::render_webui_node(ui, page, child);
+                        }
+                        ui.separator();
+                        if let Some(child) = second {
+                            Self::render_webui_node(ui, page, child);
+                        }
+                    });
+                }
+            }
+            // A labelled on/off switch. egui has no switch widget; a checkbox
+            // carries the same state and the same change event.
+            "toggle" => {
+                let mut checked = node.checked.unwrap_or(false);
+                if ui
+                    .checkbox(&mut checked, node.label.as_deref().unwrap_or(""))
+                    .changed()
+                {
+                    queue_event(
+                        ui.ctx(),
+                        page,
+                        node.cid.as_deref(),
+                        serde_json::Value::Bool(checked),
+                    );
+                }
+            }
             "expander" => {
                 egui::CollapsingHeader::new(node.label.as_deref().unwrap_or(""))
                     .id_salt(scratch_id("expander"))

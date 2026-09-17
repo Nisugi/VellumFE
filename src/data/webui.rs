@@ -213,6 +213,34 @@ pub struct WebUiNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open: Option<bool>,
 
+    // group: a titled box that may fold away.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collapsible: Option<bool>,
+
+    // stack / grid: spacing between children, in pixels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<f32>,
+
+    // split: which way the two named slots are laid out, and where the
+    // divider sits (0.0-1.0 of the available extent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<f32>,
+
+    // menu / menu_item.
+    /// menu: render as a persistent bar rather than a popup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar: Option<bool>,
+    /// menu_item: `item` | `check` | `radio` | `separator`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<bool>,
+    /// menu_item: radio group name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+
     // columns
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact: Option<bool>,
