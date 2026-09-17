@@ -71,7 +71,7 @@ fn render_node(node: &WebUiNode, depth: usize, lines: &mut Vec<Line<'static>>) {
     let pad = indent(depth);
     match node.t.as_str() {
         // Containers: render children (page shows nothing itself).
-        "page" | "col" | "cell" => {
+        "page" => {
             for child in node.children() {
                 render_node(child, depth, lines);
             }
@@ -84,17 +84,18 @@ fn render_node(node: &WebUiNode, depth: usize, lines: &mut Vec<Line<'static>>) {
                 render_node(child, depth + 1, lines);
             }
         }
-        "header" => {
-            lines.push(Line::from(Span::styled(
-                format!("{pad}{}", node.text.clone().unwrap_or_default()),
-                Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-            )));
-        }
         "text" => {
-            lines.push(Line::from(Span::raw(format!(
-                "{pad}{}",
-                node.text.clone().unwrap_or_default()
-            ))));
+            // Strong emphasis is what the retired `header` node meant.
+            let body = format!("{pad}{}", node.text.clone().unwrap_or_default());
+            let span = match node.emphasis.as_deref() {
+                Some("strong") => Span::styled(
+                    body,
+                    Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                ),
+                Some("subtle") => Span::styled(body, Style::default().add_modifier(Modifier::DIM)),
+                _ => Span::raw(body),
+            };
+            lines.push(Line::from(span));
         }
         "markdown" => {
             // Show the markdown source verbatim; the terminal has no renderer.
@@ -227,11 +228,6 @@ fn render_node(node: &WebUiNode, depth: usize, lines: &mut Vec<Line<'static>>) {
                 }
             }
         }
-        "tab" => {
-            for child in node.children() {
-                render_node(child, depth, lines);
-            }
-        }
         "image" | "image_map" => {
             let alt = node
                 .alt
@@ -345,22 +341,42 @@ mod tests {
     }
 
     #[test]
-    fn renders_header_text_and_button() {
+    fn renders_text_and_button() {
         let mut content = WebUiPanelContent::new("demo/main", "Demo");
         let mut page = node("page");
-        let mut header = node("header");
-        header.text = Some("Status".into());
+        let mut heading = node("text");
+        heading.text = Some("Status".into());
+        heading.emphasis = Some("strong".into());
         let mut text = node("text");
         text.text = Some("All systems go".into());
         let mut button = node("button");
         button.label = Some("Refresh".into());
-        page.children = Some(vec![header, text, button]);
+        page.children = Some(vec![heading, text, button]);
         content.tree = Some(page);
 
         let out = text_of(&render_lines(&content));
         assert!(out.contains("Status"));
         assert!(out.contains("All systems go"));
         assert!(out.contains("[ Refresh ]"));
+    }
+
+    /// A tag the contract does not define must be NAMED, not skipped. The
+    /// retired VellumFE-only types (header, col, tab, cell) land here now,
+    /// and so would a component from a newer contract.
+    #[test]
+    fn unknown_node_is_named_rather_than_dropped() {
+        let mut content = WebUiPanelContent::new("demo/main", "Demo");
+        let mut page = node("page");
+        let mut retired = node("header");
+        retired.text = Some("Status".into());
+        page.children = Some(vec![retired]);
+        content.tree = Some(page);
+
+        let out = text_of(&render_lines(&content));
+        assert!(
+            out.contains("header"),
+            "an unknown component must name itself; got: {out}"
+        );
     }
 
     #[test]

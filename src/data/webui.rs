@@ -140,9 +140,17 @@ pub struct WebUiNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<[f32; 2]>,
 
-    // header / text / markdown
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    // text / markdown. The contract spells the body `content`; `text` is
+    // the older name and still accepted so either side can lead.
+    #[serde(default, alias = "content", skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// `normal` | `strong` | `subtle`. Carries what the retired `header`
+    /// node used to mean: a heading is `text` with strong emphasis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emphasis: Option<String>,
+    /// `neutral` | `positive` | `caution` | `danger`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<String>,
 
     // labeled inputs + button + expander + tab
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -745,13 +753,20 @@ mod tests {
         }
     }
 
-    /// Types VellumFE invented are NOT contract types. They rendered here
-    /// and nowhere else, which is half of the drift the export exists to
-    /// stop; the vocabulary must not quietly bless them.
+    /// Types VellumFE invented are NOT contract types, and as of the Phase 4
+    /// cleanup no renderer claims them either: `header` is `text` with strong
+    /// emphasis, `col`/`cell`/`tab` were wrapper nodes the contract does not
+    /// use (columns derives children from a count, tabs from a names list,
+    /// and table takes no children at all). They now fall to the
+    /// name-the-unknown arm like any component from a newer contract.
+    ///
+    /// `image_map` is the exception still pending: `composite` covers it and
+    /// more (four layer kinds, popup, region events), so it is a Phase 5
+    /// migration rather than a deletion.
     #[test]
     fn vellum_invented_types_are_not_in_the_contract() {
         use super::contract::ComponentType;
-        for tag in ["col", "header", "image_map", "tab"] {
+        for tag in ["col", "cell", "header", "image_map", "tab"] {
             assert!(
                 ComponentType::from_wire(tag).is_none(),
                 "{tag} is not a contract type - if it became one, drop it from this list"

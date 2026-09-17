@@ -493,11 +493,15 @@ impl VellumGuiApp {
 
         match node.t.as_str() {
             "page" => Self::render_webui_nodes(ui, page, node.children()),
-            "header" => {
-                ui.label(RichText::new(node.text.as_deref().unwrap_or("")).heading());
-            }
             "text" => {
-                ui.label(node.text.as_deref().unwrap_or(""));
+                // emphasis is how the contract spells what the retired
+                // `header` node used to be: strong text is a heading.
+                let body = node.text.as_deref().unwrap_or("");
+                match node.emphasis.as_deref() {
+                    Some("strong") => ui.label(RichText::new(body).heading()),
+                    Some("subtle") => ui.label(RichText::new(body).weak()),
+                    _ => ui.label(body),
+                };
             }
             "markdown" => {
                 render_markdown_line(ui, node.text.as_deref().unwrap_or(""));
@@ -834,7 +838,6 @@ impl VellumGuiApp {
                     }
                 });
             }
-            "col" | "tab" | "cell" => Self::render_webui_nodes(ui, page, node.children()),
             "grid" => {
                 // Aligned matrix (webui-grid-node.md): row-major `cell`
                 // children, uniform column widths across every row (the
