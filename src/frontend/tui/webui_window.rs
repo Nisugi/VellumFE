@@ -305,7 +305,32 @@ fn render_node(node: &WebUiNode, depth: usize, lines: &mut Vec<Line<'static>>) {
                 }
             }
         }
-        "image" | "image_map" => {
+        // A painted surface (the map). The TUI cannot draw it, but the
+        // labels and named regions ARE readable content, so summarise
+        // rather than emitting a bare "[composite]" that tells the reader
+        // nothing about what is on screen.
+        "composite" => {
+            let layers = node.layers.as_deref().unwrap_or(&[]);
+            let labels: Vec<&str> = layers
+                .iter()
+                .filter_map(|l| match l {
+                    crate::data::webui::WebUiLayer::Label { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let regions = layers
+                .iter()
+                .filter(|l| matches!(l, crate::data::webui::WebUiLayer::Region { .. }))
+                .count();
+            lines.push(Line::from(dim(format!(
+                "{pad}▦ surface ({} layers, {regions} regions - view in the GUI)",
+                layers.len()
+            ))));
+            for text in labels {
+                lines.push(Line::from(Span::raw(format!("{pad}  {text}"))));
+            }
+        }
+        "image" => {
             let alt = node
                 .alt
                 .clone()

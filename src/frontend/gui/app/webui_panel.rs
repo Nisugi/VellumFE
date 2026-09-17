@@ -12,7 +12,9 @@
 //! widget is not being interacted with.
 
 use super::*;
-use crate::data::webui::{WebUiClientMessage, WebUiMapMarker, WebUiNode, WebUiPanelContent};
+use crate::data::webui::{
+    WebUiClientMessage, WebUiLayer, WebUiLayerColor, WebUiNode, WebUiPanelContent,
+};
 
 /// State of one image in the shared cache (egui context data, keyed by src).
 /// `Ready` holds the uploaded texture; the handle keeps it alive.
@@ -65,67 +67,6 @@ fn decode_data_uri(src: &str) -> Result<Vec<u8>, String> {
         .map_err(|err| err.to_string())
 }
 
-/// Display-space rect for a marker: unscaled coords * scale, offset into the
-/// image rect, floored to 6px like the browser bundle.
-fn marker_display_rect(marker: &WebUiMapMarker, origin: egui::Pos2, scale: f32) -> egui::Rect {
-    let min = origin + egui::vec2(marker.x1 * scale, marker.y1 * scale);
-    egui::Rect::from_min_size(
-        min,
-        egui::vec2(
-            ((marker.x2 - marker.x1) * scale).max(6.0),
-            ((marker.y2 - marker.y1) * scale).max(6.0),
-        ),
-    )
-}
-
-/// Marker visuals matching the browser bundle: "current" is a red glow
-/// circle, "pin" a filled warm dot, everything else an accent-colored box.
-fn paint_marker(
-    painter: &egui::Painter,
-    marker: &WebUiMapMarker,
-    rect: egui::Rect,
-    accent: Color32,
-) {
-    match marker.kind.as_deref() {
-        Some("current") => {
-            let red = Color32::from_rgb(229, 22, 22);
-            let radius = rect.size().max_elem() / 2.0;
-            painter.circle(
-                rect.center(),
-                radius,
-                Color32::from_rgba_unmultiplied(229, 22, 22, 46),
-                egui::Stroke::new(3.0, red),
-            );
-        }
-        Some("wound1") | Some("wound2") | Some("wound3") => {
-            // CreatureBar silhouette wound dots: small filled circles, no
-            // border; colors match the browser bundle (app.css .c-im-marker).
-            let color = match marker.kind.as_deref() {
-                Some("wound1") => Color32::from_rgba_unmultiplied(230, 200, 30, 230),
-                Some("wound2") => Color32::from_rgba_unmultiplied(230, 130, 30, 230),
-                _ => Color32::from_rgba_unmultiplied(220, 40, 40, 242),
-            };
-            painter.circle_filled(rect.center(), rect.size().min_elem() / 2.0, color);
-        }
-        Some("pin") => {
-            let warn = Color32::from_rgb(240, 173, 78);
-            painter.circle(
-                rect.center(),
-                rect.size().max_elem() / 2.0,
-                warn,
-                egui::Stroke::new(1.0, warn),
-            );
-        }
-        _ => {
-            painter.rect_stroke(
-                rect,
-                3.0,
-                egui::Stroke::new(2.0, accent),
-                egui::StrokeKind::Inside,
-            );
-        }
-    }
-}
 
 fn queue_event(ctx: &egui::Context, page: &str, cid: Option<&str>, value: serde_json::Value) {
     let Some(cid) = cid else { return };
@@ -1119,7 +1060,9 @@ impl VellumGuiApp {
                     }
                 }
             }
-            "image_map" => Self::render_webui_image_map(ui, page, node, scratch_id("immap")),
+            "composite" => {
+                Self::render_webui_composite(ui, page, node, scratch_id("composite"))
+            }
             other => {
                 ui.label(
                     RichText::new(format!("[unsupported component: {}]", other))
@@ -1137,125 +1080,237 @@ impl VellumGuiApp {
     /// UNSCALED image pixels and marker = the topmost hit box's id - the
     /// same payload the browser bundle emits, so script callbacks can't
     /// tell the difference.
-    fn render_webui_image_map(ui: &mut egui::Ui, page: &str, node: &WebUiNode, id: egui::Id) {
-        let Some(src) = node.src.as_deref() else {
+    /// `composite`: a fixed-size surface painted from an ordered draw list.
+    ///
+    /// Replaces the old VellumFE-only `image_map`, which could express one
+    /// image plus hit boxes. The contract models the same idea as `layers`
+    /// — image, bar, label and region — painted in order, so a map is art
+    /// plus markers plus text plus click targets in one node.
+    ///
+    /// Coordinates are UNSCALED surface pixels; everything is placed at
+    /// `coord * scale`, matching the browser bundle so a script callback
+    /// cannot tell the two renderers apart.
+    fn render_webui_composite(ui: &mut egui::Ui, page: &str, node: &WebUiNode, id: egui::Id) {
+        let layers = node.layers.as_deref().unwrap_or(&[]);
+        if layers.is_empty() {
             return;
-        };
-        let texture = match Self::resolve_webui_image(ui, src) {
-            WebUiImageState::Ready(texture) => texture,
-            WebUiImageState::Loading => {
-                ui.horizontal(|ui| {
-                    ui.add(egui::Spinner::new());
-                    ui.label(RichText::new("loading image...").weak());
-                });
-                return;
-            }
-            WebUiImageState::Failed(err) => {
-                ui.label(
-                    RichText::new(format!("[image_map: {}]", err))
-                        .weak()
-                        .italics(),
-                );
-                return;
-            }
-        };
-
+        }
         let scale = node.scale.unwrap_or(1.0).max(0.01);
-        let natural = texture.size_vec2();
-        let display = natural * scale;
-        let markers = node.markers.as_deref().unwrap_or(&[]);
-        let accent = ui.visuals().hyperlink_color;
+        // width/height are required by the contract; fall back to the
+        // bounding box of what we were given rather than drawing nothing.
+        let surface = egui::vec2(
+            node.size.map(|s| s[0]).unwrap_or(0.0).max(0.0),
+            node.size.map(|s| s[1]).unwrap_or(0.0).max(0.0),
+        );
+        let extent = if surface.x > 0.0 && surface.y > 0.0 {
+            surface * scale
+        } else {
+            Self::composite_bounds(layers) * scale
+        };
+        if extent.x <= 0.0 || extent.y <= 0.0 {
+            return;
+        }
 
         egui::ScrollArea::both()
             .id_salt(id.with("scroll"))
-            .max_height(display.y.min(480.0))
+            .max_height(extent.y.min(480.0))
             .auto_shrink([true, true])
             .show(ui, |ui| {
-                let (rect, response) = ui.allocate_exact_size(display, egui::Sense::click());
-                if ui.is_rect_visible(rect) {
-                    let painter = ui.painter();
-                    painter.image(
-                        texture.id(),
-                        rect,
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        Color32::WHITE,
-                    );
+                let (rect, response) =
+                    ui.allocate_exact_size(extent, egui::Sense::click());
+                if !ui.is_rect_visible(rect) {
+                    return;
+                }
+                let at = |x: f32, y: f32| rect.min + egui::vec2(x * scale, y * scale);
 
-                    let pointer = response.hover_pos();
-                    let mut hovered_label: Option<&str> = None;
-                    for marker in markers {
-                        let marker_rect = marker_display_rect(marker, rect.min, scale);
-                        paint_marker(painter, marker, marker_rect, accent);
-                        if pointer.is_some_and(|p| marker_rect.contains(p)) {
-                            hovered_label = marker.label.as_deref();
-                        }
-                    }
-                    // Marker labels surface like the browser's title tooltip.
-                    if let (Some(label), Some(pointer)) = (hovered_label, pointer) {
-                        painter.text(
-                            pointer + egui::vec2(12.0, -4.0),
-                            egui::Align2::LEFT_BOTTOM,
-                            label,
-                            egui::FontId::proportional(12.0),
-                            ui.visuals().strong_text_color(),
-                        );
-                    }
+                for layer in layers {
+                    Self::paint_composite_layer(ui, layer, scale, &at);
                 }
 
-                // Center on the scroll_to marker whenever it moves (or first
-                // appears) - same target@x,y change detection as the browser.
-                if let Some(target) = node.scroll_to.as_deref() {
-                    if let Some(marker) = markers.iter().find(|m| m.id == target) {
-                        let marker_rect = marker_display_rect(marker, rect.min, scale);
-                        let center = marker_rect.center() - rect.min;
-                        let signature = format!(
-                            "{}@{},{}",
-                            target,
-                            center.x.round() as i64,
-                            center.y.round() as i64
-                        );
-                        let seen_id = id.with("scrolled_to");
-                        let seen: String = ui.data(|d| d.get_temp(seen_id)).unwrap_or_default();
-                        if seen != signature {
-                            ui.data_mut(|d| d.insert_temp(seen_id, signature));
-                            ui.scroll_to_rect(marker_rect, Some(egui::Align::Center));
+                // Regions are hit tests, painted last so nothing covers
+                // them. The topmost one under the pointer wins, matching
+                // the browser, so iterate in reverse.
+                if let Some(pos) = response.interact_pointer_pos().filter(|_| response.clicked()) {
+                    for layer in layers.iter().rev() {
+                        if let WebUiLayer::Region {
+                            key,
+                            x1,
+                            y1,
+                            x2,
+                            y2,
+                            activates,
+                            ..
+                        } = layer
+                        {
+                            if activates == &Some(false) {
+                                continue;
+                            }
+                            let hit = egui::Rect::from_two_pos(at(*x1, *y1), at(*x2, *y2));
+                            if hit.contains(pos) {
+                                queue_event(
+                                    ui.ctx(),
+                                    page,
+                                    node.cid.as_deref(),
+                                    serde_json::json!({ "region": key }),
+                                );
+                                break;
+                            }
                         }
-                    }
-                }
-
-                let left = response.clicked();
-                let right = response.secondary_clicked();
-                if left || right {
-                    if right && node.popup.is_some() {
-                        // Right-click opens the named page as its own panel
-                        // (the browser opens a supplemental window here).
-                        queue_page_open(ui.ctx(), node.popup.as_deref().unwrap_or_default());
-                    } else if let Some(pos) = response.interact_pointer_pos() {
-                        // Topmost marker wins the hit like the browser's DOM
-                        // (later boxes render on top).
-                        let marker_hit = markers
-                            .iter()
-                            .rev()
-                            .find(|m| marker_display_rect(m, rect.min, scale).contains(pos))
-                            .map(|m| m.id.clone());
-                        let unscaled = (pos - rect.min) / scale;
-                        let modifiers = ui.input(|i| i.modifiers);
-                        queue_event(
-                            ui.ctx(),
-                            page,
-                            node.cid.as_deref(),
-                            serde_json::json!({
-                                "x": unscaled.x.round() as i64,
-                                "y": unscaled.y.round() as i64,
-                                "shift": modifiers.shift,
-                                "ctrl": modifiers.ctrl || modifiers.mac_cmd,
-                                "right": right,
-                                "marker": marker_hit,
-                            }),
-                        );
                     }
                 }
             });
+    }
+
+    /// Paints one layer. Regions draw nothing — they are hit tests — but a
+    /// labelled one still gets a tooltip-ish outline so the surface is not
+    /// silently interactive.
+    fn paint_composite_layer(
+        ui: &mut egui::Ui,
+        layer: &WebUiLayer,
+        scale: f32,
+        at: &dyn Fn(f32, f32) -> egui::Pos2,
+    ) {
+        match layer {
+            WebUiLayer::Image {
+                src,
+                x,
+                y,
+                w,
+                h,
+                opacity,
+                tint,
+            } => {
+                let WebUiImageState::Ready(texture) = Self::resolve_webui_image(ui, src) else {
+                    // Still loading or failed: skip this layer rather than
+                    // abandoning the surface, so the rest of the map draws.
+                    return;
+                };
+                let natural = texture.size_vec2();
+                let size = egui::vec2(w.unwrap_or(natural.x), h.unwrap_or(natural.y)) * scale;
+                let rect = egui::Rect::from_min_size(at(*x, *y), size);
+                let mut color = tint
+                    .as_ref()
+                    .map(|c| Self::composite_color(ui, c))
+                    .unwrap_or(egui::Color32::WHITE);
+                if let Some(alpha) = opacity {
+                    color = color.gamma_multiply(alpha.clamp(0.0, 1.0));
+                }
+                ui.painter().image(
+                    texture.id(),
+                    rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    color,
+                );
+            }
+            WebUiLayer::Bar {
+                x,
+                y,
+                w,
+                h,
+                value,
+                tone,
+                orientation,
+            } => {
+                let full = egui::Rect::from_min_size(at(*x, *y), egui::vec2(*w, *h) * scale);
+                let filled = value.clamp(0.0, 1.0);
+                let painter = ui.painter();
+                painter.rect_filled(full, 1.0, ui.visuals().extreme_bg_color);
+                let fill_rect = if orientation.as_deref() == Some("vertical") {
+                    // Vertical bars fill upward from the bottom edge.
+                    let height = full.height() * filled;
+                    egui::Rect::from_min_max(
+                        egui::pos2(full.min.x, full.max.y - height),
+                        full.max,
+                    )
+                } else {
+                    egui::Rect::from_min_size(
+                        full.min,
+                        egui::vec2(full.width() * filled, full.height()),
+                    )
+                };
+                let color = tone
+                    .as_ref()
+                    .map(|c| Self::composite_color(ui, c))
+                    .unwrap_or(ui.visuals().selection.bg_fill);
+                painter.rect_filled(fill_rect, 1.0, color);
+            }
+            WebUiLayer::Label {
+                x,
+                y,
+                text,
+                emphasis,
+                tone,
+                align,
+            } => {
+                let anchor = match align.as_deref() {
+                    Some("center") => egui::Align2::CENTER_TOP,
+                    Some("end") => egui::Align2::RIGHT_TOP,
+                    _ => egui::Align2::LEFT_TOP,
+                };
+                let style = if emphasis.as_deref() == Some("strong") {
+                    egui::TextStyle::Heading
+                } else {
+                    egui::TextStyle::Body
+                };
+                let mut color = ui.visuals().text_color();
+                if let Some(tone) = tone {
+                    color = Self::composite_color(ui, &WebUiLayerColor::Tone(tone.clone()));
+                }
+                if emphasis.as_deref() == Some("subtle") {
+                    color = color.gamma_multiply(0.6);
+                }
+                ui.painter().text(
+                    at(*x, *y),
+                    anchor,
+                    text,
+                    egui::FontId::from(style.resolve(ui.style())),
+                    color,
+                );
+            }
+            // A region paints nothing; it is a hit box resolved on click.
+            WebUiLayer::Region { .. } | WebUiLayer::Unknown => {}
+        }
+    }
+
+    /// Resolves a layer colour: a contract tone maps onto the theme so a
+    /// `danger` bar matches the rest of the UI, and explicit channels are
+    /// taken verbatim.
+    fn composite_color(ui: &egui::Ui, color: &WebUiLayerColor) -> egui::Color32 {
+        let tone = match color {
+            WebUiLayerColor::Rgb { r, g, b, a } => {
+                return egui::Color32::from_rgba_unmultiplied(*r, *g, *b, a.unwrap_or(255))
+            }
+            WebUiLayerColor::Tone(tone) => tone.as_str(),
+            WebUiLayerColor::ToneRecord { tone } => tone.as_str(),
+        };
+        match tone {
+            "positive" => egui::Color32::from_rgb(0x4c, 0xaf, 0x50),
+            "caution" => egui::Color32::from_rgb(0xff, 0xa7, 0x26),
+            "danger" => egui::Color32::from_rgb(0xe5, 0x39, 0x35),
+            _ => ui.visuals().text_color(),
+        }
+    }
+
+    /// Bounding box of a draw list, in unscaled surface pixels. Used only
+    /// when the node omits width/height.
+    fn composite_bounds(layers: &[WebUiLayer]) -> egui::Vec2 {
+        let mut max = egui::Vec2::ZERO;
+        let mut grow = |x: f32, y: f32| {
+            max.x = max.x.max(x);
+            max.y = max.y.max(y);
+        };
+        for layer in layers {
+            match layer {
+                WebUiLayer::Image { x, y, w, h, .. } => {
+                    grow(x + w.unwrap_or(0.0), y + h.unwrap_or(0.0))
+                }
+                WebUiLayer::Bar { x, y, w, h, .. } => grow(x + w, y + h),
+                WebUiLayer::Label { x, y, .. } => grow(*x, *y),
+                WebUiLayer::Region { x2, y2, .. } => grow(*x2, *y2),
+                WebUiLayer::Unknown => {}
+            }
+        }
+        max
     }
 
     fn render_webui_table(ui: &mut egui::Ui, page: &str, node: &WebUiNode, grid_id: egui::Id) {

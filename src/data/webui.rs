@@ -275,9 +275,115 @@ pub struct WebUiNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub popup_size: Option<[f32; 2]>,
 
+    /// `composite` draw list, painted in order: later layers cover earlier
+    /// ones. Coordinates are UNSCALED surface pixels, positioned at
+    /// `coord * scale` in display space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layers: Option<Vec<WebUiLayer>>,
+
     // containers (page, expander, columns/col, tabs/tab)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<WebUiNode>>,
+}
+
+/// One entry in a `composite` draw list.
+///
+/// Tagged by `kind` on the wire. Unknown kinds deserialize to
+/// [`WebUiLayer::Unknown`] rather than failing the whole page: the contract
+/// is additive, and one unrecognised layer must not blank a map.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum WebUiLayer {
+    /// Bitmap at (x, y), optionally scaled to w*h and tinted.
+    Image {
+        src: String,
+        #[serde(default)]
+        x: f32,
+        #[serde(default)]
+        y: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        w: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        h: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opacity: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tint: Option<WebUiLayerColor>,
+    },
+    /// Filled proportion bar; `value` is 0.0-1.0.
+    Bar {
+        #[serde(default)]
+        x: f32,
+        #[serde(default)]
+        y: f32,
+        #[serde(default)]
+        w: f32,
+        #[serde(default)]
+        h: f32,
+        #[serde(default)]
+        value: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tone: Option<WebUiLayerColor>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        orientation: Option<String>,
+    },
+    /// Text at a point on the surface.
+    Label {
+        #[serde(default)]
+        x: f32,
+        #[serde(default)]
+        y: f32,
+        #[serde(default)]
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        emphasis: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tone: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        align: Option<String>,
+    },
+    /// Invisible hit box. `activates` marks it clickable, and a click
+    /// reports `key` back as a region_activate event.
+    Region {
+        #[serde(default)]
+        key: String,
+        #[serde(default)]
+        x1: f32,
+        #[serde(default)]
+        y1: f32,
+        #[serde(default)]
+        x2: f32,
+        #[serde(default)]
+        y2: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        activates: Option<bool>,
+    },
+    /// A layer kind this build does not know. Kept so the rest of the
+    /// surface still draws.
+    #[serde(other)]
+    Unknown,
+}
+
+/// A layer colour: either a contract tone name or explicit channels.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
+pub enum WebUiLayerColor {
+    /// `neutral` | `positive` | `caution` | `danger`.
+    Tone(String),
+    /// Explicit 0-255 channels, with optional alpha.
+    Rgb {
+        r: u8,
+        g: u8,
+        b: u8,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        a: Option<u8>,
+    },
+    /// `{ "tone": "danger" }`, the record spelling of a tone.
+    ToneRecord {
+        tone: String,
+    },
 }
 
 impl WebUiNode {
@@ -901,5 +1007,54 @@ mod tests {
             serde_json::to_string(&msg).unwrap(),
             r#"{"type":"detach","page":"p","generation":3}"#
         );
+    }
+
+    /// The four composite layer kinds, in the shape the contract defines.
+    #[test]
+    fn composite_layers_parse_every_kind() {
+        let raw = r#"{ "t": "composite", "cid": "composite:0",
+  "width": 400, "height": 300, "scale": 1.5,
+  "layers": [
+    { "kind": "image", "src": "/files/map.png", "x": 0, "y": 0, "opacity": 0.8 },
+    { "kind": "bar", "x": 10, "y": 20, "w": 100, "h": 8, "value": 0.5, "tone": "danger" },
+    { "kind": "label", "x": 5, "y": 5, "text": "Town", "emphasis": "strong" },
+    { "kind": "region", "key": "room-12", "x1": 0, "y1": 0, "x2": 16, "y2": 16,
+      "activates": true },
+    { "kind": "hologram", "x": 1, "y": 2 }
+  ] }"#;
+        let node: WebUiNode = serde_json::from_str(raw).unwrap();
+        let layers = node.layers.as_deref().unwrap();
+        assert_eq!(layers.len(), 5);
+        assert!(matches!(&layers[0], WebUiLayer::Image { src, opacity, .. }
+                         if src == "/files/map.png" && *opacity == Some(0.8)));
+        assert!(matches!(&layers[1], WebUiLayer::Bar { value, tone, .. }
+                         if *value == 0.5
+                         && matches!(tone, Some(WebUiLayerColor::Tone(t)) if t == "danger")));
+        assert!(matches!(&layers[2], WebUiLayer::Label { text, .. } if text == "Town"));
+        assert!(matches!(&layers[3], WebUiLayer::Region { key, activates, .. }
+                         if key == "room-12" && *activates == Some(true)));
+        // An unknown kind must not take the surface down with it.
+        assert!(matches!(&layers[4], WebUiLayer::Unknown));
+    }
+
+    /// Colours arrive as a tone name, explicit channels, or the record
+    /// spelling of a tone. All three must parse.
+    #[test]
+    fn composite_layer_colours_accept_every_spelling() {
+        let raw = r#"{ "t": "composite", "layers": [
+    { "kind": "bar", "x": 0, "y": 0, "w": 1, "h": 1, "value": 1, "tone": "positive" },
+    { "kind": "bar", "x": 0, "y": 0, "w": 1, "h": 1, "value": 1,
+      "tone": { "r": 12, "g": 34, "b": 56 } },
+    { "kind": "image", "src": "x.png", "x": 0, "y": 0, "tint": { "tone": "caution" } }
+  ] }"#;
+        let node: WebUiNode = serde_json::from_str(raw).unwrap();
+        let layers = node.layers.as_deref().unwrap();
+        assert!(matches!(&layers[0], WebUiLayer::Bar { tone: Some(WebUiLayerColor::Tone(t)), .. }
+                         if t == "positive"));
+        assert!(matches!(&layers[1],
+                         WebUiLayer::Bar { tone: Some(WebUiLayerColor::Rgb { r: 12, g: 34, b: 56, .. }), .. }));
+        assert!(matches!(&layers[2],
+                         WebUiLayer::Image { tint: Some(WebUiLayerColor::ToneRecord { tone }), .. }
+                         if tone == "caution"));
     }
 }
