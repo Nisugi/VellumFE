@@ -193,6 +193,43 @@ fn render_node(node: &WebUiNode, depth: usize, lines: &mut Vec<Line<'static>>) {
         "table" => {
             render_table(node, depth, lines);
         }
+        // A prompt the script is blocked on. The GUI floats it as a real
+        // modal; the TUI has no modal surface, so it renders inline and
+        // makes the blocking obvious in the text instead.
+        "dialog" => {
+            let title = node.title.clone().unwrap_or_else(|| "Dialog".to_string());
+            lines.push(Line::from(Span::styled(
+                format!("{pad}┌ {title}"),
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+            if let Some(body) = node.body.as_deref().filter(|b| !b.is_empty()) {
+                for line in body.lines() {
+                    lines.push(Line::from(Span::raw(format!("{pad}│ {line}"))));
+                }
+            }
+            for child in node.children() {
+                render_node(child, depth + 1, lines);
+            }
+            let buttons = node.buttons.as_deref().unwrap_or(&[]);
+            if buttons.is_empty() {
+                lines.push(Line::from(dim(format!("{pad}└ (no buttons - cannot answer)"))));
+            } else {
+                let rendered: Vec<String> = buttons
+                    .iter()
+                    .map(|b| {
+                        if node.default_button.as_deref() == Some(&b.id) {
+                            format!("[*{}]", b.label)
+                        } else {
+                            format!("[ {} ]", b.label)
+                        }
+                    })
+                    .collect();
+                lines.push(Line::from(Span::raw(format!(
+                    "{pad}└ {}",
+                    rendered.join(" ")
+                ))));
+            }
+        }
         // A menu is a definition other components point at by key, opened
         // with a secondary click the TUI has no way to deliver. Only a
         // `bar` menu is a visible strip; the rest would be noise in an
@@ -609,5 +646,87 @@ mod tests {
         let popup = build(false);
         assert!(!popup.contains("Save"), "a popup menu is not on the page: {popup}");
         assert!(popup.contains("menu"), "a popup menu still names itself: {popup}");
+    }
+
+    /// A blocking prompt must show what is being asked AND how to answer.
+    #[test]
+    fn dialog_shows_its_prompt_and_buttons() {
+        let mut content = WebUiPanelContent::new("demo/main", "Demo");
+        let mut page = node("page");
+        let mut dialog = node("dialog");
+        dialog.title = Some("Confirm".into());
+        dialog.body = Some("Delete the thing?".into());
+        dialog.default_button = Some("no".into());
+        dialog.buttons = Some(vec![
+            crate::data::webui::WebUiDialogButton {
+                id: "yes".into(),
+                label: "Yes".into(),
+                variant: Some("danger".into()),
+            },
+            crate::data::webui::WebUiDialogButton {
+                id: "no".into(),
+                label: "No".into(),
+                variant: None,
+            },
+        ]);
+        page.children = Some(vec![dialog]);
+        content.tree = Some(page);
+
+        let out = text_of(&render_lines(&content));
+        assert!(out.contains("Confirm"), "missing title: {out}");
+        assert!(out.contains("Delete the thing?"), "missing body: {out}");
+        assert!(out.contains("Yes") && out.contains("No"), "missing buttons: {out}");
+        // The default is marked, since Enter answers it in the GUI.
+        assert!(out.contains("[*No]"), "default button not marked: {out}");
+    }
+
+    /// A dialog with no buttons cannot be answered. Say so rather than
+    /// drawing a prompt that looks answerable.
+    #[test]
+    fn dialog_without_buttons_says_it_cannot_be_answered() {
+        let mut content = WebUiPanelContent::new("demo/main", "Demo");
+        let mut page = node("page");
+        let mut dialog = node("dialog");
+        dialog.title = Some("Stuck".into());
+        page.children = Some(vec![dialog]);
+        content.tree = Some(page);
+
+        let out = text_of(&render_lines(&content));
+        assert!(out.contains("cannot answer"), "{out}");
+    }
+
+    /// A composite cannot be painted in a terminal, but its labels and
+    /// region count ARE readable content and must survive.
+    #[test]
+    fn composite_summarises_rather_than_vanishing() {
+        use crate::data::webui::WebUiLayer;
+        let mut content = WebUiPanelContent::new("demo/main", "Demo");
+        let mut page = node("page");
+        let mut surface = node("composite");
+        surface.layers = Some(vec![
+            WebUiLayer::Label {
+                x: 0.0,
+                y: 0.0,
+                text: "Wehnimer's".into(),
+                emphasis: None,
+                tone: None,
+                align: None,
+            },
+            WebUiLayer::Region {
+                key: "room-1".into(),
+                x1: 0.0,
+                y1: 0.0,
+                x2: 8.0,
+                y2: 8.0,
+                label: None,
+                activates: Some(true),
+            },
+        ]);
+        page.children = Some(vec![surface]);
+        content.tree = Some(page);
+
+        let out = text_of(&render_lines(&content));
+        assert!(out.contains("Wehnimer"), "labels must survive: {out}");
+        assert!(out.contains("1 regions"), "region count missing: {out}");
     }
 }

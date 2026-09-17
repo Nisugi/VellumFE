@@ -788,6 +788,80 @@ impl VellumGuiApp {
                     }
                 }
             }
+            // A prompt the script is BLOCKED on. Unlike every other
+            // component this is not part of the page flow: it floats over
+            // the app as a real modal, because a docked panel the user has
+            // scrolled away from is not somewhere a blocking question can
+            // sit unanswered. The panel keeps a one-line placeholder so the
+            // page does not appear to have lost a component.
+            "dialog" => {
+                let title = node.title.as_deref().unwrap_or("Dialog");
+                let buttons = node.buttons.as_deref().unwrap_or(&[]);
+                if buttons.is_empty() {
+                    // No way to answer: say so rather than floating a modal
+                    // the user cannot dismiss.
+                    ui.label(
+                        RichText::new(format!("[dialog \"{title}\" has no buttons]"))
+                            .weak()
+                            .italics(),
+                    );
+                    return;
+                }
+                ui.label(RichText::new(format!("[dialog: {title}]")).weak().italics());
+
+                let mut answered: Option<String> = None;
+                egui::Modal::new(scratch_id("dialog")).show(ui.ctx(), |ui| {
+                    ui.set_min_width(320.0);
+                    ui.heading(title);
+                    if let Some(body) = node.body.as_deref().filter(|b| !b.is_empty()) {
+                        ui.add_space(4.0);
+                        ui.label(body);
+                    }
+                    // Children are the contract's escape hatch for a richer
+                    // prompt than prose: render them between body and
+                    // buttons, where a form would go.
+                    if !node.children().is_empty() {
+                        ui.add_space(4.0);
+                        Self::render_webui_nodes(ui, page, node.children());
+                    }
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        for button in buttons {
+                            let is_default = node.default_button.as_deref() == Some(&button.id);
+                            let mut label = RichText::new(&button.label);
+                            match button.variant.as_deref() {
+                                Some("danger") => {
+                                    label = label.color(egui::Color32::from_rgb(0xe5, 0x39, 0x35))
+                                }
+                                Some("primary") => label = label.strong(),
+                                _ => {}
+                            }
+                            if is_default {
+                                label = label.strong();
+                            }
+                            if ui.button(label).clicked() {
+                                answered = Some(button.id.clone());
+                            }
+                        }
+                    });
+                    // Enter answers the default button, the one keyboard
+                    // affordance a blocking prompt really needs.
+                    if answered.is_none() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        if let Some(default) = node.default_button.as_deref() {
+                            answered = Some(default.to_string());
+                        }
+                    }
+                });
+
+                if let Some(button) = answered {
+                    queue_event(
+                        ui.ctx(),
+                        page,
+                        node.cid.as_deref(),
+                        serde_json::json!({ "button": button }),
+                    );
+                }
+            }
             // A plain grouping box. `label` titles it; `collapsible` folds
             // it away, which is an expander in all but name, so it reuses
             // that widget rather than growing a second one.

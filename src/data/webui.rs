@@ -241,6 +241,18 @@ pub struct WebUiNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
 
+    // dialog: a prompt the script is BLOCKED on until a button is pressed.
+    /// Prose shown above the buttons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    /// The choices. A dialog with none cannot be answered, so the renderer
+    /// treats that as malformed rather than drawing a dead prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub buttons: Option<Vec<WebUiDialogButton>>,
+    /// Button id highlighted as the default (Enter).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_button: Option<String>,
+
     // columns
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact: Option<bool>,
@@ -284,6 +296,19 @@ pub struct WebUiNode {
     // containers (page, expander, columns/col, tabs/tab)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<WebUiNode>>,
+}
+
+/// One choice on a `dialog`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct WebUiDialogButton {
+    /// Reported back as the `response` payload.
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub label: String,
+    /// `default` | `primary` | `danger`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
 }
 
 /// One entry in a `composite` draw list.

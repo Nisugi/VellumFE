@@ -357,3 +357,54 @@ fn server_time_offset_has_a_single_owning_field() {
         hits[0]
     );
 }
+
+/// Both WebUI renderers must handle every component type the contract defines.
+///
+/// This is the drift that started the whole exercise: VellumFE rendered 21 of
+/// 31 types and invented 5 the contract never had, for two months, with no
+/// signal — because both renderers dispatch on a wire string with a catch-all
+/// arm, so an unhandled component draws a small placeholder nobody reads.
+///
+/// The generated vocabulary catches a type the BUILD does not know; this
+/// catches one a RENDERER does not draw, which the compiler cannot see through
+/// a string match.
+#[test]
+fn webui_renderers_cover_every_contract_type() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let contract = fs::read_to_string(root.join("contracts/webui-contract.json"))
+        .expect("contracts/webui-contract.json");
+    // Pull the "types" array without adding a JSON dependency to the test: it
+    // is a flat list of quoted strings between `"types": [` and the next `]`.
+    let start = contract.find("\"types\"").expect("contract has a types array");
+    let open = contract[start..].find('[').expect("types array opens") + start;
+    let close = contract[open..].find(']').expect("types array closes") + open;
+    let types: Vec<String> = contract[open..close]
+        .split('"')
+        .map(|piece| piece.trim())
+        .filter(|piece| piece.chars().all(|c| c.is_ascii_lowercase() || c == '_') && !piece.is_empty())
+        .map(|piece| piece.to_string())
+        .collect();
+    assert!(types.len() > 20, "parsed too few contract types: {types:?}");
+
+    for (label, path) in [
+        ("GUI", "src/frontend/gui/app/webui_panel.rs"),
+        ("TUI", "src/frontend/tui/webui_window.rs"),
+    ] {
+        let src = fs::read_to_string(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let missing: Vec<&String> = types
+            .iter()
+            // Match the ARM, not the bare string: without the `=>` / `|`, a
+            // renamed arm ("toggle_DISABLED") still contains the type name
+            // and reads as handled.
+            .filter(|ty| {
+                !src.contains(&format!("\"{ty}\" =>")) && !src.contains(&format!("\"{ty}\" |"))
+            })
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "{label} renderer ({path}) has no arm for: {missing:?}. Every contract \
+             component must render as SOMETHING, even a named placeholder - drawing \
+             nothing silently is how the vocabulary drifted in the first place."
+        );
+    }
+}
