@@ -420,6 +420,14 @@ pub struct AppCore {
     /// is unsubscribed only when a page's last consumer leaves.
     pub(crate) webui_subscribed:
         std::collections::HashMap<String, std::collections::HashSet<crate::core::remote::WebUiConsumer>>,
+    /// Component ids the server told us to forget (`clear_sensitive`): it
+    /// has consumed a password field and our copy is a secret with no
+    /// reason to exist.
+    ///
+    /// Queued rather than cleared here because the value does not live in
+    /// core - the GUI holds edit buffers in its own per-widget temp store,
+    /// keyed by component id. The frontend drains this on its next frame.
+    pub(crate) webui_clear_sensitive: Vec<String>,
 }
 
 impl AppCore {
@@ -613,6 +621,7 @@ impl AppCore {
             webui_gui_tx: None,
             webui_pending_raw: Vec::new(),
             webui_subscribed: std::collections::HashMap::new(),
+            webui_clear_sensitive: Vec::new(),
         }
     }
 
@@ -826,6 +835,7 @@ impl AppCore {
             webui_gui_tx: None,
             webui_pending_raw: Vec::new(),
             webui_subscribed: std::collections::HashMap::new(),
+            webui_clear_sensitive: Vec::new(),
         };
 
         for conflict in &app.hotbar_key_conflicts.clone() {

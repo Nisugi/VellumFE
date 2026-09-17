@@ -58,7 +58,7 @@ async fn accept_validated(
 }
 
 fn hello_json() -> String {
-    r#"{"type":"hello","schema_version":1,
+    r#"{"type":"hello","contract_version":"2.15.3",
         "session":{"name":"Testchar","game":"GSIV"},
         "pages":[{"id":"demo/demo","title":"Demo","script":"demo",
                   "kind":"panel","bare":true,"size":[320,90]}],
@@ -102,14 +102,14 @@ async fn bridge_full_round_trip() {
 
     // Client surfaces the hello with session + page descriptors.
     let WebUiEvent::Hello {
-        schema_version,
+        contract_version,
         session,
         pages,
     } = recv_event(&mut event_rx).await
     else {
         panic!("expected Hello first");
     };
-    assert_eq!(schema_version, 1);
+    assert_eq!(contract_version, "2.15.3");
     assert_eq!(session.name, "Testchar");
     assert_eq!(pages.len(), 1);
     assert_eq!(pages[0].id, "demo/demo");
@@ -120,16 +120,21 @@ async fn bridge_full_round_trip() {
     let raw = socket.next().await.unwrap().unwrap();
     assert_eq!(
         raw.to_text().unwrap(),
-        r#"{"type":"subscribe","page":"demo/demo"}"#
+        r#"{"type":"attach","page":"demo/demo"}"#
     );
 
     // Render push comes back parsed.
     socket.send(Message::text(render_json(1))).await.unwrap();
-    let WebUiEvent::Render { page, seq, tree } = recv_event(&mut event_rx).await else {
+    let WebUiEvent::Render {
+        page,
+        generation,
+        tree,
+    } = recv_event(&mut event_rx).await
+    else {
         panic!("expected Render");
     };
     assert_eq!(page, "demo/demo");
-    assert_eq!(seq, 1);
+    assert_eq!(generation, 1);
     assert_eq!(tree.children().len(), 2);
     assert_eq!(tree.children()[1].label.as_deref(), Some("Go"));
 
@@ -301,7 +306,7 @@ async fn bridge_reconnects_and_replays_subscriptions() {
         ));
         handle.subscribe("demo/demo");
         let raw = socket.next().await.unwrap().unwrap();
-        assert!(raw.to_text().unwrap().contains("subscribe"));
+        assert!(raw.to_text().unwrap().contains("attach"));
         // server goes away (Lich script reload etc.)
         socket.close(None).await.unwrap();
     }
@@ -326,7 +331,7 @@ async fn bridge_reconnects_and_replays_subscriptions() {
         .unwrap();
     assert_eq!(
         raw.to_text().unwrap(),
-        r#"{"type":"subscribe","page":"demo/demo"}"#
+        r#"{"type":"attach","page":"demo/demo"}"#
     );
     socket.send(Message::text(hello_json())).await.unwrap();
     assert!(matches!(
@@ -335,8 +340,8 @@ async fn bridge_reconnects_and_replays_subscriptions() {
     ));
     // Fresh render resumes the page.
     socket.send(Message::text(render_json(7))).await.unwrap();
-    let WebUiEvent::Render { seq, .. } = recv_event(&mut event_rx).await else {
+    let WebUiEvent::Render { generation, .. } = recv_event(&mut event_rx).await else {
         panic!("expected Render after reconnect");
     };
-    assert_eq!(seq, 7);
+    assert_eq!(generation, 7);
 }

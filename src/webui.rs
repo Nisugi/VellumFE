@@ -34,7 +34,7 @@ use crate::data::webui::{WebUiClientMessage, WebUiServerMessage};
 pub enum WebUiEvent {
     /// Connection established; carries the server's hello payload.
     Hello {
-        schema_version: u32,
+        contract_version: String,
         session: crate::data::webui::WebUiSession,
         pages: Vec<crate::data::webui::WebUiPageDescriptor>,
     },
@@ -43,13 +43,16 @@ pub enum WebUiEvent {
     /// Full component tree push for one subscribed page.
     Render {
         page: String,
-        seq: u64,
+        generation: u64,
         tree: crate::data::webui::WebUiNode,
     },
     /// Page is finished (script exited); panel lifecycle is ours.
     PageClosed { page: String },
     /// User-facing notice from the server ("info" | "warn" | "error").
     Notice { level: String, text: String },
+    /// Server consumed sensitive values: drop our local copies for these
+    /// components so a submitted password does not linger in the panel.
+    ClearSensitive { cids: Vec<String> },
     /// Socket dropped; the task keeps retrying until `gave_up`.
     /// `never_connected` distinguishes "endpoint was never reachable"
     /// (wrong/loopback-bound host, firewall) from a lost session.
@@ -81,6 +84,7 @@ impl WebUiHandle {
     pub fn subscribe(&self, page: &str) {
         self.send(WebUiClientMessage::Subscribe {
             page: page.to_string(),
+            resume: None,
         });
     }
 
@@ -162,7 +166,13 @@ async fn run_bridge(
 
                 // Replay subscriptions lost with the previous socket.
                 for page in &subscriptions {
-                    let msg = WebUiClientMessage::Subscribe { page: page.clone() };
+                    // A reconnect replay deliberately carries no resume
+                    // token: the tokens belonged to the socket that died,
+                    // and offering a stale one is refused, not ignored.
+                    let msg = WebUiClientMessage::Subscribe {
+                        page: page.clone(),
+                        resume: None,
+                    };
                     if let Ok(json) = serde_json::to_string(&msg) {
                         let _ = socket.send(Message::Text(json.into())).await;
                     }
@@ -177,10 +187,10 @@ async fn run_bridge(
                                 return;
                             };
                             match &message {
-                                WebUiClientMessage::Subscribe { page } => {
+                                WebUiClientMessage::Subscribe { page, .. } => {
                                     subscriptions.insert(page.clone());
                                 }
-                                WebUiClientMessage::Unsubscribe { page } => {
+                                WebUiClientMessage::Unsubscribe { page, .. } => {
                                     subscriptions.remove(page);
                                 }
                                 WebUiClientMessage::Event { .. } => {}
@@ -507,26 +517,78 @@ fn handle_server_text(raw: &str, event_tx: &mpsc::UnboundedSender<WebUiEvent>) {
 
     let event = match message {
         WebUiServerMessage::Hello {
-            schema_version,
+            contract_version,
             session,
             pages,
             ..
         } => {
-            if schema_version != 1 {
-                tracing::warn!(
-                    "WebUI bridge: server schema {} (client built for 1); continuing best-effort",
-                    schema_version
-                );
+            // Negotiate on the MAJOR only, the way the server's own
+            // Contract.negotiate! does: minor/patch bumps are additive by
+            // policy, a different major is a different protocol. The old
+            // code compared a `schema_version` integer that the server had
+            // stopped sending, so it read 0 and warned on every connect.
+            let server_major = contract_version
+                .split('.')
+                .next()
+                .and_then(|m| m.parse::<u64>().ok());
+            match server_major {
+                Some(major) if major == crate::data::webui::contract::CONTRACT_MAJOR => {}
+                Some(major) => tracing::error!(
+                    "WebUI contract major {} but this build speaks {} ({}); \
+                     pages will render wrong or not at all",
+                    major,
+                    crate::data::webui::contract::CONTRACT_MAJOR,
+                    crate::data::webui::contract::CONTRACT_VERSION
+                ),
+                None => tracing::warn!(
+                    "WebUI bridge: server sent no usable contract version ({:?})",
+                    contract_version
+                ),
             }
             WebUiEvent::Hello {
-                schema_version,
+                contract_version,
                 session,
                 pages,
             }
         }
         WebUiServerMessage::Pages { pages } => WebUiEvent::Pages(pages),
-        WebUiServerMessage::Render { page, seq, tree } => WebUiEvent::Render { page, seq, tree },
-        WebUiServerMessage::Close { page } => WebUiEvent::PageClosed { page },
+        WebUiServerMessage::Render {
+            page,
+            generation,
+            tree,
+        } => WebUiEvent::Render {
+            page,
+            generation,
+            tree,
+        },
+        WebUiServerMessage::Close { page, reason } => {
+            if !reason.is_empty() {
+                tracing::debug!("WebUI page {} closed: {}", page, reason);
+            }
+            WebUiEvent::PageClosed { page }
+        }
+        WebUiServerMessage::Refusal {
+            reason,
+            message,
+            page,
+            cid,
+        } => {
+            // A refusal answers something WE sent. Surfacing it as a notice
+            // beats the old behaviour (fell through to Unknown and vanished),
+            // where a rejected event looked exactly like one that worked.
+            tracing::warn!(
+                "WebUI refused ({}): {} page={:?} cid={:?}",
+                reason,
+                message,
+                page,
+                cid
+            );
+            WebUiEvent::Notice {
+                level: "warn".to_string(),
+                text: format!("Lich refused the request: {message} ({reason})"),
+            }
+        }
+        WebUiServerMessage::ClearSensitive { cids } => WebUiEvent::ClearSensitive { cids },
         WebUiServerMessage::Notice { level, text } => WebUiEvent::Notice { level, text },
         WebUiServerMessage::Notify { title, text } => WebUiEvent::Notice {
             level: "info".to_string(),

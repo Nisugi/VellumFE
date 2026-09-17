@@ -723,6 +723,10 @@ pub struct VellumGuiApp {
     /// repaint-waking hop like server_rx. Core owns the socket (see
     /// core::app_core::webui); the GUI applies renders to panels.
     webui_rx: Option<mpsc::UnboundedReceiver<crate::webui::WebUiEvent>>,
+    /// Components whose held input buffers must be dropped, from the
+    /// server's `clear_sensitive`. Applied at the next panel render, where
+    /// an egui `Context` exists to reach the temp store.
+    webui_pending_sensitive_clears: Vec<String>,
     /// Pages currently registered on the connected Lich session (GUI-local
     /// mirror for the picker / window-kind logic).
     webui_pages: Vec<crate::data::webui::WebUiPageDescriptor>,
@@ -1201,6 +1205,7 @@ impl VellumGuiApp {
             last_monitor_bounds: None,
             main_viewport_state,
             webui_rx: None,
+            webui_pending_sensitive_clears: Vec::new(),
             webui_pages: Vec::new(),
             webui_pending: Vec::new(),
             is_direct_connection,
@@ -2395,6 +2400,9 @@ impl eframe::App for VellumGuiApp {
         // spike attribution lists this alongside real window costs.
         let ingest_start = std::time::Instant::now();
         self.pump_server_messages();
+        // Secrets the server has consumed are dropped here, where a
+        // Context exists to reach the widget temp store.
+        self.apply_webui_sensitive_clears(ui.ctx());
         self.app_core
             .perf_stats
             .record_window_render("(ingest)", ingest_start.elapsed());

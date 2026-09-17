@@ -95,6 +95,15 @@ impl VellumGuiApp {
         }
         for event in events {
             match event {
+                crate::webui::WebUiEvent::ClearSensitive { cids } => {
+                    // The server consumed these values (a submitted
+                    // password). Our copy lives in egui's temp store under
+                    // the same deterministic id the input builds, so drop
+                    // it there rather than waiting for a render to
+                    // overwrite it — a render may never come, and the
+                    // secret would sit in the panel until the page closed.
+                    self.clear_webui_sensitive_buffers(&cids);
+                }
                 crate::webui::WebUiEvent::Hello { session, pages, .. } => {
                     self.webui_pages = pages;
                     self.refresh_webui_window_kinds();
@@ -179,8 +188,12 @@ impl VellumGuiApp {
                         self.open_webui_page(&page);
                     }
                 }
-                crate::webui::WebUiEvent::Render { page, seq, tree } => {
-                    self.apply_webui_render(&page, seq, tree);
+                crate::webui::WebUiEvent::Render {
+                    page,
+                    generation,
+                    tree,
+                } => {
+                    self.apply_webui_render(&page, generation, tree);
                 }
                 crate::webui::WebUiEvent::PageClosed { page } => {
                     // Declared panels (kind: "panel") stay docked with a
@@ -278,6 +291,59 @@ impl VellumGuiApp {
         }
     }
 
+    /// Queue components whose locally-held input buffers must be dropped.
+    ///
+    /// The values live in egui's temp store, which needs a `Context` this
+    /// pump does not have, so the work is deferred to the next panel render
+    /// (`take_webui_sensitive_clears`). That is one frame later at worst,
+    /// and the alternative — threading a Context through the server pump
+    /// purely for this — buys nothing.
+    pub(super) fn clear_webui_sensitive_buffers(&mut self, cids: &[String]) {
+        self.webui_pending_sensitive_clears
+            .extend(cids.iter().cloned());
+    }
+
+    /// Applies the queued clears. Called once per frame from the renderer,
+    /// which is the first place a `Context` is in hand.
+    pub(super) fn apply_webui_sensitive_clears(&mut self, ctx: &egui::Context) {
+        let cids = std::mem::take(&mut self.webui_pending_sensitive_clears);
+        if cids.is_empty() {
+            return;
+        }
+        let pages: Vec<String> = self
+            .app_core
+            .ui_state
+            .windows
+            .values()
+            .filter_map(|w| match &w.content {
+                crate::data::WindowContent::WebUi(panel) => Some(panel.page_id.clone()),
+                _ => None,
+            })
+            .collect();
+        ctx.data_mut(|d| {
+            for page in &pages {
+                for cid in &cids {
+                    // Mirrors the ids render_webui_node builds; the temp
+                    // store cannot be enumerated by component, and an id we
+                    // never rendered simply has nothing stored.
+                    for suffix in ["buf", "seen"] {
+                        d.remove::<String>(egui::Id::new((
+                            "webui",
+                            page.as_str(),
+                            cid.as_str(),
+                            suffix,
+                        )));
+                    }
+                    d.remove::<bool>(egui::Id::new((
+                        "webui",
+                        page.as_str(),
+                        cid.as_str(),
+                        "focused",
+                    )));
+                }
+            }
+        });
+    }
     pub(super) fn apply_webui_render(
         &mut self,
         page: &str,

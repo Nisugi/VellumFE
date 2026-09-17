@@ -288,8 +288,11 @@ pub struct WebUiMapMarker {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum WebUiServerMessage {
     Hello {
-        #[serde(default)]
-        schema_version: u32,
+        /// Contract version string ("2.15.3"). The server calls this
+        /// `contract_version`; `schema_version` is accepted as the name an
+        /// older Lich used, so one side can be upgraded first.
+        #[serde(default, alias = "schema_version")]
+        contract_version: String,
         #[serde(default)]
         session: WebUiSession,
         #[serde(default)]
@@ -303,12 +306,20 @@ pub enum WebUiServerMessage {
     },
     Render {
         page: String,
-        #[serde(default)]
-        seq: u64,
+        /// Monotonic render counter. The server calls it `generation`;
+        /// `seq` is the older name, accepted so either side can lead.
+        #[serde(default, alias = "seq")]
+        generation: u64,
         tree: WebUiNode,
     },
-    /// Page is finished (script exited / page replaced).
-    Close { page: String },
+    /// Page is finished (script exited / page replaced). The server sends
+    /// `page_closed` with a reason; `close` is the older spelling.
+    #[serde(rename = "page_closed", alias = "close")]
+    Close {
+        page: String,
+        #[serde(default)]
+        reason: String,
+    },
     /// OS-notification request (UI.notify).
     Notify {
         #[serde(default)]
@@ -323,6 +334,27 @@ pub enum WebUiServerMessage {
         #[serde(default)]
         text: String,
     },
+    /// The server refused a message we sent, naming the reason and the
+    /// page/component it concerned. Previously fell into `Unknown` and was
+    /// discarded, so a refused event looked like a silent no-op.
+    Refusal {
+        #[serde(default)]
+        reason: String,
+        #[serde(default)]
+        message: String,
+        #[serde(default)]
+        page: Option<String>,
+        #[serde(default)]
+        cid: Option<String>,
+    },
+    /// Wipe locally-held values for these components: the server has
+    /// consumed a password/sensitive field and the client must not keep it.
+    /// Ignoring this leaves a submitted secret sitting in the panel.
+    #[serde(rename = "clear_sensitive")]
+    ClearSensitive {
+        #[serde(default)]
+        cids: Vec<String>,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -331,11 +363,26 @@ pub enum WebUiServerMessage {
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum WebUiClientMessage {
+    /// Start viewing a page. The server calls this `attach` (it was
+    /// `subscribe`); attaching is what creates the viewer-scoped state the
+    /// server keys per connection, so the name matters more than a rename.
+    #[serde(rename = "attach")]
     Subscribe {
         page: String,
+        /// Resume token from a prior attachment, to reclaim viewer state
+        /// after a reconnect instead of starting a fresh viewer.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        resume: Option<String>,
     },
+    /// Stop viewing a page (server: `detach`).
+    #[serde(rename = "detach")]
     Unsubscribe {
         page: String,
+        /// The last generation we rendered. The server compares it and
+        /// marks the attachment stale on a mismatch, so omitting it makes
+        /// every detach look stale.
+        #[serde(default)]
+        generation: u64,
     },
     /// Component interaction; `value` is component-specific (button: null,
     /// text_input: submitted string, checkbox: bool, table row click: index).
@@ -459,7 +506,7 @@ mod tests {
 
     #[test]
     fn parses_hello_envelope() {
-        let raw = r#"{ "type": "hello", "schema_version": 1,
+        let raw = r#"{ "type": "hello", "contract_version": "2.15.3",
   "session": { "name": "Nisugi", "game": "GSIV" },
   "pages": [
     { "id": "creaturebar/main", "title": "Creature Bar", "script": "creaturebar",
@@ -469,7 +516,7 @@ mod tests {
   "siblings": [ { "name": "Alt", "game": "GSIV", "port": 51999 } ] }"#;
         let msg: WebUiServerMessage = serde_json::from_str(raw).unwrap();
         let WebUiServerMessage::Hello {
-            schema_version,
+            contract_version,
             session,
             pages,
             siblings,
@@ -477,7 +524,7 @@ mod tests {
         else {
             panic!("expected hello, got {:?}", msg);
         };
-        assert_eq!(schema_version, 1);
+        assert_eq!(contract_version, "2.15.3");
         assert_eq!(session.name, "Nisugi");
         assert_eq!(pages.len(), 2);
         assert_eq!(pages[0].id, "creaturebar/main");
@@ -505,11 +552,16 @@ mod tests {
     { "t": "future_widget", "cid": "future_widget:5", "mystery_attr": 42 }
   ] } }"#;
         let msg: WebUiServerMessage = serde_json::from_str(raw).unwrap();
-        let WebUiServerMessage::Render { page, seq, tree } = msg else {
+        let WebUiServerMessage::Render {
+            page,
+            generation,
+            tree,
+        } = msg
+        else {
             panic!("expected render, got {:?}", msg);
         };
         assert_eq!(page, "demo/demo");
-        assert_eq!(seq, 7);
+        assert_eq!(generation, 7);
         assert_eq!(tree.t, "page");
         assert_eq!(tree.children().len(), 6);
         assert_eq!(tree.children()[1].value_f64(), Some(0.4));
@@ -628,10 +680,13 @@ mod tests {
     fn serializes_client_messages() {
         let sub = WebUiClientMessage::Subscribe {
             page: "creaturebar/main".into(),
+            resume: None,
         };
+        // The server verb is `attach`, and a resume-less attach omits the
+        // field entirely rather than sending null.
         assert_eq!(
             serde_json::to_string(&sub).unwrap(),
-            r#"{"type":"subscribe","page":"creaturebar/main"}"#
+            r#"{"type":"attach","page":"creaturebar/main"}"#
         );
         let event = WebUiClientMessage::Event {
             page: "demo/demo".into(),
@@ -722,5 +777,86 @@ mod tests {
     fn contract_major_is_exposed_for_negotiation() {
         assert_eq!(super::contract::CONTRACT_MAJOR, 2);
         assert!(super::contract::CONTRACT_VERSION.starts_with("2."));
+    }
+
+    // ---- wire compatibility -------------------------------------------
+
+    /// The live server sends `page_closed` with a reason; older builds sent
+    /// bare `close`. Both must land on the same variant or a finished page
+    /// leaves its panel claiming to be live.
+    #[test]
+    fn page_closed_and_close_are_the_same_message() {
+        let new: WebUiServerMessage =
+            serde_json::from_str(r#"{"type":"page_closed","page":"p","reason":"script_exit"}"#)
+                .unwrap();
+        assert!(matches!(new, WebUiServerMessage::Close { ref page, ref reason }
+                         if page == "p" && reason == "script_exit"));
+        let old: WebUiServerMessage =
+            serde_json::from_str(r#"{"type":"close","page":"p"}"#).unwrap();
+        assert!(matches!(old, WebUiServerMessage::Close { ref page, .. } if page == "p"));
+    }
+
+    /// `generation` is the live name, `seq` the old one. Accepting both is
+    /// what lets either side be upgraded first.
+    #[test]
+    fn render_accepts_generation_or_seq() {
+        for (field, want) in [("generation", 9u64), ("seq", 4)] {
+            let raw = format!(
+                r#"{{"type":"render","page":"p","{field}":{want},"tree":{{"t":"page"}}}}"#
+            );
+            let msg: WebUiServerMessage = serde_json::from_str(&raw).unwrap();
+            match msg {
+                WebUiServerMessage::Render { generation, .. } => assert_eq!(generation, want),
+                other => panic!("expected render, got {other:?}"),
+            }
+        }
+    }
+
+    /// A refusal answers something WE sent. It used to fall through to
+    /// Unknown and vanish, so a rejected event was indistinguishable from
+    /// one that worked.
+    #[test]
+    fn refusal_is_parsed_rather_than_discarded() {
+        let msg: WebUiServerMessage = serde_json::from_str(
+            r#"{"type":"refusal","reason":"contract","message":"Message refused","page":"p","cid":"button:1"}"#,
+        )
+        .unwrap();
+        match msg {
+            WebUiServerMessage::Refusal { reason, page, cid, .. } => {
+                assert_eq!(reason, "contract");
+                assert_eq!(page.as_deref(), Some("p"));
+                assert_eq!(cid.as_deref(), Some("button:1"));
+            }
+            other => panic!("expected refusal, got {other:?}"),
+        }
+    }
+
+    /// Ignoring clear_sensitive leaves a submitted password sitting in the
+    /// panel, so the message must reach the frontend rather than be eaten.
+    #[test]
+    fn clear_sensitive_is_parsed() {
+        let msg: WebUiServerMessage =
+            serde_json::from_str(r#"{"type":"clear_sensitive","cids":["password_input:1"]}"#)
+                .unwrap();
+        match msg {
+            WebUiServerMessage::ClearSensitive { cids } => {
+                assert_eq!(cids, vec!["password_input:1".to_string()]);
+            }
+            other => panic!("expected clear_sensitive, got {other:?}"),
+        }
+    }
+
+    /// Detach carries the last generation we rendered; the server compares
+    /// it, so the field must be on the wire.
+    #[test]
+    fn detach_serializes_as_the_server_verb() {
+        let msg = WebUiClientMessage::Unsubscribe {
+            page: "p".into(),
+            generation: 3,
+        };
+        assert_eq!(
+            serde_json::to_string(&msg).unwrap(),
+            r#"{"type":"detach","page":"p","generation":3}"#
+        );
     }
 }

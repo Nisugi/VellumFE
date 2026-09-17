@@ -180,6 +180,11 @@ impl AppCore {
             if let Some(bridge) = &self.webui_bridge {
                 bridge.send(WebUiClientMessage::Unsubscribe {
                     page: page.to_string(),
+                    // 0 = "no generation to report". We are dropping the
+                    // page, so the server's staleness check has nothing to
+                    // protect: it only guards a detach racing a render the
+                    // viewer never saw, and either way the attachment goes.
+                    generation: 0,
                 });
             }
         }
@@ -202,7 +207,7 @@ impl AppCore {
         });
         if let Some(bridge) = &self.webui_bridge {
             for page in released {
-                bridge.send(WebUiClientMessage::Unsubscribe { page });
+                bridge.send(WebUiClientMessage::Unsubscribe { page, generation: 0 });
             }
         }
     }
@@ -263,8 +268,19 @@ impl AppCore {
                 self.webui_pages = pages.clone();
                 remote.push_webui_pages(pages.clone());
             }
-            WebUiEvent::Render { page, seq, tree } => {
-                remote.push_webui_render(page.clone(), *seq, tree.clone());
+            WebUiEvent::Render {
+                page,
+                generation,
+                tree,
+            } => {
+                remote.push_webui_render(page.clone(), *generation, tree.clone());
+            }
+            WebUiEvent::ClearSensitive { cids } => {
+                // The server has taken the value; anything we still hold is
+                // a secret with no reason to exist. Clearing is the whole
+                // handling — there is nothing to forward downstream.
+                self.webui_clear_sensitive
+                    .extend(cids.iter().cloned());
             }
             WebUiEvent::PageClosed { page } => {
                 remote.push_webui_page_closed(page.clone());
@@ -343,12 +359,14 @@ mod tests {
     fn sub(page: &str) -> WebUiClientMessage {
         WebUiClientMessage::Subscribe {
             page: page.to_string(),
+            resume: None,
         }
     }
 
     fn unsub(page: &str) -> WebUiClientMessage {
         WebUiClientMessage::Unsubscribe {
             page: page.to_string(),
+            generation: 0,
         }
     }
 
@@ -372,7 +390,7 @@ mod tests {
         let mut delta_rx = handles.delta_tx.subscribe();
         core.relay_webui_to_phone(&crate::webui::WebUiEvent::Render {
             page: "bigshot".to_string(),
-            seq: 7,
+            generation: 7,
             tree: Default::default(),
         });
         match delta_rx.try_recv() {
@@ -478,7 +496,7 @@ mod tests {
         let (sink, _handles, _events) = RemoteSink::new(16);
         core.message_processor.remote = Some(sink);
         core.relay_webui_to_phone(&crate::webui::WebUiEvent::Hello {
-            schema_version: 1,
+            contract_version: "2.15.3".to_string(),
             session: Default::default(),
             pages: Vec::new(),
         });
@@ -486,7 +504,7 @@ mod tests {
         let mut pages: Vec<String> = drain(&mut up)
             .into_iter()
             .map(|m| match m {
-                WebUiClientMessage::Subscribe { page } => page,
+                WebUiClientMessage::Subscribe { page, .. } => page,
                 other => panic!("expected only Subscribe replays, got {other:?}"),
             })
             .collect();
