@@ -7054,6 +7054,13 @@ function twStatusMsg(text, isError) {
 // ({label, kind, value}). Folders are shown read-only (edit on desktop).
 function twSliceToRow(slice) {
   if ((slice.slices || []).length) return { label: slice.label || "", kind: "folder", value: "" };
+  // The built-in ring's "cmd:<text>" slices (Look) are game commands in
+  // client-action clothing. They aren't in the action catalog, so as a
+  // client row the picker would silently rewrite them to its first entry;
+  // surface them as the editable command they are.
+  if (typeof slice.client === "string" && slice.client.startsWith("cmd:")) {
+    return { label: slice.label || "", kind: "command", value: slice.client.slice(4) };
+  }
   if (slice.client) return { label: slice.label || "", kind: "client", value: slice.client };
   return { label: slice.label || "", kind: "command", value: slice.command || "" };
 }
