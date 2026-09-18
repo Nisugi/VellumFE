@@ -1964,27 +1964,16 @@ function scrollDrawerToSection(arg) {
 }
 
 // Fire a touch-wheel leaf: run its client action locally, or fall back to a
-// host wheel_pick (the "Commands" folder descends into the host default
-// wheel, so those leaves resolve server-side by their real path).
+// host wheel_pick. A leaf under the "Commands" folder belongs to the host's
+// default wheel; any other command leaf is a slice of the (host-pushed,
+// user-edited) touch wheel itself and resolves under the "touch" key —
+// WheelCore.touchPickTarget picks between the two.
 function fireTouchLeaf(path) {
   const slices = wheelLevelSlices("touch", path.slice(0, -1));
   const leaf = Array.isArray(slices) ? slices[path[path.length - 1]] : null;
   if (leaf && runWheelClientAction(leaf.client)) return;
-  // Not a client slice — it's a command from the descended host wheel.
-  // Strip the leading "Commands" folder index so the host resolves the
-  // pick against its own default wheel.
-  wheelFire("", stripTouchCommandsPrefix(path));
-}
-
-// A touch path that descended through the "Commands" folder looks like
-// [commandsIdx, ...hostPath]; the host wants just hostPath against its
-// default wheel. Non-Commands paths never reach wheelFire (client actions).
-function stripTouchCommandsPrefix(path) {
-  const top = touchWheelTop();
-  if (path.length && top[path[0]] && top[path[0]].slices === "@default") {
-    return path.slice(1);
-  }
-  return path;
+  const target = WheelCore.touchPickTarget(touchWheelTop(), path);
+  wheelFire(target.key, target.path);
 }
 
 // ---- Touch wheel input -----------------------------------------------------
