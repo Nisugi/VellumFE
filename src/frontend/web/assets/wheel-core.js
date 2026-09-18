@@ -162,6 +162,24 @@ function leafRealAt(view, display) {
   return real;
 }
 
+// Which host wheel a touch-wheel command leaf resolves against, as the
+// { key, path } for wheel_pick. `top` is the touch wheel's top-level ring,
+// `path` the leaf's real-index path within it. A path that descended
+// through the built-in "Commands" folder (`slices: "@default"`) is a leaf
+// of the host's DEFAULT wheel: key "" and the path minus the folder index.
+// Anything else is a game-command slice on the touch wheel itself (a
+// host-pushed, user-edited ring) and must resolve under the reserved
+// "touch" key — firing it at key "" runs whatever the default wheel holds
+// at that index (slice 0 is usually "look") instead of the edited command.
+// Phone-only: the desktop has no touch wheel, so there is no Rust mirror.
+function touchPickTarget(top, path) {
+  const first = Array.isArray(top) ? top[path[0]] : null;
+  if (path.length && first && first.slices === "@default") {
+    return { key: "", path: path.slice(1) };
+  }
+  return { key: "touch", path: path.slice() };
+}
+
 // Advance the dwell/commit/fire state machine one frame. Mutates only
 // `ui` ({ path, aimed, candidate, candidateSince, rearmUntilCenter,
 // peakMagnitude }); descend/ascend happen in place (path push/pop + the
@@ -278,6 +296,7 @@ const WheelCore = {
   buildWheelView,
   retractShouldFire,
   leafRealAt,
+  touchPickTarget,
   wheelAimStep,
 };
 
